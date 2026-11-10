@@ -15,6 +15,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/utils/cn';
 import {
   useApproveQrOrderMutation,
+  useCancelPosOrderMutation,
   useCheckoutOrderMutation,
   useCreatePosOrderMutation,
   usePatchOrderItemsMutation,
@@ -22,6 +23,7 @@ import {
   usePosProductsQuery,
   usePosTableGridQuery,
   useProvisionalBillMutation,
+  useReprintKitchenMutation,
   useSplitKitchenMutation,
   useTableActionMutation,
 } from '../api/pos.api';
@@ -53,9 +55,11 @@ export function PosUnifiedPage() {
   const approveQrMutation = useApproveQrOrderMutation();
   const patchItemsMutation = usePatchOrderItemsMutation();
   const splitKitchenMutation = useSplitKitchenMutation();
+  const reprintKitchenMutation = useReprintKitchenMutation();
   const provisionalBillMutation = useProvisionalBillMutation();
   const checkoutMutation = useCheckoutOrderMutation();
   const tableActionMutation = useTableActionMutation();
+  const cancelOrderMutation = useCancelPosOrderMutation();
 
   const handleSelectTable = (table: PosTableGridResponse['tables'][number]) => {
     if (table.status === 'AVAILABLE' || !table.activeOrderId) {
@@ -270,6 +274,46 @@ export function PosUnifiedPage() {
     }
   };
 
+  const handleReprintKitchen = async (batchNo?: number) => {
+    if (!selectedOrderId || reprintKitchenMutation.isPending) return;
+    try {
+      const response = await reprintKitchenMutation.mutateAsync({
+        orderId: selectedOrderId,
+        input: batchNo ? { batchNo } : undefined,
+      });
+      if (response.tickets.length > 0) {
+        thermalPrinter.printKitchenSplit({
+          orderCode: currentOrder?.orderCode ?? `#${selectedOrderId}`,
+          orderType: currentOrder?.orderType,
+          tableLabel: currentOrder?.tableLabel,
+          takeawayNumber: currentOrder?.takeawayNumber,
+          orderNote: currentOrder?.note,
+          isReprint: true,
+          tickets: response.tickets,
+        });
+        toast({
+          variant: 'info',
+          title: batchNo
+            ? `Đã in lại phiếu bếp Lượt ${batchNo}`
+            : 'Đã in lại toàn bộ phiếu bếp',
+          description: `Đã gửi ${response.tickets.length} bản sao phiếu in (có dấu bản sao chống làm trùng).`,
+        });
+      } else {
+        toast({
+          variant: 'info',
+          title: 'Thông báo in lại phiếu bếp',
+          description: response.message ?? 'Không có món đã in nào để in lại',
+        });
+      }
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Lỗi in lại phiếu bếp',
+        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      });
+    }
+  };
+
   const handlePrintProvisionalBill = async () => {
     if (!selectedOrderId || provisionalBillMutation.isPending) return;
     try {
@@ -283,7 +327,7 @@ export function PosUnifiedPage() {
       toast({
         variant: 'success',
         title: 'Đã in phiếu tạm tính (VietQR)',
-        description: `Mã đơn ${bill.orderCode} vẫn giữ nguyên trạng thái ${bill.status}.`,
+        description: `Mã đơn ${bill.orderCode} vẫn giữ nguyên trạng thái Đang phục vụ.`,
       });
     } catch (err) {
       toast({
@@ -335,7 +379,7 @@ export function PosUnifiedPage() {
       setSelectedOrderId(null);
       toast({
         variant: 'success',
-        title: 'Thanh toán hoàn tất (PAID)',
+        title: 'Thanh toán hoàn tất',
         description: payload.printReceipt
           ? 'Đã đóng đơn, giải phóng bàn và in hoá đơn.'
           : 'Đã đóng đơn và giải phóng bàn (Không in).',
@@ -360,9 +404,11 @@ export function PosUnifiedPage() {
         thermalPrinter.printTableTransferNotice(result.kitchenTransferSlip);
       }
       setTableActionOpen(false);
+      const actionText =
+        result.action === 'MOVE' ? 'chuyển' : result.action === 'MERGE' ? 'gộp' : 'hoán đổi';
       toast({
         variant: 'success',
-        title: `Đã thực hiện ${result.action} bàn thành công`,
+        title: `Đã ${actionText} bàn thành công`,
         description: result.requireKitchenNoticePrint
           ? 'Đã in Phiếu Thông báo Chuyển bàn xuống bếp.'
           : 'Đã đồng bộ sơ đồ bàn và phiên QR của khách.',
@@ -371,6 +417,41 @@ export function PosUnifiedPage() {
       toast({
         variant: 'destructive',
         title: 'Không thể thao tác bàn',
+        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      });
+    }
+  };
+
+  const handleCancelOrder = async (reason?: string) => {
+    if (!selectedOrderId || cancelOrderMutation.isPending) return;
+    const isTakeaway = currentOrder?.orderType === 'TAKEAWAY';
+    try {
+      const defaultReason = isTakeaway
+        ? 'Thu ngân huỷ đơn mang về'
+        : 'Tất cả món trong đơn đã bị huỷ bởi thu ngân';
+      const resolvedReason =
+        typeof reason === 'string' && reason.trim().length >= 10
+          ? reason.trim()
+          : defaultReason;
+
+      await cancelOrderMutation.mutateAsync({
+        orderId: selectedOrderId,
+        input: {
+          voidReason: resolvedReason,
+        },
+      });
+      setSelectedOrderId(null);
+      toast({
+        variant: 'success',
+        title: isTakeaway ? 'Đã huỷ đơn mang về' : 'Đã huỷ đơn & giải phóng bàn',
+        description: isTakeaway
+          ? 'Đơn mang về đã được huỷ thành công.'
+          : 'Bàn đã chuyển về trạng thái Bàn trống.',
+      });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Lỗi huỷ đơn',
         description: err instanceof Error ? err.message : 'Vui lòng thử lại',
       });
     }
@@ -393,10 +474,10 @@ export function PosUnifiedPage() {
       data-testid="pos-unified-screen"
       className="relative flex flex-1 min-h-0 h-full w-full flex-col gap-3 lg:flex-row overflow-hidden"
     >
-      {/* Left Panel (54% on desktop, or active tab on mobile): Table Grid / Fast Menu */}
+      {/* Left Panel: Table Grid / Fast Menu (Expands to fill all remaining width) */}
       <div
         className={cn(
-          'flex flex-1 min-h-0 h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm lg:w-[54%] xl:w-[58%]',
+          'flex flex-1 min-w-0 min-h-0 h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm',
           posTab === 'invoice' && 'hidden lg:flex',
         )}
       >
@@ -446,10 +527,10 @@ export function PosUnifiedPage() {
         </Tabs>
       </div>
 
-      {/* Right Panel (46% on desktop, or active tab on mobile): Live Electronic Invoice */}
+      {/* Right Panel: Live Electronic Invoice (Compact fixed width on desktop: 320px - 360px) */}
       <div
         className={cn(
-          'flex flex-1 min-h-0 h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm lg:w-[46%] xl:w-[42%]',
+          'flex min-h-0 h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm lg:w-[320px] xl:w-[350px] 2xl:w-[380px] lg:flex-none shrink-0',
           posTab !== 'invoice' && 'hidden lg:flex',
         )}
       >
@@ -488,6 +569,8 @@ export function PosUnifiedPage() {
           isProvisionalPending={provisionalBillMutation.isPending}
           isApprovingQr={approveQrMutation.isPending}
           isSubmittingDraft={createOrderMutation.isPending}
+          isCancellingOrder={cancelOrderMutation.isPending}
+          isReprintPending={reprintKitchenMutation.isPending}
           onUpdateDraftQty={handleUpdateDraftQty}
           onRemoveDraftItem={handleRemoveDraftItem}
           onSubmitDraftOrder={handleSubmitDraftOrder}
@@ -496,8 +579,10 @@ export function PosUnifiedPage() {
           onRemoveOrCancelOrderItem={handleRemoveOrCancelOrderItem}
           onOpenTableAction={() => setTableActionOpen(true)}
           onSplitKitchen={handleSplitKitchen}
+          onReprintKitchen={handleReprintKitchen}
           onPrintProvisionalBill={handlePrintProvisionalBill}
           onOpenCheckout={() => setCheckoutOpen(true)}
+          onCancelOrder={handleCancelOrder}
         />
       </div>
 

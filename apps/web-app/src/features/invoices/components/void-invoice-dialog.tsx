@@ -52,8 +52,8 @@ export function VoidInvoiceDialog({
       });
 
       toast({
-        title: 'Đã huỷ hoá đơn (VOIDED)',
-        description: `Hoá đơn ${invoice.orderCode} đã được chuyển sang trạng thái VOIDED và loại trừ khỏi doanh thu kết ca.`,
+        title: 'Đã huỷ hoá đơn',
+        description: `Hoá đơn ${invoice.orderCode} đã được chuyển sang trạng thái Đã huỷ và loại trừ khỏi doanh thu kết ca.`,
       });
       onOpenChange(false);
     } catch (err) {
@@ -71,12 +71,12 @@ export function VoidInvoiceDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-destructive">
             <AlertTriangle className="h-5 w-5" />
-            <span>Huỷ hoá đơn ngoại lệ (Void)</span>
+            <span>Huỷ hoá đơn ngoại lệ</span>
           </DialogTitle>
           <DialogDescription>
             Thao tác này sẽ chuyển hoá đơn{' '}
             <strong className="text-foreground">{invoice?.orderCode}</strong> sang trạng thái{' '}
-            <strong className="text-destructive">VOIDED</strong> và khấu trừ khỏi doanh thu kết ca.
+            <strong className="text-destructive">Đã huỷ</strong> và khấu trừ khỏi doanh thu kết ca.
           </DialogDescription>
         </DialogHeader>
 

@@ -1,5 +1,5 @@
 import { type ColumnDef } from '@tanstack/react-table';
-import { type OrderStatus, type PaymentMethod } from '@fnb/shared';
+import { type OrderStatus, type OrderType, type PaymentMethod } from '@fnb/shared';
 import { Ban, Eye } from 'lucide-react';
 import * as React from 'react';
 
@@ -41,6 +41,7 @@ export function InvoicesPage() {
   const [toDate, setToDate] = React.useState(today);
   const [status, setStatus] = React.useState<OrderStatus | ''>('');
   const [paymentMethod, setPaymentMethod] = React.useState<PaymentMethod | ''>('');
+  const [orderType, setOrderType] = React.useState<OrderType | ''>('');
   const [searchField, setSearchField] = React.useState<InvoiceSearchField>('order_code');
   const [keyword, setKeyword] = React.useState('');
 
@@ -57,6 +58,7 @@ export function InvoicesPage() {
     toDate,
     status: status || undefined,
     paymentMethod: paymentMethod || undefined,
+    orderType: orderType || undefined,
     searchField,
     keyword: keyword.trim() || undefined,
   });
@@ -109,11 +111,21 @@ export function InvoicesPage() {
       },
       {
         accessorKey: 'createdAt',
-        header: 'Thời điểm tạo',
-        size: 146,
-        cell: ({ row }) => (
-          <span className="tabular-nums whitespace-nowrap">{formatDateTimeCell(row.original.createdAt)}</span>
-        ),
+        header: 'Thời điểm',
+        size: 156,
+        cell: ({ row }) => {
+          const item = row.original;
+          return (
+            <div className="flex flex-col text-xs tabular-nums whitespace-nowrap">
+              <span>{formatDateTimeCell(item.createdAt)}</span>
+              {item.paidAt ? (
+                <span className="text-[11px] text-muted-foreground">
+                  TT: {formatDateTimeCell(item.paidAt)}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
       },
       {
         id: 'amountAndPayment',
@@ -122,6 +134,14 @@ export function InvoicesPage() {
         cell: ({ row }) => {
           const item = row.original;
           const pm = item.paymentMethod;
+          const pmLabel =
+            pm === 'CASH'
+              ? 'Tiền mặt'
+              : pm === 'TRANSFER'
+                ? 'Chuyển khoản'
+                : pm === 'SPLIT'
+                  ? 'Kết hợp'
+                  : pm;
           return (
             <div className="flex items-center gap-1.5 whitespace-nowrap">
               <span className="font-bold text-foreground tabular-nums">
@@ -140,7 +160,7 @@ export function InvoicesPage() {
                       'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-200',
                   )}
                 >
-                  {pm}
+                  {pmLabel}
                 </span>
               ) : null}
             </div>
@@ -153,6 +173,18 @@ export function InvoicesPage() {
         size: 174,
         cell: ({ row }) => {
           const item = row.original;
+          const statusLabel =
+            item.status === 'PAID'
+              ? 'Đã thanh toán'
+              : item.status === 'SERVING'
+                ? 'Đang phục vụ'
+                : item.status === 'VOIDED'
+                  ? 'Đã huỷ'
+                  : item.status === 'MERGED'
+                    ? 'Đã gộp'
+                    : item.status === 'PENDING'
+                      ? 'Chờ duyệt QR'
+                      : item.status;
           return (
             <div className="flex items-center gap-2 min-w-0">
               <Badge
@@ -166,7 +198,7 @@ export function InvoicesPage() {
                         : 'secondary'
                 }
               >
-                {item.status}
+                {statusLabel}
               </Badge>
               {item.note ? (
                 <span className="truncate text-xs text-muted-foreground" title={item.note}>
@@ -237,6 +269,7 @@ export function InvoicesPage() {
         toDate={toDate}
         status={status}
         paymentMethod={paymentMethod}
+        orderType={orderType}
         searchField={searchField}
         keyword={keyword}
         onDateRangeChange={(nextFrom, nextTo) => {
@@ -250,6 +283,10 @@ export function InvoicesPage() {
         }}
         onPaymentMethodChange={(nextPaymentMethod) => {
           setPaymentMethod(nextPaymentMethod);
+          setPage(1);
+        }}
+        onOrderTypeChange={(nextOrderType) => {
+          setOrderType(nextOrderType);
           setPage(1);
         }}
         onSearchFieldChange={(nextField) => {

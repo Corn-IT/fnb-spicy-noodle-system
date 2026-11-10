@@ -149,7 +149,7 @@ export function ModifierSelectorSheet({
                 className="space-y-2 rounded-xl border border-border/70 bg-muted/15 p-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-1">
-                  <span className="text-sm font-bold text-foreground">- {group.name}</span>
+                  <span className="text-sm font-bold text-foreground">{group.name}</span>
                   {group.allowSubstitution ? (
                     <Badge
                       variant="outline"

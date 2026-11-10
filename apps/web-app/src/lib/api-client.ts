@@ -47,9 +47,30 @@ async function attemptTokenRefresh(): Promise<string | null> {
         return null;
       }
 
-      const data = (await response.json()) as { accessToken?: string };
+      const data = (await response.json()) as {
+        accessToken?: string;
+        user?: {
+          id: number;
+          employeeId: number;
+          username: string;
+          isSuperAdmin: boolean;
+          permissions: any;
+          employee?: { fullName?: string; avatarUrl?: string | null };
+        };
+      };
       if (data?.accessToken) {
         useAuthStore.getState().setAccessToken(data.accessToken);
+        if (data.user) {
+          useAuthStore.getState().updateUser({
+            id: data.user.id,
+            employeeId: data.user.employeeId,
+            username: data.user.username,
+            fullName: data.user.employee?.fullName,
+            avatarUrl: data.user.employee?.avatarUrl,
+            isSuperAdmin: data.user.isSuperAdmin,
+            permissions: data.user.permissions,
+          });
+        }
         return data.accessToken;
       }
 

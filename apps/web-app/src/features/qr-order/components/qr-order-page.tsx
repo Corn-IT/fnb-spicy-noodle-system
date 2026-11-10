@@ -260,7 +260,17 @@ export function QrOrderPage() {
           >
             <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span>
-              {statusMessage} ({orderStatus})
+              {statusMessage} (
+              {orderStatus === 'SERVING'
+                ? 'Đang phục vụ'
+                : orderStatus === 'PENDING'
+                  ? 'Chờ duyệt QR'
+                  : orderStatus === 'PAID'
+                    ? 'Đã thanh toán'
+                    : orderStatus === 'VOIDED'
+                      ? 'Đã huỷ'
+                      : orderStatus}
+              )
             </span>
           </div>
         ) : null}
@@ -273,7 +283,7 @@ export function QrOrderPage() {
           </h2>
 
           {/* Tầng 1: Khu vực Bếp */}
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <div className="flex flex-wrap items-center gap-1.5 py-0.5">
             {(
               [
                 { value: 'ALL', label: 'Tất cả' },
@@ -316,7 +326,7 @@ export function QrOrderPage() {
             const subcats = Array.from(catMap.entries()).map(([id, name]) => ({ id, name }));
             if (subcats.length === 0) return null;
             return (
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+              <div className="flex flex-wrap items-center gap-1.5 py-0.5">
                 <button
                   type="button"
                   onClick={() => setCategoryFilter('ALL')}
@@ -339,7 +349,7 @@ export function QrOrderPage() {
                         : 'bg-card text-muted-foreground border border-border/60'
                     }`}
                   >
-                    + {cat.name}
+                    {cat.name}
                   </button>
                 ))}
               </div>

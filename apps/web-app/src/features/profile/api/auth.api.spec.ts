@@ -49,7 +49,32 @@ describe('loginWithCredentials', () => {
       accessToken: 'access-token',
       user: { username: 'cashier01', fullName: 'Cashier One', avatarUrl: 'https://assets.example/avatar.png' },
     });
+    const storedAuth = JSON.parse(localStorage.getItem('fnb-auth') || '{}');
+    expect(storedAuth?.state?.accessToken).toBe('access-token');
+    expect(storedAuth?.state?.user?.username).toBe('cashier01');
     expect(useUiPreferencesStore.getState()).toMatchObject({ theme: 'dark', sidebarWidth: 280 });
     expect(useUiPreferencesStore.getState().columnWidths).toEqual({ orders: { name: 240 } });
+  });
+
+  it('should persist auth state across page reloads and clear it upon clearAuth', () => {
+    useAuthStore.getState().setAuth({
+      accessToken: 'sample-jwt',
+      user: {
+        id: 1,
+        employeeId: 10,
+        username: 'admin',
+        fullName: 'Admin User',
+        isSuperAdmin: true,
+        permissions: {} as never,
+      },
+    });
+
+    const storedAuth = JSON.parse(localStorage.getItem('fnb-auth') || '{}');
+    expect(storedAuth?.state?.accessToken).toBe('sample-jwt');
+    expect(storedAuth?.state?.user?.username).toBe('admin');
+
+    useAuthStore.getState().clearAuth();
+    expect(useAuthStore.getState().accessToken).toBeNull();
+    expect(useAuthStore.getState().user).toBeNull();
   });
 });

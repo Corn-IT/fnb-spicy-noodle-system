@@ -94,9 +94,9 @@ export function TableActionDialog({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {(
                 [
-                  { type: TableActionType.MOVE, label: 'Chuyển bàn trống (MOVE)' },
-                  { type: TableActionType.MERGE, label: 'Gộp vào bàn (MERGE)' },
-                  { type: TableActionType.SWAP, label: 'Đổi 2 bàn (SWAP)' },
+                  { type: TableActionType.MOVE, label: 'Chuyển bàn trống' },
+                  { type: TableActionType.MERGE, label: 'Gộp vào bàn khác' },
+                  { type: TableActionType.SWAP, label: 'Hoán đổi 2 bàn' },
                 ] as const
               ).map((item) => (
                 <button

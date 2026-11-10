@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { apiClient } from '@/lib/api-client';
-import { useAuthStore } from '@/stores/auth.store';
+import { AUTH_STORAGE_KEY, useAuthStore } from '@/stores/auth.store';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 
 /**
@@ -28,6 +28,11 @@ export async function executeCleanLogout(queryClient: QueryClient): Promise<void
   queryClient.clear();
   // 2. Xoá token và thông tin định danh khỏi authStore
   useAuthStore.getState().clearAuth();
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
   // 3. Gọi API xoá refreshToken cookie
   await apiClient.post('/api/v1/auth/logout').catch(() => {});
   // 4. HARD INVARIANT 9: TUYỆT ĐỐI KHÔNG xoá key 'fnb-ui-preferences' trong localStorage

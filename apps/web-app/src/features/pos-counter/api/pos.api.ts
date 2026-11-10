@@ -10,9 +10,11 @@ import {
   PosTableGridResponseSchema,
   ProductSchema,
   ProvisionalBillResponseSchema,
+  ReprintKitchenRequestSchema,
   SplitKitchenResponseSchema,
   TableActionRequestSchema,
   TableActionResponseSchema,
+  VoidInvoiceRequestSchema,
   type ApproveQrOrderInput,
   type CheckoutOrderRequest,
   type CreatePosOrderInput,
@@ -23,9 +25,11 @@ import {
   type PosTableGridResponse,
   type Product,
   type ProvisionalBillResponse,
+  type ReprintKitchenRequest,
   type SplitKitchenResponse,
   type TableActionRequest,
   type TableActionResponse,
+  type VoidInvoiceRequest,
 } from '@fnb/shared';
 import { z } from 'zod';
 
@@ -89,6 +93,18 @@ export async function splitPosKitchen(orderId: number): Promise<SplitKitchenResp
   return SplitKitchenResponseSchema.parse(raw);
 }
 
+export async function reprintPosKitchen(params: {
+  orderId: number;
+  input?: ReprintKitchenRequest;
+}): Promise<SplitKitchenResponse> {
+  const parsed = params.input ? ReprintKitchenRequestSchema.parse(params.input) : {};
+  const raw = await apiClient.post<unknown>(
+    `/api/v1/pos/orders/${params.orderId}/reprint-kitchen`,
+    parsed,
+  );
+  return SplitKitchenResponseSchema.parse(raw);
+}
+
 export async function fetchPosProvisionalBill(
   orderId: number,
 ): Promise<ProvisionalBillResponse> {
@@ -103,6 +119,17 @@ export async function checkoutPosOrder(params: {
   const parsed = CheckoutOrderRequestSchema.parse(params.input);
   return apiClient.post<{ orderId: number; status: 'PAID'; paidAt: string }>(
     `/api/v1/pos/orders/${params.orderId}/checkout`,
+    parsed,
+  );
+}
+
+export async function cancelPosOrder(params: {
+  orderId: number;
+  input: VoidInvoiceRequest;
+}): Promise<{ orderId: number; status: 'VOIDED'; tableId: number | null }> {
+  const parsed = VoidInvoiceRequestSchema.parse(params.input);
+  return apiClient.post<{ orderId: number; status: 'VOIDED'; tableId: number | null }>(
+    `/api/v1/pos/orders/${params.orderId}/cancel`,
     parsed,
   );
 }
@@ -146,7 +173,10 @@ export function useCreatePosOrderMutation() {
   return useMutation({
     mutationFn: createPosOrder,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() }),
+        queryClient.invalidateQueries({ queryKey: ['invoices'] }),
+      ]);
     },
   });
 }
@@ -196,6 +226,12 @@ export function useSplitKitchenMutation() {
   });
 }
 
+export function useReprintKitchenMutation() {
+  return useMutation({
+    mutationFn: reprintPosKitchen,
+  });
+}
+
 export function useProvisionalBillMutation() {
   return useMutation({
     mutationFn: fetchPosProvisionalBill,
@@ -212,6 +248,8 @@ export function useCheckoutOrderMutation() {
         queryClient.invalidateQueries({
           queryKey: posQueryKeys.orderDetail(variables.orderId),
         }),
+        queryClient.invalidateQueries({ queryKey: ['invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['cashflow'] }),
       ]);
     },
   });
@@ -222,7 +260,27 @@ export function useTableActionMutation() {
   return useMutation({
     mutationFn: executePosTableAction,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: posQueryKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: posQueryKeys.all }),
+        queryClient.invalidateQueries({ queryKey: ['invoices'] }),
+      ]);
+    },
+  });
+}
+
+export function useCancelPosOrderMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: cancelPosOrder,
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() }),
+        queryClient.invalidateQueries({
+          queryKey: posQueryKeys.orderDetail(variables.orderId),
+        }),
+        queryClient.invalidateQueries({ queryKey: ['invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['cashflow'] }),
+      ]);
     },
   });
 }

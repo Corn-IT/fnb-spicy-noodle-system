@@ -1,7 +1,7 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ErrorCodes, KitchenStationSchema, SplitKitchenResponseSchema } from '@fnb/shared';
-import type { KitchenStation, SplitKitchenResponse } from '@fnb/shared';
+import type { KitchenStation, ReprintKitchenRequest, SplitKitchenResponse } from '@fnb/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 
@@ -148,6 +148,95 @@ export class KitchenSplitService {
       this.gateway.emitTableGridSync({ orderId, tableId: result.tableId, status: 'SERVING' });
     }
     return result.response;
+  }
+
+  async reprintKitchen(
+    orderId: number,
+    options?: ReprintKitchenRequest,
+    _userId?: number,
+  ): Promise<SplitKitchenResponse> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        table: { select: { id: true, name: true } },
+        items: {
+          where: {
+            kitchenStatus: 'PRINTED',
+            ...(options?.batchNo ? { batchNo: options.batchNo } : {}),
+          },
+          include: { product: true },
+          orderBy: { id: 'asc' },
+        },
+      },
+    });
+
+    if (!order) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+    if (order.items.length === 0) {
+      return SplitKitchenResponseSchema.parse({
+        batchNo: options?.batchNo ?? null,
+        tickets: [],
+        message: 'Không có món đã in bếp để in lại',
+      });
+    }
+
+    const comboProductIds = order.items
+      .filter((item) => item.product.station === 'COMBO')
+      .map((item) => item.productId);
+    const comboParts = comboProductIds.length > 0
+      ? await this.prisma.comboItem.findMany({
+        where: { parentProductId: { in: comboProductIds } },
+        include: { childProduct: { select: { id: true, name: true, station: true } } },
+        orderBy: [{ parentProductId: 'asc' }, { childProductId: 'asc' }],
+      })
+      : [];
+
+    const tickets = new Map<KitchenStation, TicketItem[]>();
+    for (const item of order.items) {
+      const modifiers = this.modifierNames(item.modifiersSnapshot);
+      if (item.product.station === 'COMBO') {
+        const parts = comboParts.filter((part) => part.parentProductId === item.productId);
+        for (const part of parts) {
+          const station = this.physicalStation(part.childProduct.station);
+          if (options?.station && station !== options.station) continue;
+          this.addTicketItem(tickets, station, {
+            name: part.childProduct.name,
+            qty: item.quantity * part.quantity,
+            modifiers,
+            note: item.itemNote ?? '',
+          });
+        }
+      } else {
+        const station = this.physicalStation(item.product.station);
+        if (options?.station && station !== options.station) continue;
+        this.addTicketItem(tickets, station, {
+          name: item.product.name,
+          qty: item.quantity,
+          modifiers,
+          note: item.itemNote ?? '',
+        });
+      }
+    }
+
+    const targetBatchNo = options?.batchNo ?? order.items[0]?.batchNo ?? 1;
+    const batchLabel = targetBatchNo > 1 ? `[GỌI THÊM - LƯỢT ${targetBatchNo}]` : undefined;
+    const reprintLabel = '*** BẢN SAO - IN LẠI (KHÔNG LÀM TRÙNG) ***';
+    const transferNotice = this.latestTransferNotice(order.tableTransferLogs);
+
+    const response = SplitKitchenResponseSchema.parse({
+      batchNo: targetBatchNo,
+      tickets: [...tickets.entries()].map(([station, items]) => ({
+        station,
+        ...stationPrintInfo[station],
+        batchNo: targetBatchNo,
+        reprintLabel,
+        ...(batchLabel ? { batchLabel } : {}),
+        ...(transferNotice ? { transferNotice } : {}),
+        items,
+      })),
+    });
+
+    this.logger.log(`Reprint kitchen: orderId=${orderId}, batchNo=${targetBatchNo}, stations=${[...tickets.keys()].join(',')}, userId=${_userId ?? 'unknown'}`);
+    return response;
   }
 
   private physicalStation(value: string): KitchenStation {

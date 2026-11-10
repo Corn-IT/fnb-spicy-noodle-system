@@ -1,6 +1,6 @@
 import { Calendar, RotateCcw, Search } from 'lucide-react';
 import * as React from 'react';
-import { OrderStatus, PaymentMethod } from '@fnb/shared';
+import { OrderStatus, type OrderType, PaymentMethod } from '@fnb/shared';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,11 +13,13 @@ export interface InvoiceDualFilterBarProps {
   toDate: string;
   status: OrderStatus | '';
   paymentMethod: PaymentMethod | '';
+  orderType?: OrderType | '';
   searchField: InvoiceSearchField;
   keyword: string;
   onDateRangeChange: (fromDate: string, toDate: string) => void;
   onStatusChange: (status: OrderStatus | '') => void;
   onPaymentMethodChange: (paymentMethod: PaymentMethod | '') => void;
+  onOrderTypeChange?: (orderType: OrderType | '') => void;
   onSearchFieldChange: (searchField: InvoiceSearchField) => void;
   onKeywordChange: (keyword: string) => void;
 }
@@ -27,11 +29,13 @@ export function InvoiceDualFilterBar({
   toDate,
   status,
   paymentMethod,
+  orderType = '',
   searchField,
   keyword,
   onDateRangeChange,
   onStatusChange,
   onPaymentMethodChange,
+  onOrderTypeChange,
   onSearchFieldChange,
   onKeywordChange,
 }: InvoiceDualFilterBarProps) {
@@ -132,8 +136,20 @@ export function InvoiceDualFilterBar({
         </div>
       </div>
 
-      {/* Bộ lọc trạng thái, thanh toán và tiêu chí tìm kiếm được kết hợp bằng AND. */}
+      {/* Bộ lọc trạng thái, thanh toán, loại đơn và tiêu chí tìm kiếm được kết hợp bằng AND. */}
       <div className="flex flex-wrap items-center gap-2">
+        <select
+          aria-label="Lọc hình thức phục vụ"
+          data-testid="invoice-order-type-filter"
+          value={orderType}
+          onChange={(e) => onOrderTypeChange?.(e.target.value as OrderType | '')}
+          className="h-9 flex-1 sm:flex-none rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Tất cả hình thức</option>
+          <option value="DINE_IN">Tại bàn</option>
+          <option value="TAKEAWAY">Mang về</option>
+        </select>
+
         <select
           aria-label="Lọc trạng thái hoá đơn"
           data-testid="invoice-status-filter"
@@ -169,7 +185,7 @@ export function InvoiceDualFilterBar({
           className="h-9 w-full sm:w-auto rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
         >
           <option value="order_code">Mã hoá đơn</option>
-          <option value="table">Số bàn</option>
+          <option value="table">Bàn / Mang về</option>
           <option value="note">Ghi chú</option>
         </select>
 
@@ -183,7 +199,7 @@ export function InvoiceDualFilterBar({
               searchField === 'order_code'
                 ? 'Nhập mã HĐ (VD: HD-2026...)'
                 : searchField === 'table'
-                  ? 'Nhập số bàn (VD: Bàn 05)...'
+                  ? 'Nhập số bàn (VD: 05) hoặc "Mang về"...'
                   : 'Nhập nội dung ghi chú...'
             }
             className="pl-8 w-full h-9 text-xs sm:text-sm"

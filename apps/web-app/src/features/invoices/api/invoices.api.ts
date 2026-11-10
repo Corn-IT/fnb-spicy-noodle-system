@@ -21,6 +21,7 @@ export interface InvoiceListItem {
   paymentMethod: PaymentMethod | null;
   totalAmount: number;
   createdAt: string;
+  paidAt?: string | null;
   note: string | null;
   voidReason?: string | null;
 }
@@ -62,6 +63,7 @@ export function useInvoicesQuery(filter: InvoiceFilterQuery) {
           searchField: filter.keyword ? filter.searchField : undefined,
           status: filter.status,
           paymentMethod: filter.paymentMethod,
+          orderType: filter.orderType,
         },
       }),
   });

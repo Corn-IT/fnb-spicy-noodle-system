@@ -22,23 +22,46 @@ export class InvoicesService {
         details: { fieldErrors: parsed.error.flatten().fieldErrors },
       });
     }
-    const { page, limit, fromDate, toDate, keyword, searchField, status, paymentMethod } = parsed.data;
+    const { page, limit, fromDate, toDate, keyword, searchField, status, paymentMethod, orderType } = parsed.data;
     const today = this.businessDate(new Date());
     const rangeStart = this.dateAtVietnamMidnight(fromDate ?? today);
     const rangeEnd = new Date(this.dateAtVietnamMidnight(toDate ?? today).getTime() + 24 * 60 * 60 * 1000);
-    const where: Prisma.OrderWhereInput = {
-      createdAt: { gte: rangeStart, lt: rangeEnd },
-      ...(status ? { status } : {}),
-      ...(paymentMethod ? { paymentMethod } : {}),
-    };
+
+    const andConditions: Prisma.OrderWhereInput[] = [
+      {
+        OR: [
+          { createdAt: { gte: rangeStart, lt: rangeEnd } },
+          { paidAt: { gte: rangeStart, lt: rangeEnd } },
+        ],
+      },
+    ];
+
+    if (status) andConditions.push({ status });
+    if (paymentMethod) andConditions.push({ paymentMethod });
+    if (orderType) andConditions.push({ orderType });
 
     const resolvedSearchField = searchField ?? (keyword ? 'order_code' : undefined);
     if (keyword && resolvedSearchField) {
       const contains = { contains: keyword, mode: 'insensitive' as const };
-      if (resolvedSearchField === 'order_code') where.orderCode = contains;
-      else if (resolvedSearchField === 'note') where.note = contains;
-      else where.table = { is: { name: contains } };
+      if (resolvedSearchField === 'order_code') {
+        andConditions.push({ orderCode: contains });
+      } else if (resolvedSearchField === 'note') {
+        andConditions.push({ note: contains });
+      } else {
+        const digitsOnly = keyword.replace(/\D/g, '');
+        const parsedNumber = digitsOnly ? parseInt(digitsOnly, 10) : NaN;
+        const isTakeawayKeyword = /mang\s*v[eề]|takeaway/i.test(keyword);
+        andConditions.push({
+          OR: [
+            { table: { is: { name: contains } } },
+            ...(isTakeawayKeyword ? [{ orderType: 'TAKEAWAY' as const }] : []),
+            ...(!isNaN(parsedNumber) ? [{ orderType: 'TAKEAWAY' as const, takeawayNumber: parsedNumber }] : []),
+          ],
+        });
+      }
     }
+
+    const where: Prisma.OrderWhereInput = { AND: andConditions };
 
     const [total, orders] = await Promise.all([
       this.prisma.order.count({ where }),
@@ -68,6 +91,7 @@ export class InvoicesService {
         paymentMethod: order.paymentMethod,
         totalAmount: order.totalAmount.toNumber(),
         createdAt: order.createdAt.toISOString(),
+        paidAt: order.paidAt?.toISOString() ?? null,
         note: order.note,
       })),
     };

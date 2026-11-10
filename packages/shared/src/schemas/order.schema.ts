@@ -199,6 +199,7 @@ const KitchenTicketSchema = z.object({
   batchNo: z.number().int().positive(),
   batchLabel: z.string().min(1).optional(),
   transferNotice: z.string().min(1).optional(),
+  reprintLabel: z.string().min(1).optional(),
   items: z.array(KitchenTicketItemSchema).min(1),
 }).strict();
 
@@ -209,6 +210,12 @@ export const SplitKitchenResponseSchema = z.object({
   message: z.string().optional(),
 }).strict();
 export type SplitKitchenResponse = z.infer<typeof SplitKitchenResponseSchema>;
+
+export const ReprintKitchenRequestSchema = z.object({
+  batchNo: z.number().int().positive().optional(),
+  station: KitchenStationSchema.optional(),
+}).strict();
+export type ReprintKitchenRequest = z.infer<typeof ReprintKitchenRequestSchema>;
 
 export const TableActionRequestSchema = z.object({
   action: TableActionTypeSchema,
@@ -282,6 +289,7 @@ export const InvoiceFilterQuerySchema = z.object({
   searchField: z.enum(['order_code', 'table', 'note']).optional(),
   status: OrderStatusSchema.optional(),
   paymentMethod: PaymentMethodSchema.optional(),
+  orderType: OrderTypeSchema.optional(),
 }).refine((filter) => filter.fromDate === undefined || filter.toDate === undefined || filter.fromDate <= filter.toDate, {
   message: 'Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc',
   path: ['toDate'],

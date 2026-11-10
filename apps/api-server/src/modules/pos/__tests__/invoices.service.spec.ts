@@ -37,30 +37,71 @@ describe('InvoicesService', () => {
     const result = await service.list({ page: 2, limit: 10 });
 
     expect(harness.prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ createdAt: {
-        gte: new Date('2026-11-08T00:00:00.000+07:00'),
-        lt: new Date('2026-11-09T00:00:00.000+07:00'),
-      } }),
+      where: expect.objectContaining({
+        AND: expect.arrayContaining([
+          expect.objectContaining({
+            OR: [
+              { createdAt: {
+                gte: new Date('2026-11-08T00:00:00.000+07:00'),
+                lt: new Date('2026-11-09T00:00:00.000+07:00'),
+              } },
+              { paidAt: {
+                gte: new Date('2026-11-08T00:00:00.000+07:00'),
+                lt: new Date('2026-11-09T00:00:00.000+07:00'),
+              } },
+            ],
+          }),
+        ]),
+      }),
       skip: 10,
       take: 10,
     }));
     expect(result).toMatchObject({ page: 2, limit: 10, total: 0, items: [] });
   });
 
-  it('should combine the selected search field with date, status, and payment filters', async () => {
+  it('should combine the selected search field with date, status, payment, and orderType filters', async () => {
     const harness = createHarness();
     const service = new InvoicesService(harness.prisma as never);
 
     await service.list({
       page: 1, limit: 20, fromDate: '2026-11-01', toDate: '2026-11-08',
-      searchField: 'table', keyword: '07', status: 'PAID', paymentMethod: 'CASH',
+      searchField: 'table', keyword: '07', status: 'PAID', paymentMethod: 'CASH', orderType: 'DINE_IN',
     });
 
     expect(harness.prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
-        status: 'PAID',
-        paymentMethod: 'CASH',
-        table: { is: { name: { contains: '07', mode: 'insensitive' } } },
+        AND: expect.arrayContaining([
+          { status: 'PAID' },
+          { paymentMethod: 'CASH' },
+          { orderType: 'DINE_IN' },
+          expect.objectContaining({
+            OR: expect.arrayContaining([
+              { table: { is: { name: { contains: '07', mode: 'insensitive' } } } },
+            ]),
+          }),
+        ]),
+      }),
+    }));
+  });
+
+  it('should match takeaway orders when searching by table with takeaway keyword or number', async () => {
+    const harness = createHarness();
+    const service = new InvoicesService(harness.prisma as never);
+
+    await service.list({
+      page: 1, limit: 20, searchField: 'table', keyword: 'Mang về 02',
+    });
+
+    expect(harness.prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        AND: expect.arrayContaining([
+          expect.objectContaining({
+            OR: expect.arrayContaining([
+              { orderType: 'TAKEAWAY' },
+              { orderType: 'TAKEAWAY', takeawayNumber: 2 },
+            ]),
+          }),
+        ]),
       }),
     }));
   });
@@ -72,7 +113,11 @@ describe('InvoicesService', () => {
     await service.list({ page: 1, limit: 20, keyword: 'HD-0001' });
 
     expect(harness.prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ orderCode: { contains: 'HD-0001', mode: 'insensitive' } }),
+      where: expect.objectContaining({
+        AND: expect.arrayContaining([
+          { orderCode: { contains: 'HD-0001', mode: 'insensitive' } },
+        ]),
+      }),
     }));
   });
 

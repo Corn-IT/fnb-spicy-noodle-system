@@ -166,8 +166,8 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-y-auto overscroll-contain touch-pan-y p-3 sm:p-4 pb-28 sm:pb-6">
       {/* Tầng 1: Khu vực Bếp + Nút tắt sang Quản trị Thực đơn */}
-      <div className="flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+      <div className="flex items-start justify-between gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5 py-0.5">
           {STATION_FILTERS.map((tab) => {
             const isActive = stationFilter === tab.value;
             return (
@@ -179,7 +179,7 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                   setCategoryFilter('ALL');
                 }}
                 className={cn(
-                  'inline-flex shrink-0 items-center justify-center rounded-full px-3 py-1 text-xs font-semibold transition-all active:scale-95 select-none',
+                  'inline-flex shrink-0 items-center justify-center rounded-full px-2.5 py-1 text-[11px] sm:px-3 sm:text-xs font-semibold transition-all active:scale-95 select-none',
                   isActive
                     ? 'bg-rose-600 text-white shadow-xs'
                     : 'bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground border border-border/50',
@@ -206,7 +206,7 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
       {/* Tầng 2: Danh mục con động từ MDM (VD: Mì cay, Bánh mì chảo, Lẩu...) */}
       {dynamicSubcategories.length > 0 ? (
         <div
-          className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 shrink-0"
+          className="flex flex-wrap items-center gap-1.5 py-0.5 shrink-0"
           data-testid="pos-subcategory-bar"
         >
           <button
@@ -236,7 +236,7 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                     : 'bg-card text-muted-foreground hover:text-foreground border border-border/60',
                 )}
               >
-                + {cat.name}
+                {cat.name}
               </button>
             );
           })}
@@ -340,7 +340,7 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                   >
                     <div className="flex flex-wrap items-center justify-between gap-1">
                       <span className="text-xs sm:text-sm font-bold text-foreground">
-                        - {group.name}
+                        {group.name}
                       </span>
                       <div className="flex items-center gap-1.5">
                         {group.allowSubstitution ? (

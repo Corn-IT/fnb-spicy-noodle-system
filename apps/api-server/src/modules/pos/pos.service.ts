@@ -20,6 +20,7 @@ import {
   PosTableGridResponseSchema,
   ProvisionalBillResponseSchema,
   QrOrderResponseSchema,
+  VoidInvoiceRequestSchema,
   type CheckoutOrderRequest,
   type ApproveQrOrderInput,
   type CreateOrderItemInput,
@@ -27,7 +28,9 @@ import {
   type CreateQrOrderInput,
   type PatchOrderItemsInput,
   type QrOrderResponse,
+  type ReprintKitchenRequest,
   type TableActionRequest,
+  type VoidInvoiceRequest,
 } from '@fnb/shared';
 import type { ZodType } from 'zod';
 import type { EnvConfig } from '../../config/env.config';
@@ -348,6 +351,46 @@ export class PosService {
     return { orderId: id, status: order.status };
   }
 
+  async cancelOrder(id: number, input: VoidInvoiceRequest, cashierId?: number) {
+    const parsed = this.parseRequest(VoidInvoiceRequestSchema, input);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const snapshot = await tx.order.findUnique({ where: { id }, select: { id: true, tableId: true } });
+      if (!snapshot) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+      await this.lockOrders(tx, [id]);
+      if (snapshot.tableId !== null) await this.lockTables(tx, [snapshot.tableId]);
+      const current = await tx.order.findUnique({ where: { id } }) as OrderRow | null;
+      if (!current) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+      if (!['PENDING', 'SERVING'].includes(current.status)) {
+        throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể huỷ đơn hàng đang mở hoặc đang phục vụ');
+      }
+
+      await tx.orderItem.deleteMany({ where: { orderId: id, kitchenStatus: 'NEW' } });
+      await tx.orderItem.updateMany({ where: { orderId: id, kitchenStatus: 'PRINTED' }, data: { kitchenStatus: 'CANCELLED' } });
+
+      const updated = await tx.order.update({
+        where: { id },
+        data: {
+          status: 'VOIDED',
+          voidReason: parsed.voidReason,
+          totalAmount: new Prisma.Decimal(0),
+          cashierId: cashierId ?? current.cashierId,
+        },
+      });
+
+      if (current.tableId !== null) {
+        await tx.diningTable.update({
+          where: { id: current.tableId },
+          data: { status: 'AVAILABLE', activeOrderId: null },
+        });
+      }
+      return { order: updated as OrderRow, tableId: current.tableId };
+    });
+
+    this.gateway.emitOrderStatusUpdated(id, { status: 'VOIDED', message: 'Đơn hàng đã được huỷ và giải phóng bàn' });
+    this.gateway.emitTableGridSync({ orderId: id, tableId: result.tableId, status: 'AVAILABLE' });
+    return { orderId: id, status: 'VOIDED', tableId: result.tableId };
+  }
+
   async patchOrderItems(id: number, input: PatchOrderItemsInput) {
     const parsed = this.parseRequest(PatchOrderItemsSchema, input);
     const result = await this.prisma.$transaction(async (tx) => {
@@ -537,6 +580,10 @@ export class PosService {
 
   async splitKitchen(id: number, userId?: number) {
     return this.kitchenSplitService.splitKitchen(id, userId);
+  }
+
+  async reprintKitchen(id: number, options?: ReprintKitchenRequest, userId?: number) {
+    return this.kitchenSplitService.reprintKitchen(id, options, userId);
   }
 
   private async appendItems(tx: Prisma.TransactionClient, order: OrderRow, itemInputs: CreateOrderItemInput[]) {

@@ -52,7 +52,7 @@ export function OfficialReceiptSlip({
   return (
     <div
       data-testid="official-receipt-slip"
-      className="ticket-page border-b border-dashed border-black bg-white font-mono text-xs text-black"
+      className="ticket-page px-3 border-b border-dashed border-black bg-white font-mono text-xs text-black"
       style={{ breakAfter: 'page', pageBreakAfter: 'always' }}
     >
       <div className="border-b-2 border-black pb-2 text-center">

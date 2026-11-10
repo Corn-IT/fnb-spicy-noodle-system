@@ -163,7 +163,17 @@ export function InvoiceDetailModal({
                 }
                 className="shrink-0 font-bold"
               >
-                {detail.status}
+                {detail.status === 'PAID'
+                  ? 'Đã thanh toán'
+                  : detail.status === 'VOIDED'
+                    ? 'Đã huỷ'
+                    : detail.status === 'SERVING'
+                      ? 'Đang phục vụ'
+                      : detail.status === 'MERGED'
+                        ? 'Đã gộp'
+                        : detail.status === 'PENDING'
+                          ? 'Chờ duyệt QR'
+                          : detail.status}
               </Badge>
             ) : null}
           </DialogTitle>
@@ -204,7 +214,13 @@ export function InvoiceDetailModal({
               <div>
                 <div className="text-muted-foreground">Phương thức TT</div>
                 <div className="mt-0.5 font-semibold text-foreground">
-                  {detail.paymentMethod ?? 'Chưa thanh toán'}
+                  {detail.paymentMethod === 'CASH'
+                    ? 'Tiền mặt'
+                    : detail.paymentMethod === 'TRANSFER'
+                      ? 'Chuyển khoản QR'
+                      : detail.paymentMethod === 'SPLIT'
+                        ? 'Tiền mặt + Chuyển khoản'
+                        : 'Chưa thanh toán'}
                 </div>
               </div>
               <div>

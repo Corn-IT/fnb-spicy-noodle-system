@@ -295,6 +295,8 @@ describe('@fnb/shared contracts', () => {
       items: [], totalAmount: 0, status: 'SERVING',
     }).success).toBe(true);
     expect(contracts.InvoiceFilterQuerySchema.safeParse({ page: '1', limit: '20' }).success).toBe(true);
+    expect(contracts.InvoiceFilterQuerySchema.safeParse({ page: '1', limit: '20', orderType: 'TAKEAWAY' }).success).toBe(true);
+    expect(contracts.InvoiceFilterQuerySchema.safeParse({ page: '1', limit: '20', orderType: 'DINE_IN' }).success).toBe(true);
     expect(contracts.InvoiceFilterQuerySchema.safeParse({ fromDate: '2026-11-08', toDate: '2026-11-07' }).success).toBe(false);
     expect(contracts.VoidInvoiceRequestSchema.safeParse({ voidReason: 'Lý do hợp lệ để huỷ' }).success).toBe(true);
     expect(contracts.VoidInvoiceRequestSchema.safeParse({ voidReason: 'ngắn' }).success).toBe(false);

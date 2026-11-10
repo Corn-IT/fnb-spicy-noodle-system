@@ -1,5 +1,5 @@
 import { type PosOrderSummary, type PosTableGridResponse } from '@fnb/shared';
-import { BellRing, Plus, ShoppingBag, Utensils } from 'lucide-react';
+import { BellRing, ShoppingBag, Utensils } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,7 +47,7 @@ export function TableGridPanel({
           </div>
         </div>
 
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(98px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-2 sm:gap-2.5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(98px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-2 sm:gap-2.5">
           {tables.map((table) => {
             const isSelectedOrder =
               table.activeOrderId !== null && table.activeOrderId === selectedOrderId;
@@ -63,7 +63,7 @@ export function TableGridPanel({
                 data-testid={`table-card-${table.id}`}
                 onClick={() => onSelectTable(table)}
                 className={cn(
-                  'relative flex min-h-[72px] sm:min-h-[80px] flex-col justify-between rounded-xl border-2 p-2.5 text-left transition-all active:scale-[0.98]',
+                  'relative flex min-h-[64px] sm:min-h-[70px] flex-col justify-between overflow-hidden rounded-xl border-2 p-2 sm:p-2.5 text-left transition-all active:scale-[0.98]',
                   table.status === 'AVAILABLE' &&
                     'border-emerald-600/70 bg-emerald-50/90 text-emerald-950 hover:bg-emerald-100/90 dark:border-emerald-500/70 dark:bg-emerald-950/45 dark:text-emerald-100 dark:hover:bg-emerald-900/50',
                   table.status === 'PENDING' &&
@@ -73,7 +73,7 @@ export function TableGridPanel({
                   (isSelectedOrder || isDraftSelected) && 'ring-4 ring-primary/50',
                 )}
               >
-                <div className="flex w-full items-start justify-between gap-1">
+                <div className="flex w-full items-start justify-between gap-1 min-w-0">
                   <span className="text-xs sm:text-sm font-bold whitespace-nowrap leading-tight">{table.name}</span>
                   {table.status === 'PENDING' ? (
                     <BellRing className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 text-amber-600 dark:text-amber-300" />
@@ -86,7 +86,7 @@ export function TableGridPanel({
                   </Badge>
                 ) : null}
 
-                <div className="mt-1 sm:mt-1.5 text-[11px] sm:text-xs">
+                <div className="mt-1 sm:mt-1.5 text-[11px] sm:text-xs min-w-0">
                   {table.status === 'AVAILABLE' ? (
                     <span className="font-medium opacity-80 whitespace-nowrap">Bàn trống</span>
                   ) : (
@@ -102,33 +102,52 @@ export function TableGridPanel({
       </div>
 
       <div className="border-t pt-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
-            <ShoppingBag className="h-4 w-4" />
-            Đơn Mang về Đang Phục vụ ({takeaways.length})
+        <div className="mb-2.5 sm:mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm font-bold uppercase tracking-wider text-muted-foreground">
+            <ShoppingBag className="h-4 w-4 shrink-0" />
+            <span>Đơn Mang về Đang Phục vụ ({takeaways.length})</span>
           </h3>
           <Button
             type="button"
             data-testid="create-takeaway-btn"
             onClick={onStartNewTakeaway}
-            className="bg-rose-600 font-bold text-white hover:bg-rose-700 active:scale-[0.98]"
+            className="h-8 sm:h-9 px-3 text-xs sm:text-sm bg-rose-600 font-bold text-white hover:bg-rose-700 active:scale-[0.98] gap-1.5 shadow-xs shrink-0"
           >
-            <Plus className="h-4 w-4 shrink-0" />
+            <ShoppingBag className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
             <span>TẠO ĐƠN MANG VỀ</span>
           </Button>
         </div>
 
-        {takeaways.length === 0 ? (
+        {takeaways.length === 0 && draftTarget?.orderType !== 'TAKEAWAY' ? (
           <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-            Chưa có đơn mang về nào đang mở. Bấm [TẠO ĐƠN MANG VỀ] để tạo đơn MV-# độc lập.
+            Chưa có đơn mang về nào đang mở. Bấm [TẠO ĐƠN MANG VỀ] để tạo đơn mang về độc lập.
           </p>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(136px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-2 sm:gap-2.5">
+            {draftTarget?.orderType === 'TAKEAWAY' ? (
+              <div
+                data-testid="takeaway-draft-card"
+                className="relative flex min-h-[64px] sm:min-h-[70px] flex-col justify-between overflow-hidden rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-500/15 p-2.5 sm:p-3 text-left ring-4 ring-primary/50"
+              >
+                <div className="flex w-full items-center justify-between gap-1.5 min-w-0">
+                  <span className="text-xs sm:text-sm font-bold whitespace-nowrap leading-tight text-indigo-700 dark:text-indigo-300">
+                    Mang về mới
+                  </span>
+                  <ShoppingBag className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                </div>
+                <div className="mt-1 sm:mt-1.5 text-[11px] sm:text-xs font-semibold text-indigo-600 dark:text-indigo-300">
+                  Đang chọn món
+                </div>
+              </div>
+            ) : null}
+
             {takeaways.map((order) => {
               const isSelected = order.orderId === selectedOrderId;
               const label =
                 order.tableLabel ??
                 `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`;
+              const addonBatch = addonBadgesByOrderId[order.orderId];
+
               return (
                 <button
                   key={order.orderId}
@@ -136,15 +155,38 @@ export function TableGridPanel({
                   data-testid={`takeaway-card-${order.orderId}`}
                   onClick={() => onSelectTakeawayOrder(order)}
                   className={cn(
-                    'flex flex-col justify-between rounded-xl border-2 border-indigo-500/70 bg-indigo-500/10 p-3 text-left transition hover:bg-indigo-500/20',
+                    'relative flex min-h-[64px] sm:min-h-[70px] flex-col justify-between overflow-hidden rounded-xl border-2 p-2.5 sm:p-3 text-left transition-all active:scale-[0.98]',
+                    order.status === 'PENDING' &&
+                      'animate-pulse border-amber-500 bg-amber-100/90 text-amber-950 hover:bg-amber-200/90 dark:border-amber-400 dark:bg-amber-950/65 dark:text-amber-100',
+                    order.status === 'SERVING' &&
+                      'border-rose-600 bg-rose-600 text-white hover:bg-rose-700 shadow-xs',
+                    order.status !== 'PENDING' && order.status !== 'SERVING' &&
+                      'border-indigo-500/70 bg-indigo-500/10 text-foreground hover:bg-indigo-500/20',
                     isSelected && 'ring-4 ring-primary/50',
                   )}
                 >
-                  <span className="text-sm font-bold text-foreground whitespace-nowrap">{label}</span>
-                  <span className="mt-1 text-xs text-muted-foreground truncate">{order.orderCode}</span>
-                  <span className="mt-2 text-xs font-bold text-indigo-600 dark:text-indigo-300 tabular-nums whitespace-nowrap">
-                    {order.totalAmount.toLocaleString('vi-VN')} đ
-                  </span>
+                  <div className="flex w-full items-center justify-between gap-1.5 min-w-0">
+                    <span className="text-xs sm:text-sm font-bold whitespace-nowrap leading-tight">
+                      {label}
+                    </span>
+                    {order.status === 'PENDING' ? (
+                      <BellRing className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 text-amber-600 dark:text-amber-300" />
+                    ) : (
+                      <ShoppingBag className="h-3.5 w-3.5 opacity-80 shrink-0" />
+                    )}
+                  </div>
+
+                  {addonBatch ? (
+                    <Badge className="mt-1 bg-amber-500 text-[9px] sm:text-[10px] text-white px-1.5 py-0.5 justify-center shrink-0 whitespace-nowrap">
+                      +Lượt {addonBatch}
+                    </Badge>
+                  ) : null}
+
+                  <div className="mt-1 sm:mt-1.5 text-[11px] sm:text-xs">
+                    <span className="font-bold block tabular-nums whitespace-nowrap">
+                      {order.totalAmount.toLocaleString('vi-VN')} đ
+                    </span>
+                  </div>
                 </button>
               );
             })}

@@ -8,11 +8,14 @@ import {
   Plus,
   Printer,
   QrCode,
+  ShoppingBag,
   Trash2,
 } from 'lucide-react';
+import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/utils/cn';
 import { type PosMenuSelectedItem } from './pos-menu-panel';
 
@@ -34,6 +37,8 @@ export interface LiveInvoicePanelProps {
   isProvisionalPending: boolean;
   isApprovingQr: boolean;
   isSubmittingDraft: boolean;
+  isCancellingOrder?: boolean;
+  isReprintPending?: boolean;
   onUpdateDraftQty: (index: number, delta: number) => void;
   onRemoveDraftItem: (index: number) => void;
   onSubmitDraftOrder: () => void;
@@ -42,8 +47,10 @@ export interface LiveInvoicePanelProps {
   onRemoveOrCancelOrderItem: (orderItemId: number) => void;
   onOpenTableAction: () => void;
   onSplitKitchen: () => void;
+  onReprintKitchen?: (batchNo?: number) => void;
   onPrintProvisionalBill: () => void;
   onOpenCheckout: () => void;
+  onCancelOrder?: (reason?: string) => void;
 }
 
 export function LiveInvoicePanel({
@@ -54,6 +61,8 @@ export function LiveInvoicePanel({
   isProvisionalPending,
   isApprovingQr,
   isSubmittingDraft,
+  isCancellingOrder = false,
+  isReprintPending = false,
   onUpdateDraftQty,
   onRemoveDraftItem,
   onSubmitDraftOrder,
@@ -62,9 +71,14 @@ export function LiveInvoicePanel({
   onRemoveOrCancelOrderItem,
   onOpenTableAction,
   onSplitKitchen,
+  onReprintKitchen,
   onPrintProvisionalBill,
   onOpenCheckout,
+  onCancelOrder,
 }: LiveInvoicePanelProps) {
+  const [confirmDeleteItemId, setConfirmDeleteItemId] = React.useState<number | null>(null);
+  const [confirmDeleteDraftIndex, setConfirmDeleteDraftIndex] = React.useState<number | null>(null);
+
   if (!order && draftTarget) {
     const draftTotal = draftItems.reduce(
       (sum, item) => sum + item.unitPrice * item.quantity,
@@ -72,7 +86,7 @@ export function LiveInvoicePanel({
     );
     const label =
       draftTarget.orderType === 'TAKEAWAY'
-        ? 'Đơn Mang về mới (MV-#)'
+        ? 'Đơn Mang về mới'
         : draftTarget.tableName ?? `Bàn #${draftTarget.tableId}`;
 
     return (
@@ -84,7 +98,7 @@ export function LiveInvoicePanel({
                 {label}
               </h2>
               <p className="text-xs text-muted-foreground truncate">
-                Đang chọn món tạo đơn mới ({draftTarget.orderType})
+                Đang chọn món tạo đơn mới ({draftTarget.orderType === 'DINE_IN' ? 'TẠI BÀN' : 'MANG VỀ'})
               </p>
             </div>
             <Badge className="shrink-0 bg-indigo-600 font-bold text-white shadow-xs px-2.5 py-0.5 text-xs">
@@ -134,15 +148,47 @@ export function LiveInvoicePanel({
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-rose-600"
-                      onClick={() => onRemoveDraftItem(idx)}
+                    <Popover
+                      open={confirmDeleteDraftIndex === idx}
+                      onOpenChange={(open) => setConfirmDeleteDraftIndex(open ? idx : null)}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent side="bottom" align="end" sideOffset={4} className="w-48 p-2.5 shadow-lg border bg-popover text-popover-foreground">
+                        <p className="text-xs font-semibold mb-2">Bỏ món khỏi giỏ?</p>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => setConfirmDeleteDraftIndex(null)}
+                          >
+                            Huỷ
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="destructive"
+                            className="h-6 px-2.5 text-xs font-bold"
+                            onClick={() => {
+                              setConfirmDeleteDraftIndex(null);
+                              onRemoveDraftItem(idx);
+                            }}
+                          >
+                            Xoá
+                          </Button>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 </div>
               ))
@@ -182,7 +228,10 @@ export function LiveInvoicePanel({
     );
   }
 
+  const activeItems = order.items.filter((item) => item.kitchenStatus !== 'CANCELLED');
+  const isAllCancelled = order.items.length > 0 && activeItems.length === 0;
   const hasNewItems = order.items.some((item) => item.kitchenStatus === 'NEW');
+  const hasPrintedItems = order.items.some((item) => item.kitchenStatus === 'PRINTED');
   const isSplitDisabled = isSplitPending || !hasNewItems;
 
   // Group items by batchNo
@@ -200,6 +249,26 @@ export function LiveInvoicePanel({
       ? `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`
       : `Bàn #${order.tableId}`);
 
+  const resolvedStatusLabel =
+    order.status === 'PENDING'
+      ? 'Chờ duyệt QR'
+      : order.status === 'SERVING'
+        ? 'Đang phục vụ'
+        : order.status === 'PAID'
+          ? 'Đã thanh toán'
+          : order.status === 'VOIDED'
+            ? 'Đã huỷ'
+            : order.status === 'MERGED'
+              ? 'Đã gộp'
+              : order.status;
+
+  const resolvedOrderSourceLabel =
+    order.orderSource === 'QR_CODE'
+      ? 'Quét QR tại bàn'
+      : order.orderSource === 'POS_COUNTER'
+        ? 'Đặt đơn tại quầy'
+        : order.orderSource;
+
   return (
     <div className="flex h-full flex-col justify-between bg-card p-3 sm:p-4">
       <div className="flex items-start justify-between border-b pb-2.5 sm:pb-3">
@@ -215,14 +284,16 @@ export function LiveInvoicePanel({
                 order.status === 'PENDING' && 'bg-amber-500 text-white',
                 order.status === 'SERVING' && 'bg-rose-600 text-white',
                 order.status === 'PAID' && 'bg-emerald-600 text-white',
+                order.status === 'VOIDED' && 'bg-slate-600 text-white',
+                order.status === 'MERGED' && 'bg-purple-600 text-white',
               )}
             >
-              {order.status}
+              {resolvedStatusLabel}
             </Badge>
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground truncate">
+          <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
             Mã HĐ: <span className="font-mono font-semibold">{order.orderCode}</span> • Nguồn:{' '}
-            {order.orderSource}
+            <span className="whitespace-nowrap">{resolvedOrderSourceLabel}</span>
           </p>
         </div>
 
@@ -242,11 +313,35 @@ export function LiveInvoicePanel({
       </div>
 
       <div className="my-3 flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain touch-pan-y pr-1">
-        {sortedBatches.map(([batchNo, batchItems]) => (
-          <div key={batchNo} className="space-y-2">
-            <div className="rounded bg-muted px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              {batchNo === 1 ? 'Lượt 1' : `GỌI THÊM - LƯỢT ${batchNo}`}
-            </div>
+        {order.items.length === 0 ? (
+          <div className="flex h-36 flex-col items-center justify-center rounded-xl border border-dashed text-center text-muted-foreground p-4">
+            <ShoppingBag className="h-8 w-8 mb-2 opacity-40 text-muted-foreground" />
+            <p className="text-xs sm:text-sm font-semibold">Đơn chưa có món nào</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Chọn món từ thực đơn để thêm vào đơn này</p>
+          </div>
+        ) : (
+          sortedBatches.map(([batchNo, batchItems]) => {
+          const hasPrintedInBatch = batchItems.some((item) => item.kitchenStatus === 'PRINTED');
+          return (
+            <div key={batchNo} className="space-y-2">
+              <div className="flex items-center justify-between rounded bg-muted px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                <span>{batchNo === 1 ? 'Lượt 1' : `GỌI THÊM - LƯỢT ${batchNo}`}</span>
+                {hasPrintedInBatch ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    data-testid={`btn-reprint-batch-${batchNo}`}
+                    disabled={isReprintPending}
+                    onClick={() => onReprintKitchen?.(batchNo)}
+                    className="h-6 px-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40 gap-1 flex items-center"
+                    title={`In lại phiếu bếp Lượt ${batchNo}`}
+                  >
+                    <Printer className="h-3 w-3" />
+                    <span>In lại</span>
+                  </Button>
+                ) : null}
+              </div>
 
             <div className="space-y-2">
               {batchItems.map((item) => {
@@ -325,16 +420,57 @@ export function LiveInvoicePanel({
                             >
                               <Plus className="h-3.5 w-3.5" />
                             </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              data-testid={`delete-new-item-${item.id}`}
-                              onClick={() => onRemoveOrCancelOrderItem(item.id)}
-                              className="text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/50"
+                            <Popover
+                              open={confirmDeleteItemId === item.id}
+                              onOpenChange={(open) =>
+                                setConfirmDeleteItemId(open ? item.id : null)
+                              }
                             >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  data-testid={`delete-new-item-${item.id}`}
+                                  className="text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent
+                                side="top"
+                                align="end"
+                                className="w-52 p-3 shadow-lg border bg-popover text-popover-foreground"
+                              >
+                                <p className="text-xs font-semibold mb-2">
+                                  Xác nhận xoá món khỏi đơn?
+                                </p>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => setConfirmDeleteItemId(null)}
+                                  >
+                                    Huỷ
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="destructive"
+                                    data-testid={`confirm-delete-new-item-${item.id}`}
+                                    className="h-7 px-2.5 text-xs font-bold"
+                                    onClick={() => {
+                                      setConfirmDeleteItemId(null);
+                                      onRemoveOrCancelOrderItem(item.id);
+                                    }}
+                                  >
+                                    Xoá món
+                                  </Button>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
                           </>
                         ) : (
                           <Button
@@ -355,7 +491,9 @@ export function LiveInvoicePanel({
               })}
             </div>
           </div>
-        ))}
+        );
+      })
+      )}
       </div>
 
       <div className="border-t pt-2.5 sm:pt-3">
@@ -369,56 +507,136 @@ export function LiveInvoicePanel({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            data-testid="btn-table-action"
-            onClick={onOpenTableAction}
-            className="h-10 px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
-          >
-            <ArrowLeftRight className="h-4 w-4 shrink-0" />
-            <span>Đổi / Gộp bàn</span>
-          </Button>
+        {order.items.length === 0 ? (
+          <div className="space-y-2">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-50 p-2.5 text-center text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              {order.orderType === 'TAKEAWAY'
+                ? 'Đơn mang về chưa có món nào. Bạn có thể huỷ đơn nếu không tiếp tục.'
+                : 'Đơn chưa có món nào. Bạn có thể huỷ đơn để giải phóng bàn.'}
+            </div>
+            <Button
+              type="button"
+              data-testid="btn-void-empty-order"
+              disabled={isCancellingOrder}
+              onClick={() =>
+                onCancelOrder?.(
+                  order.orderType === 'TAKEAWAY'
+                    ? 'Thu ngân huỷ đơn mang về rỗng'
+                    : 'Thu ngân huỷ đơn bàn rỗng',
+                )
+              }
+              className="w-full h-10 px-3 text-xs xl:text-sm bg-rose-600 font-bold text-white hover:bg-rose-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
+            >
+              {isCancellingOrder ? (
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              ) : (
+                <Trash2 className="h-4 w-4 shrink-0" />
+              )}
+              <span>{order.orderType === 'TAKEAWAY' ? 'Huỷ đơn mang về' : 'Huỷ đơn & Giải phóng bàn'}</span>
+            </Button>
+          </div>
+        ) : isAllCancelled ? (
+          <div className="space-y-2">
+            <div className="rounded-lg border border-rose-500/30 bg-rose-50 p-2.5 text-center text-xs font-semibold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+              {order.orderType === 'TAKEAWAY'
+                ? 'Tất cả món đã bị huỷ. Hãy huỷ đơn mang về.'
+                : 'Tất cả món đã bị huỷ. Hãy huỷ đơn để giải phóng bàn.'}
+            </div>
+            <Button
+              type="button"
+              data-testid="btn-void-order"
+              disabled={isCancellingOrder}
+              onClick={() => onCancelOrder?.()}
+              className="w-full h-10 px-3 text-xs xl:text-sm bg-rose-600 font-bold text-white hover:bg-rose-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
+            >
+              {isCancellingOrder ? (
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              ) : (
+                <Trash2 className="h-4 w-4 shrink-0" />
+              )}
+              <span>{order.orderType === 'TAKEAWAY' ? 'Huỷ đơn mang về' : 'Huỷ đơn & Giải phóng bàn'}</span>
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="btn-table-action"
+              onClick={onOpenTableAction}
+              className="h-10 px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
+            >
+              <ArrowLeftRight className="h-4 w-4 shrink-0" />
+              <span>Đổi / Gộp bàn</span>
+            </Button>
 
-          <Button
-            type="button"
-            data-testid="btn-split-kitchen"
-            disabled={isSplitDisabled}
-            onClick={onSplitKitchen}
-            className="h-10 px-3 text-xs xl:text-sm bg-amber-600 font-bold text-white hover:bg-amber-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
-          >
-            {isSplitPending ? (
-              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+            {hasNewItems ? (
+              <Button
+                type="button"
+                data-testid="btn-split-kitchen"
+                disabled={isSplitDisabled}
+                onClick={onSplitKitchen}
+                className="h-10 px-3 text-xs xl:text-sm bg-amber-600 font-bold text-white hover:bg-amber-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
+              >
+                {isSplitPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                ) : (
+                  <Printer className="h-4 w-4 shrink-0" />
+                )}
+                <span>Tách đơn</span>
+              </Button>
+            ) : hasPrintedItems ? (
+              <Button
+                type="button"
+                data-testid="btn-reprint-kitchen"
+                disabled={isReprintPending}
+                onClick={() => onReprintKitchen?.()}
+                className="h-10 px-3 text-xs xl:text-sm bg-slate-700 font-bold text-white hover:bg-slate-800 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
+                title="In lại phiếu bếp của đơn"
+              >
+                {isReprintPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                ) : (
+                  <Printer className="h-4 w-4 shrink-0" />
+                )}
+                <span>In lại bếp</span>
+              </Button>
             ) : (
-              <Printer className="h-4 w-4 shrink-0" />
+              <Button
+                type="button"
+                data-testid="btn-split-kitchen"
+                disabled={true}
+                className="h-10 px-3 text-xs xl:text-sm bg-amber-600 font-bold text-white disabled:opacity-50 touch-manipulation shadow-xs"
+              >
+                <Printer className="h-4 w-4 shrink-0" />
+                <span>Tách đơn</span>
+              </Button>
             )}
-            <span>Tách đơn</span>
-          </Button>
 
-          <Button
-            type="button"
-            variant="secondary"
-            data-testid="btn-provisional-bill"
-            disabled={isProvisionalPending || order.status !== 'SERVING'}
-            onClick={onPrintProvisionalBill}
-            className="h-10 px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
-          >
-            <QrCode className="h-4 w-4 shrink-0" />
-            <span>In tạm tính (QR)</span>
-          </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="btn-provisional-bill"
+              disabled={isProvisionalPending || order.status !== 'SERVING'}
+              onClick={onPrintProvisionalBill}
+              className="h-10 px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
+            >
+              <QrCode className="h-4 w-4 shrink-0" />
+              <span>In tạm tính (QR)</span>
+            </Button>
 
-          <Button
-            type="button"
-            data-testid="btn-checkout"
-            disabled={order.status !== 'SERVING'}
-            onClick={onOpenCheckout}
-            className="h-10 px-3 text-xs xl:text-sm bg-emerald-600 font-bold text-white hover:bg-emerald-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
-          >
-            <CreditCard className="h-4 w-4 shrink-0" />
-            <span>Thanh toán</span>
-          </Button>
-        </div>
+            <Button
+              type="button"
+              data-testid="btn-checkout"
+              disabled={order.status !== 'SERVING'}
+              onClick={onOpenCheckout}
+              className="h-10 px-3 text-xs xl:text-sm bg-emerald-600 font-bold text-white hover:bg-emerald-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
+            >
+              <CreditCard className="h-4 w-4 shrink-0" />
+              <span>Thanh toán</span>
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

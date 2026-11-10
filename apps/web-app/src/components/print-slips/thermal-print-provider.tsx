@@ -183,26 +183,27 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
         className="hidden print:block"
       >
         {currentRenderJob?.type === 'KITCHEN_SPLIT' ? (
-          <KitchenSplitSlip {...currentRenderJob.payload} />
+          <KitchenSplitSlip key={currentRenderJob.id} {...currentRenderJob.payload} />
         ) : null}
 
         {currentRenderJob?.type === 'TABLE_TRANSFER_NOTICE' ? (
-          <TableTransferNoticeSlip {...currentRenderJob.payload} />
+          <TableTransferNoticeSlip key={currentRenderJob.id} {...currentRenderJob.payload} />
         ) : null}
 
         {currentRenderJob?.type === 'KITCHEN_CANCEL_ITEM' ? (
-          <KitchenCancelItemSlip {...currentRenderJob.payload} />
+          <KitchenCancelItemSlip key={currentRenderJob.id} {...currentRenderJob.payload} />
         ) : null}
 
         {currentRenderJob?.type === 'PROVISIONAL_VIETQR' ? (
           <ProvisionalVietQrSlip
+            key={currentRenderJob.id}
             bill={currentRenderJob.payload}
             onReadyToPrint={() => executeBrowserPrintAndDequeue(currentRenderJob.id)}
           />
         ) : null}
 
         {currentRenderJob?.type === 'OFFICIAL_RECEIPT' ? (
-          <OfficialReceiptSlip {...currentRenderJob.payload} />
+          <OfficialReceiptSlip key={currentRenderJob.id} {...currentRenderJob.payload} />
         ) : null}
       </div>
     </ThermalPrinterContext.Provider>

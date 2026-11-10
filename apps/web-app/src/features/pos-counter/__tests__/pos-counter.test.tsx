@@ -677,7 +677,7 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
       await waitFor(() => {
         expect(apiClient.get).toHaveBeenCalledWith('/api/v1/pos/orders/700/provisional-bill');
       });
-      expect(screen.getByTestId('invoice-status-badge')).toHaveTextContent('SERVING');
+      expect(screen.getByTestId('invoice-status-badge')).toHaveTextContent(/SERVING|Đang phục vụ/);
 
       // Click [Thanh toán] -> opens 2-step CheckoutConfirmDialog
       fireEvent.click(screen.getByTestId('btn-checkout'));
@@ -845,8 +845,9 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
         });
       });
 
-      // Branch A (EC-POS-06): Delete NEW item
+      // Branch A (EC-POS-06): Delete NEW item (opens popover confirmation then confirms delete)
       fireEvent.click(screen.getByTestId('delete-new-item-9202'));
+      fireEvent.click(screen.getByTestId('confirm-delete-new-item-9202'));
       await waitFor(() => {
         expect(patchSpy).toHaveBeenCalledWith('/api/v1/pos/orders/801/items', {
           removeItemIds: [9202],

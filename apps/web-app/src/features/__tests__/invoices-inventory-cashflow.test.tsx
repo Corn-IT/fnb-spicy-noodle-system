@@ -200,8 +200,8 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       // Verify 7 standard columns are rendered
       expect(screen.getByText('Bàn 05')).toBeInTheDocument();
       expect(screen.getByText('Mang về #02')).toBeInTheDocument();
-      expect(screen.getByTestId('payment-badge-501')).toHaveTextContent('CASH');
-      expect(screen.getByTestId('payment-badge-502')).toHaveTextContent('SPLIT');
+      expect(screen.getByTestId('payment-badge-501')).toHaveTextContent(/Tiền mặt|CASH/);
+      expect(screen.getByTestId('payment-badge-502')).toHaveTextContent(/Kết hợp|SPLIT/);
 
       // Default Dual Filter sends today's fromDate & toDate
       expect(getSpy).toHaveBeenCalledWith(

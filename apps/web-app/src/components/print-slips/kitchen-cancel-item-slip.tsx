@@ -42,7 +42,7 @@ export function KitchenCancelItemSlip({
           <div
             key={`${slip.station}-${slip.itemName}-${index}`}
             data-testid={`kitchen-cancel-slip-${slip.station}-${index}`}
-            className="ticket-page border-b border-dashed border-black bg-white font-mono text-xs text-black"
+            className="ticket-page px-3 border-b border-dashed border-black bg-white font-mono text-xs text-black"
             style={{ breakAfter: 'page', pageBreakAfter: 'always' }}
           >
             <div className="flex flex-col items-center border-b-2 border-black pb-2 text-center">

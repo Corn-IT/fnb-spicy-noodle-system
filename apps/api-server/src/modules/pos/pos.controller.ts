@@ -5,13 +5,17 @@ import {
   CreatePosOrderSchema,
   CreateQrOrderSchema,
   PatchOrderItemsSchema,
+  ReprintKitchenRequestSchema,
   TableActionRequestSchema,
+  VoidInvoiceRequestSchema,
   type ApproveQrOrderInput,
   type CheckoutOrderRequest,
   type CreatePosOrderInput,
   type CreateQrOrderInput,
   type PatchOrderItemsInput,
+  type ReprintKitchenRequest,
   type TableActionRequest,
+  type VoidInvoiceRequest,
 } from '@fnb/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/permissions.decorator';
@@ -64,6 +68,17 @@ export class PosController {
     return this.posService.approveQrOrder(id, body, cashierId);
   }
 
+  @Post('pos/orders/:id/cancel')
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'update')
+  cancelOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(new ZodValidationPipe(VoidInvoiceRequestSchema)) body: VoidInvoiceRequest,
+    @CurrentUser('id') cashierId: number,
+  ) {
+    return this.posService.cancelOrder(id, body, cashierId);
+  }
+
   @Patch('pos/orders/:id/items')
   @UseGuards(JwtAuthGuard, RbacGuard)
   @RequirePermission('pos', 'update')
@@ -101,6 +116,18 @@ export class PosController {
     @CurrentUser('id') userId: number,
   ) {
     return this.posService.splitKitchen(id, userId);
+  }
+
+  @Post('pos/orders/:id/reprint-kitchen')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'splitKitchen')
+  reprintKitchen(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(new ZodValidationPipe(ReprintKitchenRequestSchema)) body: ReprintKitchenRequest,
+    @CurrentUser('id') userId: number,
+  ) {
+    return this.posService.reprintKitchen(id, body, userId);
   }
 
   @Post('pos/orders/:id/table-action')

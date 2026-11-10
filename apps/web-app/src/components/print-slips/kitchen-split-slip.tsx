@@ -12,6 +12,7 @@ export interface KitchenSplitSlipProps {
   orderNote?: string | null;
   transferFromTable?: string | null;
   transferToTable?: string | null;
+  isReprint?: boolean;
   tickets: SplitKitchenResponse['tickets'];
 }
 
@@ -43,6 +44,7 @@ export function KitchenSplitSlip({
   orderNote,
   transferFromTable,
   transferToTable,
+  isReprint = false,
   tickets,
 }: KitchenSplitSlipProps) {
   const resolvedTableDisplay = React.useMemo(() => {
@@ -84,7 +86,7 @@ export function KitchenSplitSlip({
           <div
             key={`${ticket.station}-${ticket.batchNo}`}
             data-testid={`kitchen-ticket-page-${ticket.station}`}
-            className="ticket-page border-b border-dashed border-black bg-white font-mono text-xs text-black"
+            className="ticket-page px-3 border-b border-dashed border-black bg-white font-mono text-xs text-black"
             style={{ breakAfter: 'page', pageBreakAfter: 'always' }}
           >
             {/* Header: Station Logo & Large Bold Station Title */}
@@ -121,6 +123,15 @@ export function KitchenSplitSlip({
                   className="mt-1 border-2 border-black px-1.5 py-1 text-center text-xs font-extrabold uppercase"
                 >
                   {transferNoticeText}
+                </div>
+              ) : null}
+
+              {(ticket.reprintLabel || isReprint) ? (
+                <div
+                  data-testid={`kitchen-reprint-banner-${ticket.station}`}
+                  className="mt-1 border-2 border-black bg-black px-1.5 py-1 text-center text-xs font-black uppercase tracking-wider text-white"
+                >
+                  {ticket.reprintLabel || '*** BẢN SAO - IN LẠI (KHÔNG LÀM TRÙNG) ***'}
                 </div>
               ) : null}
             </div>

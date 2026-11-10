@@ -108,7 +108,7 @@ export function CheckoutConfirmDialog({
             <strong className="text-base text-rose-600">
               {totalAmount.toLocaleString('vi-VN')} đ
             </strong>
-            . Sau khi xác nhận, đơn chuyển sang PAID và giải phóng bàn về trống.
+            . Sau khi xác nhận, đơn chuyển sang Đã thanh toán và giải phóng bàn về trống.
           </DialogDescription>
         </DialogHeader>
 
@@ -116,9 +116,9 @@ export function CheckoutConfirmDialog({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {(
               [
-                { method: PaymentMethod.CASH, label: 'Tiền mặt (CASH)' },
-                { method: PaymentMethod.TRANSFER, label: 'Chuyển khoản QR (TRANSFER)' },
-                { method: PaymentMethod.SPLIT, label: 'Hỗn hợp (SPLIT)' },
+                { method: PaymentMethod.CASH, label: 'Tiền mặt' },
+                { method: PaymentMethod.TRANSFER, label: 'Chuyển khoản QR' },
+                { method: PaymentMethod.SPLIT, label: 'Tiền mặt + Chuyển khoản' },
               ] as const
             ).map((opt) => (
               <button

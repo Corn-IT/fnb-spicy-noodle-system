@@ -44,6 +44,13 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint }: ProvisionalVietQ
     onReadyToPrint?.();
   }, [onReadyToPrint]);
 
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      notifyReadyOnce();
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [notifyReadyOnce]);
+
   const handleImageError = () => {
     const fallbackDataUrl = buildVietQrFallbackSvgDataUrl({
       amount: bill.totalAmount,
@@ -68,7 +75,7 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint }: ProvisionalVietQ
   return (
     <div
       data-testid="provisional-vietqr-slip"
-      className="ticket-page border-b border-dashed border-black bg-white font-mono text-xs text-black"
+      className="ticket-page px-3 border-b border-dashed border-black bg-white font-mono text-xs text-black"
       style={{ breakAfter: 'page', pageBreakAfter: 'always' }}
     >
       <div className="border-b-2 border-black pb-2 text-center">
