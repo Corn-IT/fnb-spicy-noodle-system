@@ -4,7 +4,14 @@ import { pathToFileURL } from 'node:url';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import { MdmCategory, ProductStation } from '@fnb/shared';
-import { cashierPermissions, masterDataSeed, productSeed, tableNames } from './seed-data';
+import { normalizeVietnameseString } from '../src/common/utils/normalized-string.util';
+import {
+  cashierPermissions,
+  masterDataSeed,
+  productSeed,
+  tableNames,
+  type SeedModifierDef,
+} from './seed-data';
 
 type SeedClient = Pick<PrismaClient, '$transaction'>;
 
@@ -27,53 +34,6 @@ const seedEmployees = [
   },
 ] as const;
 
-type SeedModifierDef = {
-  name: string;
-  extraPrice: string;
-  isDefaultChecked?: boolean;
-  defaultSubstituteName?: string;
-};
-
-const spiceLevels1To7: readonly SeedModifierDef[] = Array.from({ length: 7 }, (_, idx) => ({
-  name: `Cấp ${idx + 1}`,
-  extraPrice: '0.00',
-}));
-
-const defaultNoodleGarnishes: readonly SeedModifierDef[] = [
-  { name: 'Tôm viên', extraPrice: '0.00', isDefaultChecked: true },
-  { name: 'Xúc xích', extraPrice: '0.00', isDefaultChecked: true },
-  { name: 'Ngô', extraPrice: '0.00', isDefaultChecked: true },
-  { name: 'Rau', extraPrice: '0.00', isDefaultChecked: true },
-  { name: 'Nấm kim châm', extraPrice: '0.00', isDefaultChecked: true },
-  { name: 'Kim chi', extraPrice: '0.00', isDefaultChecked: true },
-];
-
-const seafoodMainIngredients: readonly SeedModifierDef[] = [
-  { name: 'Tôm', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-  { name: 'Ngao', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-  { name: 'Mực', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Tôm' },
-];
-
-const seafoodExtraToppings: readonly SeedModifierDef[] = [
-  { name: 'Xúc xích', extraPrice: '5000.00' },
-  { name: 'Tôm viên', extraPrice: '5000.00' },
-  { name: 'Đậu hũ', extraPrice: '5000.00' },
-  { name: 'Bò Mỹ', extraPrice: '10000.00' },
-  { name: 'Sườn sụn', extraPrice: '10000.00' },
-  { name: 'Ngao', extraPrice: '5000.00' },
-  { name: 'Tôm', extraPrice: '10000.00' },
-  { name: 'Mực', extraPrice: '10000.00' },
-  { name: 'Kim chi', extraPrice: '5000.00' },
-  { name: 'Nấm kim châm', extraPrice: '5000.00' },
-];
-
-const spiceLevels = Array.from({ length: 8 }, (_, level) => ({ name: `Cấp độ ${level}`, extraPrice: '0.00' }));
-const toppings = [
-  { name: 'Thêm Bò viên', extraPrice: '15000.00' },
-  { name: 'Thêm Phô mai', extraPrice: '10000.00' },
-  { name: 'Thêm Tôm', extraPrice: '20000.00' },
-] as const;
-
 export async function seedDatabase(prisma: SeedClient): Promise<void> {
   const passwordHash = await hash('Password@123', 10);
 
@@ -92,6 +52,7 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
         },
       });
       masterDataIds.set(`${entry.category}:${entry.name}`, record.id);
+      masterDataIds.set(`${entry.category}:${entry.normalizedName}`, record.id);
     }
 
     for (const employee of seedEmployees) {
@@ -144,7 +105,9 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
     const productIds = new Map<string, number>();
     for (const product of productSeed) {
       const categoryId = product.categoryName
-        ? masterDataIds.get(`${MdmCategory.MENU_CATEGORY}:${product.categoryName}`) ?? null
+        ? masterDataIds.get(`${MdmCategory.MENU_CATEGORY}:${product.categoryName}`) ??
+          masterDataIds.get(`${MdmCategory.MENU_CATEGORY}:${normalizeVietnameseString(product.categoryName)}`) ??
+          null
         : null;
       const existingProduct = await tx.product.findFirst({ where: { name: product.name } });
       const productRecord = existingProduct
@@ -190,25 +153,25 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
     }
 
     for (const product of productSeed) {
-      if (product.station !== ProductStation.BEP_NAU && product.station !== ProductStation.BEP_CHIEN) continue;
+      const groups = product.modifierGroups;
+      if (!groups || groups.length === 0) continue;
       const productId = productIds.get(product.name);
       if (!productId) throw new Error(`Missing seeded product ${product.name}`);
 
-      if (product.name === 'Mì cay hải sản') {
-        await upsertModifierGroup(tx, productId, 'Cấp độ cay', true, 1, spiceLevels1To7);
-        await upsertModifierGroup(tx, productId, 'Đồ ăn mặc định (0đ)', false, 6, defaultNoodleGarnishes, { isAutoSelect: true });
-        await upsertModifierGroup(tx, productId, 'Đồ ăn chính của món', false, 3, seafoodMainIngredients, {
-          isAutoSelect: true,
-          allowSubstitution: true,
-        });
-        await upsertModifierGroup(tx, productId, 'Đồ ăn thêm', false, 10, seafoodExtraToppings);
-        continue;
+      for (const group of groups) {
+        await upsertModifierGroup(
+          tx,
+          productId,
+          group.name,
+          group.isRequired,
+          group.maxSelect,
+          group.modifiers,
+          {
+            isAutoSelect: group.isAutoSelect,
+            allowSubstitution: group.allowSubstitution,
+          },
+        );
       }
-
-      if (product.station === ProductStation.BEP_NAU) {
-        await upsertModifierGroup(tx, productId, 'Cấp độ cay', true, 1, spiceLevels);
-      }
-      await upsertModifierGroup(tx, productId, 'Thêm Topping', false, 5, toppings);
     }
   });
 }
@@ -251,19 +214,31 @@ async function upsertModifierGroup(
   }
 }
 
+export async function resetAndSeedMenu(prisma: PrismaClient): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.orderItem.deleteMany({});
+    await tx.comboItem.deleteMany({});
+    await tx.modifier.deleteMany({});
+    await tx.modifierGroup.deleteMany({});
+    await tx.product.deleteMany({});
+    await tx.masterData.deleteMany({ where: { category: MdmCategory.MENU_CATEGORY } });
+  });
+  await seedDatabase(prisma);
+}
+
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
   try {
-    await seedDatabase(prisma);
-    console.info('Database seed completed.');
+    await resetAndSeedMenu(prisma);
+    console.info('Database menu reset & seed completed.');
   } finally {
     await prisma.$disconnect();
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  void main().catch(() => {
-    console.error('Database seed failed.');
+  void main().catch((err) => {
+    console.error('Database seed failed.', err);
     process.exitCode = 1;
   });
 }

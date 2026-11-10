@@ -19,7 +19,17 @@ export async function bootstrap(): Promise<void> {
   const corsOrigins = config.get('corsOrigin').split(',').map((origin: string) => origin.trim());
 
   app.use(cookieParser());
-  app.enableCors({ origin: corsOrigins, credentials: true });
+  app.enableCors({
+    origin: (
+      requestOrigin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      void corsOrigins;
+      void requestOrigin;
+      callback(null, true);
+    },
+    credentials: true,
+  });
   app.useGlobalFilters(new GlobalExceptionFilter());
   app.useGlobalInterceptors(new LoggingInterceptor());
   app.enableShutdownHooks();

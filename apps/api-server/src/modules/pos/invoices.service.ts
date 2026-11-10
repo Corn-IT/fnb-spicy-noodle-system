@@ -121,6 +121,7 @@ export class InvoicesService {
   }
 
   async voidInvoice(id: number, input: VoidInvoiceRequest, _actorId: number) {
+    void _actorId;
     const parsed = VoidInvoiceRequestSchema.safeParse(input);
     if (!parsed.success) {
       throw new UnprocessableEntityException({

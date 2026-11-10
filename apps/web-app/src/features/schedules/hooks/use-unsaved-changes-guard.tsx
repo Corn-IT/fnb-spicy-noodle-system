@@ -21,7 +21,6 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
   // Layer 2: React Router navigation blocker
   let blocker: ReturnType<typeof useBlocker>;
   try {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
     blocker = useBlocker(isDirty);
   } catch {
     blocker = {

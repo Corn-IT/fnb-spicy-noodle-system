@@ -33,7 +33,7 @@ async function attemptTokenRefresh(): Promise<string | null> {
 
   refreshPromise = (async () => {
     try {
-      const response = await fetch(`${env.VITE_API_BASE_URL}/api/v1/auth/refresh`, {
+      const response = await fetch(buildUrl('/api/v1/auth/refresh'), {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -70,8 +70,11 @@ function buildUrl(
   path: string,
   params?: Record<string, string | number | boolean | undefined | null>,
 ): string {
-  const base = env.VITE_API_BASE_URL.replace(/\/+$/, '');
+  let base = env.VITE_API_BASE_URL.replace(/\/+$/, '');
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  if (base.endsWith('/api/v1') && normalizedPath.startsWith('/api/v1')) {
+    base = base.slice(0, -'/api/v1'.length);
+  }
   const url = new URL(`${base}${normalizedPath}`);
 
   if (params) {

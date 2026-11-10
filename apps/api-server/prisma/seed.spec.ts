@@ -1,6 +1,7 @@
 import { compare, getRounds } from 'bcryptjs';
 import { describe, expect, it, vi } from 'vitest';
 import { seedDatabase } from './seed';
+import { productSeed } from './seed-data';
 
 type SeedRow = Record<string, unknown> & { id: number };
 
@@ -163,21 +164,32 @@ describe('seedDatabase', () => {
     expect(qrTokens.every((token) => /^[0-9a-f]{64}$/.test(token))).toBe(true);
     expect(new Set(qrTokens).size).toBe(30);
 
-    expect(products.size).toBe(11);
-    expect(comboItems.size).toBe(2);
+    const expectedComboCount = productSeed.reduce((sum, p) => sum + p.comboItems.length, 0);
+    const expectedModifierGroupCount = productSeed.reduce(
+      (sum, p) => sum + (p.modifierGroups?.length ?? 0),
+      0,
+    );
+    const expectedModifierCount = productSeed.reduce(
+      (sum, p) =>
+        sum + (p.modifierGroups?.reduce((gSum, g) => gSum + g.modifiers.length, 0) ?? 0),
+      0,
+    );
+
+    expect(products.size).toBe(productSeed.length);
+    expect(comboItems.size).toBe(expectedComboCount);
     for (const item of comboItems.values()) {
       expect(productsById.get(Number(item.childProductId))?.station).not.toBe('COMBO');
     }
-    expect(modifierGroups.size).toBe(13);
-    expect(modifiers.size).toBe(68);
-    expect([...modifierGroups.values()].filter((group) => group.name === 'Cấp độ cay' && group.isRequired === true && group.maxSelect === 1)).toHaveLength(4);
+    expect(modifierGroups.size).toBe(expectedModifierGroupCount);
+    expect(modifiers.size).toBe(expectedModifierCount);
+    expect([...modifierGroups.values()].filter((group) => group.name === 'Cấp độ cay' && group.isRequired === true && group.maxSelect === 1)).toHaveLength(7);
     expect([...modifierGroups.values()].filter((group) => group.name === 'Đồ ăn chính của món' && group.allowSubstitution === true)).toHaveLength(1);
-    expect([...modifierGroups.values()].filter((group) => group.name === 'Thêm Topping' && group.isRequired === false && group.maxSelect === 5)).toHaveLength(6);
-    expect([...modifiers.values()].filter((modifier) => modifier.name === 'Cấp độ 0' && modifier.extraPrice === '0.00')).toHaveLength(3);
+    expect([...modifierGroups.values()].filter((group) => group.name === 'Topping Mì Cay' && group.isRequired === false && group.maxSelect === 10)).toHaveLength(7);
+    expect([...modifiers.values()].filter((modifier) => modifier.name === 'Cấp độ 0' && modifier.extraPrice === '0.00')).toHaveLength(7);
     expect(tx.employee.create).toHaveBeenCalledTimes(2);
-    expect(tx.product.create).toHaveBeenCalledTimes(11);
+    expect(tx.product.create).toHaveBeenCalledTimes(productSeed.length);
     expect(tx.diningTable.upsert).toHaveBeenCalledTimes(60);
-    expect(tx.modifierGroup.create).toHaveBeenCalledTimes(13);
-    expect(tx.modifier.create).toHaveBeenCalledTimes(68);
+    expect(tx.modifierGroup.create).toHaveBeenCalledTimes(expectedModifierGroupCount);
+    expect(tx.modifier.create).toHaveBeenCalledTimes(expectedModifierCount);
   });
 });

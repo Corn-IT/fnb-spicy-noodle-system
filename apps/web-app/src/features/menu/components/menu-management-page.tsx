@@ -79,7 +79,7 @@ export function MenuManagementPage() {
   const [selectedCategoryId, setSelectedCategoryId] = React.useState<number | 'ALL'>('ALL');
   const [keyword, setKeyword] = React.useState('');
   const [page, setPage] = React.useState(1);
-  const [limit, setLimit] = React.useState(20);
+  const [limit, setLimit] = React.useState(50);
 
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [editingProduct, setEditingProduct] = React.useState<Product | null>(null);
@@ -87,10 +87,17 @@ export function MenuManagementPage() {
   const [deleteTarget, setDeleteTarget] = React.useState<Product | null>(null);
 
   const visibleCategories = React.useMemo(() => {
-    if (selectedStation === 'ALL') return categories;
-    return categories.filter((cat) => {
-      const defaultStation = cat.metadata?.defaultStation;
-      return !defaultStation || defaultStation === selectedStation;
+    const filtered = selectedStation === 'ALL'
+      ? categories
+      : categories.filter((cat) => {
+          const defaultStation = cat.metadata?.defaultStation;
+          return !defaultStation || defaultStation === selectedStation;
+        });
+    return [...filtered].sort((a, b) => {
+      const sortA = typeof a.metadata?.sortOrder === 'number' ? a.metadata.sortOrder : 999;
+      const sortB = typeof b.metadata?.sortOrder === 'number' ? b.metadata.sortOrder : 999;
+      if (sortA !== sortB) return sortA - sortB;
+      return a.name.localeCompare(b.name, 'vi');
     });
   }, [categories, selectedStation]);
 
