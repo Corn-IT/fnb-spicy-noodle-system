@@ -1,0 +1,39 @@
+{
+  "entries": [
+    {
+      "path": ".antigravity/skills/obra__superpowers/skills",
+      "include_only": [
+        "brainstorming",
+        "writing-plans",
+        "executing-plans",
+        "test-driven-development",
+        "systematic-debugging",
+        "verification-before-completion",
+        "requesting-code-review",
+        "receiving-code-review",
+        "finishing-a-development-branch",
+        "subagent-driven-development"
+      ]
+    },
+    {
+      "path": ".antigravity/skills/mattpocock__skills/skills/engineering",
+      "include_only": [
+        "codebase-design",
+        "domain-modeling",
+        "diagnosing-bugs",
+        "improve-codebase-architecture",
+        "to-spec",
+        "to-tickets",
+        "implement-spec"
+      ]
+    },
+    {
+      "path": ".antigravity/skills/nextlevelbuilder__ui-ux-pro-max-skill/.claude/skills",
+      "include_only": [
+        "ui-ux-pro-max",
+        "design-system",
+        "ui-styling"
+      ]
+    }
+  ]
+}

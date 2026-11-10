@@ -1,0 +1,122 @@
+%% ============================================================================
+%% FILE: docs/architecture/02-verified-state-machines.mmd
+%% PROJECT: Hệ thống POS & Quản trị Vận hành Quán Mì Cay (fnb-spicy-noodle-system)
+%% PHASE: Phase 2 — Architecture & Diagram Cross-Verification (State Machines)
+%% AUTHOR: Principal System Architect & QA Auditor
+%% DATE: 2026-11-07
+%% ============================================================================
+%% ĐỐI CHIẾU CHÉO CÁC QUY TẮC BẤT BIẾN (HARD INVARIANTS):
+%% 1. Tách biệt 2 điểm khởi tạo Order:
+%%    - Khách quét QR tại bàn (DINE_IN + QR_CODE) -> PENDING (chống đơn ảo/spam).
+%%    - Thu ngân tạo đơn tại quầy (POS_COUNTER: Bàn hoặc Mang về MV-#) -> SERVING.
+%% 2. Hard Invariant 3 (Delta Split):
+%%    - API split-kitchen CHỈ chuyển OrderItem từ NEW -> PRINTED.
+%%    - CẤM chuyển ngược PRINTED -> NEW trong mọi trường hợp (kể cả MOVE/MERGE/SWAP).
+%% 3. Hard Invariant 4 (Tạm tính vs Thanh toán):
+%%    - "In tạm tính (Kèm VietQR động)" là self-transition giữ nguyên SERVING.
+%%    - Chỉ "Thanh toán -> Xác nhận (2 bước)" mới chuyển SERVING -> PAID.
+%% 4. Hard Invariant 5 (Concurrency & Table Actions):
+%%    - MOVE / SWAP giữ nguyên SERVING; MERGE chuyển đơn nguồn sang MERGED (CẤM MERGE TAKEAWAY).
+%% ============================================================================
+
+stateDiagram-v2
+    direction TB
+
+    %% ========================================================================
+    %% 1. VÒNG ĐỜI HOÁ ĐƠN (ORDER LIFECYCLE STATE MACHINE)
+    %% ========================================================================
+    state "1. Vòng đời Đơn hàng (orders.status)" as OrderLifecycle {
+        [*] --> ORD_PENDING : Khách quét QR đặt món lần đầu\n(order_type=DINE_IN, order_source=QR_CODE)
+        [*] --> ORD_SERVING : Thu ngân tạo đơn tại máy POS\n(DINE_IN chọn bàn hoặc TAKEAWAY MV-#)
+
+        state "PENDING (Chờ thu ngân duyệt)" as ORD_PENDING
+        state "SERVING (Đang phục vụ tại bàn / Chờ lấy MV)" as ORD_SERVING {
+            [*] --> ActiveSession
+            ActiveSession --> ActiveSession : 1. Gọi thêm món (QR Add-on / POS Add Item)\n-> Thêm order_items (kitchen_status=NEW)
+            ActiveSession --> ActiveSession : 2. Bấm [Tách đơn] (split-kitchen)\n-> Lọc items NEW -> PRINTED, gán batch_no\n-> GIỮ NGUYÊN status=SERVING (Invariant 3)
+            ActiveSession --> ActiveSession : 3. Bấm [In tạm tính (VietQR động)]\n-> Sinh ảnh QR Napas247 (amount + TT order_code)\n-> GIỮ NGUYÊN status=SERVING (Invariant 4)
+            ActiveSession --> ActiveSession : 4. Chuyển bàn trống (MOVE) / Hoán đổi (SWAP)\n-> Khoá dòng FOR UPDATE, đổi table_id\n-> Emit order:session_redirected (Invariant 5)
+        }
+        state "MERGED (Đã gộp vào bàn đích)" as ORD_MERGED
+        state "PAID (Đã thu tiền & Đóng đơn)" as ORD_PAID
+        state "VOIDED (Đã huỷ - Loại khỏi doanh thu)" as ORD_VOIDED
+
+        ORD_PENDING --> ORD_SERVING : Thu ngân bấm [Duyệt đơn] hoặc [Tách đơn]\n(Bàn chuyển từ PENDING -> OCCUPIED)
+        ORD_PENDING --> ORD_VOIDED : Thu ngân từ chối đơn QR ảo / khách đặt nhầm\n(Giải phóng bàn về AVAILABLE)
+
+        ORD_SERVING --> ORD_MERGED : Gộp bàn (MERGE vào bàn đích đang OCCUPIED)\n-> Chuyển toàn bộ order_items sang đơn đích\n-> Ghi merged_into_order_id, giải phóng bàn nguồn\n(FORBIDDEN nếu order_type=TAKEAWAY -> 409)
+
+        ORD_SERVING --> ORD_PAID : Thu ngân bấm [Thanh toán] -> Xác nhận 2 bước\n-> Chọn CASH / TRANSFER / SPLIT\n-> Ghi paid_at=NOW(), giải phóng bàn về AVAILABLE\n-> Emit order:status_updated (Invariant 4)
+
+        ORD_SERVING --> ORD_VOIDED : Quản lý/Admin huỷ đơn đang mở\n(Bắt buộc nhập void_reason, giải phóng bàn)
+
+        ORD_PAID --> ORD_VOIDED : Huỷ hoá đơn ngoại lệ sau thanh toán (POST /invoices/:id/void)\n-> Bắt buộc quyền invoices:void + void_reason >= 10 ký tự\n-> Tự động trừ ngược khỏi doanh thu Kết ca Module 4 (EC-FIN-01)
+
+        ORD_MERGED --> [*]
+        ORD_PAID --> [*]
+        ORD_VOIDED --> [*]
+    }
+
+    %% ========================================================================
+    %% 2. VÒNG ĐỜI MÓN ĂN TRONG BẾP (ORDER_ITEM KITCHEN STATE MACHINE)
+    %% ========================================================================
+    state "2. Vòng đời Món ăn & Tách bếp (order_items.kitchen_status)" as OrderItemLifecycle {
+        [*] --> ITEM_NEW : Thêm món vào đơn (Từ QR Mobile hoặc POS Counter)\n(Lưu modifiers_snapshot JSONB & unit_price)
+
+        state "NEW (Mới gọi - Chưa in bếp)" as ITEM_NEW
+        state "PRINTED (Đã tách & In phiếu xuống 3 trạm bếp)" as ITEM_PRINTED
+        state "CANCELLED (Đã huỷ sau khi in bếp)" as ITEM_CANCELLED
+        state "DELETED (Xoá cứng khỏi DB)" as ITEM_DELETED
+
+        ITEM_NEW --> ITEM_NEW : Sửa số lượng / Cấp độ cay / Ghi chú / Đổi bàn\n(Cập nhật trực tiếp trong DB, KHÔNG cần in phiếu báo bếp)
+
+        ITEM_NEW --> ITEM_DELETED : Thu ngân bấm xoá dòng món khi chưa tách bếp\n(Hard Delete: DELETE FROM order_items - EC-POS-06 Nhánh A)
+
+        ITEM_NEW --> ITEM_PRINTED : Thu ngân bấm [Tách đơn] (POST /pos/orders/:id/split-kitchen)\n-> Nếu station=COMBO: Phân rã thành sub-items (BEP_NAU/BEP_CHIEN/PHA_CHE)\n-> Gán batch_no = MAX(batch_no) + 1\n-> Tự động in nhiệt 80mm cắt rời 3 phiếu kèm Logo trạm (Invariant 3)
+
+        ITEM_PRINTED --> ITEM_PRINTED : 1. Đơn thực hiện MOVE / MERGE / SWAP bàn\n-> GIỮ NGUYÊN kitchen_status=PRINTED (Chống in nấu lại!)\n-> requireKitchenNoticePrint=true -> In PHIẾU THÔNG BÁO CHUYỂN BÀN (EC-POS-04)\n2. Sửa cấp độ cay / ghi chú sau khi đã in\n-> In PHIẾU BÁO ĐIỀU CHỈNH BẾP
+
+        ITEM_PRINTED --> ITEM_CANCELLED : Thu ngân bấm [Huỷ món bếp] (EC-POS-06 Nhánh B)\nhoặc đơn bị VOIDED\n-> Trừ tiền khỏi total_amount đơn hàng\n-> Tự động in PHIẾU BÁO HUỶ MÓN xuống trạm bếp tương ứng
+
+        ITEM_DELETED --> [*]
+        ITEM_CANCELLED --> [*]
+    }
+
+    %% ========================================================================
+    %% 3. VÒNG ĐỜI TRẠNG THÁI BÀN ĂN VẬT LÝ (DINING_TABLES STATE MACHINE)
+    %% ========================================================================
+    state "3. Vòng đời Bàn ăn Vật lý (dining_tables.status)" as DiningTableLifecycle {
+        [*] --> TBL_AVAILABLE : Khởi tạo bàn vật lý (Bàn 01 .. Bàn 30)\n(active_order_id = NULL)
+
+        state "AVAILABLE (Màu Xanh lá - Bàn trống)" as TBL_AVAILABLE
+        state "PENDING (Màu Cam nhấp nháy - Có đơn QR mới)" as TBL_PENDING
+        state "OCCUPIED (Màu Đỏ - Đang có khách phục vụ)" as TBL_OCCUPIED
+
+        TBL_AVAILABLE --> TBL_PENDING : Khách quét QR gửi đơn lần đầu\n-> Gán active_order_id = newOrder.id\n-> Emit order:qr_new + Chuông báo thu ngân
+
+        TBL_AVAILABLE --> TBL_OCCUPIED : 1. Thu ngân tạo đơn DINE_IN tại máy POS\n2. Nhận đơn chuyển sang từ bàn khác (MOVE target)
+
+        TBL_PENDING --> TBL_OCCUPIED : Thu ngân bấm [Duyệt đơn] hoặc [Tách đơn]
+
+        TBL_PENDING --> TBL_AVAILABLE : Thu ngân từ chối đơn QR ảo (Order -> VOIDED)\n-> Reset active_order_id = NULL
+
+        TBL_OCCUPIED --> TBL_OCCUPIED : 1. Khách gọi thêm món (QR Add-on) / Tách bếp / In tạm tính\n2. Hoán đổi 2 bàn đang ăn (SWAP: đổi chéo active_order_id)\n3. Nhận gộp bàn từ bàn khác (MERGE target)
+
+        TBL_OCCUPIED --> TBL_AVAILABLE : 1. Chốt Thanh toán thành công (Order -> PAID)\n2. Chuyển bàn đi sang bàn trống khác (MOVE source)\n3. Gộp toàn bộ đơn sang bàn khác (MERGE source)\n4. Huỷ toàn bộ đơn đang mở (Order -> VOIDED)\n-> Reset active_order_id = NULL
+    }
+
+%% ============================================================================
+%% DANH SÁCH CHUYỂN ĐỔI TRẠNG THÁI BỊ CẤM TUYỆT ĐỐI (FORBIDDEN TRANSITIONS)
+%% ============================================================================
+%% [Order Status]:
+%%   - FORBIDDEN: PAID -> SERVING (Đơn đã thanh toán không được mở lại để sửa món)
+%%   - FORBIDDEN: PAID -> PENDING
+%%   - FORBIDDEN: MERGED -> SERVING | PENDING | PAID (Đơn đã gộp đã chuyển hết items)
+%%   - FORBIDDEN: VOIDED -> PENDING | SERVING | PAID | MERGED (Đơn đã huỷ là bất biến)
+%%   - FORBIDDEN: SERVING -> PAID khi chỉ bấm nút "In tạm tính (VietQR)" (Invariant 4)
+%%
+%% [OrderItem Kitchen Status]:
+%%   - FORBIDDEN: PRINTED -> NEW (Vi phạm Invariant 3 - Gây in lặp và nấu trùng món)
+%%   - FORBIDDEN: CANCELLED -> NEW | PRINTED (Món đã huỷ không được khôi phục)
+%%   - FORBIDDEN: Hard Delete bản ghi khi kitchen_status = 'PRINTED' (Phải chuyển sang CANCELLED)
+%% ============================================================================

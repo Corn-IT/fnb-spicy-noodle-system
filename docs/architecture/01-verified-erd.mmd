@@ -1,0 +1,242 @@
+%% ============================================================================
+%% FILE: docs/architecture/01-verified-erd.mmd
+%% PROJECT: Hệ thống POS & Quản trị Vận hành Quán Mì Cay (fnb-spicy-noodle-system)
+%% PHASE: Phase 2 — Architecture & Diagram Cross-Verification (Verified Physical ERD)
+%% AUTHOR: Principal System Architect & QA Auditor
+%% DATE: 2026-11-07
+%% ============================================================================
+%% QUY TẮC BẤT BIẾN ĐÃ KIỂM ĐỊNH TRONG ERD NÀY:
+%% - Hard Invariant 2 (TAKEAWAY vs DINE_IN): orders.table_id NULLABLE cho TAKEAWAY,
+%%   takeaway_number NULLABLE cho DINE_IN. Enforce bằng CHECK constraint chk_order_type_target.
+%%   KHÔNG tồn tại bản ghi bàn "Mang về" trong bảng dining_tables.
+%% - Hard Invariant 3 (Delta Split & Combo Explosion): Bổ sung bảng vật lý COMBO_ITEMS
+%%   để phân rã sản phẩm station='COMBO' về đúng BEP_NAU, BEP_CHIEN, PHA_CHE.
+%% - Hard Invariant 5 (Concurrency Control): Khoá dòng SELECT ... FOR UPDATE theo thứ tự
+%%   orders (id ASC) -> dining_tables (id ASC).
+%% - Hard Invariant 6 (Cashflow Settlement): Đầy đủ cột cash_amount, transfer_amount,
+%%   payment_source, expected_cash_in_drawer, actual_counted_cash, discrepancy_amount,
+%%   denominations_detail, note.
+%% - Hard Invariant 7 (MDM Normalization): Composite UNIQUE (category, normalized_name).
+%% - Hard Invariant 9 (UI Preferences): users.ui_preferences JSONB độc lập với Auth token.
+%% - Hard Invariant 10 (Monetary Type): 100% cột tiền tệ sử dụng NUMERIC(12, 2).
+%% ============================================================================
+
+erDiagram
+    MASTER_DATA ||--o{ EMPLOYEES : "position_id"
+    MASTER_DATA ||--o{ EMPLOYEES : "specialty_id"
+    MASTER_DATA ||--o{ INVENTORY_IMPORTS : "ingredient_mdm_id"
+    EMPLOYEES ||--o| USERS : "employee_id (Strict 1-1)"
+    USERS ||--o{ WORK_SCHEDULES : "created_by"
+    USERS ||--o{ ORDERS : "cashier_id"
+    USERS ||--o{ INVENTORY_IMPORTS : "created_by"
+    USERS ||--o{ CASH_DRAWER_SETTLEMENTS : "closed_by"
+    DINING_TABLES ||--o{ ORDERS : "table_id (Nullable for TAKEAWAY)"
+    ORDERS ||--o| DINING_TABLES : "active_order_id (Current open session)"
+    ORDERS ||--o{ ORDERS : "merged_into_order_id (Self-ref on MERGE)"
+    ORDERS ||--|{ ORDER_ITEMS : "order_id (ON DELETE CASCADE)"
+    PRODUCTS ||--o{ ORDER_ITEMS : "product_id (ON DELETE RESTRICT)"
+    PRODUCTS ||--o{ COMBO_ITEMS : "parent_product_id (Combo bundle)"
+    PRODUCTS ||--o{ COMBO_ITEMS : "child_product_id (Station item)"
+    PRODUCTS ||--o{ MODIFIER_GROUPS : "product_id (ON DELETE CASCADE)"
+    MODIFIER_GROUPS ||--|{ MODIFIERS : "group_id (ON DELETE CASCADE)"
+
+    MASTER_DATA {
+        serial id PK "PRIMARY KEY"
+        varchar category "NOT NULL: POSITION | SPECIALTY | INGREDIENT | UNIT"
+        varchar name "NOT NULL: Title Case (VD: Ba Chi Bo My)"
+        varchar normalized_name UK "NOT NULL: Composite UNIQUE(category, normalized_name)"
+        jsonb metadata "DEFAULT '{}': { default_unit, last_price }"
+        boolean is_active "NOT NULL DEFAULT TRUE (Soft disable)"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+    }
+
+    EMPLOYEES {
+        serial id PK "PRIMARY KEY"
+        varchar full_name "NOT NULL: Ho va ten day du"
+        varchar short_name "NOT NULL: V.Anh hoac N.V.Anh (#12) khi trung"
+        date dob "Ngay thang nam sinh"
+        varchar phone "So dien thoai lien he"
+        text address "Dia chi noi o hien tai (Dong bo Module 5 & 9)"
+        varchar citizen_id UK "UNIQUE: So CCCD"
+        varchar citizen_id_issued_place "Noi cap CCCD (Dong bo Module 5 & 9)"
+        int position_id FK "FK -> master_data(id) [category=POSITION]"
+        int specialty_id FK "FK -> master_data(id) [category=SPECIALTY]"
+        date start_date "Ngay bat dau vao lam"
+        varchar bank_name "Ten ngan hang nhan luong"
+        varchar bank_account_no "So tai khoan ngan hang"
+        varchar bank_account_name "Ten chu tai khoan ngan hang"
+        varchar avatar_url "URL anh dai dien (Cloudflare R2 WebP)"
+        jsonb attachment_urls "DEFAULT '[]': Danh sach file hop dong / CCCD"
+        text note "Ghi chu nhan su (Hien thi tren BaseTable Module 5)"
+        boolean is_deleted "NOT NULL DEFAULT FALSE (Soft delete)"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+    }
+
+    USERS {
+        serial id PK "PRIMARY KEY"
+        int employee_id FK,UK "UNIQUE NOT NULL FK -> employees(id) (Strict 1-1)"
+        varchar username UK "UNIQUE NOT NULL: Ten dang nhap"
+        text password_hash "NOT NULL: Bcrypt hash (cost=10, min 6 chars)"
+        boolean is_super_admin "NOT NULL DEFAULT FALSE (Bypass RBAC, UI readonly)"
+        jsonb permissions "NOT NULL DEFAULT '{}': CRUD + Sub-permissions matrix"
+        jsonb ui_preferences "NOT NULL DEFAULT '{}': { theme, column_widths, sidebar_width }"
+        boolean is_active "NOT NULL DEFAULT TRUE (Account status)"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+    }
+
+    DINING_TABLES {
+        serial id PK "PRIMARY KEY (Chi luu ban vat ly Ban 01..Ban 30)"
+        varchar name UK "UNIQUE NOT NULL: 'Ban 01' .. 'Ban 30'"
+        varchar qr_token UK "UNIQUE NOT NULL: Chuoi bao mat 64 ky tu / UUIDv4"
+        varchar status "NOT NULL DEFAULT 'AVAILABLE': AVAILABLE | PENDING | OCCUPIED"
+        int active_order_id FK "NULLABLE FK -> orders(id): Con tro phien don dang mo"
+    }
+
+    PRODUCTS {
+        serial id PK "PRIMARY KEY"
+        varchar name "NOT NULL: Ten mon an / nuoc uong / combo"
+        numeric_12_2 price "NUMERIC(12,2) NOT NULL >= 0 (Invariant 10)"
+        varchar station "NOT NULL: BEP_NAU | BEP_CHIEN | PHA_CHE | COMBO"
+        boolean is_available "NOT NULL DEFAULT TRUE (Soft disable khi het mon)"
+        varchar image_url "NULLABLE: Anh mon an tren Cloudflare R2"
+        int sort_order "NOT NULL DEFAULT 0: Thu tu hien thi tren Menu"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+    }
+
+    COMBO_ITEMS {
+        int parent_product_id PK,FK "FK -> products(id) [station='COMBO']"
+        int child_product_id PK,FK "FK -> products(id) [station IN (BEP_NAU, BEP_CHIEN, PHA_CHE)]"
+        int quantity "NOT NULL DEFAULT 1 (> 0): So luong thanh phan trong Combo"
+    }
+
+    MODIFIER_GROUPS {
+        serial id PK "PRIMARY KEY"
+        int product_id FK "NOT NULL FK -> products(id) ON DELETE CASCADE"
+        varchar name "NOT NULL: 'Cap do cay' | 'Them Topping'"
+        boolean is_required "NOT NULL DEFAULT FALSE (True cho Cap do cay 0-7)"
+        int max_select "NOT NULL DEFAULT 1 (1 = Radio, >1 = Checkbox multi-select)"
+    }
+
+    MODIFIERS {
+        serial id PK "PRIMARY KEY"
+        int group_id FK "NOT NULL FK -> modifier_groups(id) ON DELETE CASCADE"
+        varchar name "NOT NULL: 'Cap do 0'..'Cap do 7' | 'Them Bo vien'"
+        numeric_12_2 extra_price "NUMERIC(12,2) NOT NULL DEFAULT 0.00 (Invariant 10)"
+    }
+
+    ORDERS {
+        serial id PK "PRIMARY KEY"
+        varchar order_code UK "UNIQUE NOT NULL: Format 'HD-YYYYMMDD-NNNN'"
+        varchar order_type "NOT NULL: 'DINE_IN' | 'TAKEAWAY' (Invariant 2)"
+        varchar order_source "NOT NULL: 'QR_CODE' | 'POS_COUNTER'"
+        int table_id FK "NULLABLE FK -> dining_tables(id) (MUST BE NULL IF TAKEAWAY)"
+        int takeaway_number "NULLABLE INT (MUST NOT BE NULL IF TAKEAWAY, reset daily)"
+        varchar status "NOT NULL: PENDING | SERVING | PAID | MERGED | VOIDED"
+        varchar payment_method "NULLABLE: CASH | TRANSFER | SPLIT"
+        numeric_12_2 cash_amount "NUMERIC(12,2) NOT NULL DEFAULT 0.00 (Tien mat thuc thu)"
+        numeric_12_2 transfer_amount "NUMERIC(12,2) NOT NULL DEFAULT 0.00 (Tien CK VietQR)"
+        numeric_12_2 total_amount "NUMERIC(12,2) NOT NULL DEFAULT 0.00 (Tong tien hoa don)"
+        int merged_into_order_id FK "NULLABLE FK -> orders(id) (Khi status='MERGED')"
+        jsonb table_transfer_logs "NOT NULL DEFAULT '[]': [{ action, fromTable, toTable, timestamp, reason }]"
+        int cashier_id FK "NULLABLE FK -> users(id): Thu ngan xu ly"
+        text note "NULLABLE: Ghi chu chung cua don hang"
+        text void_reason "NULLABLE: Ly do huy don (Bat buoc khi status='VOIDED')"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+        timestamptz paid_at "NULLABLE: Thoi diem chot thanh toan (status='PAID')"
+    }
+
+    ORDER_ITEMS {
+        serial id PK "PRIMARY KEY"
+        int order_id FK "NOT NULL FK -> orders(id) ON DELETE CASCADE"
+        int product_id FK "NOT NULL FK -> products(id) ON DELETE RESTRICT"
+        int quantity "NOT NULL CHECK (quantity > 0)"
+        numeric_12_2 unit_price "NUMERIC(12,2) NOT NULL (Don gia goc + extra_price topping)"
+        jsonb modifiers_snapshot "NOT NULL DEFAULT '[]': [{ groupId, modifierId, name, extraPrice }]"
+        text item_note "NULLABLE: Ghi chu mon (VD: It hanh, ot de rieng)"
+        int batch_no "NOT NULL DEFAULT 1: Luot goi 1, 2, 3..."
+        varchar kitchen_status "NOT NULL DEFAULT 'NEW': NEW | PRINTED | CANCELLED"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+    }
+
+    INVENTORY_IMPORTS {
+        serial id PK "PRIMARY KEY"
+        int ingredient_mdm_id FK "NOT NULL FK -> master_data(id) [category=INGREDIENT]"
+        varchar item_name_snapshot "NOT NULL: Ten nguyen lieu tai thoi diem nhap"
+        varchar unit_name "NOT NULL: Don vi tinh (Kg, Thung, Goi, Ket, Bao)"
+        numeric_12_2 unit_price "NUMERIC(12,2) NOT NULL >= 0 (Don gia nhap)"
+        numeric_10_2 quantity "NUMERIC(10,2) NOT NULL > 0 (So luong nhap)"
+        numeric_12_2 total_cost "NUMERIC(12,2) NOT NULL >= 0 (= ROUND(unit_price * quantity, 2))"
+        varchar payment_source "NOT NULL DEFAULT 'CASH_DRAWER': CASH_DRAWER | EXTERNAL"
+        date import_date "NOT NULL DEFAULT CURRENT_DATE: Ngay nhap hang"
+        text note "NULLABLE: Ghi chu phieu nhap (Hien thi tren BaseTable Module 3)"
+        int created_by FK "NOT NULL FK -> users(id): Nhan vien lap phieu"
+        boolean is_deleted "NOT NULL DEFAULT FALSE (Soft delete)"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+    }
+
+    CASH_DRAWER_SETTLEMENTS {
+        serial id PK "PRIMARY KEY"
+        date settlement_date "NOT NULL: Ngay ket ca"
+        varchar shift_name "NOT NULL: Ten ca (Ca Sang, Ca Toi...)"
+        numeric_12_2 opening_budget "NUMERIC(12,2) NOT NULL: Ngan sach tien le dau ca"
+        numeric_12_2 total_cash_sales "NUMERIC(12,2) NOT NULL: Tong thu TIEN MAT (CASH + cash_amount of SPLIT)"
+        numeric_12_2 total_transfer_sales "NUMERIC(12,2) NOT NULL: Tong thu CHUYEN KHOAN QR (Doi soat NH)"
+        numeric_12_2 total_cash_imports "NUMERIC(12,2) NOT NULL: Tong chi TIEN KET nhap hang (CASH_DRAWER)"
+        numeric_12_2 expected_cash_in_drawer "NUMERIC(12,2) NOT NULL: opening_budget + total_cash_sales - total_cash_imports"
+        numeric_12_2 actual_counted_cash "NUMERIC(12,2) NOT NULL: Tien mat thuc dem tu bang menh gia"
+        numeric_12_2 discrepancy_amount "NUMERIC(12,2) NOT NULL: actual_counted_cash - expected_cash_in_drawer"
+        varchar status "NOT NULL: MATCHED (=0) | SURPLUS (>0) | SHORTAGE (<0)"
+        jsonb denominations_detail "NOT NULL DEFAULT '{}': { '500000': n, '200000': n, ..., '1000': n }"
+        text note "NULLABLE: Ghi chu giai trinh chenh lech (Bat buoc khi discrepancy != 0)"
+        int closed_by FK "NOT NULL FK -> users(id): Thu ngan dong ca"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+    }
+
+    WORK_SCHEDULES {
+        serial id PK "PRIMARY KEY"
+        date week_start_date "NOT NULL: Ngay Thu Hai dau tuan (YYYY-MM-DD)"
+        int day_of_week "NOT NULL CHECK (day_of_week BETWEEN 0 AND 6): 0=Mon .. 6=Sun"
+        varchar time_slot "NOT NULL: Ten khung gio / ca (VD: 'Ca Sang (08:00-15:00)')"
+        jsonb employee_ids "NOT NULL DEFAULT '[]': Mang ID nhan vien [12, 15, 18] (Multi-select)"
+        int created_by FK "NOT NULL FK -> users(id): Quan ly xep lich"
+        timestamptz updated_at "NOT NULL DEFAULT NOW()"
+    }
+
+%% ============================================================================
+%% PHỤ LỤC RÀNG BUỘC VẬT LÝ & INDEX BẮT BUỘC TRONG PRISMA MIGRATION (SQL DDL)
+%% ============================================================================
+%% 1. Ràng buộc CHECK cho DINE_IN vs TAKEAWAY (Hard Invariant 2):
+%%    ALTER TABLE orders ADD CONSTRAINT chk_order_type_target CHECK (
+%%      (order_type = 'DINE_IN' AND table_id IS NOT NULL AND takeaway_number IS NULL) OR
+%%      (order_type = 'TAKEAWAY' AND table_id IS NULL AND takeaway_number IS NOT NULL)
+%%    );
+%%
+%% 2. Ràng buộc CHECK cho Thanh toán CASH / TRANSFER / SPLIT (Hard Invariant 6 & EC-FIN-02):
+%%    ALTER TABLE orders ADD CONSTRAINT chk_order_payment_amounts CHECK (
+%%      status <> 'PAID' OR (
+%%        (payment_method = 'CASH' AND cash_amount = total_amount AND transfer_amount = 0) OR
+%%        (payment_method = 'TRANSFER' AND transfer_amount = total_amount AND cash_amount = 0) OR
+%%        (payment_method = 'SPLIT' AND cash_amount > 0 AND transfer_amount > 0 AND (cash_amount + transfer_amount) = total_amount)
+%%      )
+%%    );
+%%
+%% 3. Ràng buộc CHECK chống đệ quy Combo (FR-0.4):
+%%    ALTER TABLE combo_items ADD CONSTRAINT chk_combo_no_self_ref
+%%      CHECK (parent_product_id <> child_product_id);
+%%
+%% 4. Ràng buộc UNIQUE cho Master Data & Work Schedules:
+%%    CREATE UNIQUE INDEX uq_mdm_category_normalized ON master_data (category, normalized_name);
+%%    CREATE UNIQUE INDEX uq_schedule_cell ON work_schedules (week_start_date, day_of_week, time_slot);
+%%
+%% 5. Partial Unique Index: Đảm bảo 1 bàn vật lý chỉ có tối đa 1 đơn đang mở tại 1 thời điểm:
+%%    CREATE UNIQUE INDEX idx_one_active_order_per_table
+%%      ON orders (table_id)
+%%      WHERE status IN ('PENDING', 'SERVING') AND table_id IS NOT NULL;
+%%
+%% 6. Composite Indexes tối ưu tốc độ lọc dưới 20ms cho các Base Table (Modules 2, 3, 4):
+%%    CREATE INDEX idx_orders_created_status ON orders (created_at DESC, status, payment_method);
+%%    CREATE INDEX idx_order_items_order_kitchen ON order_items (order_id, kitchen_status);
+%%    CREATE INDEX idx_imports_date_mdm ON inventory_imports (import_date DESC, ingredient_mdm_id)
+%%      WHERE is_deleted = FALSE;
+%%    CREATE INDEX idx_settlements_date ON cash_drawer_settlements (settlement_date DESC);
+%% ============================================================================

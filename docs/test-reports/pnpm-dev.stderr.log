@@ -1,0 +1,11 @@
+$ turbo run dev
+
+Attention:
+Turborepo now collects completely anonymous telemetry regarding usage.
+This information is used to shape the Turborepo roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://turborepo.dev/docs/telemetry
+
+@fnb/api-server#dev:  ERROR  command (C:\Users\ngomi\OneDrive\Documents\POS FnB\apps\api-server) C:\Users\ngomi\AppData\Roaming\npm\node_modules\pnpm\pnpm.exe run dev exited (-1)
+ ERROR  run failed: command  exited (-1)
+[ELIFECYCLE] Command failed with exit code -1.

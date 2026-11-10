@@ -1,0 +1,194 @@
+%% ============================================================================
+%% FILE: docs/architecture/03-verified-sequences.mmd
+%% PROJECT: Hệ thống POS & Quản trị Vận hành Quán Mì Cay (fnb-spicy-noodle-system)
+%% PHASE: Phase 2 — Architecture & Diagram Cross-Verification (Verified Sequences)
+%% AUTHOR: Principal System Architect & QA Auditor
+%% DATE: 2026-11-07
+%% ============================================================================
+%% BAO PHỦ 4 LUỒNG TUẦN TỰ CỐT LÕI ĐÃ KIỂM ĐỊNH CHÉO:
+%% - LUỒNG 1 (SEQ-01): Khách quét QR đặt món & Gọi thêm món (kèm tự động điều hướng
+%%   phiên activeOrderId khi khách đã chuyển từ Bàn 01 sang Bàn 07 - EC-POS-01).
+%% - LUỒNG 2 (SEQ-02): Thu ngân bấm "Tách đơn" (Delta Split 3 bếp + Phân rã Combo +
+%%   In nhiệt 80mm tự cắt 3 phiếu kèm Logo) & Tách bạch "In tạm tính VietQR" (giữ SERVING)
+%%   với "Thanh toán 2 bước" (chuyển PAID) - Hard Invariants 3 & 4.
+%% - LUỒNG 3 (SEQ-03): Chuyển bàn (MOVE) & Gộp bàn (MERGE) với prisma.$transaction
+%%   và khoá dòng SELECT ... FOR UPDATE theo thứ tự orders -> dining_tables - Hard Invariant 5.
+%% - LUỒNG 4 (SEQ-04): Nhập hàng tự chuẩn hoá MDM (Invariant 7) & Kết ca đối soát dòng tiền
+%%   giữa orders (CASH/SPLIT vs TRANSFER), inventory_imports (CASH_DRAWER vs EXTERNAL)
+%%   và opening_budget - Hard Invariants 6 & 8.
+%% ============================================================================
+
+sequenceDiagram
+    autonumber
+    actor Guest as Khách hàng (Mobile QR)
+    participant MobileUI as Web App QR (/qr/:token)
+    participant PosUI as Màn hình POS & Admin (React)
+    participant API as NestJS API & Guards
+    participant WS as PosSocketGateway (/pos)
+    participant DB as PostgreSQL 16 ($transaction)
+    participant Printer as Máy in nhiệt 80mm (--kiosk-printing)
+
+    %% ========================================================================
+    %% LUỒNG 1: KHÁCH QUÉT QR ĐẶT MÓN, GỌI THÊM MÓN & REDIRECT PHIÊN ĐỔI BÀN
+    %% ========================================================================
+    rect rgb(235, 248, 255)
+        Note over Guest,DB: LUỒNG 1 (SEQ-01): KHÁCH QUÉT QR ĐẶT MÓN LẦN ĐẦU & GỌI THÊM MÓN (KÈM REDIRECT BÀN 01 -> BÀN 07)
+
+        Guest->>MobileUI: Quét mã QR dán tại Bàn 01 (/qr/token_ban_01)
+        MobileUI->>API: GET /api/v1/public/menu?token=token_ban_01
+        API->>DB: SELECT dining_tables (qr_token), products (is_available=true), modifier_groups, modifiers
+        DB-->>API: Thông tin Bàn 01 + Menu + Cấp độ cay (0-7) + Toppings
+        API-->>MobileUI: 200 OK { tableId: 1, tableName: "Bàn 01", activeOrderId: null, menu }
+
+        Guest->>MobileUI: Chọn 2 Mì Kim Chi Bò (Cấp 3, +Thêm Bò viên) + 1 Combo Đôi -> Bấm "Gửi đơn"
+        MobileUI->>API: POST /api/v1/public/orders/qr { qrToken: "token_ban_01", activeOrderId: null, items }
+        API->>DB: BEGIN $transaction (SELECT dining_tables WHERE id=1 FOR UPDATE)
+        API->>DB: INSERT INTO orders (order_type='DINE_IN', order_source='QR_CODE', table_id=1, status='PENDING') -> id=538
+        API->>DB: INSERT INTO order_items (order_id=538, batch_no=1, kitchen_status='NEW', modifiers_snapshot)
+        API->>DB: UPDATE dining_tables SET status='PENDING', active_order_id=538 WHERE id=1
+        DB-->>API: COMMIT (orderId=538, orderCode="HD-20261107-0039")
+        API->>WS: Emit 'order:qr_new' -> room 'pos_cashier_room' & 'table:grid_sync'
+        WS-->>PosUI: Chuông báo + Ô Bàn 01 nhấp nháy màu Cam (PENDING)
+        API-->>MobileUI: 201 Created { orderId: 538, status: "PENDING", tableLabel: "Bàn 01" }
+        MobileUI->>MobileUI: Lưu activeOrderId=538 vào sessionStorage & Join WS room 'order_session_538'
+
+        Note over Guest,DB: Giả sử 15 phút sau: Khách đã dọn từ Bàn 01 sang Bàn 07 (hoặc Gộp vào đơn 540 ở Bàn 07),<br/>nhưng khách mở lại tab trình duyệt cũ trên điện thoại (?token=token_ban_01) để gọi thêm 2 Trà đào (EC-POS-01)
+        Guest->>MobileUI: Chọn thêm 2 Trà đào cam sả -> Bấm "Gọi thêm món" trên tab điện thoại cũ
+        MobileUI->>API: POST /api/v1/public/orders/qr { qrToken: "token_ban_01", activeOrderId: 538, items }
+        API->>DB: BEGIN $transaction: Kiểm tra đơn 538 (SELECT * FROM orders WHERE id=538 FOR UPDATE)
+        alt Đơn 538 đã MOVE sang Bàn 07 (status='SERVING', table_id=7)
+            API->>DB: Nối order_items mới vào order_id=538 (kitchen_status='NEW', batch_no=2)
+            API->>DB: UPDATE orders SET total_amount = total_amount + addonTotal WHERE id=538
+        else Đơn 538 đã MERGE vào đơn 540 tại Bàn 07 (status='MERGED', merged_into_order_id=540)
+            API->>DB: SELECT * FROM orders WHERE id=540 FOR UPDATE (Đơn đích tại Bàn 07)
+            API->>DB: Nối order_items mới vào order_id=540 (kitchen_status='NEW', batch_no=MAX+1)
+            API->>DB: UPDATE orders SET total_amount = total_amount + addonTotal WHERE id=540
+        end
+        DB-->>API: COMMIT thành công trên hoá đơn của Bàn 07 (Bàn 01 KHÔNG bị tạo đơn mới!)
+        API->>WS: Emit 'order:qr_addon' -> room 'pos_cashier_room' (Bàn 07 hiện badge "Gọi thêm Lượt 2")
+        WS-->>PosUI: Cập nhật Live Invoice của Bàn 07
+        API-->>MobileUI: 200 OK { activeOrderId: 538/540, currentTableLabel: "Bàn 07", batchNo: 2 }
+    end
+
+    %% ========================================================================
+    %% LUỒNG 2: TÁCH ĐƠN 3 BẾP (DELTA SPLIT + COMBO EXPLOSION) & TẠM TÍNH VS THANH TOÁN
+    %% ========================================================================
+    rect rgb(255, 248, 235)
+        Note over PosUI,Printer: LUỒNG 2 (SEQ-02): DELTA SPLIT 3 TRẠM BẾP, IN TẠM TÍNH VIETQR (GIỮ SERVING) & CHỐT THANH TOÁN (PAID)
+
+        PosUI->>API: Thu ngân bấm [Tách đơn]: POST /api/v1/pos/orders/538/split-kitchen
+        API->>DB: BEGIN $transaction
+        API->>DB: SELECT * FROM orders WHERE id=538 FOR UPDATE (Chống Double-Click Race - EC-POS-05)
+        API->>DB: SELECT * FROM order_items JOIN products WHERE order_id=538 AND kitchen_status='NEW'
+        alt Không có món nào ở trạng thái kitchen_status='NEW'
+            DB-->>API: COMMIT (Empty set)
+            API-->>PosUI: 200 OK { tickets: [], message: "Không có món mới cần tách" } (Idempotent)
+        else Có món mới cần tách bếp (kitchen_status='NEW')
+            API->>DB: Nếu product.station='COMBO' -> Query combo_items để phân rã về BEP_NAU, BEP_CHIEN, PHA_CHE (FR-0.4)
+            API->>DB: Tính currentBatch = COALESCE(MAX(batch_no), 0) + 1
+            API->>DB: Nếu order.status='PENDING' -> UPDATE orders SET status='SERVING' & dining_tables SET status='OCCUPIED'
+            API->>DB: UPDATE order_items SET kitchen_status='PRINTED', batch_no=currentBatch WHERE order_id=538 AND kitchen_status='NEW'
+            DB-->>API: COMMIT
+            API->>WS: Emit 'order:status_updated' { status: 'SERVING', message: 'Bếp đang chế biến' } -> 'order_session_538'
+            WS-->>MobileUI: Hiển thị "Bếp đang chế biến món ăn của bạn"
+            API-->>PosUI: 200 OK { batchNo, isAddonBatch, transferNotice, tickets: [BEP_NAU, BEP_CHIEN, PHA_CHE] }
+            PosUI->>Printer: Render #thermal-print-container (break-after: page) -> window.print() ngầm
+            Printer-->>Printer: Tự động in & cắt rời 3 phiếu 80mm kèm Logo (CHEF_HAT_NOODLE, FRENCH_FRIES, DRINK_CUP)
+        end
+
+        Note over PosUI,Printer: TÁCH BẠCH BƯỚC 1: IN TẠM TÍNH KÈM VIETQR ĐỘNG (HARD INVARIANT 4 - GIỮ NGUYÊN SERVING)
+        PosUI->>API: Thu ngân bấm [In tạm tính (QR)]: GET /api/v1/pos/orders/538/provisional-bill
+        API->>DB: SELECT order, order_items (Đơn VẪN GIỮ NGUYÊN status='SERVING', Bàn giữ 'OCCUPIED')
+        API->>API: Sinh URL ảnh VietQR Napas247 (amount=total_amount, addInfo="TT HD-20261107-0039")
+        API-->>PosUI: 200 OK { order, status: "SERVING", vietQrUrl }
+        PosUI->>Printer: In "PHIẾU TẠM TÍNH" kèm mã VietQR động mang ra bàn cho khách kiểm món & quét QR
+
+        Note over PosUI,Printer: TÁCH BẠCH BƯỚC 2: CHỐT THANH TOÁN ĐÓNG ĐƠN (HARD INVARIANT 4 - CHUYỂN SANG PAID)
+        PosUI->>PosUI: Thu ngân bấm [Thanh toán] -> Mở Dialog xác nhận 2 bước (Chọn CASH / TRANSFER / SPLIT)
+        PosUI->>API: POST /api/v1/pos/orders/538/checkout { paymentMethod: "TRANSFER", printReceipt: false }
+        API->>DB: BEGIN $transaction (SELECT * FROM orders WHERE id=538 FOR UPDATE)
+        API->>DB: SELECT * FROM dining_tables WHERE id=7 FOR UPDATE
+        API->>DB: UPDATE orders SET status='PAID', payment_method='TRANSFER', transfer_amount=total_amount, cash_amount=0, paid_at=NOW()
+        API->>DB: UPDATE dining_tables SET status='AVAILABLE', active_order_id=NULL WHERE id=7
+        DB-->>API: COMMIT
+        API->>WS: Emit 'order:status_updated' { status: 'PAID' } -> 'order_session_538' & 'table:grid_sync' -> 'pos_cashier_room'
+        WS-->>MobileUI: Hiển thị "Cảm ơn quý khách và hẹn gặp lại!"
+        WS-->>PosUI: Ô Bàn 07 chuyển sang màu Xanh lá (AVAILABLE)
+        API-->>PosUI: 200 OK { status: "PAID", paidAt }
+    end
+
+    %% ========================================================================
+    %% LUỒNG 3: CHUYỂN BÀN (MOVE) & GỘP BÀN (MERGE) VỚI KHOÁ DÒNG FOR UPDATE
+    %% ========================================================================
+    rect rgb(240, 255, 240)
+        Note over Guest,Printer: LUỒNG 3 (SEQ-03): CHUYỂN BÀN (MOVE) & GỘP BÀN (MERGE) CÓ KHOÁ DÒNG SELECT ... FOR UPDATE (INVARIANT 5)
+
+        PosUI->>API: POST /api/v1/pos/orders/538/table-action { action: "MOVE" | "MERGE", targetTableId: 7, reason }
+        API->>DB: BEGIN $transaction
+        API->>DB: 1. Khoá bảng orders trước (ORDER BY id ASC FOR UPDATE): SELECT * FROM orders WHERE id IN (538, targetOrderId) FOR UPDATE
+        alt order.order_type == 'TAKEAWAY' và action == 'MERGE' (EC-POS-03)
+            DB-->>API: ROLLBACK
+            API-->>PosUI: 409 Conflict { code: "POS_TAKEAWAY_CANNOT_MERGE", message: "Không thể gộp đơn mang về" }
+        else Đơn DINE_IN hợp lệ (tại Bàn 01, table_id=1)
+            API->>DB: 2. Khoá bảng dining_tables sau (ORDER BY id ASC FOR UPDATE): SELECT * FROM dining_tables WHERE id IN (1, 7) FOR UPDATE
+            alt action == 'MOVE' (Chuyển sang Bàn 07 đang AVAILABLE)
+                API->>DB: Kiểm tra targetTable.status == 'AVAILABLE' (Nếu OCCUPIED -> Rollback & trả 409 POS_TABLE_NOT_AVAILABLE)
+                API->>DB: UPDATE orders SET table_id=7, table_transfer_logs = table_transfer_logs || newLog WHERE id=538
+                API->>DB: UPDATE dining_tables SET status='AVAILABLE', active_order_id=NULL WHERE id=1
+                API->>DB: UPDATE dining_tables SET status='OCCUPIED', active_order_id=538 WHERE id=7
+            else action == 'MERGE' (Gộp Bàn 01 vào Bàn 07 đang OCCUPIED có active_order_id=540)
+                API->>DB: Kiểm tra targetTable.status == 'OCCUPIED' (Nếu AVAILABLE -> Rollback & trả 409 POS_TABLE_NOT_OCCUPIED)
+                API->>DB: UPDATE order_items SET order_id=540 WHERE order_id=538 (GIỮ NGUYÊN kitchen_status='PRINTED'/'NEW')
+                API->>DB: UPDATE orders SET total_amount = total_amount + source.total_amount, table_transfer_logs = logs WHERE id=540
+                API->>DB: UPDATE orders SET status='MERGED', merged_into_order_id=540, total_amount=0 WHERE id=538
+                API->>DB: UPDATE dining_tables SET status='AVAILABLE', active_order_id=NULL WHERE id=1
+            end
+            API->>DB: Kiểm tra EXISTS (SELECT 1 FROM order_items WHERE order_id IN (538,540) AND kitchen_status='PRINTED')
+            DB-->>API: COMMIT (requireKitchenNoticePrint = true nếu đã có món PRINTED)
+            API->>WS: Emit 'order:session_redirected' { previousOrderId: 538, newActiveOrderId: 538/540, newTableId: 7, newTableLabel: "Bàn 07" } -> 'order_session_538'
+            WS-->>MobileUI: Tự động đổi giao diện sang "Bàn 07", cập nhật sessionStorage.activeOrderId (Không cần quét lại QR!)
+            API->>WS: Emit 'table:grid_sync' -> 'pos_cashier_room'
+            API-->>PosUI: 200 OK { requireKitchenNoticePrint: true, kitchenTransferSlip }
+            opt requireKitchenNoticePrint == true (EC-POS-04)
+                PosUI->>Printer: Tự động in "PHIẾU THÔNG BÁO CHUYỂN BÀN: BÀN 01 -> BÀN 07" cho các trạm bếp bị ảnh hưởng
+            end
+        end
+    end
+
+    %% ========================================================================
+    %% LUỒNG 4: NHẬP HÀNG TỰ CHUẨN HOÁ MDM & ĐỐI SOÁT KẾT CA DÒNG TIỀN
+    %% ========================================================================
+    rect rgb(250, 240, 255)
+        Note over PosUI,DB: LUỒNG 4 (SEQ-04): NHẬP HÀNG KHO TỰ CHUẨN HOÁ MDM (INVARIANT 7) & ĐỐI SOÁT KẾT CA (INVARIANT 6 & 8)
+
+        PosUI->>API: Mở Drawer Nhập hàng (Module 3) -> Gõ tìm nguyên liệu: GET /api/v1/mdm/lookup?category=INGREDIENT
+        API->>API: JwtAuthGuard kiểm tra Bearer Token (Mở cho mọi authenticated user, KHÔNG đòi mdm:write - Invariant 8)
+        API->>DB: SELECT id, name, metadata FROM master_data WHERE category='INGREDIENT' AND is_active=true
+        DB-->>API: Danh sách nguyên liệu + { default_unit, last_price }
+        API-->>PosUI: 200 OK (Tự động điền Đơn vị tính & gợi ý Đơn giá gần nhất)
+
+        PosUI->>API: Lưu phiếu nhập hàng: POST /api/v1/inventory-imports (RequirePermission('inventory', 'create'))
+        API->>DB: BEGIN $transaction
+        loop Cho từng dòng hàng trong Drawer
+            API->>API: MdmService.findOrCreate('INGREDIENT', rawName): trim() -> Title Case -> normalizeVietnameseString()
+            API->>DB: Upsert/Find master_data WHERE category='INGREDIENT' AND normalized_name=normalized
+            API->>DB: INSERT INTO inventory_imports (ingredient_mdm_id, unit_price, quantity, total_cost, payment_source='CASH_DRAWER' | 'EXTERNAL')
+        end
+        DB-->>API: COMMIT
+        API-->>PosUI: 201 Created
+
+        Note over PosUI,DB: CUỐI CA LÀM VIỆC: THU NGÂN ĐẾM TIỀN THEO MỆNH GIÁ VÀ BẤM "KẾT CA" (MODULE 4)
+        PosUI->>PosUI: Nhập số tờ 500k..1k trên lưới mệnh giá -> Tự tính actualCountedCash (VD: 1.235.000đ)
+        PosUI->>API: POST /api/v1/cashflow/settle { shiftName: "Ca Tối", actualCountedCash: 1235000, denominationsDetail, note }
+        API->>API: JwtAuthGuard (401 nếu lỗi token) -> RbacGuard kiểm tra 'cashflow:create' (403 nếu thiếu quyền)
+        API->>DB: BEGIN $transaction
+        API->>DB: 1. Lấy opening_budget mặc định (VD: 1.000.000đ)
+        API->>DB: 2. Tính total_cash_sales = SUM(cash_amount) FROM orders WHERE status='PAID' AND payment_method IN ('CASH', 'SPLIT') AND paid_at WITHIN shift
+        API->>DB: 3. Tính total_transfer_sales = SUM(transfer_amount) FROM orders WHERE status='PAID' AND payment_method IN ('TRANSFER', 'SPLIT') AND paid_at WITHIN shift (KHÔNG cộng vào két!)
+        API->>DB: 4. Tính total_cash_imports = SUM(total_cost) FROM inventory_imports WHERE payment_source='CASH_DRAWER' AND is_deleted=FALSE AND import_date WITHIN shift (KHÔNG trừ EXTERNAL!)
+        API->>API: 5. expected_cash_in_drawer = opening_budget + total_cash_sales - total_cash_imports
+        API->>API: 6. discrepancy_amount = actual_counted_cash - expected_cash_in_drawer (=0: MATCHED | >0: SURPLUS | <0: SHORTAGE)
+        API->>DB: INSERT INTO cash_drawer_settlements (...)
+        DB-->>API: COMMIT
+        API-->>PosUI: 201 Created { expectedCash: 1235000, actualCash: 1235000, discrepancy: 0, status: "MATCHED", cashToHandOver: 235000 }
+    end

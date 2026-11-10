@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --background: 210 40% 98%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 346.8 77.2% 49.8%;
+    --primary-foreground: 355.7 100% 97.3%;
+    --secondary: 214.3 31.8% 91.4%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 94.5%;
+    --muted-foreground: 215.3 25% 33%;
+    --accent: 210 40% 93%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 85%;
+    --input: 214.3 31.8% 83%;
+    --ring: 346.8 77.2% 49.8%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --background: 222.2 47.4% 7%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 41% 11.5%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 41% 12.5%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 346.8 77.2% 54%;
+    --primary-foreground: 355.7 100% 98%;
+    --secondary: 217.2 32.6% 18.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 16.5%;
+    --muted-foreground: 215 20.2% 74%;
+    --accent: 217.2 32.6% 20%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 23%;
+    --input: 217.2 32.6% 24%;
+    --ring: 346.8 77.2% 54%;
+  }
+}
+
+@layer base {
+  @font-face {
+    font-family: 'Segoe UI Optical';
+    src: local('Segoe UI'), local('Arial');
+    ascent-override: 94%;
+    descent-override: 24%;
+    line-gap-override: 0%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  button,
+  input,
+  select,
+  textarea {
+    font-family: 'Inter', 'Segoe UI Optical', -apple-system, BlinkMacSystemFont, sans-serif !important;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  /* Sleek modern scrollbars for desktop & mobile */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.25);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.45);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+  body * {
+    visibility: hidden;
+  }
+  #thermal-print-container,
+  #thermal-print-container * {
+    visibility: visible;
+  }
+  #thermal-print-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 72mm;
+    color: #000 !important;
+    background: #fff !important;
+  }
+  .ticket-page {
+    width: 100%;
+    padding: 2mm 0;
+    break-after: page;
+    page-break-after: always;
+  }
+}

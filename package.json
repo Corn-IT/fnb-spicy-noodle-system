@@ -1,0 +1,25 @@
+{
+  "name": "fnb-spicy-noodle-system",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.18.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
+    "db:migrate": "pnpm --filter @fnb/api-server db:migrate",
+    "db:seed": "pnpm --filter @fnb/api-server db:seed",
+    "db:setup": "pnpm --filter @fnb/api-server db:setup"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "5.1.0",
+    "eslint": "10.14.0",
+    "turbo": "2.11.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}
