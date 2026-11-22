@@ -458,7 +458,7 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
   it('supports QR Takeaway self-ordering with note-only field, draft cart persistence, active ticket card, localStorage session recovery across tab close, and auto-reset when PAID', async () => {
     const takeawayToken = 'e'.repeat(64);
     const guestSessionToken = 'f'.repeat(64);
-    let orderPaidOnServer = false;
+    let serverOrderStage: 'PENDING' | 'APPROVED_NEW' | 'KITCHEN_PRINTED' | 'PAID' = 'PENDING';
     const localQc = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
@@ -483,16 +483,18 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
     const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, opts) => {
       const params = (opts as { params?: { activeOrderId?: number; guestSessionToken?: string } })?.params;
       if (
-        !orderPaidOnServer &&
+        serverOrderStage !== 'PAID' &&
         params?.activeOrderId === 801 &&
         params?.guestSessionToken === guestSessionToken
       ) {
+        const isPending = serverOrderStage === 'PENDING';
+        const isKitchenPrinted = serverOrderStage === 'KITCHEN_PRINTED';
         return {
           orderMode: 'TAKEAWAY',
           table: {
             tableId: null,
             tableName: 'Mang về #01',
-            status: 'PENDING',
+            status: isPending ? 'PENDING' : 'OCCUPIED',
             activeOrderId: 801,
           },
           stations: [],
@@ -500,7 +502,7 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
           activeOrder: {
             orderId: 801,
             orderCode: 'HD-20261122-0001',
-            status: 'PENDING',
+            status: isPending ? 'PENDING' : 'SERVING',
             note: 'Ít cay, để riêng nước dùng',
             totalAmount: 45000,
             createdAt: '2026-11-22T05:00:00.000Z',
@@ -513,7 +515,7 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
                 unitPrice: 45000,
                 lineTotal: 45000,
                 batchNo: 1,
-                kitchenStatus: 'NEW',
+                kitchenStatus: isKitchenPrinted ? 'PRINTED' : 'NEW',
                 itemNote: null,
                 modifiers: [],
                 createdAt: '2026-11-22T05:00:00.000Z',
@@ -668,6 +670,26 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       }).activeOrderId,
     ).toBe(801);
 
+    // Simulate cashier approving QR order (Duyệt đơn) before Tách bếp -> banner & card both show approved-waiting-kitchen stage
+    serverOrderStage = 'APPROVED_NEW';
+    await act(async () => {
+      for (const handler of listeners.get('order:status_updated') ?? []) {
+        handler({
+          orderId: 801,
+          status: 'SERVING',
+          message: 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp',
+        });
+      }
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-takeaway-progress-badge')).toHaveTextContent(
+        'Quầy đã xác nhận • Chờ tách bếp',
+      );
+      expect(screen.getByTestId('qr-status-banner')).toHaveTextContent(
+        'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp (Đã xác nhận)',
+      );
+    });
+
     // Simulate closing the browser tab completely (wiping sessionStorage) and scanning QR again in a new tab
     unmount();
     sessionStorage.clear();
@@ -692,14 +714,31 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       </QueryClientProvider>,
     );
 
-    // Restores Mang về #01 and active ticket card from localStorage!
+    // Restores Mang về #01 and approved-waiting-kitchen stage from localStorage!
     await waitFor(() => {
       expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Mang về #01');
       expect(screen.getByTestId('qr-takeaway-active-ticket-card')).toBeInTheDocument();
+      expect(screen.getByTestId('qr-takeaway-progress-badge')).toHaveTextContent(
+        'Quầy đã xác nhận • Chờ tách bếp',
+      );
+    });
+
+    // Now simulate cashier clicking "Tách bếp" -> transitions both banner and ticket card to kitchen preparing!
+    serverOrderStage = 'KITCHEN_PRINTED';
+    await act(async () => {
+      for (const handler of listeners.get('order:status_updated') ?? []) {
+        handler({ orderId: 801, status: 'SERVING', message: 'Bếp đang chế biến' });
+      }
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-takeaway-progress-badge')).toHaveTextContent(
+        'Bếp đang chế biến (1/1 món)',
+      );
+      expect(screen.getByTestId('qr-status-banner')).toHaveTextContent('(Đang phục vụ)');
     });
 
     // Now simulate cashier completing payment (PAID) -> screen resets to clean state
-    orderPaidOnServer = true;
+    serverOrderStage = 'PAID';
     await act(async () => {
       for (const handler of listeners.get('order:status_updated') ?? []) {
         handler({ orderId: 801, status: 'PAID' });

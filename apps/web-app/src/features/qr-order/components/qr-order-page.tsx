@@ -191,10 +191,14 @@ export function QrOrderPage() {
 
   React.useEffect(() => {
     if (!menuData?.table) return;
+    const hasKitchenPrinted = Boolean(
+      menuData.activeOrder?.items.some((item) => item.kitchenStatus !== 'NEW'),
+    );
     syncTableSnapshot(menuData.table.tableName, {
       tableName: menuData.table.tableName,
       activeOrderId: menuData.table.activeOrderId,
       activeOrderStatus: menuData.activeOrder?.status ?? null,
+      hasKitchenPrinted,
       queriedOrderId: sessionFilter?.activeOrderId ?? null,
       orderMode: menuData.orderMode,
     });
@@ -202,6 +206,7 @@ export function QrOrderPage() {
     syncTableSnapshot,
     menuData?.table,
     menuData?.activeOrder?.status,
+    menuData?.activeOrder?.items,
     menuData?.orderMode,
     sessionFilter?.activeOrderId,
   ]);
@@ -295,8 +300,8 @@ export function QrOrderPage() {
     [activeOrder],
   );
 
-  const takeawayKitchenProgress = React.useMemo(() => {
-    if (!activeOrder) return null;
+  const kitchenCounts = React.useMemo(() => {
+    if (!activeOrder) return { receivedQty: 0, waitingQty: 0 };
     let receivedQty = 0;
     let waitingQty = 0;
     for (const item of activeOrder.items) {
@@ -306,17 +311,34 @@ export function QrOrderPage() {
         receivedQty += item.quantity;
       }
     }
-    if (activeOrder.status === 'PENDING' || receivedQty === 0) {
+    return { receivedQty, waitingQty };
+  }, [activeOrder]);
+
+  const isApprovedWaitingKitchen = Boolean(
+    activeOrder && activeOrder.status === 'SERVING' && kitchenCounts.receivedQty === 0,
+  );
+
+  const takeawayKitchenProgress = React.useMemo(() => {
+    if (!activeOrder) return null;
+    const { receivedQty, waitingQty } = kitchenCounts;
+    if (activeOrder.status === 'PENDING') {
       return {
         label: 'Chờ quầy xác nhận',
-        detail: `Đang chờ thu ngân xác nhận & chuyển xuống bếp (${placedTotalQty} món)`,
+        detail: `Đang chờ thu ngân xác nhận đơn (${placedTotalQty} món)`,
         badgeClassName: 'border-amber-500/50 bg-amber-500/15 text-amber-800 dark:text-amber-200',
+      };
+    }
+    if (receivedQty === 0) {
+      return {
+        label: 'Quầy đã xác nhận • Chờ tách bếp',
+        detail: `Thu ngân đã duyệt đơn — Đang chờ chuyển xuống bếp (${placedTotalQty} món)`,
+        badgeClassName: 'border-sky-500/50 bg-sky-500/15 text-sky-800 dark:text-sky-200',
       };
     }
     if (waitingQty > 0) {
       return {
         label: `Bếp đã nhận ${receivedQty}/${placedTotalQty} món`,
-        detail: `Còn ${waitingQty} món gọi thêm đang chờ quầy xác nhận`,
+        detail: `Còn ${waitingQty} món gọi thêm đang chờ quầy chuyển xuống bếp`,
         badgeClassName: 'border-sky-500/50 bg-sky-500/15 text-sky-800 dark:text-sky-200',
       };
     }
@@ -325,7 +347,7 @@ export function QrOrderPage() {
       detail: 'Tất cả các món đã được chuyển xuống bếp chế biến',
       badgeClassName: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200',
     };
-  }, [activeOrder, placedTotalQty]);
+  }, [activeOrder, kitchenCounts, placedTotalQty]);
 
   const placedBatches = React.useMemo(() => {
     if (!activeOrder) return [];
@@ -851,7 +873,9 @@ export function QrOrderPage() {
               'mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs font-semibold',
               orderStatus === 'VOIDED'
                 ? 'border-red-500/60 bg-red-50 text-red-950 dark:border-red-500/40 dark:bg-red-950/70 dark:text-red-100'
-                : 'border-emerald-500/50 bg-emerald-50 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-950/70 dark:text-emerald-100',
+                : isApprovedWaitingKitchen
+                  ? 'border-sky-500/50 bg-sky-50 text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/70 dark:text-sky-100'
+                  : 'border-emerald-500/50 bg-emerald-50 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-950/70 dark:text-emerald-100',
             )}
           >
             <div className="flex items-center gap-2 min-w-0">
@@ -860,13 +884,20 @@ export function QrOrderPage() {
                   'h-4 w-4 shrink-0',
                   orderStatus === 'VOIDED'
                     ? 'text-red-600 dark:text-red-400'
-                    : 'text-emerald-600 dark:text-emerald-400',
+                    : isApprovedWaitingKitchen
+                      ? 'text-sky-600 dark:text-sky-400'
+                      : 'text-emerald-600 dark:text-emerald-400',
                 )}
               />
               <span>
-                {statusMessage} (
+                {isApprovedWaitingKitchen && !statusMessage.includes('quá')
+                  ? 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp'
+                  : statusMessage}{' '}
+                (
                 {orderStatus === 'SERVING'
-                  ? 'Đang phục vụ'
+                  ? isApprovedWaitingKitchen
+                    ? 'Đã xác nhận'
+                    : 'Đang phục vụ'
                   : orderStatus === 'PENDING'
                     ? 'Mới gọi món'
                     : orderStatus === 'PAID'
