@@ -92,6 +92,10 @@ describe('KitchenSplitService', () => {
       where: { id: { in: [3] }, kitchenStatus: 'NEW' },
       data: { kitchenStatus: 'PRINTED', batchNo: 2 },
     });
+    expect(harness.gateway.emitOrderStatusUpdated).toHaveBeenCalledWith(42, {
+      status: 'SERVING',
+      message: 'Bếp đang chế biến',
+    });
   });
 
   it('should keep batch numbers increasing after a previously printed batch was cancelled', async () => {

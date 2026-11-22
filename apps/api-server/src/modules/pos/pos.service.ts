@@ -990,11 +990,16 @@ export class PosService {
           kitchenCancellationSlips: slips,
         }),
         orderCode: order.orderCode,
+        orderStatus: order.status,
         tableLabel,
         changes: auditChanges,
       };
     });
 
+    this.gateway.emitOrderStatusUpdated?.(id, {
+      orderId: id,
+      status: result.orderStatus,
+    });
     this.gateway.emitTableGridSync({ orderId: id, totalAmount: result.response.totalAmount });
     if (userId) {
       await this.auditLogService?.record({
@@ -1218,6 +1223,10 @@ export class PosService {
       };
     });
 
+    this.gateway.emitOrderStatusUpdated?.(id, {
+      orderId: id,
+      status: 'SERVING',
+    });
     this.gateway.emitTableGridSync({
       orderId: id,
       tableId: result.tableId,
@@ -1307,6 +1316,10 @@ export class PosService {
       };
     });
 
+    this.gateway.emitOrderStatusUpdated?.(id, {
+      orderId: id,
+      status: 'SERVING',
+    });
     this.gateway.emitTableGridSync({
       orderId: id,
       tableId: result.tableId,
@@ -1837,6 +1850,11 @@ export class PosService {
         orderId: id,
         status: 'PAID',
         paidAt: result.paidAt.toISOString(),
+      });
+    } else {
+      this.gateway.emitOrderStatusUpdated?.(id, {
+        orderId: id,
+        status: 'SERVING',
       });
     }
     this.gateway.emitTableGridSync({
