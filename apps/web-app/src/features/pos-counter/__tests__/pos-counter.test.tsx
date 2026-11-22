@@ -1164,7 +1164,7 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
       const dialog = await screen.findByTestId('table-print-qr-dialog');
       expect(dialog).toBeInTheDocument();
 
-      const expectedUrl = `${window.location.origin}/qr/token-ban-05`;
+      const expectedUrl = `${window.location.origin}/q/token-ban-05`;
       expect(dialog).toHaveTextContent(expectedUrl);
       expect(dialog.innerHTML).not.toContain('qrserver.com');
       expect(dialog.innerHTML).not.toContain('/qr?token=');
@@ -1720,6 +1720,46 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
       expect(screen.getByTestId('invoice-order-note')).toHaveTextContent(
         'Khách: Anh Minh - 0901234567 | Ít cay',
       );
+    });
+
+    it('displays /q/:token short chips and converts untouched legacy long QR tokens in 1 click', async () => {
+      const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
+        updatedTables: 1,
+        updatedTakeaway: true,
+      });
+
+      const tables: PosTableGridResponse['tables'] = [
+        {
+          id: 5,
+          name: 'Bàn 05',
+          status: 'AVAILABLE',
+          activeOrderId: null,
+          activeOrder: null,
+          qrToken: 'a'.repeat(64),
+        },
+      ];
+
+      render(
+        <QueryProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ThermalPrintProvider>
+            <TableManageDialog
+              open={true}
+              onOpenChange={vi.fn()}
+              tables={tables}
+              takeawayQrToken="mangve-x4p2"
+              canManageTables={true}
+            />
+          </ThermalPrintProvider>
+        </QueryProvider>,
+      );
+
+      expect(screen.getByTestId('copy-short-takeaway-qr-chip')).toHaveTextContent('/q/mangve-x4p2');
+      const shortenBtn = screen.getByTestId('shorten-legacy-qr-btn');
+      fireEvent.click(shortenBtn);
+
+      await waitFor(() => {
+        expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/tables/shorten-qr', {});
+      });
     });
   });
 });

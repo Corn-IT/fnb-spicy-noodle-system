@@ -101,7 +101,12 @@ describe('qr-export (PNG QR Card rendering, filename sanitization & pure-JS ZIP 
         expect.objectContaining({ width: 480 }),
       );
       expect(fillTextCalls).toEqual(
-        expect.arrayContaining(['MÌ CAY SASIN', 'Bàn 05', 'Quét mã QR để gọi món tại bàn']),
+        expect.arrayContaining([
+          'MÌ CAY SASIN',
+          'Bàn 05',
+          'Quét mã QR để gọi món tại bàn',
+          'pos.local/qr/abc',
+        ]),
       );
 
       const origCreateUrl = URL.createObjectURL;
