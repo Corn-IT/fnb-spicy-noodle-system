@@ -37,6 +37,8 @@ export class MenuController {
     @Query('token') token: string | undefined,
     @Query('lat') lat?: string,
     @Query('lng') lng?: string,
+    @Query('activeOrderId') activeOrderIdRaw?: string,
+    @Query('guestSessionToken') guestSessionToken?: string,
     @Req() req?: Request,
   ) {
     if (this.qrSecurityService) {
@@ -46,6 +48,21 @@ export class MenuController {
         clientIp: req ? extractClientIp(req) : undefined,
         latitude: Number.isFinite(parsedLat) ? parsedLat : undefined,
         longitude: Number.isFinite(parsedLng) ? parsedLng : undefined,
+        qrToken: token,
+      });
+    }
+    const parsedOrderId = activeOrderIdRaw !== undefined && activeOrderIdRaw !== ''
+      ? Number(activeOrderIdRaw)
+      : undefined;
+    const hasGuestContext =
+      (parsedOrderId !== undefined && Number.isSafeInteger(parsedOrderId) && parsedOrderId > 0) ||
+      Boolean(guestSessionToken?.trim());
+    if (hasGuestContext) {
+      return this.menuService.getPublicMenu(token ?? '', {
+        ...(parsedOrderId && Number.isSafeInteger(parsedOrderId) && parsedOrderId > 0
+          ? { activeOrderId: parsedOrderId }
+          : {}),
+        ...(guestSessionToken?.trim() ? { guestSessionToken: guestSessionToken.trim() } : {}),
       });
     }
     return this.menuService.getPublicMenu(token ?? '');

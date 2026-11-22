@@ -48,6 +48,7 @@ import type { EnvConfig } from '../../config/env.config';
 import { AuditLogService } from '../../common/audit/audit-log.service';
 import { getRequestContext } from '../../common/context/request-context';
 import { compareUsersForDisplay } from '../../common/utils/display-order.util';
+import { generateShortName } from '../../common/utils/short-name.util';
 import {
   decodeValidatedImageBase64,
   detectImageMimeFromMagicBytes,
@@ -729,18 +730,38 @@ export class IamService {
   async updateProfile(userId: number, input: UpdateProfileInput): Promise<ProfileResponse> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { employeeId: true, employee: { select: { fullName: true } } },
+      select: { employeeId: true, employee: { select: { fullName: true, shortName: true } } },
     });
     if (!user) throw new NotFoundException('Không tìm thấy tài khoản');
-    await this.prisma.employee.update({ where: { id: user.employeeId }, data: input });
+
+    const data: Prisma.EmployeeUncheckedUpdateInput = { ...input };
+    const fullNameChanged =
+      input.fullName !== undefined &&
+      input.fullName.trim() !== (user.employee?.fullName ?? '').trim();
+    if (
+      input.fullName !== undefined &&
+      (fullNameChanged || !user.employee?.shortName) &&
+      typeof this.prisma.employee?.findMany === 'function'
+    ) {
+      const existingEmployees = await this.prisma.employee.findMany({
+        where: { id: { not: user.employeeId }, isDeleted: false },
+        select: { id: true, shortName: true },
+      });
+      data.shortName = generateShortName(input.fullName, existingEmployees, user.employeeId);
+    }
+
+    await this.prisma.employee.update({ where: { id: user.employeeId }, data });
     await this.auditLogService?.record({
       module: 'RBAC',
       action: 'Cập nhật hồ sơ',
-      detail: user.employee?.fullName ?? `Tài khoản #${userId}`,
+      detail: input.fullName?.trim() || user.employee?.fullName || `Tài khoản #${userId}`,
       message: 'cập nhật thông tin hồ sơ cá nhân',
       actor: userId,
       metadata: { targetUserId: userId, employeeId: user.employeeId },
     });
+    if (fullNameChanged) {
+      this.posSocketGateway?.emitScheduleUpdated();
+    }
     return this.getProfile(userId);
   }
 

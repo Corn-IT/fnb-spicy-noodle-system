@@ -16,6 +16,10 @@ import {
 } from '@fnb/shared';
 import { AuditLogService } from '../../common/audit/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import {
+  isTakeawayQrToken,
+  verifyTakeawayGuestSessionToken,
+} from '../../common/security/takeaway-qr.util';
 import { normalizeVietnameseString } from '../../common/utils/normalized-string.util';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 
@@ -174,116 +178,60 @@ export class MenuService {
     return cached;
   }
 
-  async getPublicMenu(token: string) {
+  async getPublicMenu(
+    token: string,
+    options?: { activeOrderId?: number; guestSessionToken?: string },
+  ) {
     if (!QrTokenSchema.safeParse(token).success) throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
     const table = await this.prisma.diningTable.findUnique({
       where: { qrToken: token },
       select: { id: true, name: true, status: true, activeOrderId: true },
     });
-    if (!table) throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
 
-    const catalog = await this.getCachedPublicMenuCatalog();
-
-    let activeOrder: {
-      orderId: number;
-      orderCode: string;
-      status: 'PENDING' | 'SERVING';
-      totalAmount: number;
-      createdAt: string;
-      items: Array<{
-        id: number;
-        productId: number;
-        productName: string;
-        quantity: number;
-        unitPrice: number;
-        lineTotal: number;
-        batchNo: number;
-        kitchenStatus: 'NEW' | 'PRINTED' | 'CANCELLED';
-        itemNote: string | null;
-        modifiers: Array<{
-          groupId?: number;
-          modifierId?: number;
-          name: string;
-          extraPrice?: number;
-          action?: string;
-          substituteModifierId?: number;
-          substituteName?: string;
-          substitutedFromName?: string;
-        }>;
-        createdAt: string;
-      }>;
-    } | null = null;
-
-    if (table.activeOrderId !== null && typeof this.prisma.order?.findUnique === 'function') {
-      const order = await this.prisma.order.findUnique({
-        where: { id: table.activeOrderId },
-        select: {
-          id: true,
-          orderCode: true,
-          status: true,
-          totalAmount: true,
-          createdAt: true,
-          items: {
-            where: { kitchenStatus: { not: 'CANCELLED' } },
-            orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
-            select: {
-              id: true,
-              productId: true,
-              quantity: true,
-              unitPrice: true,
-              modifiersSnapshot: true,
-              itemNote: true,
-              batchNo: true,
-              kitchenStatus: true,
-              createdAt: true,
-              product: { select: { name: true } },
-            },
-          },
-        },
-      });
-      if (order && (order.status === 'PENDING' || order.status === 'SERVING') && order.items.length > 0) {
-        activeOrder = {
-          orderId: order.id,
-          orderCode: order.orderCode,
-          status: order.status,
-          totalAmount: order.totalAmount.toNumber(),
-          createdAt: order.createdAt.toISOString(),
-          items: order.items.map((item) => {
-            const rawMods = Array.isArray(item.modifiersSnapshot) ? item.modifiersSnapshot : [];
-            const modifiers = rawMods.flatMap((entry) => {
-              if (!entry || typeof entry !== 'object') return [];
-              const rec = entry as Record<string, unknown>;
-              if (typeof rec.name !== 'string' || !rec.name.trim()) return [];
-              return [{
-                ...(typeof rec.groupId === 'number' ? { groupId: rec.groupId } : {}),
-                ...(typeof rec.modifierId === 'number' ? { modifierId: rec.modifierId } : {}),
-                name: rec.name,
-                ...(rec.extraPrice !== undefined ? { extraPrice: Number(rec.extraPrice) } : {}),
-                ...(typeof rec.action === 'string' ? { action: rec.action } : {}),
-                ...(typeof rec.substituteModifierId === 'number' ? { substituteModifierId: rec.substituteModifierId } : {}),
-                ...(typeof rec.substituteName === 'string' ? { substituteName: rec.substituteName } : {}),
-                ...(typeof rec.substitutedFromName === 'string' ? { substitutedFromName: rec.substitutedFromName } : {}),
-              }];
-            });
-            return {
-              id: item.id,
-              productId: item.productId,
-              productName: item.product.name,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice.toNumber(),
-              lineTotal: item.unitPrice.mul(item.quantity).toNumber(),
-              batchNo: item.batchNo,
-              kitchenStatus: item.kitchenStatus as 'NEW' | 'PRINTED' | 'CANCELLED',
-              itemNote: item.itemNote ?? null,
-              modifiers,
-              createdAt: item.createdAt.toISOString(),
-            };
-          }),
-        };
+    if (!table) {
+      const isTakeaway = await isTakeawayQrToken(this.prisma, token);
+      if (!isTakeaway) {
+        throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
       }
+      const catalog = await this.getCachedPublicMenuCatalog();
+      const loadedTakeaway =
+        options?.activeOrderId && options?.guestSessionToken
+          ? await this.loadPublicActiveOrder(options.activeOrderId, {
+              requireTakeawayGuestToken: options.guestSessionToken,
+            })
+          : null;
+      const takeawayLabel = loadedTakeaway?.takeawayNumber
+        ? `Mang về #${String(loadedTakeaway.takeawayNumber).padStart(2, '0')}`
+        : 'Mang về';
+
+      return PublicMenuResponseSchema.parse({
+        orderMode: 'TAKEAWAY',
+        table: {
+          tableId: null,
+          tableName: takeawayLabel,
+          status: loadedTakeaway?.activeOrder
+            ? loadedTakeaway.activeOrder.status === 'PENDING'
+              ? 'PENDING'
+              : 'OCCUPIED'
+            : 'AVAILABLE',
+          activeOrderId: loadedTakeaway?.activeOrder?.orderId ?? null,
+        },
+        stations: catalog.stations,
+        categories: catalog.categories,
+        activeOrder: loadedTakeaway?.activeOrder ?? null,
+        products: catalog.products,
+        updatedAt: new Date().toISOString(),
+      });
     }
 
+    const catalog = await this.getCachedPublicMenuCatalog();
+    const loadedTableOrder =
+      table.activeOrderId !== null
+        ? await this.loadPublicActiveOrder(table.activeOrderId)
+        : null;
+
     return PublicMenuResponseSchema.parse({
+      orderMode: 'DINE_IN',
       table: {
         tableId: table.id,
         tableName: table.name,
@@ -292,10 +240,106 @@ export class MenuService {
       },
       stations: catalog.stations,
       categories: catalog.categories,
-      activeOrder,
+      activeOrder: loadedTableOrder?.activeOrder ?? null,
       products: catalog.products,
       updatedAt: new Date().toISOString(),
     });
+  }
+
+  private async loadPublicActiveOrder(
+    orderId: number,
+    takeawayCheck?: { requireTakeawayGuestToken: string },
+  ) {
+    if (typeof this.prisma.order?.findUnique !== 'function') {
+      return null;
+    }
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        orderCode: true,
+        orderType: true,
+        orderSource: true,
+        takeawayNumber: true,
+        note: true,
+        status: true,
+        totalAmount: true,
+        createdAt: true,
+        items: {
+          where: { kitchenStatus: { not: 'CANCELLED' } },
+          orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            productId: true,
+            quantity: true,
+            unitPrice: true,
+            modifiersSnapshot: true,
+            itemNote: true,
+            batchNo: true,
+            kitchenStatus: true,
+            createdAt: true,
+            product: { select: { name: true } },
+          },
+        },
+      },
+    });
+    if (!order || (order.status !== 'PENDING' && order.status !== 'SERVING') || order.items.length === 0) {
+      return null;
+    }
+    if (takeawayCheck) {
+      if (
+        order.orderType !== 'TAKEAWAY' ||
+        order.orderSource !== 'QR_CODE' ||
+        !verifyTakeawayGuestSessionToken(takeawayCheck.requireTakeawayGuestToken, order.id, order.orderCode)
+      ) {
+        return null;
+      }
+    }
+
+    const activeOrder = {
+      orderId: order.id,
+      orderCode: order.orderCode,
+      status: order.status,
+      totalAmount: order.totalAmount.toNumber(),
+      ...(order.note ? { note: order.note } : {}),
+      createdAt: order.createdAt.toISOString(),
+      items: order.items.map((item) => {
+        const rawMods = Array.isArray(item.modifiersSnapshot) ? item.modifiersSnapshot : [];
+        const modifiers = rawMods.flatMap((entry) => {
+          if (!entry || typeof entry !== 'object') return [];
+          const rec = entry as Record<string, unknown>;
+          if (typeof rec.name !== 'string' || !rec.name.trim()) return [];
+          return [{
+            ...(typeof rec.groupId === 'number' ? { groupId: rec.groupId } : {}),
+            ...(typeof rec.modifierId === 'number' ? { modifierId: rec.modifierId } : {}),
+            name: rec.name,
+            ...(rec.extraPrice !== undefined ? { extraPrice: Number(rec.extraPrice) } : {}),
+            ...(typeof rec.action === 'string' ? { action: rec.action } : {}),
+            ...(typeof rec.substituteModifierId === 'number' ? { substituteModifierId: rec.substituteModifierId } : {}),
+            ...(typeof rec.substituteName === 'string' ? { substituteName: rec.substituteName } : {}),
+            ...(typeof rec.substitutedFromName === 'string' ? { substitutedFromName: rec.substitutedFromName } : {}),
+          }];
+        });
+        return {
+          id: item.id,
+          productId: item.productId,
+          productName: item.product.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice.toNumber(),
+          lineTotal: item.unitPrice.mul(item.quantity).toNumber(),
+          batchNo: item.batchNo,
+          kitchenStatus: item.kitchenStatus as 'NEW' | 'PRINTED' | 'CANCELLED',
+          itemNote: item.itemNote ?? null,
+          modifiers,
+          createdAt: item.createdAt.toISOString(),
+        };
+      }),
+    };
+
+    return {
+      takeawayNumber: order.takeawayNumber ?? null,
+      activeOrder,
+    };
   }
 
   async listProducts() {

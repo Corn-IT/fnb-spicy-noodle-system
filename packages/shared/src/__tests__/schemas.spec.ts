@@ -592,4 +592,34 @@ describe('@fnb/shared contracts', () => {
       updatedAt: '2026-11-17T12:00:00.000Z',
     }).success).toBe(true);
   });
+
+  it('validates takeaway QR menu, order, and security config contracts', () => {
+    expect(contracts.PublicMenuResponseSchema.safeParse({
+      orderMode: 'TAKEAWAY',
+      table: { tableId: null, tableName: 'Mang về', status: 'AVAILABLE', activeOrderId: null },
+      products: [],
+    }).success).toBe(true);
+    expect(contracts.CreateQrOrderSchema.safeParse({
+      qrToken: 't'.repeat(64),
+      customerName: 'Anh Nam',
+      customerPhone: '0909123456',
+      note: 'Ít hành',
+      items: [{ productId: 1, quantity: 1 }],
+    }).success).toBe(true);
+    expect(contracts.QrOrderResponseSchema.safeParse({
+      orderId: 50,
+      activeOrderId: 50,
+      orderCode: 'HD-20261122-0001',
+      orderType: 'TAKEAWAY',
+      takeawayNumber: 1,
+      guestSessionToken: 's'.repeat(32),
+      currentTableLabel: 'Mang về #01',
+      status: 'PENDING',
+      batchNo: 1,
+      totalAmount: 45000,
+    }).success).toBe(true);
+    expect(contracts.RotateTakeawayQrResponseSchema.safeParse({ qrToken: 'k'.repeat(64) }).success).toBe(true);
+    expect(contracts.QrSecurityConfigSchema.parse({}).applySecurityToTakeaway).toBe(false);
+    expect(contracts.QrSecurityConfigSchema.parse({ applySecurityToTakeaway: true }).applySecurityToTakeaway).toBe(true);
+  });
 });

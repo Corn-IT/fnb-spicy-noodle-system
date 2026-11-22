@@ -265,4 +265,63 @@ describe('qr-pending-reminder (5m/6m reminder cadence, red warning & F5 persiste
       ],
     });
   });
+
+  it('collects pending QR NEW and ADDON orders from tableGrid.takeaways for reminders & overdue tracking', () => {
+    const startMs = Date.parse('2026-11-22T10:00:00.000Z');
+    const enqueued = vi.fn();
+    const grid: PosTableGridResponse = {
+      tables: [],
+      takeaways: [
+        {
+          orderId: 901,
+          orderCode: 'HD-20261122-0001',
+          orderType: 'TAKEAWAY',
+          tableId: null,
+          tableLabel: 'Mang về #01',
+          takeawayNumber: 1,
+          status: 'PENDING',
+          totalAmount: 49000,
+          createdAt: '2026-11-22T10:00:00.000Z',
+          pendingQrSince: '2026-11-22T10:00:00.000Z',
+          pendingQrKind: 'NEW',
+        },
+        {
+          orderId: 902,
+          orderCode: 'HD-20261122-0002',
+          orderType: 'TAKEAWAY',
+          tableId: null,
+          tableLabel: null,
+          takeawayNumber: 2,
+          status: 'SERVING',
+          totalAmount: 85000,
+          createdAt: '2026-11-22T09:50:00.000Z',
+          hasUnprintedAddon: true,
+          unprintedAddonBatchNo: 2,
+          pendingQrSince: '2026-11-22T10:00:00.000Z',
+          pendingQrKind: 'ADDON',
+        },
+      ],
+    };
+
+    const collected = collectPendingQrItems(grid);
+    expect(collected.map((item) => ({ label: item.tableLabel, kind: item.kind }))).toEqual([
+      { label: 'Mang về #01', kind: 'NEW' },
+      { label: 'Mang về #02', kind: 'ADDON' },
+    ]);
+
+    const tracker = new QrReminderTracker({
+      nowFn: () => startMs + 5 * 60_000,
+      configFn: () => ({ ...DEFAULT_QR_REMINDER_CONFIG }),
+      enqueueFn: enqueued,
+      storage: createMemoryStorage(),
+    });
+    const overdue = tracker.evaluate(grid);
+    expect(overdue).toHaveLength(2);
+    expect(enqueued).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isReminder: true,
+        tableLabel: 'Mang về #01, Mang về #02',
+      }),
+    );
+  });
 });

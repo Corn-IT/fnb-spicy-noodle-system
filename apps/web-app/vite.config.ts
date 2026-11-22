@@ -25,6 +25,28 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'shared-catalog',
+              test: /[\\/]packages[\\/]shared[\\/].*message-catalog/,
+            },
+            {
+              name: 'vendor-react',
+              test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/,
+            },
+            {
+              name: 'vendor-zod',
+              test: /[\\/]node_modules[\\/]zod[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',

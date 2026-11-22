@@ -354,6 +354,89 @@ describe('IamService', () => {
       data: { phone: '0911', address: 'New address' },
     });
   });
+
+  it('should recompute shortName and emit schedule:updated when fullName changes in updateProfile', async () => {
+    const updatedUser = {
+      id: 4,
+      employeeId: 2,
+      username: 'cashier01',
+      isSuperAdmin: false,
+      permissions,
+      uiPreferences: {},
+      employee: {
+        id: 2, fullName: 'Nguyễn Minh Hoàng', shortName: 'M.Hoàng', phone: '0900', address: 'Old',
+        bankName: null, bankAccountNo: null, bankAccountName: null, avatarUrl: null,
+        position: null, specialty: null,
+      },
+    };
+    const prisma = {
+      user: {
+        findUnique: vi.fn()
+          .mockResolvedValueOnce({ employeeId: 2, employee: { fullName: 'Cashier One', shortName: 'C.One' } })
+          .mockResolvedValueOnce(updatedUser),
+      },
+      employee: {
+        findMany: vi.fn().mockResolvedValue([{ id: 3, shortName: 'L.Anh' }]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const gateway = { emitScheduleUpdated: vi.fn(), emitPermissionsUpdated: vi.fn(), emitSessionRevoked: vi.fn() };
+    const service = new IamService(prisma as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never, undefined, gateway as never);
+
+    const profile = await service.updateProfile(4, { fullName: 'Nguyễn Minh Hoàng' });
+
+    expect(prisma.employee.findMany).toHaveBeenCalledWith({
+      where: { id: { not: 2 }, isDeleted: false },
+      select: { id: true, shortName: true },
+    });
+    expect(prisma.employee.update).toHaveBeenCalledWith({
+      where: { id: 2 },
+      data: { fullName: 'Nguyễn Minh Hoàng', shortName: 'M.Hoàng' },
+    });
+    expect(gateway.emitScheduleUpdated).toHaveBeenCalledTimes(1);
+    expect(profile.employee.shortName).toBe('M.Hoàng');
+  });
+
+  it('should disambiguate shortName on collision and skip schedule emit when fullName is unchanged', async () => {
+    const unchangedUser = {
+      id: 4,
+      employeeId: 2,
+      username: 'cashier01',
+      isSuperAdmin: false,
+      permissions,
+      uiPreferences: {},
+      employee: {
+        id: 2, fullName: 'Trần Văn Nam', shortName: 'T.V.Nam (#2)', phone: '0900', address: 'Old',
+        bankName: null, bankAccountNo: null, bankAccountName: null, avatarUrl: null,
+        position: null, specialty: null,
+      },
+    };
+    const prisma = {
+      user: {
+        findUnique: vi.fn()
+          .mockResolvedValueOnce({ employeeId: 2, employee: { fullName: 'Nguyễn Minh', shortName: 'M.Minh' } })
+          .mockResolvedValueOnce(unchangedUser)
+          .mockResolvedValueOnce({ employeeId: 2, employee: { fullName: 'Trần Văn Nam', shortName: 'T.V.Nam (#2)' } })
+          .mockResolvedValueOnce(unchangedUser),
+      },
+      employee: {
+        findMany: vi.fn().mockResolvedValue([{ id: 9, shortName: 'V.Nam' }]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const gateway = { emitScheduleUpdated: vi.fn() };
+    const service = new IamService(prisma as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never, undefined, gateway as never);
+
+    await service.updateProfile(4, { fullName: 'Trần Văn Nam' });
+    expect(prisma.employee.update).toHaveBeenLastCalledWith({
+      where: { id: 2 },
+      data: { fullName: 'Trần Văn Nam', shortName: 'T.V.Nam (#2)' },
+    });
+    expect(gateway.emitScheduleUpdated).toHaveBeenCalledTimes(1);
+
+    await service.updateProfile(4, { fullName: 'Trần Văn Nam', phone: '0988' });
+    expect(gateway.emitScheduleUpdated).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('IAM and MDM controller access boundaries', () => {

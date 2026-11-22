@@ -334,7 +334,7 @@ export function ModifierSelectorSheet({
               placeholder="VD: Không hành lá, để riêng nước..."
               value={itemNote}
               onChange={(e) => setItemNote(e.target.value)}
-              className="flex w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="flex w-full rounded-xl border border-input bg-background px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
 

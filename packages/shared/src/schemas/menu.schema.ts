@@ -156,14 +156,16 @@ export const PublicMenuActiveOrderSchema = z.object({
   orderCode: z.string().trim().min(1),
   status: z.enum(['PENDING', 'SERVING']),
   totalAmount: MoneyAmountSchema,
+  note: z.string().nullable().optional(),
   items: z.array(PublicMenuActiveOrderItemSchema),
   createdAt: z.string(),
 }).strict();
 export type PublicMenuActiveOrder = z.infer<typeof PublicMenuActiveOrderSchema>;
 
 export const PublicMenuResponseSchema = z.object({
+  orderMode: z.enum(['DINE_IN', 'TAKEAWAY']).optional(),
   table: z.object({
-    tableId: IdSchema,
+    tableId: IdSchema.nullable(),
     tableName: z.string().trim().min(1),
     status: TableStatusSchema,
     activeOrderId: IdSchema.nullable(),
@@ -176,7 +178,11 @@ export const PublicMenuResponseSchema = z.object({
 }).strict();
 export type PublicMenuResponse = z.infer<typeof PublicMenuResponseSchema>;
 
-export const PublicMenuQuerySchema = z.object({ token: QrTokenSchema }).strict();
+export const PublicMenuQuerySchema = z.object({
+  token: QrTokenSchema,
+  activeOrderId: z.coerce.number().int().positive().optional(),
+  guestSessionToken: z.string().trim().min(16).max(256).optional(),
+}).strict();
 export type PublicMenuQuery = z.infer<typeof PublicMenuQuerySchema>;
 
 export const ImportMenuExcelItemSchema = z.object({

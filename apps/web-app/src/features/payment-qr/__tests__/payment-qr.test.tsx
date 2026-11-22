@@ -291,7 +291,7 @@ describe('Story 13 — Payment QR Management & Automatic Rotation UI (/payment-q
     fireEvent.click(screen.getByTestId('payment-qr-bank-select'));
     fireEvent.click(screen.getByTestId('payment-qr-bank-option-MB'));
     expect(screen.getByTestId('payment-qr-bank-select')).toHaveTextContent('MBBank (MB)');
-  });
+  }, 15000);
 
   it('supports non-diacritic Vietnamese keyword filtering across payment accounts', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {

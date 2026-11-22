@@ -454,4 +454,190 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       }
     }
   });
+
+  it('supports QR Takeaway self-ordering with customer info/note, hides table transfer banner, and creates independent takeaway sessions', async () => {
+    const takeawayToken = 'e'.repeat(64);
+    const guestSessionToken = 'f'.repeat(64);
+    const localQc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    const connectSpy = vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue({
+      on: vi.fn(),
+      off: vi.fn(),
+      disconnect: vi.fn(),
+    } as never);
+    vi.spyOn(socketClient, 'disconnectPosSocket').mockImplementation(() => undefined);
+
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, opts) => {
+      const params = (opts as { params?: { activeOrderId?: number; guestSessionToken?: string } })?.params;
+      if (params?.activeOrderId === 801 && params?.guestSessionToken === guestSessionToken) {
+        return {
+          orderMode: 'TAKEAWAY',
+          table: {
+            tableId: null,
+            tableName: 'Mang về #01',
+            status: 'PENDING',
+            activeOrderId: 801,
+          },
+          stations: [],
+          categories: [],
+          activeOrder: {
+            orderId: 801,
+            orderCode: 'HD-20261122-0001',
+            status: 'PENDING',
+            note: 'Khách: Anh Minh - 0901234567 | Ít cay',
+            totalAmount: 45000,
+            createdAt: '2026-11-22T05:00:00.000Z',
+            items: [
+              {
+                id: 1,
+                productId: 55,
+                productName: 'Mì Kim Chi Bò',
+                quantity: 1,
+                unitPrice: 45000,
+                lineTotal: 45000,
+                batchNo: 1,
+                kitchenStatus: 'NEW',
+                itemNote: null,
+                modifiers: [],
+                createdAt: '2026-11-22T05:00:00.000Z',
+              },
+            ],
+          },
+          products: [
+            {
+              id: 55,
+              name: 'Mì Kim Chi Bò',
+              price: 45000,
+              station: 'BEP_NAU',
+              categoryId: null,
+              categoryName: null,
+              subtitle: null,
+              imageUrl: null,
+              isAvailable: true,
+              sortOrder: 1,
+              modifierGroups: [],
+              comboItems: [],
+            },
+          ],
+          updatedAt: '2026-11-22T05:00:00.000Z',
+        };
+      }
+
+      return {
+        orderMode: 'TAKEAWAY',
+        table: {
+          tableId: null,
+          tableName: 'Mang về',
+          status: 'AVAILABLE',
+          activeOrderId: null,
+        },
+        stations: [],
+        categories: [],
+        activeOrder: null,
+        products: [
+          {
+            id: 55,
+            name: 'Mì Kim Chi Bò',
+            price: 45000,
+            station: 'BEP_NAU',
+            categoryId: null,
+            categoryName: null,
+            subtitle: null,
+            imageUrl: null,
+            isAvailable: true,
+            sortOrder: 1,
+            modifierGroups: [],
+            comboItems: [],
+          },
+        ],
+        updatedAt: '2026-11-22T05:00:00.000Z',
+      };
+    });
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      orderId: 801,
+      activeOrderId: 801,
+      orderCode: 'HD-20261122-0001',
+      orderType: 'TAKEAWAY',
+      takeawayNumber: 1,
+      guestSessionToken,
+      currentTableLabel: 'Mang về #01',
+      status: 'PENDING',
+      batchNo: 1,
+      totalAmount: 45000,
+    });
+
+    render(
+      <QueryClientProvider client={localQc}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={[`/qr/${takeawayToken}`]}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByTestId('qr-table-header')).toHaveTextContent('Mang về');
+    expect(screen.queryByTestId('qr-table-transfer-warning')).not.toBeInTheDocument();
+    expect(screen.getByTestId('qr-takeaway-mode-banner')).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Chọn' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Xem chi tiết giỏ hàng' }));
+
+    fireEvent.change(await screen.findByTestId('qr-takeaway-customer-name'), {
+      target: { value: 'Anh Minh' },
+    });
+    fireEvent.change(screen.getByTestId('qr-takeaway-customer-phone'), {
+      target: { value: '0901234567' },
+    });
+    fireEvent.change(screen.getByTestId('qr-takeaway-note'), {
+      target: { value: 'Ít cay' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Xác nhận gửi đơn đặt món/i }));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/api/v1/public/orders/qr',
+        expect.objectContaining({
+          qrToken: takeawayToken,
+          customerName: 'Anh Minh',
+          customerPhone: '0901234567',
+          note: 'Ít cay',
+        }),
+        { skipAuthRefresh: true },
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Mang về #01');
+      expect(screen.getByTestId('qr-takeaway-new-order-btn')).toBeInTheDocument();
+    });
+
+    expect(connectSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        mode: 'qr_guest',
+        qrToken: takeawayToken,
+        orderId: 801,
+        guestSessionToken,
+      }),
+    );
+
+    // Click "+ Đơn mới" to start a separate takeaway order
+    fireEvent.click(screen.getByTestId('qr-takeaway-new-order-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Mang về');
+      expect(screen.queryByTestId('qr-placed-orders-bar')).not.toBeInTheDocument();
+    });
+    expect(getSpy).toHaveBeenCalled();
+  });
 });

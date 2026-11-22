@@ -29,6 +29,7 @@ import { TableManageDialog } from './table-manage-dialog';
 export interface TableGridPanelProps {
   tables: PosTableGridResponse['tables'];
   takeaways: PosOrderSummary[];
+  takeawayQrToken?: string;
   selectedOrderId: number | null;
   draftTarget:
     | { orderType: 'DINE_IN'; tableId: number; tableName: string }
@@ -43,6 +44,7 @@ export interface TableGridPanelProps {
 export function TableGridPanel({
   tables,
   takeaways,
+  takeawayQrToken,
   selectedOrderId,
   draftTarget,
   addonBadgesByOrderId,
@@ -72,8 +74,14 @@ export function TableGridPanel({
           table.status === 'PENDING' ||
           Boolean(table.activeOrder?.pendingQrKind) ||
           Boolean(table.activeOrder?.hasUnprintedAddon),
+      ) ||
+      takeaways.some(
+        (order) =>
+          order.status === 'PENDING' ||
+          Boolean(order.pendingQrKind) ||
+          Boolean(order.hasUnprintedAddon),
       ),
-    [tables],
+    [tables, takeaways],
   );
 
   React.useEffect(() => {
@@ -83,7 +91,7 @@ export function TableGridPanel({
       setNowMs(Date.now());
     }, 10_000);
     return () => window.clearInterval(timer);
-  }, [hasAnyPendingQr, tables]);
+  }, [hasAnyPendingQr, tables, takeaways]);
 
   const reminderConfig = getActiveQrReminderConfig();
 
@@ -94,10 +102,32 @@ export function TableGridPanel({
     }));
   }, [tables, nowMs, reminderConfig]);
 
-  const overdueEntries = React.useMemo(
+  const takeawayAlertStates = React.useMemo(() => {
+    return takeaways.map((order) => ({
+      order,
+      label:
+        order.tableLabel ??
+        `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`,
+      alert: evaluateOrderPendingAlert(
+        order,
+        order.status === 'PENDING' ? 'PENDING' : 'OCCUPIED',
+        nowMs,
+        reminderConfig,
+      ),
+    }));
+  }, [takeaways, nowMs, reminderConfig]);
+
+  const overdueTableEntries = React.useMemo(
     () => tableAlertStates.filter((entry) => entry.alert.isOverdue),
     [tableAlertStates],
   );
+
+  const overdueTakeawayEntries = React.useMemo(
+    () => takeawayAlertStates.filter((entry) => entry.alert.isOverdue),
+    [takeawayAlertStates],
+  );
+
+  const totalOverdueCount = overdueTableEntries.length + overdueTakeawayEntries.length;
 
   const handleToggleVoice = () => {
     const next = !voiceEnabled;
@@ -177,7 +207,7 @@ export function TableGridPanel({
             <span className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-rose-600" /> Đang phục vụ
             </span>
-            {overdueEntries.length > 0 ? (
+            {totalOverdueCount > 0 ? (
               <span className="flex items-center gap-1.5 font-bold text-red-600 dark:text-red-400">
                 <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-600" /> Chờ xác nhận quá hạn
               </span>
@@ -185,7 +215,7 @@ export function TableGridPanel({
           </div>
         </div>
 
-        {overdueEntries.length > 0 ? (
+        {totalOverdueCount > 0 ? (
           <div
             data-testid="pos-overdue-qr-banner"
             role="alert"
@@ -194,7 +224,7 @@ export function TableGridPanel({
             <div className="flex items-center gap-2 min-w-0">
               <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400 animate-pulse" />
               <span>
-                Cảnh báo đỏ: Có {overdueEntries.length} bàn chờ xác nhận quá {reminderConfig.reminderDelayMinutes} phút
+                Cảnh báo đỏ: Có {totalOverdueCount} {overdueTakeawayEntries.length > 0 ? 'bàn / đơn' : 'bàn'} chờ xác nhận quá {reminderConfig.reminderDelayMinutes} phút
                 {reminderConfig.autoCancelEnabled
                   ? ` (tự động huỷ khi quá ${reminderConfig.autoCancelMinutes} phút)`
                   : ''}
@@ -202,7 +232,7 @@ export function TableGridPanel({
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              {overdueEntries.map(({ table, alert }) => (
+              {overdueTableEntries.map(({ table, alert }) => (
                 <button
                   key={table.id}
                   type="button"
@@ -210,6 +240,17 @@ export function TableGridPanel({
                   className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-2xs transition-colors hover:bg-red-700"
                 >
                   <span>{table.name}</span>
+                  <span className="opacity-90">({alert.elapsedMinutes}p)</span>
+                </button>
+              ))}
+              {overdueTakeawayEntries.map(({ order, label, alert }) => (
+                <button
+                  key={`tw-${order.orderId}`}
+                  type="button"
+                  onClick={() => onSelectTakeawayOrder(order)}
+                  className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-2xs transition-colors hover:bg-red-700"
+                >
+                  <span>{label}</span>
                   <span className="opacity-90">({alert.elapsedMinutes}p)</span>
                 </button>
               ))}
@@ -357,11 +398,8 @@ export function TableGridPanel({
               </div>
             ) : null}
 
-            {takeaways.map((order) => {
+            {takeawayAlertStates.map(({ order, label, alert }) => {
               const isSelected = order.orderId === selectedOrderId;
-              const label =
-                order.tableLabel ??
-                `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`;
               const addonBatch =
                 addonBadgesByOrderId[order.orderId] ?? order.unprintedAddonBatchNo ?? undefined;
               // Khi gọi lượt 2 trở đi thì mới nhấp nháy chuông & hiển thị nhãn "Gọi thêm"
@@ -370,22 +408,29 @@ export function TableGridPanel({
                   addonBatch !== undefined &&
                   addonBatch >= 2,
               );
+              const isOverdue = alert.isOverdue;
 
               return (
                 <button
                   key={order.orderId}
                   type="button"
                   data-testid={`takeaway-card-${order.orderId}`}
+                  data-overdue={isOverdue ? 'true' : undefined}
                   onClick={() => onSelectTakeawayOrder(order)}
                   className={cn(
                     'relative flex min-h-[64px] sm:min-h-[70px] flex-col justify-between overflow-hidden rounded-xl border-2 p-2.5 sm:p-3 text-left transition-all active:scale-[0.98]',
                     order.status === 'PENDING' &&
+                      !isOverdue &&
                       'animate-pulse border-amber-500 bg-amber-100/90 text-amber-950 hover:bg-amber-200/90 dark:border-amber-400 dark:bg-amber-950/65 dark:text-amber-100',
                     order.status === 'SERVING' &&
+                      !isOverdue &&
                       'border-rose-600 bg-rose-600 text-white hover:bg-rose-700 shadow-xs',
-                    order.status === 'SERVING' && hasAddon && 'animate-pulse',
+                    order.status === 'SERVING' && hasAddon && !isOverdue && 'animate-pulse',
+                    isOverdue &&
+                      'animate-pulse border-red-600 bg-red-600/20 text-red-950 ring-2 ring-red-500/70 hover:bg-red-600/30 dark:border-red-500 dark:bg-red-950/75 dark:text-red-100',
                     order.status !== 'PENDING' &&
                       order.status !== 'SERVING' &&
+                      !isOverdue &&
                       'border-indigo-500/70 bg-indigo-500/10 text-foreground hover:bg-indigo-500/20',
                     isSelected && 'ring-4 ring-primary/50',
                   )}
@@ -394,7 +439,9 @@ export function TableGridPanel({
                     <span className="text-xs sm:text-sm font-bold whitespace-nowrap leading-tight">
                       {label}
                     </span>
-                    {order.status === 'PENDING' ? (
+                    {isOverdue ? (
+                      <AlertTriangle className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 text-red-600 dark:text-red-400 animate-bounce" />
+                    ) : order.status === 'PENDING' ? (
                       <BellRing className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 text-amber-600 dark:text-amber-300" />
                     ) : order.status === 'SERVING' && hasAddon ? (
                       <BellRing className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 animate-bounce text-white" />
@@ -403,7 +450,14 @@ export function TableGridPanel({
                     )}
                   </div>
 
-                  {hasAddon ? (
+                  {isOverdue ? (
+                    <Badge
+                      data-testid={`takeaway-overdue-badge-${order.orderId}`}
+                      className="mt-1 bg-red-600 text-[9px] sm:text-[10px] text-white px-1.5 py-0.5 justify-center shrink-0 whitespace-nowrap"
+                    >
+                      Quá hạn ({alert.elapsedMinutes}p)
+                    </Badge>
+                  ) : hasAddon ? (
                     <Badge className="mt-1 bg-amber-500 text-[9px] sm:text-[10px] text-white px-1.5 py-0.5 justify-center shrink-0 whitespace-nowrap">
                       Gọi thêm
                     </Badge>
@@ -425,6 +479,7 @@ export function TableGridPanel({
         open={tableManageOpen}
         onOpenChange={setTableManageOpen}
         tables={tables}
+        takeawayQrToken={takeawayQrToken}
         canManageTables={canManageTables}
       />
 

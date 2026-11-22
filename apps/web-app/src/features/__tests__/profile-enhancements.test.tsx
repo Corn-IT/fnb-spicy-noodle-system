@@ -332,4 +332,63 @@ describe('Profile Enhancements: Password Eye Toggle, Avatar Crop/Upload, Session
       HTMLCanvasElement.prototype.toDataURL = origToDataUrl;
     }
   });
+
+  it('auto-updates avatar initials preview, shortName badge, and invalidates schedules/payroll caches when fullName changes', async () => {
+    const initial = makeProfile();
+    const updated = makeProfile({
+      employee: {
+        ...initial.employee,
+        fullName: 'Phạm Hoàng Quân',
+        shortName: 'H.Quân',
+      },
+    });
+
+    useAuthStore.getState().setAuth({
+      accessToken: 'live-token',
+      user: {
+        id: 2,
+        employeeId: 12,
+        username: 'cashier01',
+        fullName: 'Nguyễn Văn Anh',
+        avatarUrl: null,
+        isSuperAdmin: false,
+        permissions: initial.permissions,
+      },
+    });
+
+    vi.spyOn(apiClient, 'get').mockResolvedValue(initial);
+    const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValueOnce(updated);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    render(
+      <QueryProvider client={queryClient}>
+        <MemoryRouter future={routerFutureFlags}>
+          <ProfilePage />
+        </MemoryRouter>
+      </QueryProvider>,
+    );
+
+    expect(await screen.findByTestId('profile-short-name')).toHaveTextContent('V.Anh');
+    expect(screen.getByTestId('profile-avatar-initials')).toHaveTextContent('VA');
+
+    const fullNameInput = screen.getByLabelText('Họ và tên nhân viên');
+    fireEvent.change(fullNameInput, { target: { value: 'Phạm Hoàng Quân' } });
+    expect(screen.getByTestId('profile-avatar-initials')).toHaveTextContent('HQ');
+
+    fireEvent.click(screen.getByRole('button', { name: /Lưu thay đổi Hồ sơ/i }));
+
+    await waitFor(() =>
+      expect(putSpy).toHaveBeenCalledWith(
+        '/api/v1/profile',
+        expect.objectContaining({ fullName: 'Phạm Hoàng Quân' }),
+      ),
+    );
+    expect(await screen.findByTestId('profile-short-name')).toHaveTextContent('H.Quân');
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['schedules'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['payroll'] });
+  });
 });

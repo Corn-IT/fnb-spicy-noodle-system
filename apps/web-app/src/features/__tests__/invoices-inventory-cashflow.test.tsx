@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { type OrderDetailResponse, UserPermissionsSchema } from '@fnb/shared';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -399,9 +399,11 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       });
 
       // Switch to approver (Super Admin) to approve pending request
-      useAuthStore.getState().setAuth({
-        accessToken: 'admin-token',
-        user: superAdminUser,
+      act(() => {
+        useAuthStore.getState().setAuth({
+          accessToken: 'admin-token',
+          user: superAdminUser,
+        });
       });
       view.rerender(
         <QueryProvider client={queryClient}>

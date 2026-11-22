@@ -30,6 +30,7 @@ import {
   QrOrderResponseSchema,
   QrTokenSchema,
   RotateTableQrResponseSchema,
+  RotateTakeawayQrResponseSchema,
   SplitCheckoutOrderRequestSchema,
   SplitProvisionalBillRequestSchema,
   UpdateDiningTableSchema,
@@ -58,6 +59,14 @@ import type { ZodType } from 'zod';
 import type { EnvConfig } from '../../config/env.config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService, formatPaymentMethodVi } from '../../common/audit/audit-log.service';
+import {
+  formatTakeawayCustomerNote,
+  getOrCreateTakeawayQrToken,
+  isTakeawayQrToken,
+  rotateTakeawayQrToken,
+  signTakeawayGuestSessionToken,
+  verifyTakeawayGuestSessionToken,
+} from '../../common/security/takeaway-qr.util';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 import { DiscountsService } from '../discounts/discounts.service';
 import { PaymentQrService, type QrSelectionResult } from '../payment-qr/payment-qr.service';
@@ -245,7 +254,13 @@ export class PosService {
     try {
       result = await this.prisma.$transaction(async (tx) => {
         const qrTable = await tx.diningTable.findUnique({ where: { qrToken: parsed.qrToken } });
-        if (!qrTable) throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
+        if (!qrTable) {
+          const isTakeaway = await isTakeawayQrToken(tx, parsed.qrToken);
+          if (!isTakeaway) {
+            throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
+          }
+          return this.createTakeawayQrOrderTx(tx, parsed);
+        }
 
         const existingOrderId = parsed.activeOrderId ?? qrTable.activeOrderId;
         if (existingOrderId !== null && existingOrderId !== undefined) {
@@ -355,7 +370,7 @@ export class PosService {
   }
 
   async getTableGrid() {
-    const [tables, takeaways] = await Promise.all([
+    const [tables, takeaways, takeawayQrToken] = await Promise.all([
       this.prisma.diningTable.findMany({
         where: { status: { in: ['AVAILABLE', 'PENDING', 'OCCUPIED'] } },
         orderBy: { id: 'asc' },
@@ -379,9 +394,13 @@ export class PosService {
         },
       }),
       this.prisma.order.findMany({
-        where: { orderType: 'TAKEAWAY', status: 'SERVING' },
-        orderBy: { takeawayNumber: 'asc' },
+        where: { orderType: 'TAKEAWAY', status: { in: ['PENDING', 'SERVING'] } },
+        orderBy: [{ createdAt: 'asc' }, { takeawayNumber: 'asc' }],
+        include: {
+          items: { select: { batchNo: true, kitchenStatus: true, itemSource: true, createdAt: true } },
+        },
       }),
+      getOrCreateTakeawayQrToken(this.prisma),
     ]);
     return PosTableGridResponseSchema.parse({
       tables: tables.map((table) => {
@@ -399,7 +418,30 @@ export class PosService {
         };
       }),
       takeaways: takeaways.map((order) => this.orderSummary(order as unknown as OrderRow, null)),
+      ...(takeawayQrToken ? { takeawayQrToken } : {}),
     });
+  }
+
+  async rotateTakeawayQr(userId?: number) {
+    const result = await rotateTakeawayQrToken(this.prisma);
+    this.gateway.emitTableGridSync({ takeawayQrRotated: true });
+    if (userId) {
+      const oldShort = typeof result.previousQrToken === 'string' && result.previousQrToken.length >= 8
+        ? `${result.previousQrToken.slice(0, 6)}...`
+        : '***';
+      const newShort = `${result.qrToken.slice(0, 6)}...`;
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Đổi mã QR Mang về',
+        detail: 'Mã QR Đặt món Mang về',
+        message: 'đổi mã QR đặt món Mang về',
+        actor: userId,
+        metadata: {
+          changes: [{ field: 'Mã QR Mang về', from: oldShort, to: newShort }],
+        },
+      });
+    }
+    return RotateTakeawayQrResponseSchema.parse({ qrToken: result.qrToken });
   }
 
   async createTable(input: CreateDiningTableInput, userId?: number) {
@@ -2267,6 +2309,116 @@ export class PosService {
         && entry !== null
         && (entry as { fromTable?: unknown }).fromTable === qrTable.name,
     );
+  }
+
+  private async createTakeawayQrOrderTx(
+    tx: Prisma.TransactionClient,
+    parsed: CreateQrOrderInput,
+  ): Promise<{ kind: 'new' | 'addon'; response: ReturnType<typeof QrOrderResponseSchema.parse>; payload: unknown }> {
+    if (parsed.activeOrderId !== undefined) {
+      await this.lockOrders(tx, [parsed.activeOrderId]);
+      const target = await tx.order.findUnique({ where: { id: parsed.activeOrderId } }) as OrderRow | null;
+      if (!target) {
+        throw new NotFoundException({ message: 'Không tìm thấy phiên đơn hàng Mang về' });
+      }
+      if (
+        target.orderType !== 'TAKEAWAY' ||
+        target.orderSource !== 'QR_CODE' ||
+        !verifyTakeawayGuestSessionToken(parsed.guestSessionToken, target.id, target.orderCode)
+      ) {
+        throw new ForbiddenException({ message: 'Phiên đơn mang về không hợp lệ' });
+      }
+      if (!['PENDING', 'SERVING'].includes(target.status)) {
+        throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Đơn hàng không còn mở để gọi thêm món');
+      }
+      const takeawayLabel = `Mang về #${String(target.takeawayNumber ?? 1).padStart(2, '0')}`;
+      const addon = await this.appendItems(tx, target, parsed.items);
+      const guestSessionToken = signTakeawayGuestSessionToken(target.id, target.orderCode);
+      const response = QrOrderResponseSchema.parse({
+        orderId: target.id,
+        activeOrderId: target.id,
+        orderCode: target.orderCode,
+        orderType: 'TAKEAWAY',
+        takeawayNumber: target.takeawayNumber,
+        guestSessionToken,
+        currentTableLabel: takeawayLabel,
+        status: target.status,
+        batchNo: addon.batchNo,
+        totalAmount: addon.totalAmount,
+      });
+      return {
+        kind: 'addon',
+        response,
+        payload: {
+          orderId: target.id,
+          tableId: null,
+          tableLabel: takeawayLabel,
+          batchNo: addon.batchNo,
+          totalAmount: addon.totalAmount,
+        },
+      };
+    }
+
+    const now = new Date();
+    const businessDay = this.businessDay(now);
+    await this.lockOrderSequence(tx, businessDay.key);
+    const orderCode = await this.nextOrderCode(tx, businessDay);
+    const takeawayNumber = await this.nextTakeawayNumber(tx, businessDay);
+    const items = await this.resolveItems(tx, parsed.items);
+    const totalAmount = this.totalForItems(items);
+    const formattedNote = formatTakeawayCustomerNote({
+      customerName: parsed.customerName,
+      customerPhone: parsed.customerPhone,
+      note: parsed.note,
+    });
+    const order = await tx.order.create({
+      data: {
+        orderCode,
+        orderType: 'TAKEAWAY',
+        orderSource: 'QR_CODE',
+        tableId: null,
+        takeawayNumber,
+        status: 'PENDING',
+        note: formattedNote,
+        subtotalAmount: totalAmount,
+        discountAmount: new Prisma.Decimal(0),
+        totalAmount,
+        createdAt: now,
+        items: { create: items.map((item) => ({ ...item, batchNo: 1, itemSource: 'QR_CODE' })) },
+      },
+    });
+    const takeawayLabel = `Mang về #${String(takeawayNumber).padStart(2, '0')}`;
+    const guestSessionToken = signTakeawayGuestSessionToken(order.id, orderCode);
+    const response = QrOrderResponseSchema.parse({
+      orderId: order.id,
+      activeOrderId: order.id,
+      orderCode,
+      orderType: 'TAKEAWAY',
+      takeawayNumber,
+      guestSessionToken,
+      currentTableLabel: takeawayLabel,
+      status: 'PENDING',
+      batchNo: 1,
+      totalAmount: totalAmount.toNumber(),
+    });
+    return {
+      kind: 'new',
+      response,
+      payload: {
+        orderId: order.id,
+        activeOrderId: order.id,
+        orderCode,
+        orderType: 'TAKEAWAY',
+        takeawayNumber,
+        currentTableLabel: takeawayLabel,
+        status: 'PENDING',
+        batchNo: 1,
+        totalAmount: totalAmount.toNumber(),
+        tableId: null,
+        tableLabel: takeawayLabel,
+        pendingQrSince: now.toISOString(),
+      },
+    };
   }
 
   private conflict(code: string, message: string): ConflictException {

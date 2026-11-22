@@ -15,20 +15,50 @@ export interface GuestQrCoordinates {
   lng: number;
 }
 
+export interface GuestQrSessionFilter {
+  activeOrderId?: number | null;
+  guestSessionToken?: string | null;
+}
+
 export const qrOrderQueryKeys = {
-  publicMenu: (qrToken: string, coords?: GuestQrCoordinates | null) =>
-    coords ? (['public-menu', qrToken, coords] as const) : (['public-menu', qrToken] as const),
+  publicMenu: (
+    qrToken: string,
+    coords?: GuestQrCoordinates | null,
+    session?: GuestQrSessionFilter | null,
+  ) => {
+    const activeOrderId = session?.activeOrderId ?? null;
+    const guestSessionToken = session?.guestSessionToken ?? null;
+    if (coords && activeOrderId && guestSessionToken) {
+      return ['public-menu', qrToken, coords, activeOrderId, guestSessionToken] as const;
+    }
+    if (activeOrderId && guestSessionToken) {
+      return ['public-menu', qrToken, activeOrderId, guestSessionToken] as const;
+    }
+    if (coords) {
+      return ['public-menu', qrToken, coords] as const;
+    }
+    return ['public-menu', qrToken] as const;
+  },
 };
 
 export async function fetchPublicMenu(
   qrToken: string,
   coords?: GuestQrCoordinates | null,
+  session?: GuestQrSessionFilter | null,
 ): Promise<PublicMenuResponse> {
+  const hasTakeawaySession =
+    Boolean(session?.activeOrderId) && Boolean(session?.guestSessionToken);
   const raw = await apiClient.get<unknown>('/api/v1/public/menu', {
     params: {
       token: qrToken,
       lat: coords?.lat,
       lng: coords?.lng,
+      ...(hasTakeawaySession
+        ? {
+            activeOrderId: session!.activeOrderId,
+            guestSessionToken: session!.guestSessionToken,
+          }
+        : {}),
     },
     skipAuthRefresh: true,
   });
@@ -43,10 +73,14 @@ export async function submitQrOrder(input: CreateQrOrderInput): Promise<QrOrderR
   return QrOrderResponseSchema.parse(raw);
 }
 
-export function usePublicMenuQuery(qrToken: string, coords?: GuestQrCoordinates | null) {
+export function usePublicMenuQuery(
+  qrToken: string,
+  coords?: GuestQrCoordinates | null,
+  session?: GuestQrSessionFilter | null,
+) {
   return useQuery({
-    queryKey: qrOrderQueryKeys.publicMenu(qrToken, coords),
-    queryFn: () => fetchPublicMenu(qrToken, coords),
+    queryKey: qrOrderQueryKeys.publicMenu(qrToken, coords, session),
+    queryFn: () => fetchPublicMenu(qrToken, coords, session),
     enabled: Boolean(qrToken),
     staleTime: 0,
     retry: false,

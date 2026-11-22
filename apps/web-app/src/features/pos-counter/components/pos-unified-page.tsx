@@ -125,27 +125,43 @@ export function PosUnifiedPage() {
     [gridData?.tables, selectedOrderId],
   );
 
+  const selectedTakeawayRow = React.useMemo(
+    () =>
+      selectedOrderId !== null
+        ? gridData?.takeaways.find((order) => order.orderId === selectedOrderId) ?? null
+        : null,
+    [gridData?.takeaways, selectedOrderId],
+  );
+
+  const selectedActivePendingOrder =
+    selectedTableRow?.activeOrder ?? selectedTakeawayRow ?? null;
+
   const [alertClockMs, setAlertClockMs] = React.useState<number>(() => Date.now());
   React.useEffect(() => {
     setAlertClockMs(Date.now());
-    if (!selectedTableRow?.activeOrder?.pendingQrSince && currentOrder?.status !== 'PENDING') {
+    if (!selectedActivePendingOrder?.pendingQrSince && currentOrder?.status !== 'PENDING') {
       return;
     }
     const timer = window.setInterval(() => {
       setAlertClockMs(Date.now());
     }, 10_000);
     return () => window.clearInterval(timer);
-  }, [selectedTableRow?.activeOrder?.pendingQrSince, currentOrder?.status]);
+  }, [selectedActivePendingOrder?.pendingQrSince, currentOrder?.status]);
 
   const selectedPendingAlert = React.useMemo(() => {
-    if (!selectedTableRow?.activeOrder) return null;
+    if (!selectedActivePendingOrder) return null;
+    const statusHint = selectedTableRow
+      ? selectedTableRow.status
+      : selectedTakeawayRow?.status === 'PENDING'
+        ? 'PENDING'
+        : 'OCCUPIED';
     return evaluateOrderPendingAlert(
-      selectedTableRow.activeOrder,
-      selectedTableRow.status,
+      selectedActivePendingOrder,
+      statusHint,
       alertClockMs,
       getActiveQrReminderConfig(),
     );
-  }, [selectedTableRow, alertClockMs]);
+  }, [selectedActivePendingOrder, selectedTableRow, selectedTakeawayRow?.status, alertClockMs]);
 
   const handleSelectTable = (table: PosTableGridResponse['tables'][number]) => {
     if (table.status === 'AVAILABLE' || !table.activeOrderId) {
@@ -180,6 +196,7 @@ export function PosUnifiedPage() {
     setDraftTarget(null);
     setDraftItems([]);
     setSelectedOrderId(order.orderId);
+    clearAddonBadge(order.orderId);
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       setPosTab('invoice');
     }
@@ -784,6 +801,7 @@ export function PosUnifiedPage() {
             <TableGridPanel
               tables={gridData?.tables ?? []}
               takeaways={gridData?.takeaways ?? []}
+              takeawayQrToken={gridData?.takeawayQrToken}
               selectedOrderId={selectedOrderId}
               draftTarget={draftTarget}
               addonBadgesByOrderId={addonBadgesByOrderId}

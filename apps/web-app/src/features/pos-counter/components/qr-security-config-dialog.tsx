@@ -1,4 +1,4 @@
-import { Crosshair, Globe, MapPin, ShieldCheck, Wifi } from 'lucide-react';
+import { Crosshair, Globe, MapPin, ShieldCheck, ShoppingBag, Wifi } from 'lucide-react';
 import * as React from 'react';
 
 import { QrSecurityFormSkeleton } from '@/components/loading';
@@ -45,6 +45,7 @@ export function QrSecurityConfigDialog({
   const [shopLatitudeInput, setShopLatitudeInput] = React.useState('');
   const [shopLongitudeInput, setShopLongitudeInput] = React.useState('');
   const [geoRadiusMeters, setGeoRadiusMeters] = React.useState(200);
+  const [applySecurityToTakeaway, setApplySecurityToTakeaway] = React.useState(false);
   const [isLocatingGps, setIsLocatingGps] = React.useState(false);
 
   React.useEffect(() => {
@@ -62,6 +63,7 @@ export function QrSecurityConfigDialog({
       configData.shopLongitude !== null ? String(configData.shopLongitude) : '',
     );
     setGeoRadiusMeters(configData.geoRadiusMeters);
+    setApplySecurityToTakeaway(configData.applySecurityToTakeaway);
   }, [configData, open]);
 
   const handleAddDetectedIp = () => {
@@ -156,6 +158,7 @@ export function QrSecurityConfigDialog({
         shopLatitude: parsedLat,
         shopLongitude: parsedLng,
         geoRadiusMeters: clampedRadius,
+        applySecurityToTakeaway,
       });
       const summary =
         wifiProtectionEnabled && !geoProtectionEnabled
@@ -288,10 +291,15 @@ export function QrSecurityConfigDialog({
               <div className="space-y-2.5 pt-1 border-t border-border/60">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-foreground">
+                    <label
+                      htmlFor="qr-wifi-ssid-input"
+                      className="text-xs font-semibold text-foreground"
+                    >
                       Tên Wi-Fi quán (Hiển thị hướng dẫn khách)
                     </label>
                     <Input
+                      id="qr-wifi-ssid-input"
+                      name="wifiSsid"
                       data-testid="qr-wifi-ssid-input"
                       value={wifiSsid}
                       onChange={(e) => setWifiSsid(e.target.value)}
@@ -300,10 +308,15 @@ export function QrSecurityConfigDialog({
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-foreground">
+                    <label
+                      htmlFor="qr-wifi-password-input"
+                      className="text-xs font-semibold text-foreground"
+                    >
                       Mật khẩu Wi-Fi (Để khách bấm Sao chép)
                     </label>
                     <Input
+                      id="qr-wifi-password-input"
+                      name="wifiPassword"
                       data-testid="qr-wifi-password-input"
                       value={wifiPassword}
                       onChange={(e) => setWifiPassword(e.target.value)}
@@ -313,8 +326,13 @@ export function QrSecurityConfigDialog({
                   </div>
                 </div>
 
-                <label className="flex items-start gap-2 rounded-lg border bg-background/80 p-2.5 cursor-pointer text-xs">
+                <label
+                  htmlFor="qr-wifi-autosync-checkbox"
+                  className="flex items-start gap-2 rounded-lg border bg-background/80 p-2.5 cursor-pointer text-xs"
+                >
                   <input
+                    id="qr-wifi-autosync-checkbox"
+                    name="autoSyncPosIp"
                     type="checkbox"
                     data-testid="qr-wifi-autosync-checkbox"
                     checked={autoSyncPosIp}
@@ -337,7 +355,10 @@ export function QrSecurityConfigDialog({
 
                 <div className="space-y-1">
                   <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-semibold text-foreground">
+                    <label
+                      htmlFor="qr-wifi-allowed-ips-input"
+                      className="text-xs font-semibold text-foreground"
+                    >
                       Danh sách IP Wi-Fi cho phép bổ sung (cách nhau dấu phẩy)
                     </label>
                     <Button
@@ -353,6 +374,8 @@ export function QrSecurityConfigDialog({
                     </Button>
                   </div>
                   <Input
+                    id="qr-wifi-allowed-ips-input"
+                    name="allowedWifiIps"
                     data-testid="qr-wifi-allowed-ips-input"
                     value={allowedIpsInput}
                     onChange={(e) => setAllowedIpsInput(e.target.value)}
@@ -420,10 +443,15 @@ export function QrSecurityConfigDialog({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">
+                    <label
+                      htmlFor="qr-shop-lat-input"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
                       Vĩ độ (Latitude)
                     </label>
                     <Input
+                      id="qr-shop-lat-input"
+                      name="shopLatitude"
                       data-testid="qr-shop-lat-input"
                       value={shopLatitudeInput}
                       onChange={(e) => setShopLatitudeInput(e.target.value)}
@@ -432,10 +460,15 @@ export function QrSecurityConfigDialog({
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">
+                    <label
+                      htmlFor="qr-shop-lng-input"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
                       Kinh độ (Longitude)
                     </label>
                     <Input
+                      id="qr-shop-lng-input"
+                      name="shopLongitude"
                       data-testid="qr-shop-lng-input"
                       value={shopLongitudeInput}
                       onChange={(e) => setShopLongitudeInput(e.target.value)}
@@ -447,7 +480,10 @@ export function QrSecurityConfigDialog({
 
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-semibold text-foreground">
+                    <label
+                      htmlFor="qr-geo-radius-input"
+                      className="text-xs font-semibold text-foreground"
+                    >
                       Bán kính an toàn quanh quán (mét)
                     </label>
                     <div className="flex items-center gap-1">
@@ -469,6 +505,8 @@ export function QrSecurityConfigDialog({
                     </div>
                   </div>
                   <Input
+                    id="qr-geo-radius-input"
+                    name="geoRadiusMeters"
                     type="number"
                     min={20}
                     max={5000}
@@ -479,6 +517,34 @@ export function QrSecurityConfigDialog({
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Tùy chọn áp dụng cho Mã QR Mang về */}
+            <div className="rounded-xl border border-border bg-muted/30 p-3.5 flex items-start justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <ShoppingBag className="h-4 w-4 text-accent-text shrink-0" />
+                  <h3 className="text-sm font-bold">
+                    Áp dụng bảo mật Wi-Fi / GPS cho Mã QR Mang về
+                  </h3>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Mặc định <strong>TẮT</strong> để khách mang về quét đặt trước qua 4G/từ xa. Bật nếu chỉ cho phép quét đơn Mang về khi đang ở tại quán.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                data-testid="toggle-takeaway-qr-security-btn"
+                variant={applySecurityToTakeaway ? 'default' : 'outline'}
+                onClick={() => setApplySecurityToTakeaway((prev) => !prev)}
+                className={cn(
+                  'shrink-0 min-w-[92px] font-bold',
+                  applySecurityToTakeaway && 'bg-amber-600 hover:bg-amber-700 text-white',
+                )}
+              >
+                {applySecurityToTakeaway ? 'Đang BẬT' : 'Đang TẮT'}
+              </Button>
             </div>
           </div>
         )}

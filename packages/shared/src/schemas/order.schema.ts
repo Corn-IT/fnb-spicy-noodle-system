@@ -42,7 +42,10 @@ const OrderItemsInputSchema = z.array(CreateOrderItemInputSchema).min(1, 'Phải
 export const CreateQrOrderSchema = z.object({
   qrToken: QrTokenSchema,
   activeOrderId: IdSchema.optional(),
+  guestSessionToken: z.string().trim().min(16).max(256).optional(),
   items: OrderItemsInputSchema,
+  customerName: z.string().trim().max(80).optional(),
+  customerPhone: z.string().trim().max(24).optional(),
   note: z.string().trim().max(1000).optional(),
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
@@ -113,6 +116,9 @@ export const QrOrderResponseSchema = z.object({
   orderId: IdSchema,
   activeOrderId: IdSchema,
   orderCode: z.string().min(1),
+  orderType: OrderTypeSchema.optional(),
+  takeawayNumber: IdSchema.nullable().optional(),
+  guestSessionToken: z.string().min(16).optional(),
   currentTableLabel: z.string().min(1),
   status: OrderStatusSchema,
   batchNo: z.number().int().positive(),
@@ -165,8 +171,14 @@ export const PosTableGridResponseSchema = z.object({
     activeOrder: PosOrderSummarySchema.nullable(),
   }).strict()),
   takeaways: z.array(PosOrderSummarySchema),
+  takeawayQrToken: QrTokenSchema.optional(),
 }).strict();
 export type PosTableGridResponse = z.infer<typeof PosTableGridResponseSchema>;
+
+export const RotateTakeawayQrResponseSchema = z.object({
+  qrToken: QrTokenSchema,
+}).strict();
+export type RotateTakeawayQrResponse = z.infer<typeof RotateTakeawayQrResponseSchema>;
 
 export const RotateTableQrResponseSchema = z.object({
   id: IdSchema,
@@ -434,11 +446,12 @@ export const QrSecurityConfigSchema = z.object({
   shopLatitude: z.number().min(-90).max(90).nullable().default(null),
   shopLongitude: z.number().min(-180).max(180).nullable().default(null),
   geoRadiusMeters: z.number().int().min(20).max(5000).default(200),
+  applySecurityToTakeaway: z.boolean().default(false),
 }).strict();
 export type QrSecurityConfig = z.infer<typeof QrSecurityConfigSchema>;
 
 export const UpdateQrSecurityConfigSchema = QrSecurityConfigSchema;
-export type UpdateQrSecurityConfigInput = z.infer<typeof UpdateQrSecurityConfigSchema>;
+export type UpdateQrSecurityConfigInput = z.input<typeof UpdateQrSecurityConfigSchema>;
 
 export const QrSecurityConfigResponseSchema = QrSecurityConfigSchema.extend({
   detectedClientIp: z.string().trim().min(1),

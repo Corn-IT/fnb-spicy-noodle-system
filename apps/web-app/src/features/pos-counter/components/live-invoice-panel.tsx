@@ -317,16 +317,18 @@ export function LiveInvoicePanel({
 
   const resolvedOrderSourceLabel =
     order.orderSource === 'QR_CODE'
-      ? 'Quét QR tại bàn'
+      ? order.orderType === 'TAKEAWAY'
+        ? 'Quét QR mang về'
+        : 'Quét QR tại bàn'
       : order.orderSource === 'POS_COUNTER'
         ? 'Đặt đơn tại quầy'
         : order.orderSource;
 
   return (
     <div className="flex h-full flex-col justify-between bg-card px-3 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-2.5">
-      <div className="flex items-start justify-between border-b pb-2">
-        <div className="min-w-0 flex-1 pr-2">
-          <div className="flex items-center gap-2">
+      <div className="space-y-1.5 border-b pb-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 data-testid="invoice-header-label" className="text-base sm:text-lg font-bold truncate">
               {resolvedHeaderLabel}
             </h2>
@@ -344,30 +346,6 @@ export function LiveInvoicePanel({
               {resolvedStatusLabel}
             </Badge>
           </div>
-          <div className="mt-0.5 space-y-0.5 text-xs text-muted-foreground leading-relaxed">
-            <div>
-              Mã HĐ: <span className="font-mono font-semibold">{order.orderCode}</span>
-            </div>
-            <div>
-              Nguồn: <span className="whitespace-nowrap">{resolvedOrderSourceLabel}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          {canUpdate && order.status === 'PENDING' && order.orderSource === 'QR_CODE' ? (
-            <Button
-              type="button"
-              size="sm"
-              data-testid="approve-qr-order-btn"
-              disabled={isApprovingQr}
-              onClick={onApproveQrOrder}
-              className="bg-amber-500 font-bold text-white hover:bg-amber-600"
-            >
-              <CheckCircle className="h-4 w-4 shrink-0" />
-              <span>Duyệt đơn QR</span>
-            </Button>
-          ) : null}
           <Button
             type="button"
             variant="ghost"
@@ -375,12 +353,46 @@ export function LiveInvoicePanel({
             data-testid="zoom-invoice-btn"
             title="Phóng to danh sách món"
             aria-label="Phóng to danh sách món"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
             onClick={() => setZoomOpen(true)}
           >
             <Maximize2 className="h-4 w-4" />
           </Button>
         </div>
+
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 space-y-0.5 text-xs text-muted-foreground leading-relaxed">
+            <div>
+              Mã HĐ: <span className="font-mono font-semibold">{order.orderCode}</span>
+            </div>
+            <div>
+              Nguồn: <span className="whitespace-nowrap">{resolvedOrderSourceLabel}</span>
+            </div>
+          </div>
+
+          {canUpdate && order.status === 'PENDING' && order.orderSource === 'QR_CODE' ? (
+            <Button
+              type="button"
+              size="sm"
+              data-testid="approve-qr-order-btn"
+              disabled={isApprovingQr}
+              onClick={onApproveQrOrder}
+              className="shrink-0 bg-amber-500 font-bold text-white hover:bg-amber-600"
+            >
+              <CheckCircle className="h-4 w-4 shrink-0" />
+              <span>Duyệt đơn QR</span>
+            </Button>
+          ) : null}
+        </div>
+
+        {order.note ? (
+          <div
+            data-testid="invoice-order-note"
+            className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-900 dark:text-amber-200 break-words"
+          >
+            {order.note}
+          </div>
+        ) : null}
       </div>
 
       {pendingAlert?.isOverdue ? (
