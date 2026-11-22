@@ -193,6 +193,10 @@ describe('PosService', () => {
     expect(harness.tx.diningTable.update).toHaveBeenCalledWith({
       where: { id: 7 }, data: { status: 'OCCUPIED', activeOrderId: 42 },
     });
+    expect(harness.gateway.emitOrderStatusUpdated).toHaveBeenCalledWith(42, {
+      status: 'SERVING',
+      message: 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp',
+    });
   });
 
   it('should include physical tables and serving takeaways in the POS table grid', async () => {

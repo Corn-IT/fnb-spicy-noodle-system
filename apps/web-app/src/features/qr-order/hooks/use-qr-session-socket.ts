@@ -69,6 +69,7 @@ export interface ServerQrTableSnapshot {
   tableName?: string;
   activeOrderId?: number | null;
   activeOrderStatus?: OrderStatus | null;
+  hasKitchenPrinted?: boolean;
   queriedOrderId?: number | null;
   orderMode?: 'DINE_IN' | 'TAKEAWAY';
 }
@@ -115,26 +116,37 @@ export function useQrSessionSocket(
       if (
         snapshot?.activeOrderId &&
         snapshot.activeOrderId === sessionState.activeOrderId &&
-        snapshot.activeOrderStatus &&
-        snapshot.activeOrderStatus !== sessionState.orderStatus
+        snapshot.activeOrderStatus
       ) {
         const nextStatus = snapshot.activeOrderStatus;
-        const resolvedMsg =
+        const nextResolvedMsg =
           nextStatus === 'SERVING'
-            ? resolveCachedAppMessage('qr.status.orderServing').title
+            ? snapshot.hasKitchenPrinted === false
+              ? 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp'
+              : resolveCachedAppMessage('qr.status.orderServing').title
             : nextStatus === 'PENDING'
               ? resolveCachedAppMessage('qr.status.orderPending').title
               : null;
-        setSessionState((prev) => {
-          const next: QrSessionState = {
-            ...prev,
-            currentTableLabel: tableName || prev.currentTableLabel,
-            orderStatus: nextStatus,
-            statusMessage: resolvedMsg ?? prev.statusMessage,
-          };
-          writeStoredSession(qrToken, next);
-          return next;
-        });
+        const shouldSyncStatusOrKitchenStage =
+          nextStatus !== sessionState.orderStatus ||
+          (nextStatus === 'SERVING' &&
+            ((snapshot.hasKitchenPrinted === false &&
+              sessionState.statusMessage !== 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp') ||
+              (snapshot.hasKitchenPrinted === true &&
+                sessionState.statusMessage === 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp')));
+
+        if (shouldSyncStatusOrKitchenStage) {
+          setSessionState((prev) => {
+            const next: QrSessionState = {
+              ...prev,
+              currentTableLabel: tableName || prev.currentTableLabel,
+              orderStatus: nextStatus,
+              statusMessage: nextResolvedMsg ?? prev.statusMessage,
+            };
+            writeStoredSession(qrToken, next);
+            return next;
+          });
+        }
       }
 
       const isTakeawayEndedOnServer =
@@ -282,9 +294,15 @@ export function useQrSessionSocket(
       const payload = raw as QrOrderStatusUpdatedPayload;
       if (!payload || !payload.status) return;
 
+      const isPreKitchenApproval =
+        payload.status === 'SERVING' &&
+        typeof payload.message === 'string' &&
+        payload.message.includes('chờ chuyển xuống bếp');
       const statusKey =
         payload.status === 'SERVING'
-          ? 'qr.status.orderServingShort'
+          ? isPreKitchenApproval
+            ? null
+            : 'qr.status.orderServingShort'
           : payload.status === 'PAID'
             ? 'qr.status.orderPaid'
             : payload.status === 'VOIDED'
