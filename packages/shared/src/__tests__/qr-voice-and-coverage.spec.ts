@@ -14,11 +14,14 @@ import {
   MESSAGE_CATALOG,
   PaymentAccountOrdersQuerySchema,
   ProductStationSchema,
+  QrTokenSchema,
+  ShortenLegacyQrTokensResponseSchema,
   SocketRooms,
   UpdateInventoryImportSchema,
   UpdatePaymentAccountRequestSchema,
   UpdateProfileSchema,
   UserPermissionsSchema,
+  buildTableQrSlugPrefix,
   calculateOrderDiscount,
   clampQrAutoCancelMinutes,
   clampQrMaxReminders,
@@ -33,8 +36,11 @@ import {
   getVietQrBankShortName,
   interpolateMessageTemplate,
   isChunkLoadErrorMessage,
+  isLegacyLongQrToken,
   isValidMessageKey,
+  maskQrTokenForAudit,
   mergeStoreSettingsWithDefaults,
+  normalizeQrToken,
   parseQrReminderConfig,
   parseQrVoiceEngineConfig,
   resolveErrorCodeMessage,
@@ -329,5 +335,29 @@ describe('qr-voice-config & shared edge coverage', () => {
     expect(parsedLegacy.settings.update).toBe(true);
     expect(parsedLegacy.dashboard.export).toBe(true);
     expect(parsedLegacy.dashboard.viewProfit).toBe(true);
+
+    // Short QR token contracts & helpers
+    expect(QrTokenSchema.safeParse('ban01-k7m9').success).toBe(true);
+    expect(QrTokenSchema.safeParse('Ban01-K7M9').success).toBe(true);
+    expect(QrTokenSchema.parse('  Ban01-K7M9  ')).toBe('Ban01-K7M9');
+    expect(QrTokenSchema.safeParse('mangve-x4p2').success).toBe(true);
+    expect(QrTokenSchema.safeParse('ban01-0oil').success).toBe(false);
+    expect(QrTokenSchema.safeParse('short').success).toBe(false);
+    expect(buildTableQrSlugPrefix('Bàn 01')).toBe('ban01');
+    expect(buildTableQrSlugPrefix('Đặt Bàn Đặc Biệt!')).toBe('datbandacbiet');
+    expect(buildTableQrSlugPrefix('---')).toBe('ban');
+    expect(normalizeQrToken('  Ban01-K7M9 ')).toBe('ban01-k7m9');
+    expect(normalizeQrToken(' custom_raw ')).toBe('custom_raw');
+    expect(isLegacyLongQrToken('a'.repeat(64))).toBe(true);
+    expect(isLegacyLongQrToken('ban01-k7m9')).toBe(false);
+    expect(isLegacyLongQrToken(null)).toBe(false);
+    expect(maskQrTokenForAudit('1-k7m9')).toBe('1-****');
+    expect(maskQrTokenForAudit('Ban08-K7M9')).toBe('ban08-****');
+    expect(maskQrTokenForAudit('abcdef1234567890')).toBe('abcdef...');
+    expect(maskQrTokenForAudit(null)).toBe('***');
+    expect(maskQrTokenForAudit('abc')).toBe('***');
+    expect(
+      ShortenLegacyQrTokensResponseSchema.safeParse({ updatedTables: 30, updatedTakeaway: true }).success,
+    ).toBe(true);
   });
 });

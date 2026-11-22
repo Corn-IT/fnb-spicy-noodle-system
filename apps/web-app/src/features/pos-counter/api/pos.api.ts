@@ -18,6 +18,7 @@ import {
   ReprintKitchenRequestSchema,
   RotateTableQrResponseSchema,
   RotateTakeawayQrResponseSchema,
+  ShortenLegacyQrTokensResponseSchema,
   SplitCheckoutOrderRequestSchema,
   SplitKitchenResponseSchema,
   SplitProvisionalBillRequestSchema,
@@ -40,6 +41,7 @@ import {
   type ReprintKitchenRequest,
   type RotateTableQrResponse,
   type RotateTakeawayQrResponse,
+  type ShortenLegacyQrTokensResponse,
   type SplitCheckoutOrderRequest,
   type SplitKitchenResponse,
   type SplitProvisionalBillRequest,
@@ -212,6 +214,11 @@ export async function rotatePosDiningTableQr(id: number): Promise<RotateTableQrR
 export async function rotatePosTakeawayQr(): Promise<RotateTakeawayQrResponse> {
   const raw = await apiClient.post<unknown>('/api/v1/pos/takeaway-qr/rotate', {});
   return RotateTakeawayQrResponseSchema.parse(raw);
+}
+
+export async function shortenPosLegacyQrTokens(): Promise<ShortenLegacyQrTokensResponse> {
+  const raw = await apiClient.post<unknown>('/api/v1/pos/tables/shorten-qr', {});
+  return ShortenLegacyQrTokensResponseSchema.parse(raw);
 }
 
 export async function cancelPosOrder(params: {
@@ -423,6 +430,16 @@ export function useRotateTakeawayQrMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: rotatePosTakeawayQr,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
+    },
+  });
+}
+
+export function useShortenLegacyQrTokensMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: shortenPosLegacyQrTokens,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
     },

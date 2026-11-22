@@ -195,6 +195,14 @@ export class PosController {
     return this.posService.rotateTakeawayQr(userId);
   }
 
+  @Post('pos/tables/shorten-qr')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'update')
+  shortenLegacyQrTokens(@CurrentUser('id') userId: number) {
+    return this.posService.shortenLegacyQrTokens(userId);
+  }
+
   @Post('pos/orders')
   @UseGuards(JwtAuthGuard, RbacGuard)
   @RequirePermission('pos', 'create')

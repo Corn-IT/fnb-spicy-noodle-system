@@ -9,6 +9,7 @@ import {
   PublicMenuResponseSchema,
   QrTokenSchema,
   UpdateProductSchema,
+  normalizeQrToken,
   type AuthPrincipal,
   type CreateProductInput,
   type ImportMenuExcelRequest,
@@ -182,14 +183,16 @@ export class MenuService {
     token: string,
     options?: { activeOrderId?: number; guestSessionToken?: string },
   ) {
-    if (!QrTokenSchema.safeParse(token).success) throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
+    const parsedToken = QrTokenSchema.safeParse(token);
+    if (!parsedToken.success) throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
+    const normalizedToken = normalizeQrToken(parsedToken.data);
     const table = await this.prisma.diningTable.findUnique({
-      where: { qrToken: token },
+      where: { qrToken: normalizedToken },
       select: { id: true, name: true, status: true, activeOrderId: true },
     });
 
     if (!table) {
-      const isTakeaway = await isTakeawayQrToken(this.prisma, token);
+      const isTakeaway = await isTakeawayQrToken(this.prisma, normalizedToken);
       if (!isTakeaway) {
         throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
       }

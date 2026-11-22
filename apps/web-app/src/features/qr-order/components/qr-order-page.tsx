@@ -1,5 +1,6 @@
 import {
   StoreAssetKind,
+  normalizeQrToken,
   type OrderItemModifierSelection,
   type Product,
   type PublicMenuActiveOrder,
@@ -105,7 +106,8 @@ const KITCHEN_STATUS_LABELS: Record<string, { label: string; className: string }
 export function QrOrderPage() {
   useMenuSyncListener();
 
-  const { token = '' } = useParams<{ token: string }>();
+  const { token: rawToken = '' } = useParams<{ token: string }>();
+  const token = React.useMemo(() => normalizeQrToken(rawToken), [rawToken]);
   const queryClient = useQueryClient();
   const [guestCoords, setGuestCoords] = React.useState<GuestQrCoordinates | null>(null);
   const [isLocatingGuestGps, setIsLocatingGuestGps] = React.useState(false);

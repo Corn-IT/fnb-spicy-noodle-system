@@ -3,6 +3,10 @@ import { Prisma } from '@prisma/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PosSocketGateway } from '../../../gateways/pos-socket.gateway';
 import { signTakeawayGuestSessionToken, setCachedTakeawayQrToken } from '../../../common/security/takeaway-qr.util';
+import {
+  generateShortQrToken,
+  generateUniqueTableQrToken,
+} from '../../../common/utils/qr-token.util';
 import { MenuService } from '../../menu/menu.service';
 import { KitchenSplitService } from '../kitchen-split.service';
 import { PosService } from '../pos.service';
@@ -289,9 +293,16 @@ describe('Takeaway QR End-to-End Backend Logic', () => {
     });
 
     const rotated = await harness.service.rotateTakeawayQr(1);
-    expect(rotated.qrToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(rotated.qrToken).toMatch(/^mangve-[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
     expect(rotated.qrToken).not.toBe(TAKEAWAY_TOKEN);
     expect(harness.gateway.emitTableGridSync).toHaveBeenCalledWith({ takeawayQrRotated: true });
+    expect(harness.auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: {
+          changes: [{ field: 'Mã QR Mang về', from: 'cccccc...', to: 'mangve-****' }],
+        },
+      }),
+    );
   });
 
   it('should resolve Takeaway public menu and restore activeOrder only when guestSessionToken matches', async () => {
@@ -402,5 +413,89 @@ describe('Takeaway QR End-to-End Backend Logic', () => {
     await expect(
       (gateway as unknown as { authenticate: (s: unknown) => Promise<void> }).authenticate(badSocket),
     ).rejects.toThrow(/Order does not belong/);
+  });
+
+  it('generates short readable table & takeaway QR tokens and converts legacy 64-char tokens in bulk', async () => {
+    const generated = generateShortQrToken('Bàn 05');
+    expect(generated).toMatch(/^ban05-[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
+
+    let checks = 0;
+    const uniqueToken = await generateUniqueTableQrToken(
+      {
+        diningTable: {
+          findUnique: vi.fn(async () => {
+            checks += 1;
+            return checks === 1 ? { id: 99 } : null;
+          }),
+        },
+      },
+      'Bàn VIP 02',
+    );
+    expect(uniqueToken).toMatch(/^banvip02-[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
+    expect(checks).toBe(2);
+
+    const updatedTableTokens: Array<{ id: number; qrToken: string }> = [];
+    let currentTakeawayToken = 'f'.repeat(64);
+    const mockTx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      diningTable: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 1, name: 'Bàn 01', qrToken: 'a'.repeat(64) },
+          { id: 2, name: 'Bàn 02', qrToken: 'ban02-k7m9' },
+        ]),
+        findUnique: vi.fn().mockResolvedValue(null),
+        update: vi.fn(async ({ where, data }: { where: { id: number }; data: { qrToken: string } }) => {
+          updatedTableTokens.push({ id: where.id, qrToken: data.qrToken });
+          return { id: where.id, qrToken: data.qrToken };
+        }),
+      },
+      masterData: {
+        findUnique: vi.fn(async () => ({ isActive: true, metadata: { qrToken: currentTakeawayToken } })),
+        upsert: vi.fn(async (args: { update?: { metadata?: { qrToken?: string } } }) => {
+          currentTakeawayToken = args.update?.metadata?.qrToken ?? currentTakeawayToken;
+          return { metadata: { qrToken: currentTakeawayToken } };
+        }),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx)),
+    };
+    const gateway = { emitTableGridSync: vi.fn() };
+    const auditLogService = { record: vi.fn() };
+
+    const service = new PosService(
+      prisma as never,
+      gateway as never,
+      undefined as never,
+      {} as KitchenSplitService,
+      {} as TableTransferService,
+      auditLogService as never,
+    );
+
+    const summary = await service.shortenLegacyQrTokens(1);
+    expect(summary).toEqual({ updatedTables: 1, updatedTakeaway: true });
+    expect(updatedTableTokens).toHaveLength(1);
+    expect(updatedTableTokens[0]!.id).toBe(1);
+    expect(updatedTableTokens[0]!.qrToken).toMatch(/^ban01-[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
+    expect(currentTakeawayToken).toMatch(/^mangve-[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
+    expect(gateway.emitTableGridSync).toHaveBeenCalledWith({ shortenedLegacyQrTokens: true });
+
+    // Case-insensitive guest menu lookup supports mixed-case manual entry
+    const menuService = new MenuService(
+      {
+        diningTable: {
+          findUnique: vi.fn(async ({ where }: { where: { qrToken: string } }) =>
+            where.qrToken === 'ban01-k7m9'
+              ? { id: 1, name: 'Bàn 01', status: 'AVAILABLE', activeOrderId: null }
+              : null,
+          ),
+        },
+        masterData: { findMany: vi.fn().mockResolvedValue([]) },
+        product: { findMany: vi.fn().mockResolvedValue([]) },
+      } as never,
+    );
+    const guestRes = await menuService.getPublicMenu('Ban01-K7M9');
+    expect(guestRes.table.tableName).toBe('Bàn 01');
   });
 });

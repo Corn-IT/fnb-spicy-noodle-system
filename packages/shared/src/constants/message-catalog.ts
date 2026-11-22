@@ -882,6 +882,14 @@ export const MESSAGE_CATALOG: readonly MessageCatalogItem[] = [
     variables: ['tableName'],
   }),
   defineMessage({
+    key: 'pos.table.qrShortenAllSuccess',
+    module: 'POS',
+    kind: 'toast',
+    label: 'Thu gọn hàng loạt mã QR thành công',
+    defaultTitle: 'Đã chuyển {count} mã QR sang dạng ngắn dễ nhập',
+    variables: ['count'],
+  }),
+  defineMessage({
     key: 'pos.table.qrExportError',
     module: 'POS',
     kind: 'toast',

@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
-import { QrTokenSchema } from '@fnb/shared';
+import { normalizeQrToken, QrTokenSchema } from '@fnb/shared';
+import { generateShortQrToken } from '../utils/qr-token.util';
 
 const SYSTEM_CONFIG_CATEGORY = 'SYSTEM_CONFIG';
 const TAKEAWAY_QR_NORMALIZED_NAME = 'takeaway_qr_config';
@@ -28,16 +29,23 @@ function extractTokenFromMetadata(metadata: unknown): string | null {
     return null;
   }
   const rawToken = (metadata as { qrToken?: unknown }).qrToken;
-  return QrTokenSchema.safeParse(rawToken).success ? (rawToken as string) : null;
+  if (typeof rawToken !== 'string') return null;
+  const normalized = normalizeQrToken(rawToken);
+  return QrTokenSchema.safeParse(normalized).success ? normalized : null;
 }
 
 export function setCachedTakeawayQrToken(token: string | null): void {
-  cachedTakeawayQrToken = token && QrTokenSchema.safeParse(token).success ? token : null;
+  if (!token) {
+    cachedTakeawayQrToken = null;
+    return;
+  }
+  const normalized = normalizeQrToken(token);
+  cachedTakeawayQrToken = QrTokenSchema.safeParse(normalized).success ? normalized : null;
 }
 
 export function isCachedTakeawayQrToken(token: string | undefined | null): boolean {
   if (!token || !cachedTakeawayQrToken) return false;
-  return token === cachedTakeawayQrToken;
+  return normalizeQrToken(token) === cachedTakeawayQrToken;
 }
 
 export async function getTakeawayQrToken(prisma: MasterDataLookupClient): Promise<string | null> {
@@ -77,7 +85,7 @@ export async function getOrCreateTakeawayQrToken(
     return undefined;
   }
 
-  const candidateToken = randomBytes(32).toString('hex');
+  const candidateToken = generateShortQrToken('Mang về', { fallbackPrefix: 'mangve' });
   const metadata: Prisma.InputJsonObject = {
     qrToken: candidateToken,
     updatedAt: new Date().toISOString(),
@@ -108,7 +116,10 @@ export async function rotateTakeawayQrToken(
   prisma: MasterDataLookupClient,
 ): Promise<{ previousQrToken: string | null; qrToken: string }> {
   const previousQrToken = await getTakeawayQrToken(prisma);
-  const nextQrToken = randomBytes(32).toString('hex');
+  const nextQrToken = generateShortQrToken('Mang về', {
+    fallbackPrefix: 'mangve',
+    previousToken: previousQrToken,
+  });
   const metadata: Prisma.InputJsonObject = {
     qrToken: nextQrToken,
     updatedAt: new Date().toISOString(),
@@ -145,11 +156,13 @@ export async function isTakeawayQrToken(
   prisma: MasterDataLookupClient,
   token: string | undefined | null,
 ): Promise<boolean> {
-  if (!token || !QrTokenSchema.safeParse(token).success) {
+  if (!token) return false;
+  const normalized = normalizeQrToken(token);
+  if (!QrTokenSchema.safeParse(normalized).success) {
     return false;
   }
   const activeToken = await getTakeawayQrToken(prisma);
-  return Boolean(activeToken && activeToken === token);
+  return Boolean(activeToken && activeToken === normalized);
 }
 
 export function signTakeawayGuestSessionToken(orderId: number, orderCode: string): string {

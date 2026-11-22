@@ -49,6 +49,27 @@ const LazyStoreSettingsPage = React.lazy(loadStoreSettingsPage);
 
 export const appRoutes: RouteObject[] = [
   {
+    path: '/q/:token',
+    errorElement: <RootRouteErrorElement />,
+    element: (
+      <React.Suspense
+        fallback={<DelayedPageFallback variant="qr" label="Đang tải thực đơn QR..." />}
+      >
+        <LazyQrOrderPage />
+      </React.Suspense>
+    ),
+  },
+  {
+    path: '/q',
+    errorElement: <RootRouteErrorElement />,
+    element: <NotFoundPage variant="guest" />,
+  },
+  {
+    path: '/q/*',
+    errorElement: <RootRouteErrorElement />,
+    element: <NotFoundPage variant="guest" />,
+  },
+  {
     path: '/qr/:token',
     errorElement: <RootRouteErrorElement />,
     element: (

@@ -192,7 +192,7 @@ describe('seedDatabase', () => {
     expect(paymentAccounts.get('BIDV:8878564012')?.accountName).toBe('TRAN VAN HUNG');
     expect(paymentAccounts.get('VCB:0351000647045')?.accountName).toBe('TRAN VAN HUNG');
     const qrTokens = [...tables.values()].map((table) => String(table.qrToken));
-    expect(qrTokens.every((token) => /^[0-9a-f]{64}$/.test(token))).toBe(true);
+    expect(qrTokens.every((token) => /^ban\d{2}-[23456789abcdefghjkmnpqrstuvwxyz]{4}$/.test(token))).toBe(true);
     expect(new Set(qrTokens).size).toBe(30);
 
     const expectedComboCount = productSeed.reduce((sum, p) => sum + p.comboItems.length, 0);

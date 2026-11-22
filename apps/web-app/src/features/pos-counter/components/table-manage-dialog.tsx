@@ -1,4 +1,4 @@
-import { type PosTableGridResponse } from '@fnb/shared';
+import { isLegacyLongQrToken, type PosTableGridResponse } from '@fnb/shared';
 import {
   Archive,
   Copy,
@@ -8,6 +8,7 @@ import {
   QrCode,
   RefreshCw,
   ShoppingBag,
+  Sparkles,
   Trash2,
   Utensils,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ import {
   useDeleteDiningTableMutation,
   useRotateDiningTableQrMutation,
   useRotateTakeawayQrMutation,
+  useShortenLegacyQrTokensMutation,
   useUpdateDiningTableMutation,
 } from '../api/pos.api';
 
@@ -89,12 +91,18 @@ export function TableManageDialog({
   const deleteMutation = useDeleteDiningTableMutation();
   const rotateQrMutation = useRotateDiningTableQrMutation();
   const rotateTakeawayQrMutation = useRotateTakeawayQrMutation();
+  const shortenQrMutation = useShortenLegacyQrTokensMutation();
+
+  const hasLegacyLongQr = React.useMemo(
+    () => tables.some((t) => isLegacyLongQrToken(t.qrToken)) || isLegacyLongQrToken(takeawayQrToken),
+    [tables, takeawayQrToken],
+  );
 
   const effectiveStoreName = settings.qr.storeName || settings.storeName || 'Quán Mì Cay';
 
   const buildTableQrUrl = React.useCallback((qrToken: string) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
-    return `${origin}/qr/${encodeURIComponent(qrToken)}`;
+    return `${origin}/q/${encodeURIComponent(qrToken)}`;
   }, []);
 
   React.useEffect(() => {
@@ -387,6 +395,27 @@ export function TableManageDialog({
     tableName: confirmDeleteTable?.name ?? '',
   });
 
+  const handleShortenAllLegacyQr = async () => {
+    try {
+      const res = await shortenQrMutation.mutateAsync();
+      const total = res.updatedTables + (res.updatedTakeaway ? 1 : 0);
+      notify('pos.table.qrShortenAllSuccess', {
+        variant: 'success',
+        vars: { count: total },
+      });
+    } catch (error) {
+      const resolvedErr = resolveErrorMessage(
+        'pos.table.qrExportError',
+        error,
+        'Không thể rút gọn danh sách mã QR cũ',
+      );
+      notify('pos.table.qrExportError', {
+        variant: 'destructive',
+        vars: { reason: resolvedErr.description ?? 'Không thể rút gọn danh sách mã QR cũ' },
+      });
+    }
+  };
+
   return (
     <>
       <Dialog
@@ -412,18 +441,34 @@ export function TableManageDialog({
                   Thêm bàn mới, đổi tên bàn hoặc xuất ảnh mã QR cho từng bàn và kênh Mang về.
                 </DialogDescription>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="download-all-qr-zip-btn"
-                disabled={isExportingZip || (tables.every((t) => !t.qrToken) && !takeawayQrToken)}
-                onClick={() => void handleDownloadAllQrZip()}
-                className="gap-1.5 font-semibold shrink-0"
-              >
-                <Archive className="h-4 w-4 text-accent-text" />
-                <span>{isExportingZip ? 'Đang nén...' : 'Tải tất cả (.zip)'}</span>
-              </Button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {canManageTables && hasLegacyLongQr ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="shorten-legacy-qr-btn"
+                    disabled={shortenQrMutation.isPending}
+                    onClick={() => void handleShortenAllLegacyQr()}
+                    className="gap-1.5 font-semibold border-amber-500/50 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    <span>{shortenQrMutation.isPending ? 'Đang rút gọn...' : 'Thu gọn mã QR cũ'}</span>
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="download-all-qr-zip-btn"
+                  disabled={isExportingZip || (tables.every((t) => !t.qrToken) && !takeawayQrToken)}
+                  onClick={() => void handleDownloadAllQrZip()}
+                  className="gap-1.5 font-semibold shrink-0"
+                >
+                  <Archive className="h-4 w-4 text-accent-text" />
+                  <span>{isExportingZip ? 'Đang nén...' : 'Tải tất cả (.zip)'}</span>
+                </Button>
+              </div>
             </div>
           </DialogHeader>
 
@@ -437,9 +482,20 @@ export function TableManageDialog({
                   <ShoppingBag className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-bold text-foreground">
-                    Mã QR Đặt món Mang về (Takeaway)
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-bold text-foreground">
+                      Mã QR Đặt món Mang về (Takeaway)
+                    </p>
+                    <button
+                      type="button"
+                      data-testid="copy-short-takeaway-qr-chip"
+                      onClick={() => void handleCopyQrLink('Đặt món Mang về', takeawayQrToken)}
+                      title="Bấm để sao chép đường dẫn ngắn"
+                      className="inline-flex max-w-[180px] items-center rounded-md border border-indigo-500/30 bg-background/80 px-2 py-0.5 font-mono text-[11px] font-semibold text-indigo-700 hover:bg-indigo-500/10 dark:text-indigo-300 truncate"
+                    >
+                      /q/{takeawayQrToken}
+                    </button>
+                  </div>
                   <p className="text-xs text-muted-foreground truncate">
                     Dán tại quầy hoặc mặt tiền — mỗi lượt quét tạo 1 đơn Mang về độc lập.
                   </p>
@@ -573,7 +629,7 @@ export function TableManageDialog({
                       editingTable?.id === t.id && 'ring-2 ring-primary border-primary',
                     )}
                   >
-                    <div className="flex items-center justify-between gap-1.5 mb-2.5">
+                    <div className="flex items-center justify-between gap-1.5 mb-1.5">
                       <span className="font-bold text-sm text-foreground truncate">{t.name}</span>
                       <span
                         className={cn(
@@ -593,6 +649,17 @@ export function TableManageDialog({
                             : 'Đang phục vụ'}
                       </span>
                     </div>
+                    {t.qrToken ? (
+                      <button
+                        type="button"
+                        data-testid={`short-table-qr-chip-${t.id}`}
+                        onClick={() => void handleCopyQrLink(t.name, t.qrToken)}
+                        title="Bấm để sao chép đường dẫn ngắn"
+                        className="mb-2 inline-flex w-fit max-w-full items-center rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-muted-foreground hover:text-foreground hover:border-primary/40 truncate"
+                      >
+                        /q/{t.qrToken}
+                      </button>
+                    ) : null}
 
                     {canManageTables ? (
                       <div className="space-y-1.5 pt-2 border-t border-border/60">

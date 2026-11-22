@@ -135,11 +135,12 @@ export async function renderQrCardPngBlob(params: QrCardPngParams): Promise<Blob
   // Footer instructions
   ctx.fillStyle = '#334155';
   ctx.font = '600 22px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText('Mở Camera hoặc Zalo để quét mã', width / 2, 782, width - 96);
+  ctx.fillText('Mở Camera hoặc truy cập nhanh:', width / 2, 780, width - 96);
 
-  ctx.fillStyle = '#94A3B8';
-  ctx.font = '500 16px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-  const shortUrl = params.qrUrl.length > 56 ? `${params.qrUrl.slice(0, 53)}...` : params.qrUrl;
+  ctx.fillStyle = '#475569';
+  ctx.font = '600 18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+  const cleanDisplayUrl = params.qrUrl.replace(/^https?:\/\//i, '');
+  const shortUrl = cleanDisplayUrl.length > 56 ? `${cleanDisplayUrl.slice(0, 53)}...` : cleanDisplayUrl;
   ctx.fillText(shortUrl, width / 2, 826, width - 96);
 
   return new Promise<Blob>((resolve, reject) => {
