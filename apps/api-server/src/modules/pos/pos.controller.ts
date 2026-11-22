@@ -113,6 +113,7 @@ export class PosController {
         clientIp: req ? extractClientIp(req) : undefined,
         latitude: body.latitude,
         longitude: body.longitude,
+        qrToken: body.qrToken,
       });
     }
     return this.posService.createQrOrder(body);
@@ -184,6 +185,14 @@ export class PosController {
   @RequirePermission('pos', 'update')
   rotateTableQr(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: number) {
     return this.posService.rotateTableQr(id, userId);
+  }
+
+  @Post('pos/takeaway-qr/rotate')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'update')
+  rotateTakeawayQr(@CurrentUser('id') userId: number) {
+    return this.posService.rotateTakeawayQr(userId);
   }
 
   @Post('pos/orders')

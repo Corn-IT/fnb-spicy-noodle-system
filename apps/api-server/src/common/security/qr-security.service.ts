@@ -11,6 +11,7 @@ import {
 } from '@fnb/shared';
 import { AuditLogService } from '../audit/audit-log.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { isTakeawayQrToken } from './takeaway-qr.util';
 
 const SYSTEM_CONFIG_CATEGORY = 'SYSTEM_CONFIG';
 const QR_SECURITY_NORMALIZED_NAME = 'qr_security_config';
@@ -26,6 +27,7 @@ const DEFAULT_QR_SECURITY_CONFIG: QrSecurityConfig = {
   shopLatitude: null,
   shopLongitude: null,
   geoRadiusMeters: 200,
+  applySecurityToTakeaway: false,
 };
 
 @Injectable()
@@ -171,6 +173,13 @@ export class QrSecurityService {
           to: `${nextConfig.geoRadiusMeters}m`,
         });
       }
+      if (prevConfig.applySecurityToTakeaway !== nextConfig.applySecurityToTakeaway) {
+        changes.push({
+          field: 'Bảo mật QR Mang về',
+          from: prevConfig.applySecurityToTakeaway ? 'Bật' : 'Tắt',
+          to: nextConfig.applySecurityToTakeaway ? 'Bật' : 'Tắt',
+        });
+      }
       if (
         prevConfig.shopLatitude !== nextConfig.shopLatitude ||
         prevConfig.shopLongitude !== nextConfig.shopLongitude
@@ -225,9 +234,17 @@ export class QrSecurityService {
     clientIp?: string;
     latitude?: number | null;
     longitude?: number | null;
+    qrToken?: string;
   }): Promise<void> {
     const { config, syncedPosIp } = await this.loadConfigState();
     if (!config.wifiProtectionEnabled && !config.geoProtectionEnabled) {
+      return;
+    }
+    if (
+      !config.applySecurityToTakeaway &&
+      params.qrToken &&
+      (await isTakeawayQrToken(this.prisma, params.qrToken))
+    ) {
       return;
     }
 
@@ -363,6 +380,7 @@ export class QrSecurityService {
         shopLongitude: typeof rawMeta.shopLongitude === 'number' ? rawMeta.shopLongitude : null,
         geoRadiusMeters:
           typeof rawMeta.geoRadiusMeters === 'number' ? Math.round(rawMeta.geoRadiusMeters) : 200,
+        applySecurityToTakeaway: Boolean(rawMeta.applySecurityToTakeaway),
       });
 
       const config = parsedConfig.success ? parsedConfig.data : DEFAULT_QR_SECURITY_CONFIG;
@@ -402,7 +420,7 @@ export function normalizeClientIp(rawIp: string | undefined | null): string {
 
 export function isWifiIpAllowed(
   guestIp: string,
-  config: QrSecurityConfig,
+  config: Pick<QrSecurityConfig, 'allowedWifiIps' | 'autoSyncPosIp'>,
   syncedPosIp: string | null,
 ): boolean {
   const normalizedGuest = normalizeClientIp(guestIp);

@@ -26,8 +26,17 @@ import {
   assertActiveSessionMatches,
   extractTokenSessionId,
 } from '../common/security/session-validation.util';
+import {
+  isTakeawayQrToken,
+  verifyTakeawayGuestSessionToken,
+} from '../common/security/takeaway-qr.util';
 
-type SocketAuth = { token?: unknown; qrToken?: unknown; orderId?: unknown };
+type SocketAuth = {
+  token?: unknown;
+  qrToken?: unknown;
+  orderId?: unknown;
+  guestSessionToken?: unknown;
+};
 type PosSocket = Socket & {
   data: Socket['data'] & {
     authMode?: 'staff' | 'guest';
@@ -246,11 +255,13 @@ export class PosSocketGateway
       throw new Error('Invalid QR guest credentials');
     }
 
+    const qrToken = auth.qrToken as string;
     const table = await this.prisma.diningTable.findUnique({
-      where: { qrToken: auth.qrToken as string },
+      where: { qrToken },
       select: { id: true },
     });
-    if (!table) throw new Error('Unknown QR table token');
+    const isTakeawayQr = table ? false : await isTakeawayQrToken(this.prisma, qrToken);
+    if (!table && !isTakeawayQr) throw new Error('Unknown QR table token');
     client.data.authMode = 'guest';
 
     const orderId = typeof auth.orderId === 'number' ? auth.orderId : Number(auth.orderId);
@@ -259,6 +270,7 @@ export class PosSocketGateway
         order?: {
           findUnique?: (args: unknown) => Promise<{
             id: number;
+            orderCode?: string;
             tableId: number | null;
             orderType: string;
             orderSource: string;
@@ -270,13 +282,26 @@ export class PosSocketGateway
       if (typeof orderRepo?.findUnique === 'function') {
         const order = await orderRepo.findUnique({
           where: { id: orderId },
-          select: { id: true, tableId: true, orderType: true, orderSource: true, status: true },
+          select: {
+            id: true,
+            orderCode: true,
+            tableId: true,
+            orderType: true,
+            orderSource: true,
+            status: true,
+          },
         });
-        const validSessionOrder =
-          order !== null &&
-          order.orderType === 'DINE_IN' &&
-          order.status !== 'VOIDED' &&
-          (order.tableId === table.id || order.orderSource === 'QR_CODE');
+        const validSessionOrder = isTakeawayQr
+          ? order !== null &&
+            order.orderType === 'TAKEAWAY' &&
+            order.orderSource === 'QR_CODE' &&
+            order.status !== 'VOIDED' &&
+            typeof order.orderCode === 'string' &&
+            verifyTakeawayGuestSessionToken(auth.guestSessionToken, order.id, order.orderCode)
+          : order !== null &&
+            order.orderType === 'DINE_IN' &&
+            order.status !== 'VOIDED' &&
+            (order.tableId === table?.id || order.orderSource === 'QR_CODE');
         if (!validSessionOrder) {
           throw new Error('Order does not belong to this QR table session');
         }
