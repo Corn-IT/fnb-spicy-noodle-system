@@ -228,10 +228,17 @@ export class MenuService {
     }
 
     const catalog = await this.getCachedPublicMenuCatalog();
-    const loadedTableOrder =
-      table.activeOrderId !== null
-        ? await this.loadPublicActiveOrder(table.activeOrderId)
+    const transferredOrderId =
+      options?.activeOrderId && options.activeOrderId !== table.activeOrderId
+        ? await this.resolveTransferredTableOrderId(options.activeOrderId, table)
         : null;
+    let loadedTableOrder =
+      transferredOrderId !== null
+        ? await this.loadPublicActiveOrder(transferredOrderId)
+        : null;
+    if (!loadedTableOrder && table.activeOrderId !== null) {
+      loadedTableOrder = await this.loadPublicActiveOrder(table.activeOrderId);
+    }
 
     return PublicMenuResponseSchema.parse({
       orderMode: 'DINE_IN',
@@ -239,7 +246,7 @@ export class MenuService {
         tableId: table.id,
         tableName: table.name,
         status: table.status,
-        activeOrderId: table.activeOrderId,
+        activeOrderId: loadedTableOrder?.activeOrder?.orderId ?? table.activeOrderId,
       },
       stations: catalog.stations,
       categories: catalog.categories,
@@ -247,6 +254,42 @@ export class MenuService {
       products: catalog.products,
       updatedAt: new Date().toISOString(),
     });
+  }
+
+  private async resolveTransferredTableOrderId(
+    requestedOrderId: number,
+    table: { id: number; name: string },
+  ): Promise<number | null> {
+    if (typeof this.prisma.order?.findUnique !== 'function') {
+      return null;
+    }
+    const source = await this.prisma.order.findUnique({
+      where: { id: requestedOrderId },
+      select: {
+        id: true,
+        tableId: true,
+        status: true,
+        mergedIntoOrderId: true,
+        tableTransferLogs: true,
+      },
+    });
+    if (!source) return null;
+    const isTransferredFromTable =
+      source.tableId === table.id ||
+      (Array.isArray(source.tableTransferLogs) &&
+        source.tableTransferLogs.some(
+          (entry) =>
+            typeof entry === 'object' &&
+            entry !== null &&
+            (entry as { fromTable?: unknown }).fromTable === table.name,
+        ));
+    if (!isTransferredFromTable) {
+      return null;
+    }
+    if (source.status === 'MERGED' && typeof source.mergedIntoOrderId === 'number') {
+      return source.mergedIntoOrderId;
+    }
+    return source.status === 'PENDING' || source.status === 'SERVING' ? source.id : null;
   }
 
   private async loadPublicActiveOrder(
@@ -266,8 +309,11 @@ export class MenuService {
         takeawayNumber: true,
         note: true,
         status: true,
+        subtotalAmount: true,
+        discountAmount: true,
         totalAmount: true,
         createdAt: true,
+        table: { select: { name: true } },
         items: {
           where: { kitchenStatus: { not: 'CANCELLED' } },
           orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
@@ -303,7 +349,14 @@ export class MenuService {
       orderId: order.id,
       orderCode: order.orderCode,
       status: order.status,
+      ...(order.subtotalAmount !== undefined
+        ? { subtotalAmount: order.subtotalAmount.toNumber() }
+        : {}),
+      ...(order.discountAmount !== undefined
+        ? { discountAmount: order.discountAmount.toNumber() }
+        : {}),
       totalAmount: order.totalAmount.toNumber(),
+      ...(order.table?.name ? { tableLabel: order.table.name } : {}),
       ...(order.note ? { note: order.note } : {}),
       createdAt: order.createdAt.toISOString(),
       items: order.items.map((item) => {

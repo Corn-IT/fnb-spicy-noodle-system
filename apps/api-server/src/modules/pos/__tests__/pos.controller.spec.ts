@@ -6,6 +6,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../../common/guards/rbac.guard';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { QrSecurityService } from '../../../common/security/qr-security.service';
+import { PosSocketGateway } from '../../../gateways/pos-socket.gateway';
 import { InvoicesController } from '../invoices.controller';
 import { InvoicesService } from '../invoices.service';
 import { PosController } from '../pos.controller';
@@ -29,6 +31,14 @@ describe('POS and invoice HTTP routes', () => {
     get: vi.fn(async () => ({ orderId: 43 })),
     voidInvoice: vi.fn(async () => ({ orderId: 43, status: 'VOIDED' })),
   };
+  const qrSecurityService = {
+    updateConfig: vi.fn(async () => ({ wifiProtectionEnabled: true })),
+    verifyGuestQrAccess: vi.fn(async () => undefined),
+    recordPosClientIp: vi.fn(),
+  };
+  const gateway = {
+    emitStoreSettingsUpdated: vi.fn(),
+  };
   const adminRecord = {
     id: 1, employeeId: 1, username: 'superadmin', isSuperAdmin: true, isActive: true,
     permissions: UserPermissionsSchema.parse({}),
@@ -47,6 +57,8 @@ describe('POS and invoice HTTP routes', () => {
       providers: [
         { provide: PosService, useValue: posService },
         { provide: InvoicesService, useValue: invoicesService },
+        { provide: QrSecurityService, useValue: qrSecurityService },
+        { provide: PosSocketGateway, useValue: gateway },
         { provide: JwtService, useValue: { verifyAsync: async (token: string) => ({ sub: token === 'cashier-token' ? 2 : 1, tokenType: 'access' }) } },
         { provide: PrismaService, useValue: { user: { findUnique: async (args: { where: { id: number } }) => (
           args.where.id === cashierRecord.id ? cashierRecord : adminRecord
@@ -135,5 +147,17 @@ describe('POS and invoice HTTP routes', () => {
 
     expect(response.status).toBe(403);
     expect(invoicesService.voidInvoice).not.toHaveBeenCalled();
+  });
+
+  it('emits store:settings_updated when QR security config is updated so active guests lock/unlock realtime', async () => {
+    gateway.emitStoreSettingsUpdated.mockClear();
+    const res = await fetch(`${baseUrl}/api/v1/pos/qr-security-config`, {
+      method: 'PUT',
+      headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ wifiProtectionEnabled: true }),
+    });
+    expect(res.status).toBe(200);
+    expect(qrSecurityService.updateConfig).toHaveBeenCalledTimes(1);
+    expect(gateway.emitStoreSettingsUpdated).toHaveBeenCalledTimes(1);
   });
 });

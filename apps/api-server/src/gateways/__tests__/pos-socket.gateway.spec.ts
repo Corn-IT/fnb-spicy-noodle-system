@@ -37,17 +37,50 @@ describe('PosSocketGateway', () => {
     expect(client.disconnect).not.toHaveBeenCalled();
   });
 
-  it('should let a QR guest join only the order session for its supplied order', async () => {
+  it('should let a QR guest join only its table room and order session room', async () => {
     const jwt = { verifyAsync: vi.fn() };
-    const prisma = { user: { findUnique: vi.fn() }, diningTable: { findUnique: vi.fn().mockResolvedValue({ id: 7 }) } };
-    const client = createClient({ qrToken: 'a'.repeat(64), orderId: '42' });
+    const prisma = { user: { findUnique: vi.fn() }, diningTable: { findUnique: vi.fn().mockResolvedValue({ id: 7, name: 'Bàn 07' }) } };
+    const clientWithOrder = createClient({ qrToken: 'a'.repeat(64), orderId: '42' });
+    const clientIdle = createClient({ qrToken: 'a'.repeat(64) });
     const gateway = new PosSocketGateway(jwt as unknown as JwtService, prisma as never);
 
-    await gateway.handleConnection(client as never);
+    await gateway.handleConnection(clientWithOrder as never);
+    await gateway.handleConnection(clientIdle as never);
 
-    expect(client.join).toHaveBeenCalledExactlyOnceWith(SocketRooms.orderSession(42));
-    expect(client.join).not.toHaveBeenCalledWith(SocketRooms.POS_CASHIER);
+    expect(clientWithOrder.join).toHaveBeenCalledWith(SocketRooms.tableSession(7));
+    expect(clientWithOrder.join).toHaveBeenCalledWith(SocketRooms.orderSession(42));
+    expect(clientWithOrder.join).toHaveBeenCalledTimes(2);
+    expect(clientWithOrder.join).not.toHaveBeenCalledWith(SocketRooms.POS_CASHIER);
+    expect(clientIdle.join).toHaveBeenCalledExactlyOnceWith(SocketRooms.tableSession(7));
     expect(jwt.verifyAsync).not.toHaveBeenCalled();
+  });
+
+  it('should reject a DINE_IN QR guest joining another table active order (anti-IDOR)', async () => {
+    const prisma = {
+      diningTable: { findUnique: vi.fn().mockResolvedValue({ id: 2, name: 'Bàn 02' }) },
+      order: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 42,
+          orderCode: 'HD-42',
+          tableId: 1,
+          orderType: 'DINE_IN',
+          orderSource: 'QR_CODE',
+          status: 'SERVING',
+          tableTransferLogs: [],
+        }),
+      },
+    } as unknown as PrismaService;
+    const gateway = new PosSocketGateway({} as JwtService, prisma);
+    const client = {
+      handshake: { auth: { qrToken: 'b'.repeat(64), orderId: 42 } },
+      data: {},
+      join: vi.fn(),
+    };
+
+    await expect(
+      (gateway as unknown as { authenticate: (s: unknown) => Promise<void> }).authenticate(client),
+    ).rejects.toThrow(/Order does not belong/);
+    expect(client.join).not.toHaveBeenCalled();
   });
 
   it('should disconnect clients with missing or invalid staff authentication', async () => {
@@ -172,6 +205,23 @@ describe('PosSocketGateway', () => {
     gateway.emitStoreSettingsUpdated({ version: 'v1' });
     const perms = UserPermissionsSchema.parse({ pos: { view: true } });
     gateway.emitPermissionsUpdated(7, perms);
+    const qrNotice = {
+      orderId: 42,
+      tableId: 7,
+      kind: 'PROVISIONAL_BILL_PRINTED' as const,
+      totalAmount: 150000,
+      timestamp: '2026-11-22T12:00:00.000Z',
+    };
+    gateway.emitQrOrderNotice(42, qrNotice);
+    gateway.emitTableOrderNotice(7, {
+      orderId: 42,
+      tableId: 7,
+      kind: 'GUEST_ORDER_CREATED',
+      batchNo: 1,
+      totalAmount: 50000,
+      timestamp: '2026-11-22T12:00:00.000Z',
+    });
+    gateway.emitTableQrRotated(7, 42);
 
     expect(emissions).toEqual([
       { room: SocketRooms.POS_CASHIER, event: SocketEvents.ORDER_QR_NEW, payload },
@@ -189,6 +239,24 @@ describe('PosSocketGateway', () => {
         room: SocketRooms.userAccount(7),
         event: SocketEvents.PERMISSIONS_UPDATED,
         payload: { userId: 7, permissions: perms, updatedAt: expect.any(String) },
+      },
+      { room: SocketRooms.orderSession(42), event: SocketEvents.QR_ORDER_NOTICE, payload: qrNotice },
+      {
+        room: SocketRooms.tableSession(7),
+        event: SocketEvents.QR_ORDER_NOTICE,
+        payload: {
+          orderId: 42,
+          tableId: 7,
+          kind: 'GUEST_ORDER_CREATED',
+          batchNo: 1,
+          totalAmount: 50000,
+          timestamp: '2026-11-22T12:00:00.000Z',
+        },
+      },
+      {
+        room: [SocketRooms.tableSession(7), SocketRooms.orderSession(42)],
+        event: SocketEvents.TABLE_QR_ROTATED,
+        payload: { tableId: 7, rotatedAt: expect.any(String) },
       },
     ]);
   });

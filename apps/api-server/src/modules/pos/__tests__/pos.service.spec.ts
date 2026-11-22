@@ -92,6 +92,9 @@ function createHarness() {
     emitQrAddonOrder: vi.fn(),
     emitOrderStatusUpdated: vi.fn(),
     emitOrderSessionRedirected: vi.fn(),
+    emitQrOrderNotice: vi.fn(),
+    emitTableOrderNotice: vi.fn(),
+    emitTableQrRotated: vi.fn(),
     emitTableGridSync: vi.fn(),
   };
   const configuration = {
@@ -898,5 +901,108 @@ describe('PosService', () => {
         paymentAccountId: null,
       }),
     }));
+    expect(harness.gateway.emitOrderStatusUpdated).toHaveBeenCalledWith(
+      88,
+      expect.objectContaining({
+        status: 'VOIDED',
+        reason: 'Khách huỷ bàn trước khi thanh toán',
+      }),
+    );
+  });
+
+  it('should emit QR realtime notices for patchOrderItems cancellations, provisional bills, table QR rotation, and QR order rejection reasons', async () => {
+    const harness = createHarness();
+    // 1. patchOrderItems removing/reducing items
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 51, tableId: 3 })
+      .mockResolvedValueOnce({
+        id: 51,
+        orderCode: 'HD-51',
+        tableId: 3,
+        status: 'SERVING',
+        totalAmount: new Prisma.Decimal('100.00'),
+        discountSnapshot: null,
+        table: { id: 3, name: 'Bàn 03' },
+        items: [
+          {
+            id: 201,
+            productId: 11,
+            quantity: 2,
+            unitPrice: new Prisma.Decimal('50.00'),
+            modifiersSnapshot: [],
+            itemNote: null,
+            kitchenStatus: 'NEW',
+            product: { name: 'Mì bò', station: 'BEP_NAU', comboParents: [] },
+          },
+        ],
+      });
+    harness.tx.orderItem.findMany.mockResolvedValue([{ id: 201, quantity: 1, unitPrice: new Prisma.Decimal('50.00'), modifiersSnapshot: [], product: { categoryId: null } }]);
+    harness.tx.product.findMany.mockResolvedValue([{ ...product, price: new Prisma.Decimal('50.00') }]);
+    const service = createPosService(harness);
+
+    await service.patchOrderItems(51, { removeItemIds: [201] }, 1);
+    expect(harness.gateway.emitQrOrderNotice).toHaveBeenCalledWith(
+      51,
+      expect.objectContaining({
+        orderId: 51,
+        tableId: 3,
+        kind: 'ITEMS_UPDATED',
+        cancelledItems: [{ name: 'Mì bò', quantity: 2 }],
+      }),
+    );
+
+    // 2. getProvisionalBill -> PROVISIONAL_BILL_PRINTED without leaking payment account/VietQR
+    harness.gateway.emitQrOrderNotice.mockClear();
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 51,
+      orderCode: 'HD-51',
+      orderType: 'DINE_IN',
+      tableId: 3,
+      takeawayNumber: null,
+      status: 'SERVING',
+      totalAmount: new Prisma.Decimal('50000.00'),
+      discountSnapshot: null,
+      table: { id: 3, name: 'Bàn 03', status: 'OCCUPIED' },
+      items: [],
+    });
+    await service.getProvisionalBill(51, 1);
+    expect(harness.gateway.emitQrOrderNotice).toHaveBeenCalledWith(
+      51,
+      expect.objectContaining({
+        orderId: 51,
+        tableId: 3,
+        kind: 'PROVISIONAL_BILL_PRINTED',
+        totalAmount: 50000,
+      }),
+    );
+
+    // 3. rotateTableQr -> emits TABLE_QR_ROTATED with activeOrderId
+    harness.tx.diningTable.findUnique
+      .mockResolvedValueOnce({ id: 3, name: 'Bàn 03', status: 'OCCUPIED', activeOrderId: 51, qrToken: 'ban03-old1' })
+      .mockResolvedValueOnce(null);
+    harness.tx.diningTable.update.mockResolvedValueOnce({
+      id: 3,
+      name: 'Bàn 03',
+      qrToken: 'ban03-new2',
+      status: 'OCCUPIED',
+      activeOrderId: 51,
+    });
+    await service.rotateTableQr(3, 1);
+    expect(harness.gateway.emitTableQrRotated).toHaveBeenCalledWith(3, 51);
+
+    // 4. approveQrOrder(false) -> forwards reason to QR room
+    harness.gateway.emitOrderStatusUpdated.mockClear();
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 52, tableId: 4 })
+      .mockResolvedValueOnce({ id: 52, orderCode: 'HD-52', orderSource: 'QR_CODE', status: 'PENDING', tableId: 4, table: { name: 'Bàn 04' } });
+    harness.tx.order.update.mockResolvedValueOnce({ id: 52, orderCode: 'HD-52', status: 'VOIDED' });
+    await service.approveQrOrder(52, { approved: false, reason: 'Quán tạm hết nguyên liệu lẩu' }, 1);
+    expect(harness.gateway.emitOrderStatusUpdated).toHaveBeenCalledWith(
+      52,
+      expect.objectContaining({
+        status: 'VOIDED',
+        reason: 'Quán tạm hết nguyên liệu lẩu',
+      }),
+    );
   });
 });

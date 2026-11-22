@@ -369,8 +369,31 @@ export class PosService {
       throw error;
     }
 
-    if (result.kind === 'new') this.gateway.emitQrNewOrder(result.payload);
-    else this.gateway.emitQrAddonOrder(result.payload);
+    if (result.kind === 'new') {
+      this.gateway.emitQrNewOrder(result.payload);
+      const tableId = (result.payload as { tableId?: number | null })?.tableId ?? null;
+      if (typeof tableId === 'number') {
+        this.gateway.emitTableOrderNotice?.(tableId, {
+          orderId: result.response.orderId,
+          tableId,
+          kind: 'GUEST_ORDER_CREATED',
+          batchNo: result.response.batchNo,
+          totalAmount: result.response.totalAmount,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } else {
+      this.gateway.emitQrAddonOrder(result.payload);
+      const tableId = (result.payload as { tableId?: number | null })?.tableId ?? null;
+      this.gateway.emitQrOrderNotice?.(result.response.orderId, {
+        orderId: result.response.orderId,
+        tableId,
+        kind: 'GUEST_ADDON_ADDED',
+        batchNo: result.response.batchNo,
+        totalAmount: result.response.totalAmount,
+        timestamp: new Date().toISOString(),
+      });
+    }
     return result.response;
   }
 
@@ -703,6 +726,7 @@ export class PosService {
     });
 
     this.gateway.emitTableGridSync({ tableId: id });
+    this.gateway.emitTableQrRotated?.(id, result.table.activeOrderId);
     if (userId) {
       const oldShort = maskQrTokenForAudit(result.previousQrToken);
       const newShort = maskQrTokenForAudit(result.table.qrToken);
@@ -773,6 +797,7 @@ export class PosService {
       message: parsed.approved
         ? 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp'
         : 'Đơn hàng đã bị từ chối',
+      ...(!parsed.approved && parsed.reason ? { reason: parsed.reason } : {}),
     });
     this.gateway.emitTableGridSync({ orderId: id, status: order.order.status });
     await this.auditLogService?.record({
@@ -832,7 +857,11 @@ export class PosService {
       return { order: updated as OrderRow, tableId: current.tableId, tableLabel };
     });
 
-    this.gateway.emitOrderStatusUpdated(id, { status: 'VOIDED', message: 'Đơn hàng đã được huỷ và giải phóng bàn' });
+    this.gateway.emitOrderStatusUpdated(id, {
+      status: 'VOIDED',
+      message: 'Đơn hàng đã được huỷ và giải phóng bàn',
+      ...(parsed.voidReason ? { reason: parsed.voidReason } : {}),
+    });
     this.gateway.emitTableGridSync({ orderId: id, tableId: result.tableId, status: 'AVAILABLE' });
     if (cashierId) {
       await this.auditLogService?.record({
@@ -935,6 +964,7 @@ export class PosService {
       const totalAmount = totals.totalDecimal;
 
       const auditChanges: Array<{ field: string; from: string; to: string }> = [];
+      const cancelledItems: Array<{ name: string; quantity: number }> = [];
       for (const itemId of parsed.removeItemIds ?? []) {
         const item = itemsById.get(itemId);
         if (item) {
@@ -942,6 +972,7 @@ export class PosService {
           const mods = this.modifierNames(item.modifiersSnapshot);
           const desc = `${item.quantity}x ${itemName}${mods.length ? ` (${mods.join(', ')})` : ''}`;
           auditChanges.push({ field: 'Xoá / huỷ món', from: desc, to: 'Đã bỏ khỏi đơn' });
+          cancelledItems.push({ name: itemName, quantity: item.quantity });
         }
       }
       for (const update of parsed.updates ?? []) {
@@ -951,6 +982,9 @@ export class PosService {
           const oldMods = this.modifierNames(item.modifiersSnapshot);
           const replacement = replacementsByOrderItemId.get(update.orderItemId);
           const nextQty = update.quantity ?? item.quantity;
+          if (nextQty < item.quantity) {
+            cancelledItems.push({ name: itemName, quantity: item.quantity - nextQty });
+          }
           const nextMods = replacement ? this.modifierNames(replacement.modifiersSnapshot) : oldMods;
           const oldNote = item.itemNote ?? '';
           const nextNote = update.itemNote === undefined ? oldNote : (update.itemNote ?? '');
@@ -996,14 +1030,24 @@ export class PosService {
         }),
         orderCode: order.orderCode,
         orderStatus: order.status,
+        tableId: order.tableId,
         tableLabel,
         changes: auditChanges,
+        cancelledItems,
       };
     });
 
     this.gateway.emitOrderStatusUpdated?.(id, {
       orderId: id,
       status: result.orderStatus,
+    });
+    this.gateway.emitQrOrderNotice?.(id, {
+      orderId: id,
+      tableId: result.tableId,
+      kind: 'ITEMS_UPDATED',
+      totalAmount: result.response.totalAmount,
+      ...(result.cancelledItems.length > 0 ? { cancelledItems: result.cancelledItems } : {}),
+      timestamp: new Date().toISOString(),
     });
     this.gateway.emitTableGridSync({ orderId: id, totalAmount: result.response.totalAmount });
     if (userId) {
@@ -1232,6 +1276,14 @@ export class PosService {
       orderId: id,
       status: 'SERVING',
     });
+    this.gateway.emitQrOrderNotice?.(id, {
+      orderId: id,
+      tableId: result.tableId,
+      kind: 'DISCOUNT_APPLIED',
+      discountAmount: result.discountAmount,
+      totalAmount: result.detail.totalAmount,
+      timestamp: new Date().toISOString(),
+    });
     this.gateway.emitTableGridSync({
       orderId: id,
       tableId: result.tableId,
@@ -1325,6 +1377,15 @@ export class PosService {
       orderId: id,
       status: 'SERVING',
     });
+    if (result.hadDiscount) {
+      this.gateway.emitQrOrderNotice?.(id, {
+        orderId: id,
+        tableId: result.tableId,
+        kind: 'DISCOUNT_REMOVED',
+        totalAmount: result.detail.totalAmount,
+        timestamp: new Date().toISOString(),
+      });
+    }
     this.gateway.emitTableGridSync({
       orderId: id,
       tableId: result.tableId,
@@ -1376,6 +1437,13 @@ export class PosService {
     });
 
     await this.recordQrSelectionAudit(qrSelection, order.orderCode, order.totalAmount.toNumber(), userId);
+    this.gateway.emitQrOrderNotice?.(order.id, {
+      orderId: order.id,
+      tableId: order.tableId,
+      kind: 'PROVISIONAL_BILL_PRINTED',
+      totalAmount: order.totalAmount.toNumber(),
+      timestamp: new Date().toISOString(),
+    });
 
     const tableCode = this.orderTableCode(order);
     const totals = computeTotalsFromRows(order.items ?? [], order.discountSnapshot);
@@ -1481,6 +1549,13 @@ export class PosService {
 
     const qrSelection = await this.qrService.selectForAmount(this.prisma, splitTotal);
     await this.recordQrSelectionAudit(qrSelection, `${order.orderCode} (Tách đơn)`, splitTotal.toNumber(), userId);
+    this.gateway.emitQrOrderNotice?.(order.id, {
+      orderId: order.id,
+      tableId: order.tableId,
+      kind: 'PROVISIONAL_BILL_PRINTED',
+      totalAmount: splitTotal.toNumber(),
+      timestamp: new Date().toISOString(),
+    });
 
     const tableCode = this.orderTableCode(order);
     const vietQrPayload = this.qrService.buildVietQrUrl(

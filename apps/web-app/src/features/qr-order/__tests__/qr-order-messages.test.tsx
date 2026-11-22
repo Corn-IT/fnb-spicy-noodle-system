@@ -1,4 +1,4 @@
-import { DEFAULT_STORE_SETTINGS, type PublicStoreSettingsResponse } from '@fnb/shared';
+import { DEFAULT_STORE_SETTINGS, SocketEvents, type PublicStoreSettingsResponse } from '@fnb/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -172,10 +172,10 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
 
     const parsed = JSON.parse(sessionStorage.getItem('fnb_qr_session_table-5-token') ?? '{}') as {
       activeOrderId: number | null;
-      redirectNotice: string | null;
+      redirectNotice?: string | null;
     };
     expect(parsed.activeOrderId).toBeNull();
-    expect(parsed.redirectNotice).toBeNull();
+    expect(parsed.redirectNotice).toBeUndefined();
 
     // Also verify cross-table stale VOIDED session recovers cleanly on socket connect_error
     connectSpy.mockClear();
@@ -308,7 +308,7 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       </QueryClientProvider>,
     );
 
-    await screen.findByTestId('qr-status-banner');
+    await screen.findByTestId('qr-table-header');
 
     // 1. Expired ADDON -> keeps SERVING session while showing 12-min addon auto-cancel banner
     await act(async () => {
@@ -685,8 +685,8 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       expect(screen.getByTestId('qr-takeaway-progress-badge')).toHaveTextContent(
         'Quầy đã xác nhận • Chờ tách bếp',
       );
-      expect(screen.getByTestId('qr-status-banner')).toHaveTextContent(
-        'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp (Đã xác nhận)',
+      expect(screen.getByTestId('qr-realtime-notice')).toHaveTextContent(
+        'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp',
       );
     });
 
@@ -734,10 +734,10 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       expect(screen.getByTestId('qr-takeaway-progress-badge')).toHaveTextContent(
         'Bếp đang chế biến (1/1 món)',
       );
-      expect(screen.getByTestId('qr-status-banner')).toHaveTextContent('(Đang phục vụ)');
+      expect(screen.getByTestId('qr-realtime-notice')).toHaveTextContent('Bếp đang chế biến');
     });
 
-    // Now simulate cashier completing payment (PAID) -> screen resets to clean state
+    // Now simulate cashier completing payment (PAID) -> screen resets active ticket, shows durable PAID banner + Gọi đơn mới button
     serverOrderStage = 'PAID';
     await act(async () => {
       for (const handler of listeners.get('order:status_updated') ?? []) {
@@ -749,6 +749,8 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Mang về');
       expect(screen.queryByTestId('qr-takeaway-active-ticket-card')).not.toBeInTheDocument();
       expect(screen.queryByTestId('qr-placed-orders-bar')).not.toBeInTheDocument();
+      expect(screen.getByTestId('qr-status-banner')).toHaveTextContent('Cảm ơn quý khách và hẹn gặp lại!');
+      expect(screen.getByTestId('qr-new-order-btn')).toBeInTheDocument();
     });
     expect(
       (JSON.parse(localStorage.getItem(`fnb_qr_session_${takeawayToken}`) ?? '{}') as {
@@ -756,5 +758,656 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       }).activeOrderId,
     ).toBeNull();
     expect(getSpy).toHaveBeenCalled();
+  });
+
+  it('auto-dismisses ephemeral notices after 6s, supports manual dismiss without persisting across F5, caps bursts, and delivers new POS->QR notices', async () => {
+    const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+    const mockSocket = {
+      connected: true,
+      connect: vi.fn(),
+      on: vi.fn((event: string, fn: (...args: unknown[]) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(fn);
+        listeners.set(event, list);
+      }),
+      off: vi.fn((event: string, fn: (...args: unknown[]) => void) => {
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter((entry) => entry !== fn),
+        );
+      }),
+      disconnect: vi.fn(),
+    };
+    vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue(mockSocket as never);
+    vi.spyOn(socketClient, 'disconnectPosSocket').mockImplementation(() => undefined);
+
+    sessionStorage.setItem(
+      'fnb_qr_session_table-1-token',
+      JSON.stringify({ activeOrderId: 101, guestSessionToken: null, currentTableLabel: 'Bàn 01' }),
+    );
+    localStorage.setItem(
+      'fnb_qr_session_table-1-token',
+      JSON.stringify({ activeOrderId: 101, guestSessionToken: null, currentTableLabel: 'Bàn 01' }),
+    );
+
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      orderMode: 'DINE_IN',
+      table: { tableId: 1, tableName: 'Bàn 01', status: 'OCCUPIED', activeOrderId: 101 },
+      stations: [],
+      categories: [],
+      activeOrder: {
+        orderId: 101,
+        orderCode: 'HD-101',
+        status: 'SERVING',
+        subtotalAmount: 40000,
+        discountAmount: 0,
+        totalAmount: 40000,
+        items: [],
+        createdAt: '2026-11-22T05:00:00.000Z',
+      },
+      products: [],
+      updatedAt: '2026-11-22T05:00:00.000Z',
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    const { unmount } = render(
+      <QueryClientProvider client={qc}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={['/qr/table-1-token']}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByTestId('qr-table-header');
+    vi.useFakeTimers();
+    try {
+      // 1. Fire ITEMS_UPDATED notice & verify auto-dismiss at 6000ms
+      act(() => {
+        for (const h of listeners.get('qr:order_notice') ?? []) {
+          h({
+            orderId: 101,
+            tableId: 1,
+            kind: 'ITEMS_UPDATED',
+            cancelledItems: [{ name: 'Mì Xúc Xích', quantity: 1 }],
+            totalAmount: 40000,
+            timestamp: '2026-11-22T12:00:01.000Z',
+          });
+        }
+      });
+
+      const noticesAfterCancel = screen.getAllByTestId('qr-realtime-notice');
+      expect(noticesAfterCancel[0]).toHaveTextContent('Quầy đã huỷ 1 × Mì Xúc Xích');
+      // Ephemeral notices are NEVER written to storage
+      expect(localStorage.getItem('fnb_qr_session_table-1-token')).not.toContain('Quầy đã huỷ');
+
+      act(() => {
+        vi.advanceTimersByTime(6000);
+      });
+      expect(screen.queryByTestId('qr-realtime-notice')).not.toBeInTheDocument();
+
+      // 2. Burst 5 notices within 1s -> capped at max 2 visible and manual dismiss works
+      const burstKinds = [
+        { kind: 'DISCOUNT_APPLIED', discountAmount: 10000, totalAmount: 30000, ts: '2026-11-22T12:00:02.000Z' },
+        { kind: 'DISCOUNT_REMOVED', totalAmount: 40000, ts: '2026-11-22T12:00:03.000Z' },
+        { kind: 'PROVISIONAL_BILL_PRINTED', totalAmount: 40000, ts: '2026-11-22T12:00:04.000Z' },
+        { kind: 'TABLE_MERGED_INTO', sourceTableLabel: 'Bàn 02', targetTableLabel: 'Bàn 01', ts: '2026-11-22T12:00:05.000Z' },
+        { kind: 'GUEST_ADDON_ADDED', batchNo: 2, totalAmount: 55000, ts: '2026-11-22T12:00:06.000Z' },
+      ];
+      act(() => {
+        for (const entry of burstKinds) {
+          for (const h of listeners.get('qr:order_notice') ?? []) {
+            h({
+              orderId: 101,
+              tableId: 1,
+              kind: entry.kind,
+              ...(entry.discountAmount !== undefined ? { discountAmount: entry.discountAmount } : {}),
+              ...(entry.totalAmount !== undefined ? { totalAmount: entry.totalAmount } : {}),
+              ...(entry.sourceTableLabel ? { sourceTableLabel: entry.sourceTableLabel } : {}),
+              ...(entry.targetTableLabel ? { targetTableLabel: entry.targetTableLabel } : {}),
+              ...(entry.batchNo !== undefined ? { batchNo: entry.batchNo } : {}),
+              timestamp: entry.ts,
+            });
+          }
+        }
+      });
+
+      const cappedNotices = screen.getAllByTestId('qr-realtime-notice');
+      expect(cappedNotices).toHaveLength(2);
+      expect(cappedNotices[0]).toHaveTextContent('Bàn 02 đã được gộp vào bàn của bạn (Bàn 01)');
+      expect(cappedNotices[1]).toHaveTextContent('Bàn vừa gọi thêm món (Lượt #2)');
+
+      // Dismiss one manually via X button
+      const dismissButtons = screen.getAllByTestId('qr-realtime-notice-dismiss');
+      fireEvent.click(dismissButtons[0]);
+      expect(screen.getAllByTestId('qr-realtime-notice')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // 3. Simulated F5 (unmount + remount): remaining ephemeral notice must NOT come back
+    unmount();
+    const qc2 = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={qc2}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={['/qr/table-1-token']}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+    await screen.findByTestId('qr-table-header');
+    expect(screen.queryByTestId('qr-realtime-notice')).not.toBeInTheDocument();
+  });
+
+  it('syncs new table order for idle co-diner, shows reconnect indicator, handles QR rotation, flags unavailable cart items, and preserves draft cart on VOIDED', async () => {
+    const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+    const mockSocket = {
+      connected: true,
+      connect: vi.fn(),
+      on: vi.fn((event: string, fn: (...args: unknown[]) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(fn);
+        listeners.set(event, list);
+      }),
+      off: vi.fn((event: string, fn: (...args: unknown[]) => void) => {
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter((entry) => entry !== fn),
+        );
+      }),
+      disconnect: vi.fn(),
+    };
+    vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue(mockSocket as never);
+    vi.spyOn(socketClient, 'disconnectPosSocket').mockImplementation(() => undefined);
+
+    let productAvailable = true;
+    let tableActiveOrderId: number | null = null;
+
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async () => ({
+      orderMode: 'DINE_IN',
+      table: {
+        tableId: 2,
+        tableName: 'Bàn 02',
+        status: tableActiveOrderId ? 'PENDING' : 'AVAILABLE',
+        activeOrderId: tableActiveOrderId,
+      },
+      stations: [],
+      categories: [{ id: 1, code: 'TOPPING', name: 'Topping', sortOrder: 1 }],
+      activeOrder: tableActiveOrderId
+        ? {
+            orderId: tableActiveOrderId,
+            orderCode: `HD-${tableActiveOrderId}`,
+            status: 'PENDING',
+            subtotalAmount: 10000,
+            discountAmount: 0,
+            totalAmount: 10000,
+            items: [
+              {
+                id: 1,
+                productId: 50,
+                productName: 'Topping Bò',
+                quantity: 1,
+                unitPrice: 10000,
+                lineTotal: 10000,
+                batchNo: 1,
+                kitchenStatus: 'NEW',
+                itemNote: null,
+                modifiers: [],
+                createdAt: '2026-11-22T05:00:00.000Z',
+              },
+            ],
+            createdAt: '2026-11-22T05:00:00.000Z',
+          }
+        : null,
+      products: productAvailable
+        ? [
+            {
+              id: 50,
+              name: 'Topping Bò',
+              price: 10000,
+              station: 'BEP_NAU',
+              categoryId: 1,
+              categoryName: 'Topping',
+              subtitle: null,
+              imageUrl: null,
+              isAvailable: true,
+              sortOrder: 1,
+              modifierGroups: [],
+              comboItems: [],
+            },
+          ]
+        : [],
+      updatedAt: '2026-11-22T05:00:00.000Z',
+    }));
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={['/qr/table-2-token']}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    // Put 1 item into draft cart
+    fireEvent.click(await screen.findByRole('button', { name: 'Chọn' }));
+    expect(await screen.findByTestId('qr-submit-order-btn')).not.toBeDisabled();
+
+    // 1. Co-diner submits first order -> idle guest gets GUEST_ORDER_CREATED and sees PENDING banner & placed bar
+    tableActiveOrderId = 202;
+    await act(async () => {
+      for (const h of listeners.get('qr:order_notice') ?? []) {
+        h({
+          orderId: 202,
+          tableId: 2,
+          kind: 'GUEST_ORDER_CREATED',
+          batchNo: 1,
+          totalAmount: 10000,
+          timestamp: '2026-11-22T12:01:00.000Z',
+        });
+      }
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-placed-orders-bar')).toHaveTextContent('Món đã gọi (1 món)');
+      expect(screen.getByTestId('qr-status-banner')).toHaveTextContent('Mới gọi món');
+    });
+
+    // 2. Socket disconnects -> reconnecting indicator appears; reconnects -> indicator clears & refetches
+    await act(async () => {
+      for (const h of listeners.get('disconnect') ?? []) {
+        h('transport close');
+      }
+    });
+    expect(screen.getByTestId('qr-reconnecting-indicator')).toHaveTextContent('Mất kết nối, đang kết nối lại');
+
+    const prevGetCount = getSpy.mock.calls.length;
+    await act(async () => {
+      for (const h of listeners.get('connect') ?? []) {
+        h();
+      }
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('qr-reconnecting-indicator')).not.toBeInTheDocument();
+      expect(getSpy.mock.calls.length).toBeGreaterThan(prevGetCount);
+    });
+
+    // 3. Menu item becomes unavailable -> draft cart flags item & disables submit button
+    productAvailable = false;
+    await act(async () => {
+      for (const h of listeners.get('menu:updated') ?? []) {
+        h();
+      }
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-cart-unavailable-warning')).toBeInTheDocument();
+      expect(screen.getByTestId('qr-submit-order-btn')).toBeDisabled();
+    });
+
+    // 4. Order VOIDED -> durable red banner shows reason AND keeps guest draft cart intact
+    tableActiveOrderId = null;
+    await act(async () => {
+      for (const h of listeners.get('order:status_updated') ?? []) {
+        h({ status: 'VOIDED', reason: 'Quán tạm hết hàng' });
+      }
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-status-banner')).toHaveTextContent('Quán tạm hết hàng');
+      expect(screen.getByTestId('qr-submit-order-btn')).toBeInTheDocument();
+    });
+
+    // 5. Table QR rotated -> dedicated clear lock screen appears
+    await act(async () => {
+      for (const h of listeners.get('table:qr_rotated') ?? []) {
+        h({ tableId: 2, rotatedAt: '2026-11-22T12:05:00.000Z' });
+      }
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-rotated-lock-screen')).toBeInTheDocument();
+    });
+  });
+
+  it('keeps redirected table label stable across stale snapshots and does not flash PENDING banner when receiving a SERVING moved order', async () => {
+    const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+    const mockSocket = {
+      on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      }),
+      off: vi.fn(),
+    };
+    vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue(mockSocket as never);
+
+    let activeOrderId: number | null = 301;
+    let activeOrderTableLabel = 'Bàn 01';
+    let orderStatus: 'PENDING' | 'SERVING' = 'SERVING';
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async () => ({
+      orderMode: 'DINE_IN',
+      table: {
+        tableId: 1,
+        tableName: 'Bàn 01',
+        status: activeOrderId ? 'OCCUPIED' : 'AVAILABLE',
+        activeOrderId,
+      },
+      stations: [],
+      categories: [],
+      activeOrder: activeOrderId
+        ? {
+            orderId: activeOrderId,
+            orderCode: `HD-${activeOrderId}`,
+            status: orderStatus,
+            tableLabel: activeOrderTableLabel,
+            subtotalAmount: 10000,
+            discountAmount: 0,
+            totalAmount: 10000,
+            items: [],
+            createdAt: '2026-11-22T05:00:00.000Z',
+          }
+        : null,
+      products: [],
+      updatedAt: '2026-11-22T05:00:00.000Z',
+    }));
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    const { unmount } = render(
+      <QueryClientProvider client={qc}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={['/qr/ban01-tok']}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Bàn 01');
+    });
+
+    // Simulate ORDER_SESSION_REDIRECTED to Bàn 02 while stale snapshot still returns activeOrderTableLabel = Bàn 01 once
+    await act(async () => {
+      for (const h of listeners.get('order:session_redirected') ?? []) {
+        h({
+          previousOrderId: 301,
+          newActiveOrderId: 301,
+          newTableId: 2,
+          newTableLabel: 'Bàn 02',
+          message: 'Đơn hàng của bạn đã được chuyển sang Bàn 02.',
+        });
+      }
+    });
+
+    // Header stays Bàn 02 without reverting back to Bàn 01!
+    expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Bàn 02');
+    unmount();
+    listeners.clear();
+
+    // Idle guest at Bàn 02 receives SERVING order from MOVE -> must NOT flash PENDING banner!
+    activeOrderId = null;
+    const qc2 = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={qc2}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={['/qr/ban02-tok']}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Bàn 01');
+    });
+
+    activeOrderId = 301;
+    orderStatus = 'SERVING';
+    activeOrderTableLabel = 'Bàn 02';
+    await act(async () => {
+      for (const h of listeners.get('qr:order_notice') ?? []) {
+        h({
+          orderId: 301,
+          tableId: 2,
+          kind: 'GUEST_ORDER_CREATED',
+          orderStatus: 'SERVING',
+          timestamp: '2026-11-22T12:06:00.000Z',
+        });
+      }
+    });
+    expect(screen.queryByText(/vui lòng chờ thu ngân xác nhận/i)).not.toBeInTheDocument();
+  });
+
+  it('re-evaluates public menu on store:settings_updated to enforce and release QR Wi-Fi lock realtime', async () => {
+    const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+    const mockSocket = {
+      on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      }),
+      off: vi.fn(),
+    };
+    vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue(mockSocket as never);
+
+    let wifiBlocked = false;
+    vi.spyOn(apiClient, 'get').mockImplementation(async () => {
+      if (wifiBlocked) {
+        throw new ApiClientError({
+          statusCode: 403,
+          error: 'Forbidden',
+          code: 'QR_WIFI_REQUIRED',
+          message: 'Vui lòng kết nối Wi-Fi quán để đặt món',
+          details: { wifiSsid: 'An Vat Tran', wifiPassword: 'chucngonmieng' },
+        });
+      }
+      return {
+        orderMode: 'DINE_IN',
+        table: { tableId: 1, tableName: 'Bàn 01', status: 'AVAILABLE', activeOrderId: null },
+        stations: [],
+        categories: [],
+        activeOrder: null,
+        products: [],
+        updatedAt: '2026-11-22T05:00:00.000Z',
+      };
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={['/qr/ban01-tok']}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Bàn 01');
+    });
+
+    wifiBlocked = true;
+    await act(async () => {
+      for (const h of listeners.get(SocketEvents.STORE_SETTINGS_UPDATED) ?? []) {
+        h();
+      }
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-wifi-lock-screen')).toBeInTheDocument();
+      expect(screen.getByTestId('qr-lock-wifi-ssid')).toHaveTextContent('An Vat Tran');
+    });
+
+    wifiBlocked = false;
+    await act(async () => {
+      for (const h of listeners.get(SocketEvents.STORE_SETTINGS_UPDATED) ?? []) {
+        h();
+      }
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('qr-wifi-lock-screen')).not.toBeInTheDocument();
+      expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Bàn 01');
+    });
+  });
+
+  it('reconciles missed terminal order transition cleanly on visibilitychange foreground return without replaying old ephemeral notices', async () => {
+    const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+    const mockSocket = {
+      connected: true,
+      connect: vi.fn(),
+      on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      }),
+      off: vi.fn(),
+    };
+    vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue(mockSocket as never);
+
+    let serverOrderActive = true;
+    vi.spyOn(apiClient, 'get').mockImplementation(async () => ({
+      orderMode: 'DINE_IN',
+      table: {
+        tableId: 1,
+        tableName: 'Bàn 01',
+        status: serverOrderActive ? 'PENDING' : 'AVAILABLE',
+        activeOrderId: serverOrderActive ? 501 : null,
+      },
+      stations: [],
+      categories: [],
+      activeOrder: serverOrderActive
+        ? {
+            orderId: 501,
+            orderCode: 'HD-501',
+            status: 'PENDING',
+            tableLabel: 'Bàn 01',
+            subtotalAmount: 10000,
+            discountAmount: 0,
+            totalAmount: 10000,
+            items: [
+              {
+                id: 1,
+                productId: 50,
+                productName: 'Topping Bò',
+                quantity: 1,
+                unitPrice: 10000,
+                lineTotal: 10000,
+                batchNo: 1,
+                kitchenStatus: 'NEW',
+                itemNote: null,
+                modifiers: [],
+                createdAt: '2026-11-22T05:00:00.000Z',
+              },
+            ],
+            createdAt: '2026-11-22T05:00:00.000Z',
+          }
+        : null,
+      products: [],
+      updatedAt: '2026-11-22T05:00:00.000Z',
+    }));
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={['/qr/ban01-tok']}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-status-banner')).toHaveTextContent('Mới gọi món');
+    });
+
+    // Simulate missed PAID while device slept, then returning to foreground (visibilitychange === 'visible')
+    serverOrderActive = false;
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('qr-status-banner')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('qr-placed-orders-bar')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('qr-realtime-notice')).not.toBeInTheDocument();
+    });
+    expect(
+      (JSON.parse(localStorage.getItem('fnb_qr_session_ban01-tok') ?? '{}') as {
+        activeOrderId: number | null;
+      }).activeOrderId,
+    ).toBeNull();
   });
 });
