@@ -103,7 +103,8 @@ export class TableTransferService {
         reason: parsed.reason,
       };
       let redirectedOrderId = source.id;
-      let secondRedirect: { orderId: number; fromTable: string; toTable: string } | undefined;
+      const sourceNoticeStatus: 'PENDING' | 'SERVING' = source.status === 'PENDING' ? 'PENDING' : 'SERVING';
+      let secondRedirect: { orderId: number; fromTable: string; toTable: string; orderStatus: 'PENDING' | 'SERVING' } | undefined;
       let affectedStations = sourceStations;
 
       if (parsed.action === 'MOVE') {
@@ -214,7 +215,12 @@ export class TableTransferService {
           data: { status: 'OCCUPIED', activeOrderId: source.id },
         });
         affectedStations = [...new Set([...sourceStations, ...this.printedStations(targetOrder.items)])];
-        secondRedirect = { orderId: targetOrder.id, fromTable: targetTable.name, toTable: sourceTable.name };
+        secondRedirect = {
+          orderId: targetOrder.id,
+          fromTable: targetTable.name,
+          toTable: sourceTable.name,
+          orderStatus: targetOrder.status,
+        };
       }
 
       const kitchenTransferSlip = affectedStations.length > 0 ? {
@@ -231,8 +237,10 @@ export class TableTransferService {
           requireKitchenNoticePrint: kitchenTransferSlip !== undefined,
           kitchenTransferSlip,
         }),
+        action: parsed.action,
         previousOrderId: source.id,
         redirectedOrderId,
+        sourceNoticeStatus,
         newTableId: targetTable.id,
         newTableLabel: targetTable.name,
         previousTableLabel: sourceTable.name,
@@ -256,6 +264,44 @@ export class TableTransferService {
         result.tableIds[0],
         result.secondRedirect.toTable,
       );
+    }
+    const nowIso = new Date().toISOString();
+    if (result.action === 'MERGE') {
+      this.gateway.emitTableOrderNotice?.(
+        result.newTableId,
+        {
+          orderId: result.redirectedOrderId,
+          tableId: result.newTableId,
+          kind: 'TABLE_MERGED_INTO',
+          sourceTableLabel: result.previousTableLabel,
+          targetTableLabel: result.newTableLabel,
+          timestamp: nowIso,
+        },
+        result.redirectedOrderId,
+      );
+    } else if (result.action === 'MOVE') {
+      this.gateway.emitTableOrderNotice?.(result.newTableId, {
+        orderId: result.redirectedOrderId,
+        tableId: result.newTableId,
+        kind: 'GUEST_ORDER_CREATED',
+        orderStatus: result.sourceNoticeStatus,
+        timestamp: nowIso,
+      });
+    } else if (result.action === 'SWAP' && result.secondRedirect) {
+      this.gateway.emitTableOrderNotice?.(result.tableIds[0], {
+        orderId: result.secondRedirect.orderId,
+        tableId: result.tableIds[0],
+        kind: 'GUEST_ORDER_CREATED',
+        orderStatus: result.secondRedirect.orderStatus,
+        timestamp: nowIso,
+      });
+      this.gateway.emitTableOrderNotice?.(result.newTableId, {
+        orderId: result.redirectedOrderId,
+        tableId: result.newTableId,
+        kind: 'GUEST_ORDER_CREATED',
+        orderStatus: result.sourceNoticeStatus,
+        timestamp: nowIso,
+      });
     }
     this.gateway.emitTableGridSync({ tableIds: result.tableIds });
     this.logger.log(`Table transfer: orderId=${orderId}, action=${parsed.action}, from=${result.previousTableLabel}, to=${result.newTableLabel}, userId=${_userId ?? 'unknown'}`);

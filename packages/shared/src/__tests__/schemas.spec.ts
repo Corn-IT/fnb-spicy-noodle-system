@@ -621,5 +621,90 @@ describe('@fnb/shared contracts', () => {
     expect(contracts.RotateTakeawayQrResponseSchema.safeParse({ qrToken: 'k'.repeat(64) }).success).toBe(true);
     expect(contracts.QrSecurityConfigSchema.parse({}).applySecurityToTakeaway).toBe(false);
     expect(contracts.QrSecurityConfigSchema.parse({ applySecurityToTakeaway: true }).applySecurityToTakeaway).toBe(true);
+    expect(contracts.SocketRooms.tableSession(7)).toBe('table_session_7');
+    expect(contracts.SocketEvents.QR_ORDER_NOTICE).toBe('qr:order_notice');
+    expect(contracts.SocketEvents.TABLE_QR_ROTATED).toBe('table:qr_rotated');
+    expect(contracts.QrOrderNoticePayloadSchema.safeParse({
+      orderId: 50,
+      tableId: 3,
+      kind: 'ITEMS_UPDATED',
+      totalAmount: 40000,
+      cancelledItems: [{ name: 'Mì Xúc Xích', quantity: 1 }],
+      timestamp: '2026-11-22T12:00:00.000Z',
+    }).success).toBe(true);
+    // Rejects sensitive/unexpected internal fields on guest socket payload (.strict())
+    expect(contracts.QrOrderNoticePayloadSchema.safeParse({
+      orderId: 50,
+      kind: 'PROVISIONAL_BILL_PRINTED',
+      totalAmount: 40000,
+      cashierId: 3,
+      timestamp: '2026-11-22T12:00:00.000Z',
+    }).success).toBe(false);
+    expect(contracts.QrTableRotatedPayloadSchema.safeParse({
+      tableId: 3,
+      rotatedAt: '2026-11-22T12:00:00.000Z',
+    }).success).toBe(true);
+  });
+
+  it('validates physical thermal printer device config and LAN ESC/POS print contracts with SSRF protection', () => {
+    expect(contracts.ThermalPrinterDeviceConfigSchema.parse({})).toEqual(
+      contracts.DEFAULT_THERMAL_PRINTER_DEVICE_CONFIG,
+    );
+    expect(
+      contracts.ThermalPrinterDeviceConfigSchema.safeParse({
+        driver: 'RAWBT_USB',
+        paperWidthDots: 576,
+        cashDrawerKick: true,
+        rawbtWsUrl: 'ws://127.0.0.1:40213/',
+        rawbtFallbackToIntent: true,
+        lanHost: '192.168.1.200',
+        lanPort: 9100,
+        lanTimeoutMs: 4000,
+      }).success,
+    ).toBe(true);
+    expect(
+      contracts.ThermalPrinterDeviceConfigSchema.safeParse({
+        driver: 'UNKNOWN_DRIVER',
+      }).success,
+    ).toBe(false);
+
+    // Private RFC1918 and loopback IPs allowed
+    expect(contracts.isAllowedLanPrinterHost('192.168.1.200')).toBe(true);
+    expect(contracts.isAllowedLanPrinterHost('10.0.0.55')).toBe(true);
+    expect(contracts.isAllowedLanPrinterHost('172.16.0.10')).toBe(true);
+    expect(contracts.isAllowedLanPrinterHost('172.31.255.250')).toBe(true);
+    expect(contracts.isAllowedLanPrinterHost('127.0.0.1')).toBe(true);
+
+    // Public IPs, cloud metadata IPs, out-of-range octets, and domains rejected (SSRF protection)
+    expect(contracts.isAllowedLanPrinterHost('8.8.8.8')).toBe(false);
+    expect(contracts.isAllowedLanPrinterHost('169.254.169.254')).toBe(false);
+    expect(contracts.isAllowedLanPrinterHost('172.15.0.1')).toBe(false);
+    expect(contracts.isAllowedLanPrinterHost('172.32.0.1')).toBe(false);
+    expect(contracts.isAllowedLanPrinterHost('192.168.1.999')).toBe(false);
+    expect(contracts.isAllowedLanPrinterHost('printer.example.com')).toBe(false);
+
+    expect(
+      contracts.LanEscPosPrintRequestSchema.safeParse({
+        host: '192.168.1.200',
+        port: 9100,
+        payloadBase64: 'G0A=',
+      }).success,
+    ).toBe(true);
+    expect(
+      contracts.LanEscPosPrintRequestSchema.safeParse({
+        host: '169.254.169.254',
+        port: 9100,
+        payloadBase64: 'G0A=',
+      }).success,
+    ).toBe(false);
+    expect(
+      contracts.LanEscPosPrintResponseSchema.safeParse({
+        success: true,
+        host: '192.168.1.200',
+        port: 9100,
+        bytesSent: 128,
+        durationMs: 15,
+      }).success,
+    ).toBe(true);
   });
 });

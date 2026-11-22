@@ -31,6 +31,7 @@ function createHarness() {
   };
   const gateway = {
     emitOrderSessionRedirected: vi.fn(() => expect(transactionCommitted).toBe(true)),
+    emitTableOrderNotice: vi.fn(() => expect(transactionCommitted).toBe(true)),
     emitTableGridSync: vi.fn(() => expect(transactionCommitted).toBe(true)),
   };
   return {
@@ -90,6 +91,15 @@ describe('TableTransferService', () => {
       newActiveOrderId: 42,
       newTableLabel: 'Bàn 07',
     }));
+    expect(harness.gateway.emitTableOrderNotice).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        orderId: 42,
+        tableId: 7,
+        kind: 'GUEST_ORDER_CREATED',
+        orderStatus: 'SERVING',
+      }),
+    );
   });
 
   it('should reject moving an order to a table that is already occupied', async () => {
@@ -170,6 +180,17 @@ describe('TableTransferService', () => {
     }));
     expect(result).toMatchObject({ action: 'MERGE', sourceTableId: 1, targetTableId: 7, requireKitchenNoticePrint: true });
     expect(harness.gateway.emitOrderSessionRedirected).toHaveBeenCalledWith(42, expect.objectContaining({ newActiveOrderId: 99 }));
+    expect(harness.gateway.emitTableOrderNotice).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        orderId: 99,
+        tableId: 7,
+        kind: 'TABLE_MERGED_INTO',
+        sourceTableLabel: 'Bàn 01',
+        targetTableLabel: 'Bàn 07',
+      }),
+      99,
+    );
   });
 
   it('should swap active orders safely and redirect both customer sessions', async () => {
@@ -221,6 +242,14 @@ describe('TableTransferService', () => {
     expect(orders.get(99)?.tableId).toBe(1);
     expect(result.kitchenTransferSlip?.affectedStations).toEqual(['BEP_NAU', 'PHA_CHE']);
     expect(harness.gateway.emitOrderSessionRedirected).toHaveBeenCalledTimes(2);
+    expect(harness.gateway.emitTableOrderNotice).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ orderId: 99, kind: 'GUEST_ORDER_CREATED', orderStatus: 'SERVING' }),
+    );
+    expect(harness.gateway.emitTableOrderNotice).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ orderId: 42, kind: 'GUEST_ORDER_CREATED', orderStatus: 'SERVING' }),
+    );
   });
 
   it('should reject merging an order into its own table', async () => {

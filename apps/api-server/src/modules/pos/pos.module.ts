@@ -14,11 +14,12 @@ import { PosService } from './pos.service';
 import { KitchenSplitService } from './kitchen-split.service';
 import { QrAutoCancelService } from './qr-auto-cancel.service';
 import { TableTransferService } from './table-transfer.service';
+import { ThermalLanPrintService } from './thermal-lan-print.service';
 
 @Module({
   imports: [configuredJwtModule(), PaymentQrModule, DiscountsModule],
   controllers: [PosController, InvoicesController],
-  providers: [PosService, KitchenSplitService, TableTransferService, InvoicesService, QrAutoCancelService, QrSecurityService, JwtAuthGuard, RbacGuard],
-  exports: [PosService, InvoicesService, QrSecurityService, QrAutoCancelService],
+  providers: [PosService, KitchenSplitService, TableTransferService, InvoicesService, QrAutoCancelService, QrSecurityService, ThermalLanPrintService, JwtAuthGuard, RbacGuard],
+  exports: [PosService, InvoicesService, QrSecurityService, QrAutoCancelService, ThermalLanPrintService],
 })
 export class PosModule {}

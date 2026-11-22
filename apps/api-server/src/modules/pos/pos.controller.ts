@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Inject, Optional, Param, ParseIntPipe, Patch, Post, Put, Query, Req, Res, ServiceUnavailableException, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, Inject, Optional, Param, ParseIntPipe, Patch, Post, Put, Query, Req, Res, ServiceUnavailableException, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import {
   ApplyPosDiscountRequestSchema,
@@ -7,6 +7,8 @@ import {
   CreateDiningTableSchema,
   CreatePosOrderSchema,
   CreateQrOrderSchema,
+  ErrorCodes,
+  LanEscPosPrintRequestSchema,
   PatchOrderItemsSchema,
   ReprintKitchenRequestSchema,
   SplitCheckoutOrderRequestSchema,
@@ -22,6 +24,7 @@ import {
   type CreateDiningTableInput,
   type CreatePosOrderInput,
   type CreateQrOrderInput,
+  type LanEscPosPrintRequest,
   type PatchOrderItemsInput,
   type ReprintKitchenRequest,
   type SplitCheckoutOrderRequest,
@@ -38,7 +41,9 @@ import { RbacGuard } from '../../common/guards/rbac.guard';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { QrSecurityService } from '../../common/security/qr-security.service';
 import { extractClientIp } from '../../common/security/rate-limit.guard';
+import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 import { PosService } from './pos.service';
+import { ThermalLanPrintService } from './thermal-lan-print.service';
 
 @Controller('api/v1')
 export class PosController {
@@ -48,6 +53,8 @@ export class PosController {
   constructor(
     @Inject(PosService) private readonly posService: PosService,
     @Optional() @Inject(QrSecurityService) private readonly qrSecurityService?: QrSecurityService,
+    @Optional() @Inject(PosSocketGateway) private readonly gateway?: PosSocketGateway,
+    @Optional() @Inject(ThermalLanPrintService) private readonly thermalLanPrintService?: ThermalLanPrintService,
   ) {}
 
   @Get('public/tts')
@@ -129,16 +136,18 @@ export class PosController {
   @Put('pos/qr-security-config')
   @UseGuards(JwtAuthGuard, RbacGuard)
   @RequirePermission('pos', 'qrSecurity')
-  updateQrSecurityConfig(
+  async updateQrSecurityConfig(
     @Body(new ZodValidationPipe(UpdateQrSecurityConfigSchema)) body: UpdateQrSecurityConfigInput,
     @CurrentUser('id') userId: number,
     @Req() req?: Request,
   ) {
-    return this.qrSecurityService?.updateConfig(
+    const updated = await this.qrSecurityService?.updateConfig(
       body,
       req ? extractClientIp(req) : undefined,
       userId,
     );
+    this.gateway?.emitStoreSettingsUpdated?.();
+    return updated;
   }
 
   @Get('pos/tables')
@@ -368,5 +377,30 @@ export class PosController {
     @CurrentUser('id') userId: number,
   ) {
     return this.posService.removeDiscount(id, userId);
+  }
+
+  @Post('pos/print/lan-escpos')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  async printLanEscPos(
+    @Body(new ZodValidationPipe(LanEscPosPrintRequestSchema)) body: LanEscPosPrintRequest,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    const canPrint = Boolean(
+      user?.isSuperAdmin ||
+      user?.permissions?.pos?.view ||
+      user?.permissions?.invoices?.view ||
+      user?.permissions?.invoices?.reprint ||
+      user?.permissions?.settings?.view,
+    );
+    if (!canPrint) {
+      throw new ForbiddenException({
+        code: ErrorCodes.RBAC_PERMISSION_DENIED,
+        message: 'Tài khoản không có quyền sử dụng máy in nhiệt trên hệ thống',
+      });
+    }
+
+    const service = this.thermalLanPrintService ?? new ThermalLanPrintService();
+    return service.sendEscPosPayload(body);
   }
 }

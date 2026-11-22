@@ -4,6 +4,9 @@ import {
   AuthPrincipalSchema,
   type PermissionsUpdatedSocketPayload,
   type QrAutoCancelledPayload,
+  type QrOrderNoticePayload,
+  QrOrderNoticePayloadSchema,
+  QrTableRotatedPayloadSchema,
   QrTokenSchema,
   SocketEvents,
   SocketNamespace,
@@ -44,6 +47,7 @@ type PosSocket = Socket & {
     user?: { id: number };
     sessionId?: string;
     orderId?: number;
+    tableId?: number;
   };
 };
 
@@ -93,12 +97,15 @@ export class PosSocketGateway
         }
         return;
       }
-      if (client.data.authMode === 'guest' && client.data.orderId) {
-        await client.join(SocketRooms.orderSession(client.data.orderId));
-        return;
-      }
       if (client.data.authMode === 'guest') {
-        await client.join(SocketRooms.PUBLIC_MENU);
+        if (typeof client.data.tableId === 'number') {
+          await client.join(SocketRooms.tableSession(client.data.tableId));
+        }
+        if (client.data.orderId) {
+          await client.join(SocketRooms.orderSession(client.data.orderId));
+        } else if (typeof client.data.tableId !== 'number') {
+          await client.join(SocketRooms.PUBLIC_MENU);
+        }
         return;
       }
       throw new Error('Socket authentication state is missing');
@@ -169,6 +176,35 @@ export class PosSocketGateway
 
   emitOrderSessionRedirected(previousOrderId: number, payload: unknown): void {
     this.server.to(SocketRooms.orderSession(previousOrderId)).emit(SocketEvents.ORDER_SESSION_REDIRECTED, payload);
+  }
+
+  emitQrOrderNotice(orderId: number, payload: QrOrderNoticePayload): void {
+    const validated = QrOrderNoticePayloadSchema.parse(payload);
+    this.server?.to(SocketRooms.orderSession(orderId)).emit(SocketEvents.QR_ORDER_NOTICE, validated);
+  }
+
+  emitTableOrderNotice(
+    tableId: number,
+    payload: QrOrderNoticePayload,
+    alsoOrderId?: number | null,
+  ): void {
+    const validated = QrOrderNoticePayloadSchema.parse(payload);
+    const rooms =
+      alsoOrderId && alsoOrderId !== undefined
+        ? [SocketRooms.tableSession(tableId), SocketRooms.orderSession(alsoOrderId)]
+        : SocketRooms.tableSession(tableId);
+    this.server?.to(rooms).emit(SocketEvents.QR_ORDER_NOTICE, validated);
+  }
+
+  emitTableQrRotated(tableId: number, activeOrderId?: number | null): void {
+    const validated = QrTableRotatedPayloadSchema.parse({
+      tableId,
+      rotatedAt: new Date().toISOString(),
+    });
+    const rooms = activeOrderId
+      ? [SocketRooms.tableSession(tableId), SocketRooms.orderSession(activeOrderId)]
+      : SocketRooms.tableSession(tableId);
+    this.server?.to(rooms).emit(SocketEvents.TABLE_QR_ROTATED, validated);
   }
 
   emitTableGridSync(payload: unknown): void {
@@ -260,11 +296,14 @@ export class PosSocketGateway
     const qrToken = normalizeQrToken(parsedQrToken.data);
     const table = await this.prisma.diningTable.findUnique({
       where: { qrToken },
-      select: { id: true },
+      select: { id: true, name: true },
     });
     const isTakeawayQr = table ? false : await isTakeawayQrToken(this.prisma, qrToken);
     if (!table && !isTakeawayQr) throw new Error('Unknown QR table token');
     client.data.authMode = 'guest';
+    if (table) {
+      client.data.tableId = table.id;
+    }
 
     const orderId = typeof auth.orderId === 'number' ? auth.orderId : Number(auth.orderId);
     if (Number.isSafeInteger(orderId) && orderId >= 1) {
@@ -277,6 +316,7 @@ export class PosSocketGateway
             orderType: string;
             orderSource: string;
             status: string;
+            tableTransferLogs?: unknown;
           } | null>;
         };
       }).order;
@@ -291,8 +331,18 @@ export class PosSocketGateway
             orderType: true,
             orderSource: true,
             status: true,
+            tableTransferLogs: true,
           },
         });
+        const isTransferredFromTable =
+          Boolean(table?.name) &&
+          Array.isArray(order?.tableTransferLogs) &&
+          order.tableTransferLogs.some(
+            (entry) =>
+              typeof entry === 'object' &&
+              entry !== null &&
+              (entry as { fromTable?: unknown }).fromTable === table?.name,
+          );
         const validSessionOrder = isTakeawayQr
           ? order !== null &&
             order.orderType === 'TAKEAWAY' &&
@@ -303,7 +353,7 @@ export class PosSocketGateway
           : order !== null &&
             order.orderType === 'DINE_IN' &&
             order.status !== 'VOIDED' &&
-            (order.tableId === table?.id || order.orderSource === 'QR_CODE');
+            (order.tableId === table?.id || isTransferredFromTable);
         if (!validSessionOrder) {
           throw new Error('Order does not belong to this QR table session');
         }

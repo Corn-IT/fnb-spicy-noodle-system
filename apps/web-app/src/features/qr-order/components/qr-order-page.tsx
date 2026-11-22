@@ -167,30 +167,34 @@ export function QrOrderPage() {
     guestSessionToken,
     currentTableLabel,
     orderStatus,
-    statusMessage,
-    redirectNotice,
+    ephemeralNotices,
+    endedState,
+    addonAutoCancelNotice,
+    isReconnecting,
+    qrRotated,
+    dismissEphemeralNotice,
+    dismissAddonAutoCancelNotice,
+    markSubmittingAddon,
+    clearSubmittingAddon,
     registerSubmittedOrder,
-    startNewTakeawaySession,
+    startNewOrderSession,
     syncTableSnapshot,
+    getSessionFilter,
   } = useQrSessionSocket(token);
 
-  const sessionFilter = React.useMemo(
-    () =>
-      activeOrderId && guestSessionToken
-        ? { activeOrderId, guestSessionToken }
-        : undefined,
-    [activeOrderId, guestSessionToken],
-  );
-
-  const { data: menuData, isPending, isError, error, refetch } = usePublicMenuQuery(
-    token,
-    guestCoords,
-    sessionFilter,
-  );
+  const {
+    data: menuData,
+    queriedOrderId,
+    isPending,
+    isPlaceholderData,
+    isError,
+    error,
+    refetch,
+  } = usePublicMenuQuery(token, guestCoords, getSessionFilter);
   const submitMutation = useSubmitQrOrderMutation();
 
   React.useEffect(() => {
-    if (!menuData?.table) return;
+    if (!menuData?.table || isPlaceholderData) return;
     const hasKitchenPrinted = Boolean(
       menuData.activeOrder?.items.some((item) => item.kitchenStatus !== 'NEW'),
     );
@@ -198,17 +202,16 @@ export function QrOrderPage() {
       tableName: menuData.table.tableName,
       activeOrderId: menuData.table.activeOrderId,
       activeOrderStatus: menuData.activeOrder?.status ?? null,
+      activeOrderTableLabel: menuData.activeOrder?.tableLabel ?? null,
       hasKitchenPrinted,
-      queriedOrderId: sessionFilter?.activeOrderId ?? null,
+      queriedOrderId,
       orderMode: menuData.orderMode,
     });
   }, [
     syncTableSnapshot,
-    menuData?.table,
-    menuData?.activeOrder?.status,
-    menuData?.activeOrder?.items,
-    menuData?.orderMode,
-    sessionFilter?.activeOrderId,
+    isPlaceholderData,
+    menuData,
+    queriedOrderId,
   ]);
   const { settings } = useStoreSettings();
   const { resolveMessage, resolveErrorMessage, notify } = useAppMessages();
@@ -291,9 +294,77 @@ export function QrOrderPage() {
   const activeOrder: PublicMenuActiveOrder | null = React.useMemo(() => {
     const order = menuData?.activeOrder ?? null;
     if (!order || order.items.length === 0) return null;
-    if (orderStatus === 'PAID' || orderStatus === 'VOIDED') return null;
+    if (endedState !== null || orderStatus === 'PAID' || orderStatus === 'VOIDED') return null;
     return order;
-  }, [menuData?.activeOrder, orderStatus]);
+  }, [menuData?.activeOrder, endedState, orderStatus]);
+
+  const isPaidLocked = endedState?.kind === 'PAID';
+
+  const productById = React.useMemo(
+    () => new Map((menuData?.products ?? []).map((p) => [p.id, p])),
+    [menuData?.products],
+  );
+
+  const reconciledCart = React.useMemo(() => {
+    const hasMenuProducts = menuData !== undefined;
+    return cart.map((item) => {
+      const product = productById.get(item.productId);
+      if (!hasMenuProducts) {
+        return {
+          ...item,
+          effectiveName: item.name,
+          effectiveUnitPrice: item.unitPrice,
+          isUnavailable: false,
+          priceChanged: false,
+        };
+      }
+      if (!product || !product.isAvailable) {
+        return {
+          ...item,
+          effectiveName: item.name,
+          effectiveUnitPrice: item.unitPrice,
+          isUnavailable: true,
+          priceChanged: false,
+        };
+      }
+      const modById = new Map<number, { extraPrice: number; isAvailable?: boolean }>();
+      for (const grp of product.modifierGroups) {
+        for (const m of grp.modifiers) {
+          modById.set(m.id, { extraPrice: m.extraPrice, isAvailable: m.isAvailable });
+        }
+      }
+      let modExtra = 0;
+      let isModifierUnavailable = false;
+      for (const sel of item.modifiers) {
+        if (sel.action === 'REMOVED_DEFAULT') continue;
+        const targetModId =
+          sel.action === 'SUBSTITUTED' && sel.substituteModifierId
+            ? sel.substituteModifierId
+            : sel.modifierId;
+        const foundMod = modById.get(targetModId);
+        if (!foundMod || foundMod.isAvailable === false) {
+          isModifierUnavailable = true;
+        } else {
+          modExtra += foundMod.extraPrice;
+        }
+      }
+      const latestUnitPrice = product.price + modExtra;
+      return {
+        ...item,
+        effectiveName: product.name,
+        effectiveUnitPrice: latestUnitPrice,
+        isUnavailable: isModifierUnavailable,
+        priceChanged: !isModifierUnavailable && latestUnitPrice !== item.unitPrice,
+      };
+    });
+  }, [cart, menuData, productById]);
+
+  const unavailableCartNames = React.useMemo(
+    () => reconciledCart.filter((item) => item.isUnavailable).map((item) => item.effectiveName),
+    [reconciledCart],
+  );
+  const hasUnavailableCartItem = unavailableCartNames.length > 0;
+  const hasPriceChangedCartItem = reconciledCart.some((item) => item.priceChanged);
 
   const placedTotalQty = React.useMemo(
     () => (activeOrder ? activeOrder.items.reduce((sum, item) => sum + item.quantity, 0) : 0),
@@ -313,10 +384,6 @@ export function QrOrderPage() {
     }
     return { receivedQty, waitingQty };
   }, [activeOrder]);
-
-  const isApprovedWaitingKitchen = Boolean(
-    activeOrder && activeOrder.status === 'SERVING' && kitchenCounts.receivedQty === 0,
-  );
 
   const takeawayKitchenProgress = React.useMemo(() => {
     if (!activeOrder) return null;
@@ -446,9 +513,6 @@ export function QrOrderPage() {
   };
 
   const handleProductClick = (product: Product) => {
-    if (isTakeaway && !activeOrderId && (orderStatus === 'PAID' || orderStatus === 'VOIDED')) {
-      startNewTakeawaySession();
-    }
     if (product.modifierGroups.length > 0) {
       setSelectingProduct(product);
       return;
@@ -511,8 +575,11 @@ export function QrOrderPage() {
     setCart((prev) => prev.filter((item) => item.key !== key));
   };
 
-  const cartTotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartTotal = reconciledCart.reduce(
+    (sum, item) => sum + item.effectiveUnitPrice * item.quantity,
+    0,
+  );
+  const cartCount = reconciledCart.reduce((sum, item) => sum + item.quantity, 0);
 
   const handleRequestGuestGps = React.useCallback(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -597,9 +664,17 @@ export function QrOrderPage() {
   }, [qrSecurityBlock?.code, handleRequestGuestGps]);
 
   const handleSubmitOrder = async () => {
-    if (cart.length === 0 || submitMutation.isPending) return;
+    if (cart.length === 0 || submitMutation.isPending || isPaidLocked) return;
+    if (hasUnavailableCartItem) {
+      notify('qr.cart.unavailableItem', {
+        variant: 'destructive',
+        vars: { names: unavailableCartNames.join(', ') },
+      });
+      return;
+    }
 
     try {
+      markSubmittingAddon(resolvedActiveOrderId);
       const response = await submitMutation.mutateAsync({
         qrToken: token,
         ...(resolvedActiveOrderId ? { activeOrderId: resolvedActiveOrderId } : {}),
@@ -620,6 +695,7 @@ export function QrOrderPage() {
         activeOrderId: response.activeOrderId,
         currentTableLabel: response.currentTableLabel,
         status: response.status,
+        batchNo: response.batchNo,
         guestSessionToken: response.guestSessionToken ?? null,
       });
       setCart([]);
@@ -631,6 +707,7 @@ export function QrOrderPage() {
         vars: { batchNo: response.batchNo, tableLabel: response.currentTableLabel },
       });
     } catch (err) {
+      clearSubmittingAddon();
       const resolvedErr = resolveErrorMessage('qr.order.submitError', err);
       notify('qr.order.submitError', {
         variant: 'destructive',
@@ -645,6 +722,28 @@ export function QrOrderPage() {
         variant="qr"
         label={resolveMessage('qr.loading.menu').title}
       />
+    );
+  }
+
+  if (qrRotated) {
+    const rotatedCopy = resolveMessage('qr.lock.qrRotated');
+    return (
+      <div
+        data-testid="qr-rotated-lock-screen"
+        className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center bg-background p-6 text-center text-foreground"
+      >
+        <div className="w-full rounded-2xl border bg-card p-6 shadow-md space-y-4">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            <RefreshCw className="h-7 w-7" />
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-lg font-bold text-foreground">{rotatedCopy.title}</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+              {rotatedCopy.description}
+            </p>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -856,57 +955,127 @@ export function QrOrderPage() {
           </div>
         )}
 
-        {redirectNotice ? (
+        {isReconnecting ? (
           <div
-            data-testid="qr-redirect-banner"
-            className="mt-2.5 flex items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 dark:border-amber-500/40 dark:bg-amber-950/70 dark:text-amber-100"
+            data-testid="qr-reconnecting-indicator"
+            role="status"
+            aria-live="polite"
+            className="mt-2.5 flex items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-950 dark:border-amber-500/40 dark:bg-amber-950/70 dark:text-amber-100"
           >
-            <RefreshCw className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-            <span>{redirectNotice}</span>
+            <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-600 dark:text-amber-400" />
+            <span>{resolveMessage('qr.notice.reconnecting').title}</span>
           </div>
         ) : null}
 
-        {statusMessage ? (
+        {ephemeralNotices.length > 0 ? (
+          <div
+            data-testid="qr-realtime-notice-stack"
+            aria-live="polite"
+            className="mt-2.5 space-y-1.5"
+          >
+            {ephemeralNotices.map((notice) => (
+              <div
+                key={notice.id}
+                data-testid="qr-realtime-notice"
+                role="status"
+                className={cn(
+                  'flex items-center justify-between gap-2 rounded-lg border pl-3 pr-1 py-1 text-xs font-semibold',
+                  notice.variant === 'warning'
+                    ? 'border-amber-500/50 bg-amber-50 text-amber-950 dark:border-amber-500/40 dark:bg-amber-950/70 dark:text-amber-100'
+                    : notice.variant === 'success'
+                      ? 'border-emerald-500/50 bg-emerald-50 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-950/70 dark:text-emerald-100'
+                      : 'border-sky-500/50 bg-sky-50 text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/70 dark:text-sky-100',
+                )}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                  <span className="break-words">{notice.title}</span>
+                </div>
+                <button
+                  type="button"
+                  data-testid="qr-realtime-notice-dismiss"
+                  onClick={() => dismissEphemeralNotice(notice.id)}
+                  aria-label="Đóng thông báo"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/10 touch-manipulation"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {endedState ? (
           <div
             data-testid="qr-status-banner"
+            role={endedState.kind === 'VOIDED' ? 'alert' : 'status'}
+            aria-live={endedState.kind === 'VOIDED' ? 'assertive' : 'polite'}
             className={cn(
               'mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs font-semibold',
-              orderStatus === 'VOIDED'
+              endedState.kind === 'VOIDED'
                 ? 'border-red-500/60 bg-red-50 text-red-950 dark:border-red-500/40 dark:bg-red-950/70 dark:text-red-100'
-                : isApprovedWaitingKitchen
-                  ? 'border-sky-500/50 bg-sky-50 text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/70 dark:text-sky-100'
-                  : 'border-emerald-500/50 bg-emerald-50 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-950/70 dark:text-emerald-100',
+                : 'border-emerald-500/50 bg-emerald-50 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-950/70 dark:text-emerald-100',
             )}
           >
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-start gap-2 min-w-0 flex-1">
               <CheckCircle2
                 className={cn(
-                  'h-4 w-4 shrink-0',
-                  orderStatus === 'VOIDED'
+                  'h-4 w-4 shrink-0 mt-0.5',
+                  endedState.kind === 'VOIDED'
                     ? 'text-red-600 dark:text-red-400'
-                    : isApprovedWaitingKitchen
-                      ? 'text-sky-600 dark:text-sky-400'
-                      : 'text-emerald-600 dark:text-emerald-400',
+                    : 'text-emerald-600 dark:text-emerald-400',
                 )}
               />
-              <span>
-                {isApprovedWaitingKitchen && !statusMessage.includes('quá')
-                  ? 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp'
-                  : statusMessage}{' '}
-                (
-                {orderStatus === 'SERVING'
-                  ? isApprovedWaitingKitchen
-                    ? 'Đã xác nhận'
-                    : 'Đang phục vụ'
-                  : orderStatus === 'PENDING'
-                    ? 'Mới gọi món'
-                    : orderStatus === 'PAID'
-                      ? 'Đã thanh toán'
-                      : orderStatus === 'VOIDED'
-                        ? 'Đã huỷ'
-                        : orderStatus}
-                )
-              </span>
+              <div className="min-w-0 space-y-0.5">
+                <p className="break-words">
+                  {endedState.title} ({endedState.kind === 'PAID' ? 'Đã thanh toán' : 'Đã huỷ'})
+                </p>
+                {endedState.reason ? (
+                  <p className="text-[11px] font-medium opacity-90 break-words">
+                    Lý do: {endedState.reason}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              data-testid="qr-new-order-btn"
+              onClick={() => startNewOrderSession(isTakeaway ? 'Mang về' : menuData.table.tableName)}
+              className="h-11 px-3 rounded-lg bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90 shrink-0"
+            >
+              Gọi đơn mới
+            </Button>
+          </div>
+        ) : addonAutoCancelNotice ? (
+          <div
+            data-testid="qr-status-banner"
+            role="alert"
+            aria-live="assertive"
+            className="mt-2.5 flex items-center justify-between gap-2 rounded-lg border border-red-500/60 bg-red-50 pl-3 pr-1 py-1 text-xs font-semibold text-red-950 dark:border-red-500/40 dark:bg-red-950/70 dark:text-red-100"
+          >
+            <span className="break-words">{addonAutoCancelNotice}</span>
+            <button
+              type="button"
+              data-testid="qr-status-dismiss-btn"
+              onClick={dismissAddonAutoCancelNotice}
+              aria-label="Đóng thông báo"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/10 touch-manipulation"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : (activeOrder && (orderStatus === 'PENDING' || activeOrder.status === 'PENDING')) ||
+          (activeOrderId !== null && orderStatus === 'PENDING') ? (
+          <div
+            data-testid="qr-status-banner"
+            role="status"
+            aria-live="polite"
+            className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-500/50 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/70 dark:text-sky-100"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
+              <span>{resolveMessage('qr.status.orderPending').title} (Mới gọi món)</span>
             </div>
           </div>
         ) : null}
@@ -1166,39 +1335,56 @@ export function QrOrderPage() {
           ) : null}
 
           {cart.length > 0 ? (
-            <div className="flex items-center justify-between gap-3 rounded-2xl border border-primary/40 bg-card/95 p-2.5 shadow-2xl backdrop-blur-md">
-              <button
-                type="button"
-                onClick={() => setCartSheetOpen(true)}
-                className="flex items-center gap-2.5 text-left transition active:scale-[0.98] min-w-0"
-                aria-label="Xem chi tiết giỏ hàng"
-              >
-                <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-                  <ShoppingBag className="h-5 w-5" />
-                  <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-extrabold text-white ring-2 ring-background">
-                    {cartCount}
-                  </span>
+            <div className="rounded-2xl border border-primary/40 bg-card/95 p-2.5 shadow-2xl backdrop-blur-md space-y-2">
+              {hasUnavailableCartItem ? (
+                <div
+                  data-testid="qr-cart-unavailable-warning"
+                  role="alert"
+                  className="rounded-lg border border-red-500/40 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-800 dark:bg-red-950/60 dark:text-red-200"
+                >
+                  {resolveMessage('qr.cart.unavailableItem', {
+                    names: unavailableCartNames.join(', '),
+                  }).title}
                 </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs font-semibold text-foreground">Giỏ hàng</span>
-                    <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : null}
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCartSheetOpen(true)}
+                  className="flex items-center gap-2.5 text-left transition active:scale-[0.98] min-w-0"
+                  aria-label="Xem chi tiết giỏ hàng"
+                >
+                  <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+                    <ShoppingBag className="h-5 w-5" />
+                    <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-extrabold text-white ring-2 ring-background">
+                      {cartCount}
+                    </span>
                   </div>
-                  <p className="text-sm font-extrabold text-price truncate">
-                    {cartTotal.toLocaleString('vi-VN')} đ
-                  </p>
-                </div>
-              </button>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-semibold text-foreground">Giỏ hàng</span>
+                      <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                    </div>
+                    <p className="text-sm font-extrabold text-price truncate">
+                      {cartTotal.toLocaleString('vi-VN')} đ
+                    </p>
+                  </div>
+                </button>
 
-              <Button
-                type="button"
-                data-testid="qr-submit-order-btn"
-                disabled={submitMutation.isPending}
-                onClick={handleSubmitOrder}
-                className="h-11 rounded-xl bg-primary px-4 text-xs sm:text-sm font-bold text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-[0.98] shrink-0"
-              >
-                {resolvedActiveOrderId ? 'Gửi gọi thêm' : 'Gửi đặt món'} ({cartCount})
-              </Button>
+                <Button
+                  type="button"
+                  data-testid="qr-submit-order-btn"
+                  disabled={submitMutation.isPending || hasUnavailableCartItem || isPaidLocked}
+                  onClick={handleSubmitOrder}
+                  className="h-11 rounded-xl bg-primary px-4 text-xs sm:text-sm font-bold text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-[0.98] shrink-0"
+                >
+                  {isPaidLocked
+                    ? "Bấm 'Gọi đơn mới'"
+                    : hasUnavailableCartItem
+                      ? 'Có món hết hàng'
+                      : `${resolvedActiveOrderId ? 'Gửi gọi thêm' : 'Gửi đặt món'} (${cartCount})`}
+                </Button>
+              </div>
             </div>
           ) : null}
         </div>
@@ -1291,13 +1477,31 @@ export function QrOrderPage() {
           </div>
 
           {activeOrder ? (
-            <div className="border-t pt-3 flex items-center justify-between">
-              <span className="text-sm font-semibold text-muted-foreground">
-                Tổng tạm tính ({placedTotalQty} món)
-              </span>
-              <span className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400">
-                {activeOrder.totalAmount.toLocaleString('vi-VN')} đ
-              </span>
+            <div className="border-t pt-3 space-y-1.5">
+              {(activeOrder.discountAmount ?? 0) > 0 ? (
+                <>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Tạm tính ({placedTotalQty} món)</span>
+                    <span>
+                      {(activeOrder.subtotalAmount ?? activeOrder.totalAmount + (activeOrder.discountAmount ?? 0)).toLocaleString('vi-VN')} đ
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                    <span>Giảm giá</span>
+                    <span>-{(activeOrder.discountAmount ?? 0).toLocaleString('vi-VN')} đ</span>
+                  </div>
+                </>
+              ) : null}
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-muted-foreground">
+                  {(activeOrder.discountAmount ?? 0) > 0
+                    ? 'Tổng thanh toán'
+                    : `Tổng tạm tính (${placedTotalQty} món)`}
+                </span>
+                <span className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400">
+                  {activeOrder.totalAmount.toLocaleString('vi-VN')} đ
+                </span>
+              </div>
             </div>
           ) : null}
         </SheetContent>
@@ -1338,13 +1542,49 @@ export function QrOrderPage() {
                 <span>Xoá tất cả</span>
               </Button>
             </div>
-            {cart.map((item) => (
+            {hasUnavailableCartItem ? (
+              <div
+                role="alert"
+                className="rounded-xl border border-red-500/50 bg-red-50 p-2.5 text-xs font-semibold text-red-800 dark:bg-red-950/60 dark:text-red-200"
+              >
+                {resolveMessage('qr.cart.unavailableItem', {
+                  names: unavailableCartNames.join(', '),
+                }).title}
+              </div>
+            ) : hasPriceChangedCartItem ? (
+              <div className="rounded-xl border border-amber-500/50 bg-amber-50 p-2.5 text-xs font-semibold text-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
+                {resolveMessage('qr.cart.priceChanged').title}
+              </div>
+            ) : null}
+            {reconciledCart.map((item) => (
               <div
                 key={item.key}
-                className="flex items-center justify-between rounded-xl border bg-card p-3 shadow-xs"
+                className={cn(
+                  'flex items-center justify-between rounded-xl border bg-card p-3 shadow-xs',
+                  item.isUnavailable && 'border-red-500/50 bg-red-50/40 dark:bg-red-950/30',
+                )}
               >
                 <div className="min-w-0 flex-1 pr-3">
-                  <p className="font-semibold text-sm text-foreground truncate">{item.name}</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="font-semibold text-sm text-foreground truncate">{item.effectiveName}</p>
+                    {item.isUnavailable ? (
+                      <Badge
+                        variant="outline"
+                        data-testid="qr-cart-item-unavailable-badge"
+                        className="border-red-500/60 bg-red-500/15 text-red-700 dark:text-red-300 text-[10px] font-bold"
+                      >
+                        Hết món
+                      </Badge>
+                    ) : item.priceChanged ? (
+                      <Badge
+                        variant="outline"
+                        data-testid="qr-cart-item-price-changed-badge"
+                        className="border-amber-500/60 bg-amber-500/15 text-amber-800 dark:text-amber-200 text-[10px] font-bold"
+                      >
+                        Giá mới
+                      </Badge>
+                    ) : null}
+                  </div>
                   {item.modifierLabels.length > 0 ? (
                     <p className="text-xs text-muted-foreground line-clamp-1">
                       {item.modifierLabels.join(', ')}
@@ -1356,7 +1596,7 @@ export function QrOrderPage() {
                     </p>
                   ) : null}
                   <p className="text-xs font-bold text-price mt-0.5">
-                    {(item.unitPrice * item.quantity).toLocaleString('vi-VN')} đ
+                    {(item.effectiveUnitPrice * item.quantity).toLocaleString('vi-VN')} đ
                   </p>
                 </div>
 
@@ -1431,7 +1671,7 @@ export function QrOrderPage() {
             </div>
             <Button
               type="button"
-              disabled={submitMutation.isPending}
+              disabled={submitMutation.isPending || hasUnavailableCartItem || isPaidLocked}
               onClick={() => {
                 setCartSheetOpen(false);
                 void handleSubmitOrder();
@@ -1440,8 +1680,11 @@ export function QrOrderPage() {
             >
               <ShoppingBag className="h-4 w-4 shrink-0" />
               <span>
-                {resolvedActiveOrderId ? 'Xác nhận gọi thêm món' : 'Xác nhận gửi đơn đặt món'} (
-                {cartCount} món — {cartTotal.toLocaleString('vi-VN')} đ)
+                {isPaidLocked
+                  ? "Đơn đã thanh toán — Bấm 'Gọi đơn mới'"
+                  : hasUnavailableCartItem
+                    ? 'Vui lòng xoá món hết hàng trước khi gửi'
+                    : `${resolvedActiveOrderId ? 'Xác nhận gọi thêm món' : 'Xác nhận gửi đơn đặt món'} (${cartCount} món — ${cartTotal.toLocaleString('vi-VN')} đ)`}
               </span>
             </Button>
           </div>

@@ -316,4 +316,138 @@ describe('MenuService', () => {
     expect(tx.product.delete).toHaveBeenCalledWith({ where: { id: 2 } });
     expect(posSocketGateway.emitMenuUpdated).toHaveBeenCalledTimes(1);
   });
+
+  it('resolves transferred activeOrder for DINE_IN F5 only when transferred from the requested table (anti-IDOR) and exposes subtotal/discountAmount', async () => {
+    const prisma = {
+      diningTable: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 1,
+          name: 'Bàn 01',
+          status: 'AVAILABLE',
+          activeOrderId: null,
+        }),
+      },
+      product: { findMany: vi.fn().mockResolvedValue([]) },
+      masterData: { findMany: vi.fn().mockResolvedValue([]) },
+      order: {
+        findUnique: vi
+          .fn()
+          // 1. Transferred order lookup -> belongs to Bàn 01 via tableTransferLogs
+          .mockResolvedValueOnce({
+            id: 700,
+            tableId: 3,
+            status: 'SERVING',
+            mergedIntoOrderId: null,
+            tableTransferLogs: [{ action: 'MOVE', fromTable: 'Bàn 01', toTable: 'Bàn 03' }],
+          })
+          // 2. loadPublicActiveOrder for 700
+          .mockResolvedValueOnce({
+            id: 700,
+            orderCode: 'HD-700',
+            status: 'SERVING',
+            subtotalAmount: new Prisma.Decimal('100000.00'),
+            discountAmount: new Prisma.Decimal('10000.00'),
+            totalAmount: new Prisma.Decimal('90000.00'),
+            createdAt: new Date('2026-11-22T05:00:00.000Z'),
+            table: { name: 'Bàn 03' },
+            items: [
+              {
+                id: 1,
+                productId: 1,
+                product: { name: 'Mì bò' },
+                quantity: 1,
+                unitPrice: new Prisma.Decimal('100000.00'),
+                batchNo: 1,
+                kitchenStatus: 'PRINTED',
+                itemNote: null,
+                modifiersSnapshot: [],
+                createdAt: new Date('2026-11-22T05:00:00.000Z'),
+              },
+            ],
+          })
+          // 3. Cross-table IDOR attempt (order 888 belongs to Bàn 08, never transferred from Bàn 01)
+          .mockResolvedValueOnce({
+            id: 888,
+            tableId: 8,
+            status: 'SERVING',
+            mergedIntoOrderId: null,
+            tableTransferLogs: [],
+          }),
+      },
+    };
+    const service = new MenuService(prisma as never);
+
+    const movedRes = await service.getPublicMenu('ban01-zry8', { activeOrderId: 700 });
+    expect(movedRes.activeOrder).toMatchObject({
+      orderId: 700,
+      subtotalAmount: 100000,
+      discountAmount: 10000,
+      totalAmount: 90000,
+      tableLabel: 'Bàn 03',
+    });
+
+    const idorRes = await service.getPublicMenu('ban01-zry8', { activeOrderId: 888 });
+    expect(idorRes.activeOrder).toBeNull();
+  });
+
+  it('keeps swapped guest attached to their transferred order even when the physical table holds another active order', async () => {
+    const prisma = {
+      diningTable: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 1,
+          name: 'Bàn 01',
+          status: 'OCCUPIED',
+          activeOrderId: 119,
+        }),
+      },
+      product: { findMany: vi.fn().mockResolvedValue([]) },
+      masterData: { findMany: vi.fn().mockResolvedValue([]) },
+      order: {
+        findUnique: vi
+          .fn()
+          // 1. resolveTransferredTableOrderId(118, Bàn 01) -> swapped from Bàn 01 to Bàn 02
+          .mockResolvedValueOnce({
+            id: 118,
+            tableId: 2,
+            status: 'SERVING',
+            mergedIntoOrderId: null,
+            tableTransferLogs: [{ action: 'SWAP', fromTable: 'Bàn 01', toTable: 'Bàn 02' }],
+          })
+          // 2. loadPublicActiveOrder(118)
+          .mockResolvedValueOnce({
+            id: 118,
+            orderCode: 'HD-118',
+            status: 'SERVING',
+            subtotalAmount: new Prisma.Decimal('10000.00'),
+            discountAmount: new Prisma.Decimal('0.00'),
+            totalAmount: new Prisma.Decimal('10000.00'),
+            createdAt: new Date('2026-11-22T05:00:00.000Z'),
+            table: { name: 'Bàn 02' },
+            items: [
+              {
+                id: 1,
+                productId: 1,
+                product: { name: 'Topping' },
+                quantity: 2,
+                unitPrice: new Prisma.Decimal('5000.00'),
+                batchNo: 1,
+                kitchenStatus: 'PRINTED',
+                itemNote: null,
+                modifiersSnapshot: [],
+                createdAt: new Date('2026-11-22T05:00:00.000Z'),
+              },
+            ],
+          }),
+      },
+    };
+    const service = new MenuService(prisma as never);
+
+    const res = await service.getPublicMenu('ban01-zry8', { activeOrderId: 118 });
+    expect(res.activeOrder).toMatchObject({
+      orderId: 118,
+      tableLabel: 'Bàn 02',
+      totalAmount: 10000,
+    });
+    expect(res.table.activeOrderId).toBe(118);
+  });
 });

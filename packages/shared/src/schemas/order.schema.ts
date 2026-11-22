@@ -161,6 +161,44 @@ export const QrAutoCancelledPayloadSchema = z.object({
 }).strict();
 export type QrAutoCancelledPayload = z.infer<typeof QrAutoCancelledPayloadSchema>;
 
+export const QrNoticeKindSchema = z.enum([
+  'GUEST_ORDER_CREATED',
+  'GUEST_ADDON_ADDED',
+  'ITEMS_UPDATED',
+  'DISCOUNT_APPLIED',
+  'DISCOUNT_REMOVED',
+  'PROVISIONAL_BILL_PRINTED',
+  'TABLE_MERGED_INTO',
+]);
+export type QrNoticeKind = z.infer<typeof QrNoticeKindSchema>;
+
+export const QrCancelledItemNoticeSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  quantity: z.number().int().positive(),
+}).strict();
+export type QrCancelledItemNotice = z.infer<typeof QrCancelledItemNoticeSchema>;
+
+export const QrOrderNoticePayloadSchema = z.object({
+  orderId: IdSchema,
+  tableId: IdSchema.nullable().optional(),
+  kind: QrNoticeKindSchema,
+  orderStatus: z.enum(['PENDING', 'SERVING']).optional(),
+  batchNo: z.number().int().positive().optional(),
+  totalAmount: MoneyAmountSchema.optional(),
+  discountAmount: MoneyAmountSchema.optional(),
+  cancelledItems: z.array(QrCancelledItemNoticeSchema).optional(),
+  sourceTableLabel: z.string().trim().min(1).max(64).optional(),
+  targetTableLabel: z.string().trim().min(1).max(64).optional(),
+  timestamp: IsoDateTimeSchema,
+}).strict();
+export type QrOrderNoticePayload = z.infer<typeof QrOrderNoticePayloadSchema>;
+
+export const QrTableRotatedPayloadSchema = z.object({
+  tableId: IdSchema,
+  rotatedAt: IsoDateTimeSchema,
+}).strict();
+export type QrTableRotatedPayload = z.infer<typeof QrTableRotatedPayloadSchema>;
+
 export const PosTableGridResponseSchema = z.object({
   tables: z.array(z.object({
     id: IdSchema,
@@ -465,5 +503,93 @@ export const QrSecurityConfigResponseSchema = QrSecurityConfigSchema.extend({
   updatedAt: z.string().nullable().optional(),
 }).strict();
 export type QrSecurityConfigResponse = z.infer<typeof QrSecurityConfigResponseSchema>;
+
+export const ThermalPrinterDriverSchema = z.enum(['BROWSER', 'RAWBT_USB', 'LAN_ESCPOS']);
+export type ThermalPrinterDriver = z.infer<typeof ThermalPrinterDriverSchema>;
+
+export const ThermalPaperWidthDotsSchema = z.union([z.literal(576), z.literal(384)]);
+export type ThermalPaperWidthDots = z.infer<typeof ThermalPaperWidthDotsSchema>;
+
+/**
+ * Validates that a LAN printer host is a private RFC1918 IPv4 address
+ * (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12) or 127.0.0.1 local print relay.
+ * Prevents SSRF to public internet hosts or cloud metadata services (169.254.x.x).
+ */
+export function isAllowedLanPrinterHost(rawHost: string): boolean {
+  const host = rawHost.trim();
+  const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!ipv4Match) return false;
+
+  const octets = [
+    Number(ipv4Match[1]),
+    Number(ipv4Match[2]),
+    Number(ipv4Match[3]),
+    Number(ipv4Match[4]),
+  ];
+  if (octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) {
+    return false;
+  }
+
+  const [a, b, c, d] = octets;
+  if (a === 127 && b === 0 && c === 0 && d === 1) return true;
+  if (a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+
+  return false;
+}
+
+export const ThermalPrinterDeviceConfigSchema = z.object({
+  driver: ThermalPrinterDriverSchema.default('BROWSER'),
+  paperWidthDots: ThermalPaperWidthDotsSchema.default(576),
+  cashDrawerKick: z.boolean().default(true),
+  rawbtWsUrl: z.string().trim().min(1).max(200).default('ws://127.0.0.1:40213/'),
+  rawbtFallbackToIntent: z.boolean().default(true),
+  lanHost: z.string().trim().min(1).max(64).default('192.168.1.200'),
+  lanPort: z.number().int().min(1).max(65535).default(9100),
+  lanTimeoutMs: z.number().int().min(500).max(15000).default(4000),
+}).strict();
+export type ThermalPrinterDeviceConfig = z.infer<typeof ThermalPrinterDeviceConfigSchema>;
+
+export const DEFAULT_THERMAL_PRINTER_DEVICE_CONFIG: ThermalPrinterDeviceConfig = {
+  driver: 'BROWSER',
+  paperWidthDots: 576,
+  cashDrawerKick: true,
+  rawbtWsUrl: 'ws://127.0.0.1:40213/',
+  rawbtFallbackToIntent: true,
+  lanHost: '192.168.1.200',
+  lanPort: 9100,
+  lanTimeoutMs: 4000,
+};
+
+export const LanEscPosPrintRequestSchema = z.object({
+  host: z
+    .string()
+    .trim()
+    .min(1, 'Địa chỉ IP máy in LAN không được để trống')
+    .max(64)
+    .refine(isAllowedLanPrinterHost, {
+      message:
+        'Địa chỉ IP máy in phải nằm trong dải mạng nội bộ LAN (192.168.x.x, 10.x.x.x, 172.16-31.x.x hoặc 127.0.0.1)',
+    }),
+  port: z.number().int().min(1).max(65535).default(9100),
+  payloadBase64: z
+    .string()
+    .trim()
+    .min(1, 'Dữ liệu lệnh in ESC/POS không được để trống')
+    .max(2_000_000, 'Dữ liệu lệnh in ESC/POS vượt quá kích thước cho phép'),
+  timeoutMs: z.number().int().min(500).max(15000).default(4000),
+}).strict();
+export type LanEscPosPrintRequest = z.infer<typeof LanEscPosPrintRequestSchema>;
+
+export const LanEscPosPrintResponseSchema = z.object({
+  success: z.boolean(),
+  host: z.string(),
+  port: z.number().int(),
+  bytesSent: z.number().int().nonnegative(),
+  durationMs: z.number().nonnegative(),
+}).strict();
+export type LanEscPosPrintResponse = z.infer<typeof LanEscPosPrintResponseSchema>;
+
 
 

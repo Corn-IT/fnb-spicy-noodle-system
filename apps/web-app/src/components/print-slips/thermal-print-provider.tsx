@@ -1,11 +1,21 @@
 import * as React from 'react';
 
 import {
+  buildCashDrawerKickPayload,
+  encodeThermalContainerToEscPos,
+} from './escpos-encoder.util';
+import {
   KitchenCancelItemSlip,
   type KitchenCancelItemSlipProps,
 } from './kitchen-cancel-item-slip';
 import { KitchenSplitSlip, type KitchenSplitSlipProps } from './kitchen-split-slip';
 import { OfficialReceiptSlip, type OfficialReceiptSlipProps } from './official-receipt-slip';
+import {
+  dispatchLanEscPosPrint,
+  dispatchRawbtUsbPrint,
+  type PhysicalPrintDispatchResult,
+} from './physical-print-transport.util';
+import { useThermalPrinterConfigStore } from './printer-config.store';
 import {
   ProvisionalVietQrSlip,
   type ProvisionalVietQrSlipData,
@@ -51,26 +61,33 @@ export type ThermalPrintJob =
 export interface ThermalPrinterContextValue {
   printQueue: ThermalPrintJob[];
   activePrintJob: ThermalPrintJob | null;
+  lastPhysicalPrintResult: PhysicalPrintDispatchResult | null;
+  lastPhysicalPrintError: string | null;
   printKitchenSplit: (payload: KitchenSplitSlipProps) => void;
   printTableTransferNotice: (payload: TableTransferNoticeSlipProps) => void;
   printKitchenCancelItem: (payload: KitchenCancelItemSlipProps) => void;
   printProvisionalVietQr: (payload: ProvisionalVietQrSlipData) => void;
   printOfficialReceipt: (payload: OfficialReceiptSlipProps) => void;
   printTableQr: (payload: TableQrSlipProps) => void;
+  kickCashDrawerNow: () => Promise<PhysicalPrintDispatchResult | null>;
   clearPrintQueue: () => void;
 }
 
 const noop = () => {};
+const asyncNullNoop = async () => null;
 
 const defaultPrinterContext: ThermalPrinterContextValue = {
   printQueue: [],
   activePrintJob: null,
+  lastPhysicalPrintResult: null,
+  lastPhysicalPrintError: null,
   printKitchenSplit: noop,
   printTableTransferNotice: noop,
   printKitchenCancelItem: noop,
   printProvisionalVietQr: noop,
   printOfficialReceipt: noop,
   printTableQr: noop,
+  kickCashDrawerNow: asyncNullNoop,
   clearPrintQueue: noop,
 };
 
@@ -92,24 +109,103 @@ export interface ThermalPrintProviderProps {
 export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
   const [printQueue, setPrintQueue] = React.useState<ThermalPrintJob[]>([]);
   const [lastJob, setLastJob] = React.useState<ThermalPrintJob | null>(null);
+  const [lastPhysicalPrintResult, setLastPhysicalPrintResult] =
+    React.useState<PhysicalPrintDispatchResult | null>(null);
+  const [lastPhysicalPrintError, setLastPhysicalPrintError] = React.useState<string | null>(null);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
 
   const activePrintJob = printQueue[0] ?? null;
   const currentRenderJob = activePrintJob ?? lastJob;
+  const currentRenderJobRef = React.useRef<ThermalPrintJob | null>(null);
+  currentRenderJobRef.current = currentRenderJob;
 
   const executeBrowserPrintAndDequeue = React.useCallback((jobId: string) => {
-    if (typeof window !== 'undefined' && typeof window.print === 'function') {
-      const isAutomation = Boolean(
-        (typeof navigator !== 'undefined' && navigator.webdriver) ||
-        window.location.search.includes('no-print') ||
-        window.localStorage.getItem('fnb_disable_native_print') === 'true'
-      );
-      if (!isAutomation) {
-        window.print();
-      } else {
-        console.log('[ThermalPrint] Automation mode detected: simulated print for job', jobId);
+    const printerConfig = useThermalPrinterConfigStore.getState().config;
+    const job = currentRenderJobRef.current;
+
+    if (printerConfig.driver === 'BROWSER') {
+      if (typeof window !== 'undefined' && typeof window.print === 'function') {
+        const isAutomation = Boolean(
+          (typeof navigator !== 'undefined' && navigator.webdriver) ||
+            window.location.search.includes('no-print') ||
+            window.localStorage.getItem('fnb_disable_native_print') === 'true',
+        );
+        if (!isAutomation) {
+          window.print();
+        } else {
+          console.log('[ThermalPrint] Automation mode detected: simulated print for job', jobId);
+        }
       }
+      setPrintQueue((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== jobId) : []));
+      return;
     }
+
+    const containerEl =
+      containerRef.current ??
+      (typeof document !== 'undefined'
+        ? document.getElementById('thermal-print-container')
+        : null);
+
     setPrintQueue((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== jobId) : []));
+
+    if (!containerEl) {
+      return;
+    }
+
+    const shouldKickCashDrawer = Boolean(
+      printerConfig.cashDrawerKick &&
+        job?.type === 'OFFICIAL_RECEIPT' &&
+        job.payload.paymentMethod !== 'TRANSFER',
+    );
+
+    void (async () => {
+      try {
+        setLastPhysicalPrintError(null);
+        const escPosBytes = await encodeThermalContainerToEscPos(containerEl, {
+          paperWidthDots: printerConfig.paperWidthDots,
+          kickCashDrawer: shouldKickCashDrawer,
+        });
+
+        if (printerConfig.driver === 'RAWBT_USB') {
+          const res = await dispatchRawbtUsbPrint(escPosBytes, {
+            wsUrl: printerConfig.rawbtWsUrl,
+            fallbackToIntent: printerConfig.rawbtFallbackToIntent,
+          });
+          setLastPhysicalPrintResult(res);
+        } else if (printerConfig.driver === 'LAN_ESCPOS') {
+          const res = await dispatchLanEscPosPrint(escPosBytes, printerConfig);
+          setLastPhysicalPrintResult(res);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Lỗi gửi lệnh in nhiệt ESC/POS';
+        setLastPhysicalPrintError(msg);
+      }
+    })();
+  }, []);
+
+  const kickCashDrawerNow = React.useCallback(async (): Promise<PhysicalPrintDispatchResult | null> => {
+    const printerConfig = useThermalPrinterConfigStore.getState().config;
+    const kickBytes = buildCashDrawerKickPayload();
+    setLastPhysicalPrintError(null);
+
+    try {
+      if (printerConfig.driver === 'LAN_ESCPOS') {
+        const res = await dispatchLanEscPosPrint(kickBytes, printerConfig);
+        setLastPhysicalPrintResult(res);
+        return res;
+      }
+      // For RAWBT_USB (or even if called while testing drawer from Android POS)
+      const res = await dispatchRawbtUsbPrint(kickBytes, {
+        wsUrl: printerConfig.rawbtWsUrl,
+        fallbackToIntent: printerConfig.rawbtFallbackToIntent,
+      });
+      setLastPhysicalPrintResult(res);
+      return res;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Lỗi gửi xung mở két đựng tiền RJ11';
+      setLastPhysicalPrintError(msg);
+      throw err;
+    }
   }, []);
 
   React.useEffect(() => {
@@ -142,6 +238,8 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
     () => ({
       printQueue,
       activePrintJob,
+      lastPhysicalPrintResult,
+      lastPhysicalPrintError,
       printKitchenSplit: (payload) => {
         if (payload.tickets.length === 0) return;
         enqueueReplacementOrAppend({
@@ -186,15 +284,25 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
           payload,
         });
       },
+      kickCashDrawerNow,
       clearPrintQueue,
     }),
-    [printQueue, activePrintJob, enqueueReplacementOrAppend, clearPrintQueue],
+    [
+      printQueue,
+      activePrintJob,
+      lastPhysicalPrintResult,
+      lastPhysicalPrintError,
+      enqueueReplacementOrAppend,
+      kickCashDrawerNow,
+      clearPrintQueue,
+    ],
   );
 
   return (
     <ThermalPrinterContext.Provider value={contextValue}>
       {children}
       <div
+        ref={containerRef}
         id="thermal-print-container"
         data-testid="thermal-print-container"
         aria-hidden="true"
