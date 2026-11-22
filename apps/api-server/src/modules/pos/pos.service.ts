@@ -768,7 +768,12 @@ export class PosService {
         tableLabel: current.table?.name ?? (current.orderType === 'TAKEAWAY' ? `Mang về #${String(current.takeawayNumber ?? 0).padStart(2, '0')}` : null),
       };
     });
-    this.gateway.emitOrderStatusUpdated(id, { status: order.order.status, message: parsed.approved ? 'Bếp đang chế biến' : 'Đơn hàng đã bị từ chối' });
+    this.gateway.emitOrderStatusUpdated(id, {
+      status: order.order.status,
+      message: parsed.approved
+        ? 'Quầy đã xác nhận đơn, đang chờ chuyển xuống bếp'
+        : 'Đơn hàng đã bị từ chối',
+    });
     this.gateway.emitTableGridSync({ orderId: id, status: order.order.status });
     await this.auditLogService?.record({
       module: 'POS',
