@@ -316,7 +316,7 @@ export function ProfilePage() {
                   data-testid="profile-avatar-initials"
                   className="text-2xl font-bold text-muted-foreground select-none"
                 >
-                  {computeInitials(emp?.fullName || fullName)}
+                  {computeInitials(fullName || emp?.fullName)}
                 </span>
               )}
               <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50 text-[11px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100">
@@ -331,7 +331,10 @@ export function ProfilePage() {
               </p>
               <p className="text-xs text-muted-foreground">
                 Tên viết tắt lịch tuần:{' '}
-                <span className="font-mono font-semibold text-accent-text">
+                <span
+                  data-testid="profile-short-name"
+                  className="font-mono font-semibold text-accent-text"
+                >
                   {emp?.shortName ?? 'N/A'}
                 </span>
               </p>

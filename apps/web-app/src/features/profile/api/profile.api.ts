@@ -71,6 +71,8 @@ function syncUpdatedProfileToCaches(
   });
   void queryClient.invalidateQueries({ queryKey: ['employees'] });
   void queryClient.invalidateQueries({ queryKey: ['users'] });
+  void queryClient.invalidateQueries({ queryKey: ['schedules'] });
+  void queryClient.invalidateQueries({ queryKey: ['payroll'] });
 }
 
 export function useUpdateProfileMutation() {
