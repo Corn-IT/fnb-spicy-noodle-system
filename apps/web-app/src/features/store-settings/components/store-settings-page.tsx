@@ -59,6 +59,7 @@ import {
 import { MessageCatalogEditor } from './message-catalog-editor';
 import { NavCustomizationPanel } from './nav-customization-panel';
 import { PrintTemplateCustomizer } from './print-template-customizer';
+import { PrinterHardwareSettingsPanel } from './printer-hardware-settings-panel';
 import { StoreAssetsPanel } from './store-assets-panel';
 import { VoiceAnnouncerSettingsCard } from './voice-announcer-settings-card';
 import {
@@ -891,6 +892,7 @@ export function StoreSettingsPage() {
         </TabsContent>
 
         <TabsContent value="receipt" className="mt-4 min-w-0 w-full">
+          <PrinterHardwareSettingsPanel storeSettings={livePreviewSettings} />
           <PrintTemplateCustomizer
             draft={draft}
             livePreviewSettings={livePreviewSettings}
