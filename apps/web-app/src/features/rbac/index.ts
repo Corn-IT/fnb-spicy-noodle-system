@@ -4,6 +4,10 @@ export {
   type PermissionsDrawerProps,
 } from './components/permissions-drawer';
 export {
+  CreateUserDialog,
+  type CreateUserDialogProps,
+} from './components/create-user-dialog';
+export {
   useUsersQuery,
   useCreateUserMutation,
   useUpdatePermissionsMutation,

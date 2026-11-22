@@ -38,14 +38,24 @@ export type MdmListResponse = z.infer<typeof MdmListResponseSchema>;
 export const UpsertMdmSchema = z.object({
   category: MdmCategorySchema,
   name: z.string().trim().min(1).max(120),
+  normalizedName: z.string().trim().min(1).max(120).optional(),
   metadata: MetadataSchema,
 }).strict();
 export type UpsertMdmInput = z.infer<typeof UpsertMdmSchema>;
 
 export const UpdateMdmSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
+  normalizedName: z.string().trim().min(1).max(120).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
-}).strict().refine((input) => input.name !== undefined || input.metadata !== undefined, {
-  message: 'Phải cung cấp tên hoặc metadata cần cập nhật',
-});
+  isActive: z.boolean().optional(),
+}).strict().refine(
+  (input) =>
+    input.name !== undefined ||
+    input.normalizedName !== undefined ||
+    input.metadata !== undefined ||
+    input.isActive !== undefined,
+  {
+    message: 'Phải cung cấp tên, tên không dấu, thông tin phụ hoặc trạng thái cần cập nhật',
+  },
+);
 export type UpdateMdmInput = z.infer<typeof UpdateMdmSchema>;

@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Inject, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, ParseIntPipe, Post, Put, Query, UseGuards } from '@nestjs/common';
 import {
   CashflowSettlementFilterQuerySchema,
+  CompensateSettlementRequestSchema,
   CreateSettlementRequestSchema,
   UpdateDefaultBudgetSchema,
   type AuthPrincipal,
   type CashflowSettlementFilterQuery,
+  type CompensateSettlementRequest,
   type CreateSettlementRequest,
   type UpdateDefaultBudgetInput,
 } from '@fnb/shared';
@@ -22,8 +24,8 @@ export class CashflowController {
 
   @Get('preview')
   @RequirePermission('cashflow', 'view')
-  preview() {
-    return this.cashflowService.preview();
+  preview(@CurrentUser() user?: AuthPrincipal) {
+    return this.cashflowService.preview(new Date(), Boolean(user?.isSuperAdmin));
   }
 
   @Get('settlements')
@@ -41,9 +43,22 @@ export class CashflowController {
     return this.cashflowService.settleShift(body, user.id);
   }
 
+  @Post('settlements/:id/compensate')
+  @RequirePermission('cashflow', 'compensate')
+  compensate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(new ZodValidationPipe(CompensateSettlementRequestSchema)) body: CompensateSettlementRequest,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    return this.cashflowService.compensateSettlement(id, body, user.id);
+  }
+
   @Put('default-budget')
   @RequirePermission('cashflow', 'config')
-  setDefaultBudget(@Body(new ZodValidationPipe(UpdateDefaultBudgetSchema)) body: UpdateDefaultBudgetInput) {
-    return this.cashflowService.setDefaultBudget(body);
+  setDefaultBudget(
+    @Body(new ZodValidationPipe(UpdateDefaultBudgetSchema)) body: UpdateDefaultBudgetInput,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    return this.cashflowService.setDefaultBudget(body, user.id);
   }
 }

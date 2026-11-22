@@ -1,16 +1,24 @@
 import {
+  TableActionType,
+  type ApplyPosDiscountRequest,
   type CheckoutOrderRequest,
   type PosOrderSummary,
   type PosTableGridResponse,
+  type SplitCheckoutOrderRequest,
   type TableActionRequest,
 } from '@fnb/shared';
 import { ChevronLeft, ChevronRight, Receipt } from 'lucide-react';
 import * as React from 'react';
 
+import { AuditHistoryButton } from '@/components/audit-history-drawer/audit-history-drawer';
+import { SystemErrorView } from '@/components/error-display';
+import { PageHeader } from '@/components/layout/page-header';
 import { useThermalPrinter } from '@/components/print-slips';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { toast } from '@/components/ui/toast';
+import { useAppMessages } from '@/hooks/use-app-messages';
+import { evaluateOrderPendingAlert } from '@/lib/qr-pending-reminder';
+import { getActiveQrReminderConfig } from '@/lib/qr-voice-announcer';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/utils/cn';
 import {
@@ -24,30 +32,70 @@ import {
   usePosTableGridQuery,
   useProvisionalBillMutation,
   useReprintKitchenMutation,
+  useSplitCheckoutOrderMutation,
   useSplitKitchenMutation,
+  useApplyPosDiscountMutation,
+  useSplitProvisionalBillMutation,
   useTableActionMutation,
+  useRemovePosDiscountMutation,
 } from '../api/pos.api';
 import { usePosCashierSocket } from '../hooks/use-pos-cashier-socket';
 import { CheckoutConfirmDialog } from './checkout-confirm-dialog';
 import { LiveInvoicePanel, type LiveInvoiceDraftTarget } from './live-invoice-panel';
+import { PosDiscountDialog } from './pos-discount-dialog';
 import { PosMenuPanel, type PosMenuSelectedItem } from './pos-menu-panel';
+import {
+  SplitOrderItemsDialog,
+  type SplitOrderDialogMode,
+  type SplitSelectedItemSummary,
+} from './split-order-items-dialog';
 import { TableActionDialog } from './table-action-dialog';
 import { TableGridPanel } from './table-grid-panel';
 
 export function PosUnifiedPage() {
-  const { data: gridData } = usePosTableGridQuery();
-  const { data: products = [] } = usePosProductsQuery();
-  const { addonBadgesByOrderId, clearAddonBadge } = usePosCashierSocket();
+  const { notify, resolveErrorMessage } = useAppMessages();
+  const notifyErr = (key: string, err: unknown) => {
+    const resolved = resolveErrorMessage(key, err);
+    notify(key, {
+      variant: 'destructive',
+      vars: { reason: resolved.description ?? 'Vui lòng thử lại' },
+    });
+  };
+  const tableGridQuery = usePosTableGridQuery();
+  const gridData = tableGridQuery.data;
+  const productsQuery = usePosProductsQuery();
+  const products = productsQuery.data ?? [];
+  const [selectedOrderId, setSelectedOrderId] = React.useState<number | null>(null);
+  const { addonBadgesByOrderId, clearAddonBadge } = usePosCashierSocket({
+    onQrAutoCancelled: (payload) => {
+      if (payload.kind === 'NEW' && payload.orderId === selectedOrderId) {
+        setSelectedOrderId(null);
+      }
+    },
+  });
   const thermalPrinter = useThermalPrinter();
   const currentUser = useAuthStore((s) => s.user);
+  const canCreateOrder = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.create);
+  const canUpdateOrder = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.update);
+  const canSplitKitchen = Boolean(
+    currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.splitKitchen,
+  );
+  const canTableAction = Boolean(
+    currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.tableAction,
+  );
+  const canCheckout = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.checkout);
 
   const [posTab, setPosTab] = React.useState<'tables' | 'menu' | 'invoice'>('tables');
-  const [selectedOrderId, setSelectedOrderId] = React.useState<number | null>(null);
   const [draftTarget, setDraftTarget] = React.useState<LiveInvoiceDraftTarget | null>(null);
   const [draftItems, setDraftItems] = React.useState<PosMenuSelectedItem[]>([]);
 
   const [tableActionOpen, setTableActionOpen] = React.useState(false);
   const [checkoutOpen, setCheckoutOpen] = React.useState(false);
+  const [discountDialogOpen, setDiscountDialogOpen] = React.useState(false);
+  const [splitDialogMode, setSplitDialogMode] = React.useState<SplitOrderDialogMode | null>(null);
+  const [lastSplitPaymentAccountId, setLastSplitPaymentAccountId] = React.useState<number | null>(
+    null,
+  );
 
   const { data: currentOrder } = usePosOrderDetailQuery(selectedOrderId);
 
@@ -57,12 +105,56 @@ export function PosUnifiedPage() {
   const splitKitchenMutation = useSplitKitchenMutation();
   const reprintKitchenMutation = useReprintKitchenMutation();
   const provisionalBillMutation = useProvisionalBillMutation();
+  const splitProvisionalBillMutation = useSplitProvisionalBillMutation();
   const checkoutMutation = useCheckoutOrderMutation();
+  const splitCheckoutMutation = useSplitCheckoutOrderMutation();
   const tableActionMutation = useTableActionMutation();
   const cancelOrderMutation = useCancelPosOrderMutation();
+  const applyDiscountMutation = useApplyPosDiscountMutation();
+  const removeDiscountMutation = useRemovePosDiscountMutation();
+
+  React.useEffect(() => {
+    setLastSplitPaymentAccountId(null);
+  }, [selectedOrderId]);
+
+  const selectedTableRow = React.useMemo(
+    () =>
+      selectedOrderId !== null
+        ? gridData?.tables.find((table) => table.activeOrderId === selectedOrderId) ?? null
+        : null,
+    [gridData?.tables, selectedOrderId],
+  );
+
+  const [alertClockMs, setAlertClockMs] = React.useState<number>(() => Date.now());
+  React.useEffect(() => {
+    setAlertClockMs(Date.now());
+    if (!selectedTableRow?.activeOrder?.pendingQrSince && currentOrder?.status !== 'PENDING') {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setAlertClockMs(Date.now());
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [selectedTableRow?.activeOrder?.pendingQrSince, currentOrder?.status]);
+
+  const selectedPendingAlert = React.useMemo(() => {
+    if (!selectedTableRow?.activeOrder) return null;
+    return evaluateOrderPendingAlert(
+      selectedTableRow.activeOrder,
+      selectedTableRow.status,
+      alertClockMs,
+      getActiveQrReminderConfig(),
+    );
+  }, [selectedTableRow, alertClockMs]);
 
   const handleSelectTable = (table: PosTableGridResponse['tables'][number]) => {
     if (table.status === 'AVAILABLE' || !table.activeOrderId) {
+      if (!canCreateOrder) {
+        setSelectedOrderId(null);
+        setDraftTarget(null);
+        setDraftItems([]);
+        return;
+      }
       // Source B: Click empty table -> prepare DINE_IN draft and switch to Menu tab
       setSelectedOrderId(null);
       setDraftTarget({
@@ -94,6 +186,7 @@ export function PosUnifiedPage() {
   };
 
   const handleStartNewTakeaway = () => {
+    if (!canCreateOrder) return;
     // Source C: Click [+ TẠO ĐƠN MANG VỀ] -> prepare TAKEAWAY draft (tableId: null) and switch to Menu tab
     setSelectedOrderId(null);
     setDraftTarget({ orderType: 'TAKEAWAY' });
@@ -103,6 +196,7 @@ export function PosUnifiedPage() {
 
   const handleAddItemFromMenu = async (item: PosMenuSelectedItem) => {
     if (selectedOrderId && currentOrder) {
+      if (!canUpdateOrder) return;
       try {
         await patchItemsMutation.mutateAsync({
           orderId: selectedOrderId,
@@ -117,21 +211,18 @@ export function PosUnifiedPage() {
             ],
           },
         });
-        toast({
+        notify('pos.order.addItemSuccess', {
           variant: 'success',
-          title: 'Đã thêm món vào đơn',
-          description: `${item.quantity}x ${item.name}`,
+          vars: { quantity: item.quantity, itemName: item.name },
           duration: 3000,
         });
       } catch (err) {
-        toast({
-          variant: 'destructive',
-          title: 'Lỗi thêm món',
-          description: err instanceof Error ? err.message : 'Vui lòng thử lại',
-        });
+        notifyErr('pos.order.addItemError', err);
       }
       return;
     }
+
+    if (!canCreateOrder) return;
 
     if (!draftTarget) {
       setDraftTarget({ orderType: 'TAKEAWAY' });
@@ -172,17 +263,12 @@ export function PosUnifiedPage() {
       setSelectedOrderId(created.orderId);
       setPosTab('tables');
 
-      toast({
+      notify('pos.order.createSuccess', {
         variant: 'success',
-        title: 'Đã tạo đơn thành công',
-        description: `${created.tableLabel ?? created.orderCode}`,
+        vars: { targetLabel: `${created.tableLabel ?? created.orderCode}` },
       });
     } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Không thể tạo đơn',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
-      });
+      notifyErr('pos.order.createError', err);
     }
   };
 
@@ -193,17 +279,9 @@ export function PosUnifiedPage() {
         orderId: selectedOrderId,
         input: { approved: true },
       });
-      toast({
-        variant: 'success',
-        title: 'Đã duyệt đơn QR',
-        description: 'Đơn chuyển sang trạng thái Đang phục vụ (SERVING).',
-      });
+      notify('pos.order.approveQrSuccess', { variant: 'success' });
     } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi duyệt đơn QR',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
-      });
+      notifyErr('pos.order.approveQrError', err);
     }
   };
 
@@ -231,10 +309,9 @@ export function PosUnifiedPage() {
         orderCode: currentOrder?.orderCode,
         slips: result.kitchenCancellationSlips,
       });
-      toast({
+      notify('pos.order.cancelItemSlipSuccess', {
         variant: 'warning',
-        title: 'Đã huỷ món bếp & sinh Phiếu Báo Huỷ',
-        description: `Đã gửi lệnh in báo huỷ tới ${result.kitchenCancellationSlips.length} trạm bếp.`,
+        vars: { stationCount: result.kitchenCancellationSlips.length },
       });
     }
   };
@@ -243,6 +320,7 @@ export function PosUnifiedPage() {
     if (!selectedOrderId || splitKitchenMutation.isPending) return;
     try {
       const response = await splitKitchenMutation.mutateAsync(selectedOrderId);
+      clearAddonBadge(selectedOrderId);
       if (response.tickets.length > 0) {
         thermalPrinter.printKitchenSplit({
           orderCode: currentOrder?.orderCode ?? `#${selectedOrderId}`,
@@ -252,25 +330,19 @@ export function PosUnifiedPage() {
           orderNote: currentOrder?.note,
           tickets: response.tickets,
         });
-        toast({
+        notify('pos.kitchen.splitSuccess', {
           variant: 'success',
-          title: `Đã tách đơn Lượt ${response.batchNo}`,
-          description: `Đã gửi ${response.tickets.length} phiếu in nhiệt xuống bếp.`,
+          vars: { batchNo: response.batchNo, ticketCount: response.tickets.length },
         });
       } else {
-        toast({
+        notify('pos.kitchen.splitNoNewItems', {
           variant: 'info',
-          title: 'Thông báo tách bếp',
-          description: response.message ?? 'Không có món mới cần tách',
+          vars: { message: response.message ?? 'Không có món mới cần tách' },
           duration: 3500,
         });
       }
     } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi tách bếp',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
-      });
+      notifyErr('pos.kitchen.splitError', err);
     }
   };
 
@@ -291,26 +363,20 @@ export function PosUnifiedPage() {
           isReprint: true,
           tickets: response.tickets,
         });
-        toast({
+        notify(batchNo ? 'pos.kitchen.reprintBatchSuccess' : 'pos.kitchen.reprintAllSuccess', {
           variant: 'info',
-          title: batchNo
-            ? `Đã in lại phiếu bếp Lượt ${batchNo}`
-            : 'Đã in lại toàn bộ phiếu bếp',
-          description: `Đã gửi ${response.tickets.length} bản sao phiếu in (có dấu bản sao chống làm trùng).`,
+          vars: batchNo
+            ? { batchNo, ticketCount: response.tickets.length }
+            : { ticketCount: response.tickets.length },
         });
       } else {
-        toast({
+        notify('pos.kitchen.reprintEmpty', {
           variant: 'info',
-          title: 'Thông báo in lại phiếu bếp',
-          description: response.message ?? 'Không có món đã in nào để in lại',
+          vars: { message: response.message ?? 'Không có món đã in nào để in lại' },
         });
       }
     } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi in lại phiếu bếp',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
-      });
+      notifyErr('pos.kitchen.reprintError', err);
     }
   };
 
@@ -318,23 +384,79 @@ export function PosUnifiedPage() {
     if (!selectedOrderId || provisionalBillMutation.isPending) return;
     try {
       const bill = await provisionalBillMutation.mutateAsync(selectedOrderId);
+      if (bill.vietQrPayload && typeof Image !== 'undefined') {
+        const img = new Image();
+        img.src = bill.vietQrPayload;
+        if (img.decode) {
+          try {
+            await Promise.race([
+              img.decode(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500)),
+            ]);
+          } catch {
+            // fallback handled by ProvisionalVietQrSlip
+          }
+        }
+      }
       thermalPrinter.printProvisionalVietQr({
         ...bill,
         tableLabel: currentOrder?.tableLabel,
         cashierName: currentUser?.fullName ?? currentUser?.username,
         createdAt: currentOrder?.createdAt,
       });
-      toast({
+      if (bill.qrOverLimit && bill.paymentAccount) {
+        notify('pos.paymentQr.overLimitWarning', {
+          variant: 'warning',
+          vars: {
+            accountLabel: bill.paymentAccount.label,
+            bankName: bill.paymentAccount.bankName,
+            accountNo: bill.paymentAccount.accountNo,
+          },
+        });
+      } else if (bill.qrRotated && bill.paymentAccount) {
+        notify('pos.paymentQr.rotatedInfo', {
+          variant: 'info',
+          vars: {
+            accountLabel: bill.paymentAccount.label,
+            bankName: bill.paymentAccount.bankName,
+            accountNo: bill.paymentAccount.accountNo,
+          },
+        });
+      }
+      notify('pos.provisional.printSuccess', {
         variant: 'success',
-        title: 'Đã in phiếu tạm tính (VietQR)',
-        description: `Mã đơn ${bill.orderCode} vẫn giữ nguyên trạng thái Đang phục vụ.`,
+        vars: { orderCode: bill.orderCode },
       });
     } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi in tạm tính',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      notifyErr('pos.provisional.printError', err);
+    }
+  };
+
+  const handleApplyDiscount = async (payload: ApplyPosDiscountRequest) => {
+    if (!selectedOrderId) return;
+    try {
+      const updated = await applyDiscountMutation.mutateAsync({
+        orderId: selectedOrderId,
+        input: payload,
       });
+      setDiscountDialogOpen(false);
+      notify('pos.discount.applySuccess', {
+        variant: 'success',
+        vars: { amount: (updated.discountAmount ?? 0).toLocaleString('vi-VN') },
+      });
+      return updated;
+    } catch (err) {
+      notifyErr('pos.discount.applyError', err);
+    }
+  };
+
+  const handleRemoveDiscount = async () => {
+    if (!selectedOrderId || removeDiscountMutation.isPending) return;
+    try {
+      await removeDiscountMutation.mutateAsync(selectedOrderId);
+      notify('pos.discount.removeSuccess', { variant: 'info' });
+    } catch (err) {
+      notifyErr('pos.discount.removeError', err);
     }
   };
 
@@ -353,6 +475,10 @@ export function PosUnifiedPage() {
           (orderSnapshot.orderType === 'TAKEAWAY'
             ? `Mang về #${String(orderSnapshot.takeawayNumber ?? 1).padStart(2, '0')}`
             : `Bàn #${orderSnapshot.tableId}`);
+        const discountLabel =
+          orderSnapshot.discountSnapshot?.kind === 'CODE'
+            ? (orderSnapshot.discountSnapshot.code ?? orderSnapshot.discountSnapshot.name)
+            : (orderSnapshot.discountSnapshot?.name ?? null);
         thermalPrinter.printOfficialReceipt({
           orderCode: orderSnapshot.orderCode,
           tableLabel: resolvedTableLabel,
@@ -361,6 +487,9 @@ export function PosUnifiedPage() {
           paymentMethod: payload.paymentMethod,
           cashAmount: payload.cashAmount,
           transferAmount: payload.transferAmount,
+          subtotalAmount: orderSnapshot.subtotalAmount,
+          discountAmount: orderSnapshot.discountAmount,
+          discountLabel,
           totalAmount: orderSnapshot.totalAmount,
           items: orderSnapshot.items
             .filter((item) => item.kitchenStatus !== 'CANCELLED')
@@ -376,49 +505,185 @@ export function PosUnifiedPage() {
       }
 
       setCheckoutOpen(false);
+      clearAddonBadge(selectedOrderId);
       setSelectedOrderId(null);
-      toast({
+      notify(payload.printReceipt ? 'pos.checkout.successWithPrint' : 'pos.checkout.successNoPrint', {
         variant: 'success',
-        title: 'Thanh toán hoàn tất',
-        description: payload.printReceipt
-          ? 'Đã đóng đơn, giải phóng bàn và in hoá đơn.'
-          : 'Đã đóng đơn và giải phóng bàn (Không in).',
       });
     } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi thanh toán',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      notifyErr('pos.checkout.error', err);
+    }
+  };
+
+  const handlePrintSplitProvisional = async (
+    selectedItems: SplitSelectedItemSummary[],
+    splitTotal: number,
+  ) => {
+    if (!currentOrder || splitProvisionalBillMutation.isPending) return;
+    try {
+      const bill = await splitProvisionalBillMutation.mutateAsync({
+        orderId: currentOrder.orderId,
+        input: {
+          items: selectedItems.map((item) => ({
+            orderItemId: item.orderItemId,
+            quantity: item.quantity,
+          })),
+        },
       });
+      setLastSplitPaymentAccountId(bill.paymentAccount?.id ?? null);
+
+      if (bill.vietQrPayload && typeof Image !== 'undefined') {
+        const img = new Image();
+        img.src = bill.vietQrPayload;
+        if (img.decode) {
+          try {
+            await Promise.race([
+              img.decode(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500)),
+            ]);
+          } catch {
+            // fallback handled by ProvisionalVietQrSlip
+          }
+        }
+      }
+      thermalPrinter.printProvisionalVietQr({
+        ...bill,
+        tableLabel: currentOrder.tableLabel,
+        cashierName: currentUser?.fullName ?? currentUser?.username,
+        createdAt: currentOrder.createdAt,
+      });
+      setSplitDialogMode(null);
+      if (bill.qrOverLimit && bill.paymentAccount) {
+        notify('pos.paymentQr.overLimitWarning', {
+          variant: 'warning',
+          vars: {
+            accountLabel: bill.paymentAccount.label,
+            bankName: bill.paymentAccount.bankName,
+            accountNo: bill.paymentAccount.accountNo,
+          },
+        });
+      } else if (bill.qrRotated && bill.paymentAccount) {
+        notify('pos.paymentQr.rotatedInfo', {
+          variant: 'info',
+          vars: {
+            accountLabel: bill.paymentAccount.label,
+            bankName: bill.paymentAccount.bankName,
+            accountNo: bill.paymentAccount.accountNo,
+          },
+        });
+      }
+      notify('pos.split.provisionalSuccess', {
+        variant: 'success',
+        vars: {
+          itemCount: selectedItems.length,
+          amount: splitTotal.toLocaleString('vi-VN'),
+        },
+      });
+    } catch (err) {
+      notifyErr('pos.split.provisionalError', err);
+    }
+  };
+
+  const handleConfirmSplitCheckout = async (
+    payload: SplitCheckoutOrderRequest,
+    selectedItems: SplitSelectedItemSummary[],
+    splitTotal: number,
+  ) => {
+    if (!selectedOrderId || !currentOrder) return;
+    try {
+      const orderSnapshot = currentOrder;
+      const response = await splitCheckoutMutation.mutateAsync({
+        orderId: selectedOrderId,
+        input: {
+          ...payload,
+          ...(lastSplitPaymentAccountId ? { paymentAccountId: lastSplitPaymentAccountId } : {}),
+        },
+      });
+      setLastSplitPaymentAccountId(null);
+
+      if (payload.printReceipt) {
+        const resolvedTableLabel =
+          orderSnapshot.tableLabel ??
+          (orderSnapshot.orderType === 'TAKEAWAY'
+            ? `Mang về #${String(orderSnapshot.takeawayNumber ?? 1).padStart(2, '0')}`
+            : `Bàn #${orderSnapshot.tableId}`);
+        thermalPrinter.printOfficialReceipt({
+          orderCode: response.paidOrderCode,
+          tableLabel: resolvedTableLabel,
+          cashierName: currentUser?.fullName ?? currentUser?.username,
+          paidAt: response.paidAt,
+          paymentMethod: payload.paymentMethod,
+          cashAmount: payload.cashAmount,
+          transferAmount: payload.transferAmount,
+          totalAmount: splitTotal,
+          items: selectedItems.map((item) => ({
+            name: item.name,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            lineTotal: item.lineTotal,
+            modifiers: item.modifiers,
+            note: item.note,
+          })),
+        });
+      }
+
+      setSplitDialogMode(null);
+      if (response.isFullCheckout) {
+        setSelectedOrderId(null);
+      }
+      notify(
+        response.isFullCheckout
+          ? 'pos.split.checkoutFullSuccess'
+          : 'pos.split.checkoutPartialSuccess',
+        {
+          variant: 'success',
+          vars: response.isFullCheckout
+            ? undefined
+            : {
+                paidOrderCode: response.paidOrderCode,
+                remainingAmount: response.remainingTotalAmount.toLocaleString('vi-VN'),
+              },
+        },
+      );
+    } catch (err) {
+      notifyErr('pos.split.checkoutError', err);
     }
   };
 
   const handleConfirmTableAction = async (input: TableActionRequest) => {
     if (!selectedOrderId) return;
     try {
+      const mergedTargetOrderId =
+        input.action === TableActionType.MERGE
+          ? (gridData?.tables.find((t) => t.id === input.targetTableId)?.activeOrderId ?? null)
+          : null;
       const result = await tableActionMutation.mutateAsync({
         orderId: selectedOrderId,
         input,
       });
       if (result.requireKitchenNoticePrint && result.kitchenTransferSlip) {
-        thermalPrinter.printTableTransferNotice(result.kitchenTransferSlip);
+        thermalPrinter.printTableTransferNotice({
+          ...result.kitchenTransferSlip,
+          cashierName: currentUser?.fullName || currentUser?.username || 'Thu ngân',
+        });
       }
       setTableActionOpen(false);
+      if (result.action === TableActionType.MERGE && mergedTargetOrderId) {
+        setSelectedOrderId(mergedTargetOrderId);
+      }
       const actionText =
         result.action === 'MOVE' ? 'chuyển' : result.action === 'MERGE' ? 'gộp' : 'hoán đổi';
-      toast({
-        variant: 'success',
-        title: `Đã ${actionText} bàn thành công`,
-        description: result.requireKitchenNoticePrint
-          ? 'Đã in Phiếu Thông báo Chuyển bàn xuống bếp.'
-          : 'Đã đồng bộ sơ đồ bàn và phiên QR của khách.',
-      });
+      notify(
+        result.requireKitchenNoticePrint
+          ? 'pos.tableAction.successPrinted'
+          : 'pos.tableAction.successSynced',
+        {
+          variant: 'success',
+          vars: { actionText },
+        },
+      );
     } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Không thể thao tác bàn',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
-      });
+      notifyErr('pos.tableAction.error', err);
     }
   };
 
@@ -441,19 +706,11 @@ export function PosUnifiedPage() {
         },
       });
       setSelectedOrderId(null);
-      toast({
+      notify(isTakeaway ? 'pos.order.voidTakeawaySuccess' : 'pos.order.voidTableSuccess', {
         variant: 'success',
-        title: isTakeaway ? 'Đã huỷ đơn mang về' : 'Đã huỷ đơn & giải phóng bàn',
-        description: isTakeaway
-          ? 'Đơn mang về đã được huỷ thành công.'
-          : 'Bàn đã chuyển về trạng thái Bàn trống.',
       });
     } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi huỷ đơn',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại',
-      });
+      notifyErr('pos.order.voidError', err);
     }
   };
 
@@ -469,11 +726,26 @@ export function PosUnifiedPage() {
       ? 'Đơn Mang về mới'
       : draftTarget?.tableName ?? 'Đang chọn bàn';
 
+  if (!gridData && tableGridQuery.isError) {
+    return (
+      <SystemErrorView
+        variant="section"
+        error={tableGridQuery.error}
+        onRetry={() => {
+          void tableGridQuery.refetch();
+          void productsQuery.refetch();
+        }}
+      />
+    );
+  }
+
   return (
     <div
       data-testid="pos-unified-screen"
-      className="relative flex flex-1 min-h-0 h-full w-full flex-col gap-3 lg:flex-row overflow-hidden"
+      className="relative flex flex-1 min-h-0 h-full w-full flex-col gap-3 overflow-hidden"
     >
+      <PageHeader path="/pos" defaultTitle="Bán hàng POS" hideWhenDefault className="shrink-0" />
+      <div className="flex flex-1 min-h-0 w-full flex-col gap-3 lg:flex-row overflow-hidden">
       {/* Left Panel: Table Grid / Fast Menu (Expands to fill all remaining width) */}
       <div
         className={cn(
@@ -486,16 +758,15 @@ export function PosUnifiedPage() {
           onValueChange={(v) => setPosTab(v as 'tables' | 'menu' | 'invoice')}
           className="flex flex-1 min-h-0 h-full flex-col"
         >
-          <div className="flex items-center justify-between border-b px-2.5 sm:px-4 py-2 sm:py-2.5 shrink-0">
-            <TabsList className="grid w-full grid-cols-3 lg:grid-cols-2">
+          <div className="flex items-center justify-between gap-2 border-b px-2.5 sm:px-4 py-2 sm:py-2.5 shrink-0">
+            <TabsList className="grid w-full min-w-0 grid-cols-3 lg:grid-cols-2">
               <TabsTrigger value="tables" data-testid="pos-tab-tables">
-                <span className="hidden sm:inline">Sơ đồ Bàn & Mang về</span>
-                <span className="sm:hidden">Sơ đồ Bàn</span>
+                <span className="hidden xl:inline truncate">Sơ đồ Bàn & Mang về</span>
+                <span className="xl:hidden truncate">Sơ đồ Bàn</span>
               </TabsTrigger>
               <TabsTrigger value="menu" data-testid="pos-tab-menu">
-                <span className="hidden xl:inline">Thực đơn Gọi món nhanh</span>
-                <span className="hidden sm:inline xl:hidden">Thực đơn Gọi món</span>
-                <span className="sm:hidden">Thực đơn</span>
+                <span className="hidden xl:inline truncate">Thực đơn Gọi món nhanh</span>
+                <span className="xl:hidden truncate">Thực đơn</span>
               </TabsTrigger>
               <TabsTrigger
                 value="invoice"
@@ -503,9 +774,10 @@ export function PosUnifiedPage() {
                 onClick={() => setPosTab('invoice')}
                 className="lg:hidden"
               >
-                <span>Hoá đơn {activeBadgeCount > 0 ? `(${activeBadgeCount})` : ''}</span>
+                <span className="truncate">Hoá đơn {activeBadgeCount > 0 ? `(${activeBadgeCount})` : ''}</span>
               </TabsTrigger>
             </TabsList>
+            <AuditHistoryButton module="POS" label="Lịch sử" className="shrink-0" />
           </div>
 
           <TabsContent value="tables" className="mt-0 flex-1 min-h-0 h-full overflow-hidden flex flex-col data-[state=inactive]:hidden">
@@ -565,12 +837,19 @@ export function PosUnifiedPage() {
           order={currentOrder ?? null}
           draftTarget={draftTarget}
           draftItems={draftItems}
+          canCreate={canCreateOrder}
+          canUpdate={canUpdateOrder}
+          canSplitKitchen={canSplitKitchen}
+          canTableAction={canTableAction}
+          canCheckout={canCheckout}
           isSplitPending={splitKitchenMutation.isPending}
           isProvisionalPending={provisionalBillMutation.isPending}
           isApprovingQr={approveQrMutation.isPending}
           isSubmittingDraft={createOrderMutation.isPending}
           isCancellingOrder={cancelOrderMutation.isPending}
           isReprintPending={reprintKitchenMutation.isPending}
+          isDiscountPending={applyDiscountMutation.isPending || removeDiscountMutation.isPending}
+          pendingAlert={selectedPendingAlert}
           onUpdateDraftQty={handleUpdateDraftQty}
           onRemoveDraftItem={handleRemoveDraftItem}
           onSubmitDraftOrder={handleSubmitDraftOrder}
@@ -581,20 +860,25 @@ export function PosUnifiedPage() {
           onSplitKitchen={handleSplitKitchen}
           onReprintKitchen={handleReprintKitchen}
           onPrintProvisionalBill={handlePrintProvisionalBill}
+          onOpenSplitProvisionalBill={() => setSplitDialogMode('PROVISIONAL')}
           onOpenCheckout={() => setCheckoutOpen(true)}
+          onOpenSplitCheckout={() => setSplitDialogMode('CHECKOUT')}
           onCancelOrder={handleCancelOrder}
+          onOpenDiscount={() => setDiscountDialogOpen(true)}
+          onRemoveDiscount={handleRemoveDiscount}
         />
+      </div>
       </div>
 
       {/* Floating Bottom Quick Action Bar on Mobile/Tablet Portrait */}
       {posTab !== 'invoice' && (currentOrder || draftItems.length > 0 || draftTarget) ? (
         <div className="fixed inset-x-0 bottom-0 z-30 p-2.5 sm:p-3 lg:hidden pb-safe">
-          <div className="flex items-center justify-between gap-2.5 rounded-2xl border border-rose-500/30 bg-card/95 p-2.5 shadow-2xl backdrop-blur-md">
+          <div className="flex items-center justify-between gap-2.5 rounded-2xl border border-primary/30 bg-card/95 p-2.5 shadow-2xl backdrop-blur-md">
             <div className="min-w-0 flex-1 pl-1">
               <p className="text-xs font-bold text-foreground truncate">
                 {activeLabel} {activeBadgeCount > 0 ? `(${activeBadgeCount} món)` : ''}
               </p>
-              <p className="text-sm font-extrabold text-rose-600 truncate">
+              <p className="text-sm font-extrabold text-price truncate">
                 {activeTotal.toLocaleString('vi-VN')} đ
               </p>
             </div>
@@ -602,7 +886,7 @@ export function PosUnifiedPage() {
               type="button"
               size="sm"
               onClick={() => setPosTab('invoice')}
-              className="h-9 bg-rose-600 text-white font-bold shadow-xs active:scale-95 shrink-0 px-3.5"
+              className="h-9 bg-primary text-primary-foreground hover:bg-primary/90 font-bold shadow-xs active:scale-95 shrink-0 px-3.5"
             >
               <Receipt className="h-4 w-4 shrink-0" />
               <span>Xem Hoá đơn</span>
@@ -627,6 +911,30 @@ export function PosUnifiedPage() {
         isSubmitting={checkoutMutation.isPending}
         onConfirmCheckout={handleConfirmCheckout}
       />
+
+      <PosDiscountDialog
+        open={discountDialogOpen}
+        onOpenChange={setDiscountDialogOpen}
+        order={currentOrder ?? null}
+        isSubmitting={applyDiscountMutation.isPending}
+        onApplyDiscount={handleApplyDiscount}
+      />
+
+      {splitDialogMode ? (
+        <SplitOrderItemsDialog
+          open={Boolean(splitDialogMode)}
+          onOpenChange={(open) => {
+            if (!open) setSplitDialogMode(null);
+          }}
+          mode={splitDialogMode}
+          order={currentOrder ?? null}
+          isSubmitting={
+            splitCheckoutMutation.isPending || splitProvisionalBillMutation.isPending
+          }
+          onPrintSplitProvisional={handlePrintSplitProvisional}
+          onConfirmSplitCheckout={handleConfirmSplitCheckout}
+        />
+      ) : null}
     </div>
   );
 }

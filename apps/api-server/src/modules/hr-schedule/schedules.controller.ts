@@ -9,7 +9,7 @@ import {
   type ScheduleWeekQuery,
 } from '@fnb/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RequirePermission } from '../../common/decorators/permissions.decorator';
+import { RequireAnyPermission, RequirePermission } from '../../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -27,7 +27,11 @@ export class SchedulesController {
   }
 
   @Put('bulk-save')
-  @RequirePermission('schedules', 'update')
+  @RequireAnyPermission(
+    { module: 'schedules', action: 'create' },
+    { module: 'schedules', action: 'update' },
+    { module: 'schedules', action: 'delete' },
+  )
   bulkSave(
     @Body(new ZodValidationPipe(BulkSaveScheduleRequestSchema)) body: BulkSaveScheduleRequest,
     @CurrentUser() user: AuthPrincipal,
@@ -36,7 +40,10 @@ export class SchedulesController {
   }
 
   @Post('copy-previous-week')
-  @RequirePermission('schedules', 'update')
+  @RequireAnyPermission(
+    { module: 'schedules', action: 'create' },
+    { module: 'schedules', action: 'update' },
+  )
   copyPreviousWeek(
     @Body(new ZodValidationPipe(CopyPreviousWeekRequestSchema)) body: CopyPreviousWeekRequest,
     @CurrentUser() user: AuthPrincipal,

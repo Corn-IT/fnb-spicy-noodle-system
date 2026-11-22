@@ -1,12 +1,17 @@
-import { Body, Controller, Get, Inject, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   InvoiceFilterQuerySchema,
+  ReviewInvoicePaymentEditSchema,
+  UpdateInvoicePaymentMethodSchema,
   VoidInvoiceRequestSchema,
+  type AuthPrincipal,
   type InvoiceFilterQuery,
+  type ReviewInvoicePaymentEditInput,
+  type UpdateInvoicePaymentMethodInput,
   type VoidInvoiceRequest,
 } from '@fnb/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RequirePermission, SuperAdminOnly } from '../../common/decorators/permissions.decorator';
+import { RequirePermission } from '../../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -31,12 +36,32 @@ export class InvoicesController {
 
   @Post(':id/reprint')
   @RequirePermission('invoices', 'reprint')
-  reprint(@Param('id', ParseIntPipe) id: number) {
-    return this.invoicesService.get(id);
+  reprint(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthPrincipal) {
+    return this.invoicesService.reprint(id, user);
+  }
+
+  @Patch(':id/payment-method')
+  @RequirePermission('invoices', 'update')
+  requestPaymentMethodEdit(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(new ZodValidationPipe(UpdateInvoicePaymentMethodSchema)) body: UpdateInvoicePaymentMethodInput,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    return this.invoicesService.requestPaymentMethodEdit(id, body, user);
+  }
+
+  @Post(':id/payment-method/review')
+  @RequirePermission('invoices', 'approve')
+  reviewPaymentMethodEdit(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(new ZodValidationPipe(ReviewInvoicePaymentEditSchema)) body: ReviewInvoicePaymentEditInput,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    return this.invoicesService.reviewPaymentMethodEdit(id, body, user);
   }
 
   @Post(':id/void')
-  @SuperAdminOnly()
+  @RequirePermission('invoices', 'void')
   voidInvoice(
     @Param('id', ParseIntPipe) id: number,
     @Body(new ZodValidationPipe(VoidInvoiceRequestSchema)) body: VoidInvoiceRequest,

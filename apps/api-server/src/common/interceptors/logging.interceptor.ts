@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { finalize, type Observable } from 'rxjs';
 import type { RequestWithId } from '../middleware/request-id.middleware';
+import { redactSensitiveUrl } from '../security/redact.util';
 
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
@@ -17,8 +18,9 @@ export class LoggingInterceptor implements NestInterceptor {
     const startedAt = Date.now();
 
     return next.handle().pipe(finalize(() => {
+      const safePath = redactSensitiveUrl(request.originalUrl ?? request.url);
       this.logger.log(
-        `HTTP request completed: requestId=${request.requestId} method=${request.method} path=${request.originalUrl} durationMs=${Date.now() - startedAt}`,
+        `HTTP request completed: requestId=${request.requestId} method=${request.method} path=${safePath} durationMs=${Date.now() - startedAt}`,
       );
     }));
   }

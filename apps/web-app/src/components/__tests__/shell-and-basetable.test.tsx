@@ -12,7 +12,7 @@ import { ResizableSidebar } from '@/components/layout/resizable-sidebar';
 import { TopNavbar, executeCleanLogout } from '@/components/layout/top-navbar';
 import { Toaster, useToastStore } from '@/components/ui/toast';
 import { ProfilePage, type JoinedUserProfile } from '@/features/profile';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, bootstrapAuthSession } from '@/lib/api-client';
 import { QueryProvider } from '@/providers/query-provider';
 import { useAuthStore } from '@/stores/auth.store';
 import {
@@ -88,16 +88,13 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
           username: 'cashier01',
           fullName: 'Nguyễn Văn Anh',
           isSuperAdmin: false,
-          permissions: {
+          permissions: UserPermissionsSchema.parse({
             pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true },
-            invoices: { view: true, reprint: true, void: false },
-            inventory: { view: true, create: true, update: false, delete: true },
-            cashflow: { view: true, create: true, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: true, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+            invoices: { view: true, reprint: true },
+            inventory: { view: true, create: true, delete: true },
+            cashflow: { view: true, create: true },
+            schedules: { view: true },
+          }),
         },
       });
 
@@ -105,6 +102,14 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
       uiPrefs.setTheme('dark');
       uiPrefs.setSidebarWidth(280);
       uiPrefs.setTableColumnWidths('invoices', { orderCode: 220, totalAmount: 180 });
+      localStorage.setItem(
+        'store_settings_cache',
+        JSON.stringify({ storeName: 'Mì Cay Test', subtitle: 'Sub Test' }),
+      );
+      localStorage.setItem(
+        'store_messages_cache',
+        JSON.stringify({ 'pos.order.createSuccess': { title: 'Tạo đơn OK' } }),
+      );
 
       const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ ok: true });
 
@@ -128,6 +133,14 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
         totalAmount: 180,
       });
 
+      const cachedStoreSettings = localStorage.getItem('store_settings_cache');
+      expect(cachedStoreSettings).not.toBeNull();
+      expect(JSON.parse(cachedStoreSettings!).storeName).toBe('Mì Cay Test');
+
+      const cachedStoreMessages = localStorage.getItem('store_messages_cache');
+      expect(cachedStoreMessages).not.toBeNull();
+      expect(JSON.parse(cachedStoreMessages!)['pos.order.createSuccess'].title).toBe('Tạo đơn OK');
+
       expect(useUiPreferencesStore.getState().theme).toBe('dark');
       expect(useUiPreferencesStore.getState().sidebarWidth).toBe(280);
       expect(useUiPreferencesStore.getState().columnWidths.invoices).toEqual({
@@ -147,16 +160,12 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
           username: 'cashier01',
           fullName: 'Nguyễn Văn Anh',
           isSuperAdmin: false,
-          permissions: {
-            pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true },
-            invoices: { view: true, reprint: true, void: false },
-            inventory: { view: true, create: true, update: false, delete: true },
-            cashflow: { view: true, create: true, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: false, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, create: true, update: true, splitKitchen: true, tableAction: true, checkout: true },
+            invoices: { view: true, reprint: true },
+            inventory: { view: true, create: true, delete: true },
+            cashflow: { view: true, create: true },
+          }),
         },
       });
 
@@ -185,16 +194,7 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
           username: 'superadmin',
           fullName: 'Chủ Quán Sơn Bảo',
           isSuperAdmin: true,
-          permissions: {
-            pos: { view: false, create: false, update: false, delete: false, splitKitchen: false, tableAction: false, checkout: false },
-            invoices: { view: false, reprint: false, void: false },
-            inventory: { view: false, create: false, update: false, delete: false },
-            cashflow: { view: false, create: false, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: false, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+          permissions: UserPermissionsSchema.parse({}),
         },
       });
 
@@ -209,6 +209,113 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
       expect(screen.getByText(/Quản trị Master Data/i)).toBeInTheDocument();
     });
 
+    it('should keep sidebar logo unclipped in header and move expand button below header when collapsed', () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: {
+          id: 1,
+          employeeId: 1,
+          username: 'superadmin',
+          fullName: 'Nguyễn Minh Quân',
+          isSuperAdmin: true,
+          permissions: UserPermissionsSchema.parse({}),
+        },
+      });
+
+      render(
+        <MemoryRouter future={routerFutureFlags}>
+          <ResizableSidebar />
+        </MemoryRouter>,
+      );
+
+      const collapseBtn = screen.getByTestId('sidebar-collapse-btn');
+      fireEvent.click(collapseBtn);
+
+      expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(true);
+      const logo = screen.getByTestId('sidebar-logo');
+      const expandBtn = screen.getByTestId('sidebar-expand-btn');
+      expect(logo).toBeInTheDocument();
+      expect(expandBtn).toBeInTheDocument();
+      // Header row only holds brand logo when collapsed (expand button sits below divider)
+      expect(logo.parentElement?.parentElement?.contains(expandBtn)).toBe(false);
+
+      fireEvent.click(expandBtn);
+      expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(false);
+    });
+
+    it('should group sidebar routes logically with /discounts right after /menu and hide empty groups for cashier01', () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: {
+          id: 1,
+          employeeId: 1,
+          username: 'superadmin',
+          fullName: 'Nguyễn Minh Quân',
+          isSuperAdmin: true,
+          permissions: UserPermissionsSchema.parse({}),
+        },
+      });
+
+      const { unmount } = render(
+        <MemoryRouter future={routerFutureFlags}>
+          <ResizableSidebar />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByText('Bán hàng & Khuyến mãi')).toBeInTheDocument();
+      expect(screen.getByText('Tài chính & Kho')).toBeInTheDocument();
+      expect(screen.getByText('Nhân sự & Tiền lương')).toBeInTheDocument();
+      expect(screen.getByText('Hệ thống')).toBeInTheDocument();
+
+      const navLinks = screen.getAllByRole('link').map((el) => el.getAttribute('href'));
+      expect(navLinks).toEqual([
+        '/dashboard',
+        '/pos',
+        '/menu',
+        '/discounts',
+        '/invoices',
+        '/cashflow',
+        '/payment-qr',
+        '/inventory',
+        '/employees',
+        '/schedules',
+        '/payroll',
+        '/master-data',
+        '/rbac',
+        '/settings',
+      ]);
+
+      unmount();
+
+      useAuthStore.getState().setAuth({
+        accessToken: 'cashier-token',
+        user: {
+          id: 2,
+          employeeId: 12,
+          username: 'cashier01',
+          fullName: 'Trần Thị Lan',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true },
+            invoices: { view: true },
+            inventory: { view: true },
+            cashflow: { view: true },
+          }),
+        },
+      });
+
+      render(
+        <MemoryRouter future={routerFutureFlags}>
+          <ResizableSidebar />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByTestId('sidebar-group-sales')).toBeInTheDocument();
+      expect(screen.getByTestId('sidebar-group-finance')).toBeInTheDocument();
+      expect(screen.queryByTestId('sidebar-group-hr')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('sidebar-group-system')).not.toBeInTheDocument();
+    });
+
     it('should render 403 Forbidden screen without clearing auth session when cashier01 visits a restricted route', () => {
       useAuthStore.getState().setAuth({
         accessToken: 'cashier-token',
@@ -218,16 +325,12 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
           username: 'cashier01',
           fullName: 'Nguyễn Văn Anh',
           isSuperAdmin: false,
-          permissions: {
-            pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true },
-            invoices: { view: true, reprint: true, void: false },
-            inventory: { view: true, create: true, update: false, delete: true },
-            cashflow: { view: true, create: true, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: false, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, create: true, update: true, splitKitchen: true, tableAction: true, checkout: true },
+            invoices: { view: true, reprint: true },
+            inventory: { view: true, create: true, delete: true },
+            cashflow: { view: true, create: true },
+          }),
         },
       });
 
@@ -260,16 +363,12 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
           username: 'cashier01',
           fullName: 'Nguyễn Văn Anh',
           isSuperAdmin: false,
-          permissions: {
-            pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true },
-            invoices: { view: true, reprint: true, void: false },
-            inventory: { view: true, create: true, update: false, delete: true },
-            cashflow: { view: true, create: true, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: false, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, create: true, update: true, splitKitchen: true, tableAction: true, checkout: true },
+            invoices: { view: true, reprint: true },
+            inventory: { view: true, create: true, delete: true },
+            cashflow: { view: true, create: true },
+          }),
         },
       });
 
@@ -331,6 +430,113 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
       expect(useAuthStore.getState().accessToken).toBe('fresh-access-token-999');
       expect(fetchMock).toHaveBeenCalledTimes(4);
     });
+
+    it('should preserve user session when token refresh hits a network drop (Failed to fetch) or 502/503 server outage, and wrap network drops into NETWORK_ERROR', async () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'expired-token',
+        user: {
+          id: 2,
+          employeeId: 12,
+          username: 'cashier01',
+          fullName: 'Nguyễn Văn Anh',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({ pos: { view: true } }),
+        },
+      });
+
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        // 1. Original API returns 401 -> triggers refresh -> refresh returns 502 Bad Gateway
+        .mockResolvedValueOnce(new Response(JSON.stringify({ statusCode: 401, message: 'Expired' }), { status: 401 }))
+        .mockResolvedValueOnce(new Response('Bad Gateway', { status: 502 }))
+        // 2. Direct network drop (TypeError: Failed to fetch)
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+      await expect(apiClient.get('/api/v1/pos/tables')).rejects.toMatchObject({
+        statusCode: 401,
+      });
+
+      // User MUST NOT be logged out when refresh fails due to 502 server outage!
+      expect(useAuthStore.getState().user?.username).toBe('cashier01');
+
+      // Direct network failure wraps cleanly into NETWORK_ERROR
+      await expect(apiClient.get('/api/v1/pos/tables')).rejects.toMatchObject({
+        statusCode: 0,
+        code: 'NETWORK_ERROR',
+      });
+      expect(useAuthStore.getState().user?.username).toBe('cashier01');
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('should proactively bootstrap accessToken after F5 reload (user != null, accessToken == null) before hitting protected APIs', async () => {
+      // Simulates reload where persisted `user` exists in zustand store, but RAM-only `accessToken` is null
+      useAuthStore.setState({
+        accessToken: null,
+        user: {
+          id: 2,
+          employeeId: 12,
+          username: 'cashier01',
+          fullName: 'Nguyễn Văn Anh',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({ pos: { view: true } }),
+        },
+      });
+
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              accessToken: 'bootstrapped-token-123',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ tables: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+      const res = await apiClient.get<{ tables: unknown[] }>('/api/v1/pos/tables');
+      expect(res.tables).toEqual([]);
+      expect(useAuthStore.getState().accessToken).toBe('bootstrapped-token-123');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/auth/refresh');
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/v1/pos/tables');
+
+      // Calling bootstrapAuthSession() when token is already present resolves cleanly without extra fetch
+      await expect(bootstrapAuthSession()).resolves.toBe('bootstrapped-token-123');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('should clear stale auth cleanly and avoid redundant protected API / refresh calls when refresh returns 401', async () => {
+      useAuthStore.setState({
+        accessToken: null,
+        user: {
+          id: 99,
+          employeeId: 99,
+          username: 'expired',
+          fullName: 'Expired User',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({ pos: { view: true } }),
+        },
+      });
+
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 'AUTH_TOKEN_EXPIRED', message: 'Expired' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      await expect(apiClient.get('/api/v1/pos/tables')).rejects.toMatchObject({ statusCode: 401 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/auth/refresh');
+      expect(useAuthStore.getState().user).toBeNull();
+      expect(useAuthStore.getState().authNotice).toBe('SESSION_EXPIRED');
+    });
   });
 
   describe('AC-08.3: Navbar Right-Corner Order', () => {
@@ -343,16 +549,12 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
           username: 'cashier01',
           fullName: 'Nguyễn Văn Anh',
           isSuperAdmin: false,
-          permissions: {
-            pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true },
-            invoices: { view: true, reprint: true, void: false },
-            inventory: { view: true, create: true, update: false, delete: true },
-            cashflow: { view: true, create: true, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: false, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, create: true, update: true, splitKitchen: true, tableAction: true, checkout: true },
+            invoices: { view: true, reprint: true },
+            inventory: { view: true, create: true, delete: true },
+            cashflow: { view: true, create: true },
+          }),
         },
       });
 
@@ -382,16 +584,12 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
           username: 'cashier01',
           fullName: 'Nguyễn Văn Anh',
           isSuperAdmin: false,
-          permissions: {
-            pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true },
-            invoices: { view: true, reprint: true, void: false },
-            inventory: { view: true, create: true, update: false, delete: true },
-            cashflow: { view: true, create: true, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: false, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, create: true, update: true, splitKitchen: true, tableAction: true, checkout: true },
+            invoices: { view: true, reprint: true },
+            inventory: { view: true, create: true, delete: true },
+            cashflow: { view: true, create: true },
+          }),
         },
       });
 
@@ -562,16 +760,12 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
           username: 'cashier01',
           fullName: 'Nguyễn Văn Anh',
           isSuperAdmin: false,
-          permissions: {
-            pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true },
-            invoices: { view: true, reprint: true, void: false },
-            inventory: { view: true, create: true, update: false, delete: true },
-            cashflow: { view: true, create: true, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: false, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, create: true, update: true, splitKitchen: true, tableAction: true, checkout: true },
+            invoices: { view: true, reprint: true },
+            inventory: { view: true, create: true, delete: true },
+            cashflow: { view: true, create: true },
+          }),
         },
       });
 

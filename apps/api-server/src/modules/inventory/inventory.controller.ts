@@ -1,10 +1,12 @@
-import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Post, Put, Query, UseGuards } from '@nestjs/common';
 import {
   CreateInventoryImportBatchSchema,
   InventoryImportFilterQuerySchema,
+  UpdateInventoryImportSchema,
   type AuthPrincipal,
   type CreateInventoryImportBatchInput,
   type InventoryImportFilterQuery,
+  type UpdateInventoryImportInput,
 } from '@fnb/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/permissions.decorator';
@@ -31,6 +33,16 @@ export class InventoryController {
     @CurrentUser() user: AuthPrincipal,
   ) {
     return this.inventoryService.createBatch(body, user.id);
+  }
+
+  @Put(':id')
+  @RequirePermission('inventory', 'update')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(new ZodValidationPipe(UpdateInventoryImportSchema)) body: UpdateInventoryImportInput,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    return this.inventoryService.updateImport(id, body, user);
   }
 
   @Delete(':id')

@@ -1,4 +1,4 @@
-import { type UserPermissions } from '@fnb/shared';
+import { type SessionRevokeReason, type UserPermissions } from '@fnb/shared';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
@@ -14,13 +14,27 @@ export interface AuthenticatedUser {
   permissions: UserPermissions;
 }
 
+export type AuthNoticeReason =
+  | 'SESSION_EXPIRED'
+  | 'SESSION_REPLACED'
+  | 'SESSION_REVOKED'
+  | 'UNAUTHENTICATED';
+
+export interface AuthNoticeMeta {
+  reason?: SessionRevokeReason;
+  at?: string | null;
+}
+
 interface AuthState {
   accessToken: string | null;
   user: AuthenticatedUser | null;
+  authNotice: AuthNoticeReason | null;
+  authNoticeMeta: AuthNoticeMeta | null;
   setAuth: (payload: { accessToken: string; user: AuthenticatedUser }) => void;
   setAccessToken: (accessToken: string) => void;
   updateUser: (partial: Partial<AuthenticatedUser>) => void;
-  clearAuth: () => void;
+  clearAuth: (reason?: AuthNoticeReason | null, meta?: AuthNoticeMeta | null) => void;
+  clearAuthNotice: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -28,19 +42,23 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       accessToken: null,
       user: null,
-      setAuth: ({ accessToken, user }) => set({ accessToken, user }),
+      authNotice: null,
+      authNoticeMeta: null,
+      setAuth: ({ accessToken, user }) =>
+        set({ accessToken, user, authNotice: null, authNoticeMeta: null }),
       setAccessToken: (accessToken) => set({ accessToken }),
       updateUser: (partial) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...partial } : null,
         })),
-      clearAuth: () => set({ accessToken: null, user: null }),
+      clearAuth: (reason = null, meta = null) =>
+        set({ accessToken: null, user: null, authNotice: reason, authNoticeMeta: meta }),
+      clearAuthNotice: () => set({ authNotice: null, authNoticeMeta: null }),
     }),
     {
       name: AUTH_STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
-        accessToken: state.accessToken,
         user: state.user,
       }),
     },

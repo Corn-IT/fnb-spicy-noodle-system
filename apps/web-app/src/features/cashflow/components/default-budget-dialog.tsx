@@ -10,9 +10,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { toast } from '@/components/ui/toast';
+import { CurrencyInput } from '@/components/ui/currency-input';
+import { useAppMessages } from '@/hooks/use-app-messages';
 import { useUpdateDefaultBudgetMutation } from '@/features/cashflow/api/cashflow.api';
+import { formatVnd } from '@/utils/currency';
 
 export interface DefaultBudgetDialogProps {
   currentBudget: number;
@@ -25,6 +26,7 @@ export function DefaultBudgetDialog({
   open,
   onOpenChange,
 }: DefaultBudgetDialogProps) {
+  const { notify, resolveErrorMessage } = useAppMessages();
   const [budgetStr, setBudgetStr] = React.useState(String(currentBudget));
   const updateBudgetMutation = useUpdateDefaultBudgetMutation();
 
@@ -39,26 +41,25 @@ export function DefaultBudgetDialog({
       openingBudget: Number(budgetStr),
     });
     if (!parsed.success) {
-      toast({
-        variant: 'destructive',
-        title: 'Ngân sách không hợp lệ',
-        description: 'Vui lòng nhập số tiền hợp lệ (>= 0).',
-      });
+      notify('cashflow.budget.invalidAmount', { variant: 'destructive' });
       return;
     }
 
     try {
       await updateBudgetMutation.mutateAsync(parsed.data);
-      toast({
-        title: 'Đã cập nhật ngân sách đầu ngày',
-        description: `Ngân sách tiền lẻ mặc định đã đổi thành ${parsed.data.openingBudget.toLocaleString('vi-VN')} đ.`,
+      notify('cashflow.budget.saveSuccess', {
+        vars: { amountFormatted: formatVnd(parsed.data.openingBudget) },
       });
       onOpenChange(false);
     } catch (err) {
-      toast({
+      const resolvedErr = resolveErrorMessage(
+        'cashflow.budget.saveError',
+        err,
+        'Vui lòng thử lại.',
+      );
+      notify('cashflow.budget.saveError', {
         variant: 'destructive',
-        title: 'Không thể lưu ngân sách mặc định',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại.',
+        vars: { reason: resolvedErr.description ?? 'Vui lòng thử lại.' },
       });
     }
   };
@@ -81,14 +82,13 @@ export function DefaultBudgetDialog({
           >
             Ngân sách tiền lẻ mặc định (VNĐ)
           </label>
-          <Input
+          <CurrencyInput
             id="default-budget-input-field"
-            type="number"
-            min={0}
-            step={10000}
             data-testid="default-budget-input"
             value={budgetStr}
-            onChange={(e) => setBudgetStr(e.target.value)}
+            onValueChange={(rawDigits) => setBudgetStr(rawDigits)}
+            placeholder="VD: 1.000.000"
+            suffix="đ"
           />
         </div>
 

@@ -6,15 +6,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 export const DENOMINATION_TIERS = [
-  { key: '500000', value: 500000, label: '500.000đ' },
-  { key: '200000', value: 200000, label: '200.000đ' },
-  { key: '100000', value: 100000, label: '100.000đ' },
-  { key: '50000', value: 50000, label: '50.000đ' },
-  { key: '20000', value: 20000, label: '20.000đ' },
-  { key: '10000', value: 10000, label: '10.000đ' },
-  { key: '5000', value: 5000, label: '5.000đ' },
-  { key: '2000', value: 2000, label: '2.000đ' },
-  { key: '1000', value: 1000, label: '1.000đ' },
+  { key: '500000', value: 500000, label: '500.000 đ' },
+  { key: '200000', value: 200000, label: '200.000 đ' },
+  { key: '100000', value: 100000, label: '100.000 đ' },
+  { key: '50000', value: 50000, label: '50.000 đ' },
+  { key: '20000', value: 20000, label: '20.000 đ' },
+  { key: '10000', value: 10000, label: '10.000 đ' },
+  { key: '5000', value: 5000, label: '5.000 đ' },
+  { key: '2000', value: 2000, label: '2.000 đ' },
+  { key: '1000', value: 1000, label: '1.000 đ' },
 ] as const;
 
 export const INITIAL_DENOMINATIONS: DenominationsDetail = {
@@ -60,7 +60,7 @@ export function DenominationCounterGrid({
       <div>
         <div className="mb-3 flex items-center justify-between border-b pb-2.5">
           <div className="flex items-center gap-2">
-            <Banknote className="h-5 w-5 text-primary" />
+            <Banknote className="h-5 w-5 text-accent-text" />
             <div>
               <h3 className="text-sm font-bold text-foreground">
                 Lưới Đếm Tiền Theo 9 Mệnh Giá
@@ -124,7 +124,7 @@ export function DenominationCounterGrid({
         </span>
         <span
           data-testid="actual-counted-cash"
-          className="font-mono text-lg font-extrabold text-primary"
+          className="font-mono text-lg font-extrabold text-price"
         >
           {actualCountedCash.toLocaleString('vi-VN')} đ
         </span>

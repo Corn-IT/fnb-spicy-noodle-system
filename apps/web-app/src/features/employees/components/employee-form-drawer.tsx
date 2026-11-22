@@ -6,7 +6,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { toast } from '@/components/ui/toast';
+import { useAppMessages } from '@/hooks/use-app-messages';
+import { useAuthStore } from '@/stores/auth.store';
 
 import {
   type EmployeeRecord,
@@ -94,13 +95,17 @@ export function EmployeeFormDrawer({
   positions,
   specialties,
 }: EmployeeFormDrawerProps) {
+  const { notify, resolveErrorMessage } = useAppMessages();
+  const isSuperAdmin = Boolean(useAuthStore((s) => s.user?.isSuperAdmin));
   const [form, setForm] = React.useState<FormState>(() => buildInitial(employee));
+  const [formError, setFormError] = React.useState<string | null>(null);
   const createMutation = useCreateEmployeeMutation();
   const updateMutation = useUpdateEmployeeMutation(employee?.id ?? 0);
 
   React.useEffect(() => {
     if (open) {
       setForm(buildInitial(employee));
+      setFormError(null);
     }
   }, [open, employee]);
 
@@ -114,13 +119,28 @@ export function EmployeeFormDrawer({
 
   const handleSubmit = async () => {
     if (isReadonly) return;
+    setFormError(null);
 
     const posId = Number(form.positionId);
     const specId = Number(form.specialtyId);
 
     if (!form.fullName.trim() || !posId || !specId) {
-      toast({ variant: 'destructive', title: 'Vui lòng điền đầy đủ Họ tên, Chức vụ và Chuyên môn' });
+      setFormError('Vui lòng điền đầy đủ Họ tên, Chức vụ và Chuyên môn.');
+      notify('employees.form.missingRequired', { variant: 'destructive' });
       return;
+    }
+
+    const shouldCreateAccount = isCreate && isSuperAdmin && form.createAccount;
+    const trimmedUsername = form.username.trim();
+    if (shouldCreateAccount) {
+      if (trimmedUsername.length < 3) {
+        setFormError('Tên đăng nhập phải có ít nhất 3 ký tự.');
+        return;
+      }
+      if (form.password.length < 6) {
+        setFormError('Mật khẩu tài khoản phải có ít nhất 6 ký tự.');
+        return;
+      }
     }
 
     try {
@@ -141,16 +161,15 @@ export function EmployeeFormDrawer({
           avatarUrl: form.avatarUrl || null,
           attachmentUrls: [],
           note: form.note || null,
-          account:
-            form.createAccount && form.username && form.password
-              ? {
-                  username: form.username,
-                  password: form.password,
-                  permissions: defaultUserPermissions,
-                }
-              : undefined,
+          account: shouldCreateAccount
+            ? {
+                username: trimmedUsername,
+                password: form.password,
+                permissions: defaultUserPermissions,
+              }
+            : undefined,
         });
-        toast({ variant: 'success', title: 'Tạo nhân viên thành công' });
+        notify('employees.form.createSuccess', { variant: 'success' });
       } else {
         await updateMutation.mutateAsync({
           fullName: form.fullName.trim(),
@@ -169,11 +188,21 @@ export function EmployeeFormDrawer({
           attachmentUrls: [],
           note: form.note || null,
         });
-        toast({ variant: 'success', title: 'Cập nhật nhân viên thành công' });
+        notify('employees.form.updateSuccess', { variant: 'success' });
       }
       onOpenChange(false);
-    } catch {
-      toast({ variant: 'destructive', title: isCreate ? 'Tạo nhân viên thất bại' : 'Cập nhật thất bại' });
+    } catch (error) {
+      const resolvedErr = resolveErrorMessage(
+        isCreate ? 'employees.form.createError' : 'employees.form.updateError',
+        error,
+        'Không thể lưu hồ sơ nhân viên. Vui lòng kiểm tra lại.',
+      );
+      const reason = resolvedErr.description ?? 'Không thể lưu hồ sơ nhân viên.';
+      setFormError(reason);
+      notify(isCreate ? 'employees.form.createError' : 'employees.form.updateError', {
+        variant: 'destructive',
+        vars: { reason },
+      });
     }
   };
 
@@ -265,7 +294,7 @@ export function EmployeeFormDrawer({
             <Input data-testid="emp-note" value={form.note} readOnly={isReadonly} onChange={(e) => update('note', e.target.value)} />
           </FieldRow>
 
-          {isCreate ? (
+          {isCreate && isSuperAdmin ? (
             <div className="mt-2 rounded-lg border p-3">
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -288,6 +317,16 @@ export function EmployeeFormDrawer({
                   </FieldRow>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {formError ? (
+            <div
+              role="alert"
+              data-testid="employee-form-error"
+              className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive"
+            >
+              {formError}
             </div>
           ) : null}
         </div>

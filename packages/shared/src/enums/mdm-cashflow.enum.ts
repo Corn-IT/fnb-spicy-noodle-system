@@ -7,6 +7,7 @@ export const MdmCategory = {
   UNIT: 'UNIT',
   SUPPLIER: 'SUPPLIER',
   MENU_CATEGORY: 'MENU_CATEGORY',
+  KITCHEN_STATION: 'KITCHEN_STATION',
 } as const;
 export type MdmCategory = (typeof MdmCategory)[keyof typeof MdmCategory];
 export const MdmCategorySchema = z.enum([
@@ -16,6 +17,7 @@ export const MdmCategorySchema = z.enum([
   MdmCategory.UNIT,
   MdmCategory.SUPPLIER,
   MdmCategory.MENU_CATEGORY,
+  MdmCategory.KITCHEN_STATION,
 ]);
 
 export const PaymentSource = { CASH_DRAWER: 'CASH_DRAWER', EXTERNAL: 'EXTERNAL' } as const;

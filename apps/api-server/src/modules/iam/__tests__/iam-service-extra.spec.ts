@@ -115,14 +115,25 @@ describe('IamService additional failure and success paths', () => {
     expect(result.items[0]).not.toHaveProperty('passwordHash');
   });
 
-  it('should filter and paginate user accounts by username or linked employee name', async () => {
-    const findMany = vi.fn().mockResolvedValue([activeUser()]);
-    const count = vi.fn().mockResolvedValue(7);
-    const service = makeService({ user: { findMany, count } });
+  it('should filter, sort hierarchically, and paginate user accounts by username or linked employee name', async () => {
+    const pagedPool = [
+      activeUser({ id: 5, username: 'thungan', isSuperAdmin: false }),
+      activeUser({ id: 6, username: 'cashier06', isSuperAdmin: false }),
+      activeUser({ id: 3, username: 'adminview', isSuperAdmin: false }),
+      activeUser({ id: 2, username: 'admin', isSuperAdmin: false }),
+      activeUser({ id: 1, username: 'superadmin', isSuperAdmin: true }),
+      activeUser({ id: 4, username: 'cashier01', isSuperAdmin: false }),
+      activeUser({ id: 7, username: 'cashier07', isSuperAdmin: false }),
+    ];
+    const findMany = vi.fn().mockResolvedValue(pagedPool);
+    const service = makeService({ user: { findMany } });
 
     const result = await service.listUsers({ page: 2, limit: 5, keyword: 'cashier' } as never);
 
-    expect(result).toMatchObject({ page: 2, limit: 5, total: 7, items: [{ username: 'cashier01' }] });
+    expect(result.page).toBe(2);
+    expect(result.limit).toBe(5);
+    expect(result.total).toBe(7);
+    expect(result.items).toHaveLength(2);
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         OR: [
@@ -131,12 +142,10 @@ describe('IamService additional failure and success paths', () => {
           { employee: { is: { shortName: { contains: 'cashier', mode: 'insensitive' } } } },
         ],
       }),
-      skip: 5,
-      take: 5,
     }));
-    expect(count).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ OR: expect.any(Array) }),
-    }));
+
+    const page1 = await service.listUsers({ page: 1, limit: 4 } as never);
+    expect(page1.items.map((u) => u.username)).toEqual(['superadmin', 'admin', 'adminview', 'thungan']);
   });
 
   it('should reject a missing or deleted employee when creating a user', async () => {
@@ -191,7 +200,14 @@ describe('IamService additional failure and success paths', () => {
 
     await service.updateUserPermissions(4, { permissions, isActive: false });
 
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { permissions, isActive: false } }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        permissions,
+        isActive: false,
+        activeSessionId: null,
+        lastRevokedNotice: expect.objectContaining({ reason: 'ACCOUNT_DISABLED' }),
+      }),
+    }));
   });
 
   it('should update permissions without changing account activation state', async () => {
@@ -236,7 +252,13 @@ describe('IamService additional failure and success paths', () => {
 
     expect(compareSpy).toHaveBeenCalledWith('current-pass', 'current-password-hash');
     expect(hashSpy).toHaveBeenCalledWith('new-pass-123', 10);
-    expect(update).toHaveBeenCalledWith({ where: { id: 4 }, data: { passwordHash: 'next-password-hash' } });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 4 },
+      data: expect.objectContaining({
+        passwordHash: 'next-password-hash',
+        activeSessionId: expect.any(String),
+      }),
+    });
   });
 
   it('should refuse password changes when the current password is incorrect', async () => {
@@ -251,7 +273,12 @@ describe('IamService additional failure and success paths', () => {
       currentPassword: 'wrong-pass',
       newPassword: 'new-pass-123',
       confirmPassword: 'new-pass-123',
-    })).rejects.toMatchObject({ status: 401 });
+    })).rejects.toMatchObject({
+      status: 422,
+      response: {
+        message: 'Mật khẩu hiện tại không chính xác',
+      },
+    });
     expect(update).not.toHaveBeenCalled();
   });
 

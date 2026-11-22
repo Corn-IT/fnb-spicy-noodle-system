@@ -24,6 +24,7 @@ export {
   TableTransferNoticeSlip,
   type TableTransferNoticeSlipProps,
 } from './table-transfer-notice-slip';
+export { TableQrSlip, type TableQrSlipProps } from './table-qr-slip';
 export {
   ThermalPrintProvider,
   useThermalPrinter,
@@ -35,5 +36,8 @@ export {
   buildVietQrFallbackSvgDataUrl,
   buildVietQrImageUrl,
   buildVietQrTransferMemo,
+  formatTableOrTakeawayShortCode,
+  type VietQrFallbackOptions,
+  type VietQrTableOptions,
   type VietQrUrlOptions,
 } from './vietqr-url.util';

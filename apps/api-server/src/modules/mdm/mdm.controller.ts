@@ -3,10 +3,12 @@ import {
   MdmLookupQuerySchema,
   UpsertMdmSchema,
   UpdateMdmSchema,
+  type AuthPrincipal,
   type MdmLookupQuery,
   type UpdateMdmInput,
   type UpsertMdmInput,
 } from '@fnb/shared';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/permissions.decorator';
@@ -15,7 +17,9 @@ import { MdmService } from './mdm.service';
 
 @Controller('api/v1/mdm')
 export class MdmController {
-  constructor(@Inject(MdmService) private readonly mdmService: MdmService) {}
+  constructor(
+    @Inject(MdmService) private readonly mdmService: MdmService,
+  ) {}
 
   @Get('lookup')
   @UseGuards(JwtAuthGuard)
@@ -32,25 +36,29 @@ export class MdmController {
 
   @Post()
   @UseGuards(JwtAuthGuard, RbacGuard)
-  @RequirePermission('mdm', 'write')
-  create(@Body(new ZodValidationPipe(UpsertMdmSchema)) body: UpsertMdmInput) {
-    return this.mdmService.findOrCreate(body.category, body.name, body.metadata);
+  @RequirePermission('mdm', 'create')
+  create(
+    @Body(new ZodValidationPipe(UpsertMdmSchema)) body: UpsertMdmInput,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    return this.mdmService.findOrCreate(body.category, body.name, body.metadata, undefined, user, body.normalizedName);
   }
 
   @Put(':id')
   @UseGuards(JwtAuthGuard, RbacGuard)
-  @RequirePermission('mdm', 'write')
+  @RequirePermission('mdm', 'update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body(new ZodValidationPipe(UpdateMdmSchema)) body: UpdateMdmInput,
+    @CurrentUser() user: AuthPrincipal,
   ) {
-    return this.mdmService.update(id, body);
+    return this.mdmService.update(id, body, user);
   }
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RbacGuard)
-  @RequirePermission('mdm', 'write')
-  disable(@Param('id', ParseIntPipe) id: number) {
-    return this.mdmService.softDisable(id);
+  @RequirePermission('mdm', 'delete')
+  disable(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthPrincipal) {
+    return this.mdmService.softDisable(id, user);
   }
 }

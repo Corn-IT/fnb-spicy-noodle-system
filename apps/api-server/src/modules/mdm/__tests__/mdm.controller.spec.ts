@@ -24,14 +24,16 @@ describe('MdmController', () => {
     const created = { category: MdmCategory.INGREDIENT, name: 'Bún bò Huế', metadata: { last_price: 1 } };
     const updated = { name: 'Đá bi' };
 
+    const actor = { id: 1, username: 'admin', isSuperAdmin: true } as never;
+
     await controller.list(query);
-    await controller.create(created);
-    await controller.update(1, updated);
-    await controller.disable(1);
+    await controller.create(created, actor);
+    await controller.update(1, updated, actor);
+    await controller.disable(1, actor);
 
     expect(service.list).toHaveBeenCalledWith(query);
-    expect(service.findOrCreate).toHaveBeenCalledWith(MdmCategory.INGREDIENT, 'Bún bò Huế', { last_price: 1 });
-    expect(service.update).toHaveBeenCalledWith(1, updated);
-    expect(service.softDisable).toHaveBeenCalledWith(1);
+    expect(service.findOrCreate).toHaveBeenCalledWith(MdmCategory.INGREDIENT, 'Bún bò Huế', { last_price: 1 }, undefined, actor, undefined);
+    expect(service.update).toHaveBeenCalledWith(1, updated, actor);
+    expect(service.softDisable).toHaveBeenCalledWith(1, actor);
   });
 });

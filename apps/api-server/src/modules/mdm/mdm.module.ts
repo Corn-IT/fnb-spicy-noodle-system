@@ -4,11 +4,12 @@ import { PrismaModule } from '../../common/prisma/prisma.module';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { configuredJwtModule } from '../../common/utils/jwt-module-options';
+import { PosModule } from '../pos/pos.module';
 import { MdmController } from './mdm.controller';
 import { MdmService } from './mdm.service';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, configuredJwtModule()],
+  imports: [ConfigModule, PrismaModule, configuredJwtModule(), PosModule],
   controllers: [MdmController],
   providers: [MdmService, JwtAuthGuard, RbacGuard],
   exports: [MdmService],

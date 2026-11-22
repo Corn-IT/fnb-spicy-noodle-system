@@ -1,3 +1,4 @@
+import { UserPermissionsSchema } from '@fnb/shared';
 import { QueryClient } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -23,16 +24,17 @@ const superAdminUser = {
   username: 'superadmin',
   fullName: 'Chủ Quán Sơn Bảo',
   isSuperAdmin: true,
-  permissions: {
-    pos: { view: true, create: true, update: true, delete: true, splitKitchen: true, tableAction: true, checkout: true },
-    invoices: { view: true, reprint: true, void: true },
-    inventory: { view: true, create: true, update: true, delete: true },
-    cashflow: { view: true, create: true, config: true },
-    employees: { view: true, create: true, update: true, delete: true },
-    schedules: { view: true, update: true },
-    mdm: { view: true, write: true },
-    rbac: { view: true, manage: true },
-  },
+  permissions: UserPermissionsSchema.parse({
+    pos: { view: true, create: true, update: true, delete: true, splitKitchen: true, tableAction: true, checkout: true, qrSecurity: true },
+    menu: { view: true, create: true, update: true, delete: true, export: true },
+    invoices: { view: true, reprint: true, update: true, approve: true, void: true, export: true },
+    inventory: { view: true, create: true, update: true, delete: true, export: true },
+    cashflow: { view: true, create: true, compensate: true, config: true, export: true },
+    employees: { view: true, create: true, update: true, delete: true, export: true },
+    schedules: { view: true, create: true, update: true, delete: true, export: true },
+    mdm: { view: true, create: true, update: true, delete: true },
+    rbac: { view: true, create: true, update: true, resetPassword: true },
+  }),
 };
 
 const cashierUser = {
@@ -41,16 +43,16 @@ const cashierUser = {
   username: 'cashier01',
   fullName: 'Nguyễn Văn Anh',
   isSuperAdmin: false,
-  permissions: {
-    pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true },
-    invoices: { view: true, reprint: true, void: false },
-    inventory: { view: true, create: true, update: false, delete: true },
-    cashflow: { view: true, create: true, config: false },
-    employees: { view: true, create: false, update: false, delete: false },
-    schedules: { view: true, update: false },
-    mdm: { view: true, write: false },
-    rbac: { view: false, manage: false },
-  },
+  permissions: UserPermissionsSchema.parse({
+    pos: { view: true, create: true, update: true, splitKitchen: true, tableAction: true, checkout: true },
+    menu: { view: true },
+    invoices: { view: true, reprint: true },
+    inventory: { view: true, create: true, delete: true },
+    cashflow: { view: true, create: true },
+    employees: { view: true },
+    schedules: { view: true },
+    mdm: { view: true },
+  }),
 };
 
 describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7) & RBAC (Module 8)', () => {
@@ -301,6 +303,53 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
       });
     });
 
+    it('should lock the status button with tooltip and keep active styling for Super Admin employee', async () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: superAdminUser,
+      });
+
+      const superAdminEmployee = {
+        ...mockEmployeesResponse.items[0],
+        id: 1,
+        fullName: 'Nguyễn Minh Quân',
+        shortName: 'M.Quân',
+        isDeleted: false,
+        user: { id: 1, username: 'superadmin', isActive: true, isSuperAdmin: true },
+      };
+
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/employees') return { ...mockEmployeesResponse, items: [superAdminEmployee] };
+        if (url === '/api/v1/mdm/lookup') return [];
+        throw new Error(`Unexpected GET ${url}`);
+      });
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      render(
+        <QueryProvider client={queryClient}>
+          <MemoryRouter future={routerFutureFlags}>
+            <EmployeesPage />
+          </MemoryRouter>
+        </QueryProvider>,
+      );
+
+      expect(await screen.findByText('Nguyễn Minh Quân')).toBeInTheDocument();
+
+      const statusBtn = screen.getByTestId('toggle-employee-active-btn-1');
+      expect(statusBtn).toBeDisabled();
+      expect(statusBtn).toHaveAttribute(
+        'title',
+        'Tài khoản Super Admin mặc định luôn hoạt động và không thể tạm ngưng',
+      );
+      expect(statusBtn).toHaveTextContent('Đang hoạt động');
+
+      fireEvent.click(statusBtn);
+      expect(screen.queryByTestId('employee-status-confirm-dialog')).not.toBeInTheDocument();
+    });
+
     it('should filter inactive employees and confirm before restoring their linked login', async () => {
       useAuthStore.getState().setAuth({
         accessToken: 'admin-token',
@@ -351,6 +400,125 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
 
       await waitFor(() => {
         expect(patchSpy).toHaveBeenCalledWith('/api/v1/employees/10/status', { isActive: true });
+      });
+    });
+
+    it('should enforce >= 30 day waiting period on permanent delete for inactive employees and render Số điện thoại & Trạng thái columns', async () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: superAdminUser,
+      });
+
+      const now = Date.now();
+      const recentDeletedAt = new Date(now - 5 * 86_400_000).toISOString();
+      const eligibleDeletedAt = new Date(now - 35 * 86_400_000).toISOString();
+
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/employees') {
+          return {
+            page: 1,
+            limit: 20,
+            total: 2,
+            items: [
+              {
+                id: 21,
+                fullName: 'Nhân viên Mới Tạm Ngưng',
+                shortName: 'M.Ngưng',
+                dob: '1999-05-01',
+                phone: '0903334444',
+                address: null,
+                citizenId: null,
+                citizenIdIssuedPlace: null,
+                positionId: 1,
+                specialtyId: 3,
+                startDate: '2025-01-01',
+                bankName: null,
+                bankAccountNo: null,
+                bankAccountName: null,
+                avatarUrl: null,
+                attachmentUrls: [],
+                note: null,
+                isDeleted: true,
+                deletedAt: recentDeletedAt,
+                createdAt: recentDeletedAt,
+                position: { id: 1, name: 'Thu Ngân' },
+                specialty: { id: 3, name: 'BEP_NAU' },
+                user: null,
+              },
+              {
+                id: 22,
+                fullName: 'Nhân viên Đủ 30 Ngày',
+                shortName: 'Đ.Hạn',
+                dob: '1997-08-12',
+                phone: '0905556666',
+                address: null,
+                citizenId: null,
+                citizenIdIssuedPlace: null,
+                positionId: 1,
+                specialtyId: 3,
+                startDate: '2024-01-01',
+                bankName: null,
+                bankAccountNo: null,
+                bankAccountName: null,
+                avatarUrl: null,
+                attachmentUrls: [],
+                note: null,
+                isDeleted: true,
+                deletedAt: eligibleDeletedAt,
+                createdAt: eligibleDeletedAt,
+                position: { id: 1, name: 'Thu Ngân' },
+                specialty: { id: 3, name: 'BEP_NAU' },
+                user: null,
+              },
+            ],
+          };
+        }
+        return [];
+      });
+
+      const deleteSpy = vi.spyOn(apiClient, 'delete').mockResolvedValue({ id: 22, deleted: true });
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      render(
+        <QueryProvider client={queryClient}>
+          <MemoryRouter future={routerFutureFlags}>
+            <EmployeesPage />
+          </MemoryRouter>
+        </QueryProvider>,
+      );
+
+      fireEvent.change(screen.getByTestId('employee-status-filter'), {
+        target: { value: 'inactive' },
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Nhân viên Mới Tạm Ngưng')).toBeInTheDocument();
+        expect(screen.getByText('Nhân viên Đủ 30 Ngày')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Số điện thoại')).toBeInTheDocument();
+      expect(screen.getByText('Trạng thái')).toBeInTheDocument();
+      expect(screen.getByText('0903334444')).toBeInTheDocument();
+      expect(screen.getByText('0905556666')).toBeInTheDocument();
+
+      const blockedDeleteBtn = screen.getByTestId('delete-employee-btn-21');
+      expect(blockedDeleteBtn).toBeDisabled();
+      expect(blockedDeleteBtn.getAttribute('title')).toMatch(/Cần đủ 30 ngày tạm ngưng.*còn 25 ngày/);
+
+      const allowedDeleteBtn = screen.getByTestId('delete-employee-btn-22');
+      expect(allowedDeleteBtn).not.toBeDisabled();
+      fireEvent.click(allowedDeleteBtn);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('delete-employee-dialog')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByTestId('confirm-delete-employee-btn'));
+
+      await waitFor(() => {
+        expect(deleteSpy).toHaveBeenCalledWith('/api/v1/employees/22/permanent');
       });
     });
   });
@@ -453,6 +621,34 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
       );
       expect(removeBeforeunloadCalls.length).toBeGreaterThanOrEqual(1);
     });
+
+    it('should render strict 24H time dropdown selectors (HH:mm without AM/PM) and update attendance cleanly', async () => {
+      const onChange = vi.fn();
+
+      render(
+        <ScheduleCellMultiselect
+          employees={mockEmployees}
+          selectedIds={[10]}
+          attendances={[{ employeeId: 10, startTime: '08:00', endTime: '21:30' }]}
+          onChange={onChange}
+        />,
+      );
+
+      expect(screen.getByTestId('schedule-tag-10')).toHaveTextContent('V.Anh (08:00-21:30)');
+      fireEvent.click(screen.getByTestId('schedule-cell-trigger'));
+
+      const startHourSelect = await screen.findByTestId('schedule-start-time-10-hour');
+      const endHourSelect = screen.getByTestId('schedule-end-time-10-hour');
+      expect((startHourSelect as HTMLSelectElement).value).toBe('08');
+      expect((endHourSelect as HTMLSelectElement).value).toBe('21');
+      expect(screen.queryByText(/AM|PM/)).not.toBeInTheDocument();
+
+      fireEvent.change(endHourSelect, { target: { value: '22' } });
+      expect(onChange).toHaveBeenCalledWith(
+        [10],
+        [{ employeeId: 10, startTime: '08:00', endTime: '22:30' }],
+      );
+    });
   });
 
   describe('AC-12.3: Module 7 — Master Data 5 Tabs & Module 8 — RBAC Drawer with Super Admin DISABLED', () => {
@@ -532,9 +728,61 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
 
       // No create button
       expect(screen.queryByTestId('create-mdm-btn')).not.toBeInTheDocument();
-      // No edit/delete action buttons in table
+      // No edit/delete/toggle-status action buttons in table
       expect(screen.queryByTestId('edit-mdm-btn-1')).not.toBeInTheDocument();
       expect(screen.queryByTestId('delete-mdm-btn-1')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('toggle-mdm-status-1')).not.toBeInTheDocument();
+    });
+
+    it('should render Thông tin phụ header, allow clicking status toggle, and edit name + normalizedName + metadata', async () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: superAdminUser,
+      });
+
+      vi.spyOn(apiClient, 'get').mockResolvedValue(mockMdmResponse);
+      const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValue(mockMdmResponse.items[0]);
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      render(
+        <QueryProvider client={queryClient}>
+          <MemoryRouter future={routerFutureFlags}>
+            <MasterDataPage />
+          </MemoryRouter>
+        </QueryProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Thu Ngân')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Thông tin phụ')).toBeInTheDocument();
+      expect(screen.queryByText('Thông tin phụ / Trạm bếp')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('toggle-mdm-status-1'));
+      await waitFor(() => {
+        expect(putSpy).toHaveBeenCalledWith('/api/v1/mdm/1', { isActive: false });
+      });
+
+      fireEvent.click(screen.getByTestId('edit-mdm-btn-1'));
+      const dialog = await screen.findByTestId('mdm-upsert-dialog');
+      expect(dialog).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId('mdm-name-input'), { target: { value: 'Thu Ngân Ca Chính' } });
+      fireEvent.change(screen.getByTestId('mdm-normalized-name-input'), { target: { value: 'thu-ngan-ca-chinh' } });
+      fireEvent.change(screen.getByTestId('mdm-description-input'), { target: { value: 'Quầy POS 01' } });
+      fireEvent.click(screen.getByTestId('submit-mdm-btn'));
+
+      await waitFor(() => {
+        expect(putSpy).toHaveBeenCalledWith('/api/v1/mdm/1', {
+          name: 'Thu Ngân Ca Chính',
+          normalizedName: 'thu-ngan-ca-chinh',
+          metadata: { description: 'Quầy POS 01' },
+        });
+      });
     });
 
     const mockUsersResponse = {
@@ -595,7 +843,11 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
       // [+ Thêm mới tài khoản] button shown for Super Admin
       expect(screen.getByTestId('create-user-btn')).toBeInTheDocument();
 
-      // Open permissions drawer for Super Admin user (id=1)
+      // Clicking a table row cell must NOT open PermissionsDrawer; only the [Phân quyền] button should
+      fireEvent.click(screen.getByText('superadmin'));
+      expect(screen.queryByTestId('permissions-drawer')).not.toBeInTheDocument();
+
+      // Open permissions drawer for Super Admin user (id=1) via explicit button
       fireEvent.click(screen.getByTestId('open-permissions-btn-1'));
 
       await waitFor(() => {
@@ -611,8 +863,11 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
       const posViewCheckbox = screen.getByTestId('perm-checkbox-pos-view');
       expect(posViewCheckbox).toBeDisabled();
 
-      const rbacManageCheckbox = screen.getByTestId('perm-checkbox-rbac-manage');
-      expect(rbacManageCheckbox).toBeDisabled();
+      const menuViewCheckbox = screen.getByTestId('perm-checkbox-menu-view');
+      expect(menuViewCheckbox).toBeDisabled();
+
+      const rbacResetPwCheckbox = screen.getByTestId('perm-checkbox-rbac-resetPassword');
+      expect(rbacResetPwCheckbox).toBeDisabled();
 
       // No save button should be visible for Super Admin
       expect(screen.queryByTestId('save-permissions-btn')).not.toBeInTheDocument();
@@ -629,7 +884,7 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
         ...mockUsersResponse.items[1],
         permissions: {
           ...cashierUser.permissions,
-          invoices: { view: true, reprint: true, void: true },
+          invoices: { ...cashierUser.permissions.invoices, view: true, reprint: true, update: false, approve: true },
         },
       });
 
@@ -649,6 +904,12 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
         expect(screen.getByText('cashier01')).toBeInTheDocument();
       });
 
+      // Table search input must stay marked as non-autofill searchbox
+      const searchInput = screen.getByPlaceholderText('Tìm kiếm tài khoản...') as HTMLInputElement;
+      expect(searchInput).toHaveAttribute('type', 'search');
+      expect(searchInput).toHaveAttribute('autocomplete', 'off');
+      expect(searchInput.value).toBe('');
+
       // Open permissions drawer for cashier (id=2)
       fireEvent.click(screen.getByTestId('open-permissions-btn-2'));
 
@@ -656,12 +917,35 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
         expect(screen.getByTestId('permissions-drawer')).toBeInTheDocument();
       });
 
-      // Checkboxes should NOT be disabled for regular user
-      const invoicesVoidCheckbox = screen.getByTestId('perm-checkbox-invoices-void');
-      expect(invoicesVoidCheckbox).not.toBeDisabled();
+      // Reset-password fields must be isolated in an explicit <form> with new-password
+      // so Chrome password manager never autofills the table search input
+      const resetSection = screen.getByTestId('reset-password-section');
+      expect(resetSection.tagName).toBe('FORM');
+      expect(resetSection).toHaveAttribute('autocomplete', 'off');
+      expect(screen.getByTestId('reset-password-input')).toHaveAttribute(
+        'autocomplete',
+        'new-password',
+      );
+      expect(screen.getByTestId('reset-password-confirm-input')).toHaveAttribute(
+        'autocomplete',
+        'new-password',
+      );
 
-      // Toggle invoices void permission
-      fireEvent.click(invoicesVoidCheckbox);
+      // Checkboxes should NOT be disabled for regular user
+      const invoicesApproveCheckbox = screen.getByTestId('perm-checkbox-invoices-approve');
+      expect(invoicesApproveCheckbox).not.toBeDisabled();
+
+      // Verify pos.qrSecurity ("Bảo mật QR") checkbox exists and can be toggled
+      const posQrSecurityCheckbox = screen.getByTestId('perm-checkbox-pos-qrSecurity');
+      expect(posQrSecurityCheckbox).not.toBeDisabled();
+      fireEvent.click(posQrSecurityCheckbox);
+
+      // Toggle invoices approve permission
+      fireEvent.click(invoicesApproveCheckbox);
+
+      // invoices.void must remain locked (SuperAdminOnly on backend)
+      expect(screen.getByTestId('perm-checkbox-invoices-void')).toBeDisabled();
+      expect(screen.getByTestId('user-active-checkbox')).not.toBeDisabled();
 
       // Save button should be visible
       const saveBtn = screen.getByTestId('save-permissions-btn');
@@ -673,7 +957,98 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
           '/api/v1/users/2/permissions',
           expect.objectContaining({
             permissions: expect.objectContaining({
-              invoices: expect.objectContaining({ void: true }),
+              pos: expect.objectContaining({ qrSecurity: true }),
+              invoices: expect.objectContaining({ approve: true, void: false }),
+            }),
+          }),
+        );
+      });
+    });
+
+    it('should open CreateUserDialog for Super Admin, filter employees without accounts, and submit POST /api/v1/users', async () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: superAdminUser,
+      });
+
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url.startsWith('/api/v1/users')) return mockUsersResponse;
+        if (url.startsWith('/api/v1/employees')) {
+          return {
+            page: 1,
+            limit: 100,
+            total: 2,
+            items: [
+              {
+                id: 30,
+                fullName: 'Lê Minh Tuấn',
+                isActive: true,
+                user: null,
+                position: { id: 2, name: 'Thu ngân' },
+                specialty: { id: 3, name: 'Quầy' },
+              },
+              {
+                id: 1,
+                fullName: 'Nguyễn Minh Quân',
+                isActive: true,
+                user: { id: 1, username: 'superadmin', isActive: true },
+                position: { id: 1, name: 'Quản lý' },
+                specialty: { id: 3, name: 'Quầy' },
+              },
+            ],
+          };
+        }
+        return {};
+      });
+
+      const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
+        id: 10,
+        username: 'thungan02',
+        isSuperAdmin: false,
+        isActive: true,
+        employeeId: 30,
+      });
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      render(
+        <QueryProvider client={queryClient}>
+          <MemoryRouter future={routerFutureFlags}>
+            <RbacUsersPage />
+          </MemoryRouter>
+        </QueryProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('create-user-btn')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId('create-user-btn'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('create-user-drawer')).toBeInTheDocument();
+        expect(screen.getByTestId('create-user-employee-select')).toHaveValue('30');
+      });
+
+      fireEvent.change(screen.getByTestId('create-user-username-input'), {
+        target: { value: 'thungan02' },
+      });
+      fireEvent.change(screen.getByTestId('create-user-password-input'), {
+        target: { value: 'Password@123' },
+      });
+      fireEvent.click(screen.getByTestId('submit-create-user-btn'));
+
+      await waitFor(() => {
+        expect(postSpy).toHaveBeenCalledWith(
+          '/api/v1/users',
+          expect.objectContaining({
+            employeeId: 30,
+            username: 'thungan02',
+            password: 'Password@123',
+            permissions: expect.objectContaining({
+              pos: expect.objectContaining({ view: true, create: true, checkout: true }),
             }),
           }),
         );

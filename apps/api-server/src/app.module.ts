@@ -1,8 +1,13 @@
 import { Module, RequestMethod, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { parseEnvConfig } from './config/env.config';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { RateLimitGuard } from './common/security/rate-limit.guard';
+import { SecurityHeadersMiddleware } from './common/security/security-headers.middleware';
 import { PrismaModule } from './common/prisma/prisma.module';
+import { AuditLogModule } from './common/audit/audit-log.module';
+import { RealtimeModule } from './gateways/realtime.module';
 import { HealthModule } from './health/health.module';
 import { IamModule } from './modules/iam/iam.module';
 import { MdmModule } from './modules/mdm/mdm.module';
@@ -11,6 +16,10 @@ import { PosModule } from './modules/pos/pos.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { CashflowModule } from './modules/cashflow/cashflow.module';
 import { HrScheduleModule } from './modules/hr-schedule/hr-schedule.module';
+import { PaymentQrModule } from './modules/payment-qr/payment-qr.module';
+import { DiscountsModule } from './modules/discounts/discounts.module';
+import { StoreSettingsModule } from './modules/store-settings/store-settings.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -20,18 +29,33 @@ import { HrScheduleModule } from './modules/hr-schedule/hr-schedule.module';
       validate: (environment) => parseEnvConfig(environment),
     }),
     PrismaModule,
+    AuditLogModule,
+    RealtimeModule,
     HealthModule,
     IamModule,
     MdmModule,
     MenuModule,
+    PaymentQrModule,
+    DiscountsModule,
     PosModule,
     InventoryModule,
     CashflowModule,
     HrScheduleModule,
+    StoreSettingsModule,
+    DashboardModule,
+  ],
+  providers: [
+    RateLimitGuard,
+    {
+      provide: APP_GUARD,
+      useExisting: RateLimitGuard,
+    },
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestIdMiddleware).forRoutes({ path: '*', method: RequestMethod.ALL });
+    consumer
+      .apply(RequestIdMiddleware, SecurityHeadersMiddleware)
+      .forRoutes({ path: '*', method: RequestMethod.ALL });
   }
 }

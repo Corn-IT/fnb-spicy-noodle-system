@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IdSchema, IsoDateSchema, PaginationFields } from './common.schema';
+import { AvatarUrlSchema } from './profile.schema';
 import { CreateUserSchema } from './rbac.schema';
 
 const optionalText = (maxLength: number) => z.string().trim().max(maxLength).nullable().optional();
@@ -17,7 +18,7 @@ const EmployeeFields = {
   bankName: optionalText(120),
   bankAccountNo: optionalText(64),
   bankAccountName: optionalText(160),
-  avatarUrl: z.url().nullable().optional(),
+  avatarUrl: AvatarUrlSchema.nullable().optional(),
   attachmentUrls: z.array(z.url()),
   note: optionalText(1000),
 };
@@ -48,10 +49,22 @@ export const EmployeeFilterQuerySchema = z.object({
 });
 export type EmployeeFilterQuery = z.infer<typeof EmployeeFilterQuerySchema>;
 
+export const ScheduleAttendanceModeSchema = z.enum(['FULL_SHIFT', 'CUSTOM_HOURS']);
+export type ScheduleAttendanceMode = z.infer<typeof ScheduleAttendanceModeSchema>;
+
+export const ScheduleAttendanceEntrySchema = z.object({
+  employeeId: IdSchema,
+  mode: ScheduleAttendanceModeSchema.optional(),
+  startTime: z.string().trim().max(16).optional(),
+  endTime: z.string().trim().max(16).optional(),
+}).strict();
+export type ScheduleAttendanceEntry = z.infer<typeof ScheduleAttendanceEntrySchema>;
+
 export const ScheduleCellSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
   timeSlot: z.string().trim().min(1).max(100),
   employeeIds: z.array(IdSchema).max(100),
+  attendances: z.array(ScheduleAttendanceEntrySchema).max(100).optional(),
 }).strict().refine((cell) => new Set(cell.employeeIds).size === cell.employeeIds.length, {
   message: 'Không được gán trùng một nhân viên trong cùng ô lịch',
   path: ['employeeIds'],
@@ -105,3 +118,77 @@ export const CopyPreviousWeekRequestSchema = z.object({
   path: ['targetWeekStartDate'],
 });
 export type CopyPreviousWeekRequest = z.infer<typeof CopyPreviousWeekRequestSchema>;
+
+export const PayrollShiftTypeSchema = z.enum(['FULL_TIME', 'PART_TIME']);
+export type PayrollShiftType = z.infer<typeof PayrollShiftTypeSchema>;
+
+export const PayrollConfigSchema = z.object({
+  defaultBaseSalary: z.number().nonnegative().max(1000000000).default(7000000),
+  standardFullTimeDays: z.number().int().min(1).max(31).default(28),
+  standardHoursPerDay: z.number().positive().max(24).default(12),
+  defaultPartTimeHourlyRate: z.number().nonnegative().max(10000000).default(25000),
+}).strict();
+export type PayrollConfig = z.infer<typeof PayrollConfigSchema>;
+
+export const UpdatePayrollConfigSchema = PayrollConfigSchema;
+export type UpdatePayrollConfigInput = z.infer<typeof UpdatePayrollConfigSchema>;
+
+export const PayrollQuerySchema = z.object({
+  fromDate: IsoDateSchema,
+  toDate: IsoDateSchema,
+  keyword: z.string().trim().min(1).optional(),
+}).strict().refine((q) => q.fromDate <= q.toDate, {
+  message: 'Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc',
+  path: ['toDate'],
+});
+export type PayrollQuery = z.infer<typeof PayrollQuerySchema>;
+
+export const UpdateEmployeePayrollSchema = z.object({
+  fromDate: IsoDateSchema,
+  toDate: IsoDateSchema,
+  shiftType: PayrollShiftTypeSchema,
+  useCustomRate: z.boolean().default(false),
+  customBaseSalary: z.number().nonnegative().max(1000000000).nullable().optional(),
+  customHourlyRate: z.number().nonnegative().max(10000000).nullable().optional(),
+  overrideFullShiftDays: z.number().min(0).max(366).nullable().optional(),
+  overrideCustomHours: z.number().min(0).max(8784).nullable().optional(),
+  bonusOrAdjustment: z.number().finite().min(-1000000000).max(1000000000).default(0),
+  note: z.string().trim().max(500).nullable().optional(),
+}).strict();
+export type UpdateEmployeePayrollInput = z.infer<typeof UpdateEmployeePayrollSchema>;
+
+export const PayrollRowSchema = z.object({
+  employeeId: IdSchema,
+  fullName: z.string().min(1),
+  shortName: z.string().min(1),
+  isDeleted: z.boolean(),
+  positionName: z.string().nullable(),
+  specialtyName: z.string().nullable(),
+  shiftType: PayrollShiftTypeSchema,
+  scheduleFullShiftDays: z.number().nonnegative(),
+  scheduleCustomHours: z.number().nonnegative(),
+  fullShiftDays: z.number().nonnegative(),
+  customHours: z.number().nonnegative(),
+  hasManualOverride: z.boolean(),
+  useCustomRate: z.boolean(),
+  appliedBaseSalary: z.number().nonnegative(),
+  appliedHourlyRate: z.number().nonnegative(),
+  bonusOrAdjustment: z.number().finite(),
+  note: z.string().nullable(),
+  totalSalary: z.number().finite(),
+}).strict();
+export type PayrollRow = z.infer<typeof PayrollRowSchema>;
+
+export const PayrollSummaryResponseSchema = z.object({
+  fromDate: IsoDateSchema,
+  toDate: IsoDateSchema,
+  config: PayrollConfigSchema,
+  items: z.array(PayrollRowSchema),
+  summary: z.object({
+    totalEmployees: z.number().int().nonnegative(),
+    totalFullShiftDays: z.number().nonnegative(),
+    totalCustomHours: z.number().nonnegative(),
+    totalSalary: z.number().finite(),
+  }).strict(),
+}).strict();
+export type PayrollSummaryResponse = z.infer<typeof PayrollSummaryResponseSchema>;

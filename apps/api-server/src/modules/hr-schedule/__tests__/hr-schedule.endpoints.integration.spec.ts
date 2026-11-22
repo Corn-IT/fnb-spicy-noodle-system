@@ -116,9 +116,13 @@ describe('HR and schedule HTTP endpoints', () => {
       expect.objectContaining({ id: 4 }),
     );
     expect(update.status).toBe(200);
-    expect(hrScheduleService.updateEmployee).toHaveBeenCalledWith(12, { phone: '0900000000' });
+    expect(hrScheduleService.updateEmployee).toHaveBeenCalledWith(
+      12,
+      { phone: '0900000000' },
+      expect.objectContaining({ id: 4 }),
+    );
     expect(remove.status).toBe(200);
-    expect(hrScheduleService.softDeleteEmployee).toHaveBeenCalledWith(12);
+    expect(hrScheduleService.softDeleteEmployee).toHaveBeenCalledWith(12, expect.objectContaining({ id: 4 }));
   });
 
   it('serves employee activation status updates to permitted managers', async () => {
@@ -130,7 +134,11 @@ describe('HR and schedule HTTP endpoints', () => {
     const responseBody = await response.text();
 
     expect(response.status, responseBody).toBe(200);
-    expect(hrScheduleService.setEmployeeActiveStatus).toHaveBeenCalledWith(12, true);
+    expect(hrScheduleService.setEmployeeActiveStatus).toHaveBeenCalledWith(
+      12,
+      true,
+      expect.objectContaining({ id: 4 }),
+    );
 
     const forbidden = await fetch(`${baseUrl}/api/v1/employees/12/status`, {
       method: 'PATCH',

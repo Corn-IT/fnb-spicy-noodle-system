@@ -11,7 +11,7 @@ export type SocketAuthMode =
   | {
       mode: 'qr_guest';
       qrToken: string;
-      orderId: number | string;
+      orderId?: number | string | null;
     };
 
 let activeSocket: Socket | null = null;
@@ -23,12 +23,19 @@ export function connectPosSocket(authConfig: SocketAuthMode): Socket {
   }
 
   const baseUrl = env.VITE_SOCKET_URL.replace(/\/+$/, '');
-  const namespaceUrl = `${baseUrl}${SocketNamespace}`;
+  const namespaceUrl = baseUrl.endsWith(SocketNamespace)
+    ? baseUrl
+    : `${baseUrl}${SocketNamespace}`;
 
   const authPayload =
     authConfig.mode === 'staff'
       ? { token: authConfig.token }
-      : { qrToken: authConfig.qrToken, orderId: authConfig.orderId };
+      : {
+          qrToken: authConfig.qrToken,
+          ...(authConfig.orderId !== undefined && authConfig.orderId !== null
+            ? { orderId: authConfig.orderId }
+            : {}),
+        };
 
   activeSocket = io(namespaceUrl, {
     auth: authPayload,

@@ -1,26 +1,70 @@
-export interface VietQrUrlOptions {
-  amount: number;
-  orderCode: string;
-  bankId?: string;
-  accountNo?: string;
-  accountName?: string;
+export interface VietQrTableOptions {
+  tableLabel?: string | null;
+  tableId?: number | null;
+  orderType?: string | null;
+  takeawayNumber?: number | null;
 }
 
-const DEFAULT_VIETQR_BANK_ID = 'VCB';
-const DEFAULT_VIETQR_ACCOUNT_NO = '1023456789';
-const DEFAULT_VIETQR_ACCOUNT_NAME = 'QUAN MI CAY SON BAO';
+export interface VietQrFallbackOptions extends VietQrTableOptions {
+  amount: number;
+  orderCode: string;
+}
 
-export function buildVietQrTransferMemo(orderCode: string): string {
+export interface VietQrUrlOptions extends VietQrFallbackOptions {
+  bankId: string;
+  accountNo: string;
+  accountName: string;
+}
+
+export function formatTableOrTakeawayShortCode(
+  options?: VietQrTableOptions | string | null,
+): string {
+  if (!options) return '';
+  if (typeof options === 'string') {
+    const digits = options.match(/\d+/);
+    return digits ? `B${digits[0].padStart(2, '0')}` : options.replace(/\s+/g, '').toUpperCase();
+  }
+  if (options.orderType === 'TAKEAWAY' || options.takeawayNumber) {
+    const num = options.takeawayNumber ?? 1;
+    return `MV${String(num).padStart(2, '0')}`;
+  }
+  if (options.tableLabel && options.tableLabel.trim()) {
+    const label = options.tableLabel.trim();
+    const digits = label.match(/\d+/);
+    if (digits) {
+      return `B${digits[0].padStart(2, '0')}`;
+    }
+    return label.replace(/\s+/g, '').toUpperCase();
+  }
+  if (options.tableId != null) {
+    return `B${String(options.tableId).padStart(2, '0')}`;
+  }
+  return '';
+}
+
+export function buildVietQrTransferMemo(
+  orderCode: string,
+  tableInfo?: VietQrTableOptions | string | null,
+): string {
   const cleanCode = orderCode.trim();
+  const tableCode = formatTableOrTakeawayShortCode(tableInfo);
+  if (tableCode) {
+    return `TT ${tableCode} ${cleanCode}`;
+  }
   return `TT ${cleanCode}`;
 }
 
 export function buildVietQrImageUrl(options: VietQrUrlOptions): string {
-  const bankId = (options.bankId || DEFAULT_VIETQR_BANK_ID).trim();
-  const accountNo = (options.accountNo || DEFAULT_VIETQR_ACCOUNT_NO).trim();
-  const accountName = (options.accountName || DEFAULT_VIETQR_ACCOUNT_NAME).trim();
+  const bankId = options.bankId.trim();
+  const accountNo = options.accountNo.trim();
+  const accountName = options.accountName.trim();
   const numericAmount = Math.max(0, Math.round(options.amount));
-  const addInfo = buildVietQrTransferMemo(options.orderCode);
+  const addInfo = buildVietQrTransferMemo(options.orderCode, {
+    tableLabel: options.tableLabel,
+    tableId: options.tableId,
+    orderType: options.orderType,
+    takeawayNumber: options.takeawayNumber,
+  });
 
   const query = new URLSearchParams({
     amount: String(numericAmount),
@@ -31,9 +75,14 @@ export function buildVietQrImageUrl(options: VietQrUrlOptions): string {
   return `https://img.vietqr.io/image/${encodeURIComponent(bankId)}-${encodeURIComponent(accountNo)}-compact2.png?${query.toString()}`;
 }
 
-export function buildVietQrFallbackSvgDataUrl(options: VietQrUrlOptions): string {
+export function buildVietQrFallbackSvgDataUrl(options: VietQrFallbackOptions): string {
   const numericAmount = Math.max(0, Math.round(options.amount));
-  const memo = buildVietQrTransferMemo(options.orderCode);
+  const memo = buildVietQrTransferMemo(options.orderCode, {
+    tableLabel: options.tableLabel,
+    tableId: options.tableId,
+    orderType: options.orderType,
+    takeawayNumber: options.takeawayNumber,
+  });
   const seedText = `${memo}|${numericAmount}`;
 
   // Generate deterministic 11x11 high-contrast matrix pattern from orderCode & amount

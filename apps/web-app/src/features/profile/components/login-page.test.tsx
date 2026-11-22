@@ -79,4 +79,21 @@ describe('LoginPage return navigation', () => {
     expect(await screen.findByRole('heading', { name: 'Màn hình POS' })).toBeInTheDocument();
     expect(screen.getByTestId('current-path')).toHaveTextContent('/pos');
   });
+
+  it('shows Vietnamese validation messages when username or password are invalid', async () => {
+    renderLogin();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Đăng nhập Quầy POS' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Vui lòng nhập tên đăng nhập');
+
+    fireEvent.change(screen.getByLabelText('Tên đăng nhập'), {
+      target: { value: 'thungan' },
+    });
+    fireEvent.change(screen.getByLabelText('Mật khẩu'), {
+      target: { value: '123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Đăng nhập Quầy POS' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Mật khẩu phải có ít nhất 6 ký tự');
+    expect(mutateAsyncMock).not.toHaveBeenCalled();
+  });
 });

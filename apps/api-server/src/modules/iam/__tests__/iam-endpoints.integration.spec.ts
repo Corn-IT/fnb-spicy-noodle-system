@@ -38,6 +38,13 @@ describe('IAM and MDM HTTP integration', () => {
     ...authUser,
     isActive: true,
     employee: { id: authUser.employeeId, ...authUser.employee },
+    session: {
+      isActiveSession: true,
+      isSocketOnline: true,
+      ipAddress: '192.168.1.77',
+      deviceLabel: 'Windows · Chrome',
+      startedAt: '2026-11-17T08:00:00.000Z',
+    },
   };
   const profile = {
     id: 4,
@@ -67,16 +74,17 @@ describe('IAM and MDM HTTP integration', () => {
       throw error;
     }
     if (token === 'invalid') throw new Error('invalid signature');
-    return { sub: token === 'superadmin' ? 1 : 4, tokenType: 'access' };
+    const sub = token === 'superadmin' ? 1 : token === 'rbacviewer' ? 5 : 4;
+    return { sub, tokenType: 'access' };
   });
   const prisma = {
     user: {
       findUnique: vi.fn(async ({ where }: { where: { id: number } }) => ({
         id: where.id,
         employeeId: where.id + 10,
-        username: where.id === 1 ? 'superadmin' : 'cashier01',
+        username: where.id === 1 ? 'superadmin' : where.id === 5 ? 'adminview' : 'cashier01',
         isSuperAdmin: where.id === 1,
-        permissions: {},
+        permissions: where.id === 5 ? { rbac: { view: true } } : {},
         isActive: true,
       })),
     },
@@ -98,6 +106,17 @@ describe('IAM and MDM HTTP integration', () => {
     updateProfile: vi.fn(async () => profile),
     updateUiPreferences: vi.fn(async () => authUser.uiPreferences),
     changePassword: vi.fn(async () => ({ message: 'Đổi mật khẩu thành công' })),
+    getUserSessionHistory: vi.fn(async () => ({
+      user: { id: 4, username: 'cashier01', fullName: 'Cashier One', isSuperAdmin: false, isActive: true },
+      currentSession: {
+        isActiveSession: false,
+        isSocketOnline: false,
+        ipAddress: null,
+        deviceLabel: null,
+        startedAt: null,
+      },
+      items: [],
+    })),
   };
 
   let app: INestApplication;
@@ -157,11 +176,19 @@ describe('IAM and MDM HTTP integration', () => {
       headers,
       body: JSON.stringify({ isActive: false }),
     });
+    const sessionHistoryResponse = await fetch(`${baseUrl}/api/v1/users/4/session-history?limit=5`, {
+      headers: { authorization: 'Bearer cashier' },
+    });
+    const unauthSessionHistory = await fetch(`${baseUrl}/api/v1/users/4/session-history`);
 
     expect(createMdmResponse.status).toBe(403);
     await expect(createMdmResponse.json()).resolves.toMatchObject({ code: 'RBAC_PERMISSION_DENIED' });
     expect(updateUserResponse.status).toBe(403);
     await expect(updateUserResponse.json()).resolves.toMatchObject({ code: 'RBAC_SUPER_ADMIN_REQUIRED' });
+    expect(sessionHistoryResponse.status).toBe(403);
+    await expect(sessionHistoryResponse.json()).resolves.toMatchObject({ code: 'RBAC_SUPER_ADMIN_REQUIRED' });
+    expect(unauthSessionHistory.status).toBe(401);
+    await expect(unauthSessionHistory.json()).resolves.toMatchObject({ code: 'AUTH_TOKEN_MISSING' });
   });
 
   it('allows authenticated cashiers to use MDM lookup while denying the management list', async () => {
@@ -256,6 +283,25 @@ describe('IAM and MDM HTTP integration', () => {
     await expect(listResponse.json()).resolves.toEqual({ page: 1, limit: 50, total: 1, items: [adminUser] });
     expect(iamService.listUsers).toHaveBeenCalledWith({ page: 2, limit: 10, keyword: 'Anh' });
 
+    const viewerListResponse = await fetch(`${baseUrl}/api/v1/users?page=1&limit=10`, {
+      headers: { authorization: 'Bearer rbacviewer' },
+    });
+    expect(viewerListResponse.status).toBe(200);
+    await expect(viewerListResponse.json()).resolves.toMatchObject({
+      items: [
+        {
+          id: 4,
+          session: {
+            isActiveSession: true,
+            isSocketOnline: true,
+            ipAddress: null,
+            deviceLabel: null,
+            startedAt: null,
+          },
+        },
+      ],
+    });
+
     const createResponse = await fetch(`${baseUrl}/api/v1/users`, {
       method: 'POST',
       headers,
@@ -271,6 +317,10 @@ describe('IAM and MDM HTTP integration', () => {
     });
     expect(updateResponse.status).toBe(200);
     await expect(updateResponse.json()).resolves.toEqual(adminUser);
+
+    const historyResponse = await fetch(`${baseUrl}/api/v1/users/4/session-history?limit=5`, { headers });
+    expect(historyResponse.status).toBe(200);
+    expect(iamService.getUserSessionHistory).toHaveBeenCalledWith(4, 5);
   });
 
   it('serves MDM create, update, and disable routes to a super-admin', async () => {

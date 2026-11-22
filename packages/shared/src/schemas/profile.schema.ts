@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IdSchema } from './common.schema';
+import { IdSchema, IsoDateTimeSchema } from './common.schema';
 
 const UiPreferenceFields = {
   theme: z.enum(['light', 'dark', 'system']),
@@ -24,6 +24,32 @@ export const UpdateUiPreferencesSchema = z.object({
 );
 export type UpdateUiPreferencesInput = z.infer<typeof UpdateUiPreferencesSchema>;
 
+export const AvatarUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(1000)
+  .refine(
+    (value) => {
+      if (value.startsWith('/api/v1/')) {
+        return true;
+      }
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    },
+    { message: 'URL ảnh đại diện không hợp lệ (chỉ hỗ trợ http/https hoặc đường dẫn nội bộ)' },
+  );
+
+export const UploadAvatarSchema = z.object({
+  mime: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+  base64: z.string().trim().min(1),
+}).strict();
+export type UploadAvatarInput = z.infer<typeof UploadAvatarSchema>;
+
 export const UpdateProfileSchema = z.object({
   fullName: z.string().trim().min(2).max(160).optional(),
   phone: z.string().trim().max(32).nullable().optional(),
@@ -31,11 +57,18 @@ export const UpdateProfileSchema = z.object({
   bankName: z.string().trim().max(120).nullable().optional(),
   bankAccountNo: z.string().trim().max(64).nullable().optional(),
   bankAccountName: z.string().trim().max(160).nullable().optional(),
-  avatarUrl: z.url().nullable().optional(),
+  avatarUrl: AvatarUrlSchema.nullable().optional(),
 }).strict().refine((profile) => Object.keys(profile).length > 0, {
   message: 'Phải cung cấp ít nhất một trường cần cập nhật',
 });
 export type UpdateProfileInput = z.infer<typeof UpdateProfileSchema>;
+
+export const ProfileSessionInfoSchema = z.object({
+  ipAddress: z.string().nullable().default(null),
+  deviceLabel: z.string().nullable().default(null),
+  startedAt: IsoDateTimeSchema.nullable().default(null),
+});
+export type ProfileSessionInfo = z.infer<typeof ProfileSessionInfoSchema>;
 
 export const ChangePasswordSchema = z.object({
   currentPassword: z.string().min(6).max(128),

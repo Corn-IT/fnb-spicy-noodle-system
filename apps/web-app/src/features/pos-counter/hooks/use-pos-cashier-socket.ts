@@ -1,43 +1,36 @@
-import { SocketEvents } from '@fnb/shared';
+import {
+  QrAutoCancelledPayloadSchema,
+  SocketEvents,
+  type QrAutoCancelledPayload,
+} from '@fnb/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import * as React from 'react';
 
-import { toast } from '@/components/ui/toast';
+import { useAppMessages } from '@/hooks/use-app-messages';
+import { enqueueQrVoiceAlert } from '@/lib/qr-voice-announcer';
 import { usePosSocketContext } from '@/providers/socket-provider';
 import { posQueryKeys } from '../api/pos.api';
 
 interface QrOrderSocketPayload {
-  orderId: number;
+  orderId?: number;
   tableId?: number;
   tableLabel?: string;
   batchNo?: number;
   totalAmount?: number;
 }
 
-function playCashierBellSound(): void {
-  try {
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, ctx.currentTime);
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.18);
-  } catch {
-    // Ignore audio autoplay blocks in headless/test environments
-  }
+export interface UsePosCashierSocketOptions {
+  onQrAutoCancelled?: (payload: QrAutoCancelledPayload) => void;
 }
 
-export function usePosCashierSocket() {
+export function usePosCashierSocket(options?: UsePosCashierSocketOptions) {
   const { socket } = usePosSocketContext();
   const queryClient = useQueryClient();
+  const { notify } = useAppMessages();
+  const notifyRef = React.useRef(notify);
+  notifyRef.current = notify;
+  const autoCancelCallbackRef = React.useRef(options?.onQrAutoCancelled);
+  autoCancelCallbackRef.current = options?.onQrAutoCancelled;
   const [addonBadgesByOrderId, setAddonBadgesByOrderId] = React.useState<Record<number, number>>({});
 
   const clearAddonBadge = React.useCallback((orderId: number) => {
@@ -54,11 +47,11 @@ export function usePosCashierSocket() {
 
     const handleQrNew = (raw: unknown) => {
       const payload = raw as QrOrderSocketPayload;
-      playCashierBellSound();
-      toast({
+      const tableLabel = payload?.tableLabel ?? 'Bàn';
+      void enqueueQrVoiceAlert({ tableLabel, kind: 'NEW' });
+      notifyRef.current('pos.socket.newQrOrder', {
         variant: 'warning',
-        title: `🔔 Đơn QR mới tại ${payload?.tableLabel ?? 'Bàn'}`,
-        description: 'Vui lòng kiểm tra và bấm Duyệt đơn / Tách bếp.',
+        vars: { tableLabel },
         duration: 6000,
       });
       void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
@@ -71,18 +64,18 @@ export function usePosCashierSocket() {
 
     const handleQrAddon = (raw: unknown) => {
       const payload = raw as QrOrderSocketPayload;
-      playCashierBellSound();
+      const tableLabel = payload?.tableLabel ?? 'Bàn';
+      void enqueueQrVoiceAlert({ tableLabel, kind: 'ADDON' });
       const batchNo = payload?.batchNo ?? 2;
-      if (payload?.orderId) {
+      if (payload?.orderId && batchNo >= 2) {
         setAddonBadgesByOrderId((prev) => ({
           ...prev,
-          [payload.orderId]: batchNo,
+          [payload.orderId!]: batchNo,
         }));
       }
-      toast({
+      notifyRef.current('pos.socket.qrAppendItems', {
         variant: 'info',
-        title: `🔔 ${payload?.tableLabel ?? 'Bàn'} gọi thêm Lượt ${batchNo}`,
-        description: 'Khách vừa đặt thêm món qua QR.',
+        vars: { tableLabel, batchNo },
         duration: 6000,
       });
       void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
@@ -93,20 +86,65 @@ export function usePosCashierSocket() {
       }
     };
 
-    const handleGridSync = () => {
+    const handleGridSync = (raw?: unknown) => {
+      const payload = (raw ?? {}) as QrOrderSocketPayload & { status?: string };
+      if (
+        typeof payload.orderId === 'number' &&
+        (payload.status === 'SERVING' ||
+          payload.status === 'PAID' ||
+          payload.status === 'AVAILABLE')
+      ) {
+        clearAddonBadge(payload.orderId);
+      }
+      void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
+      if (typeof payload.orderId === 'number') {
+        void queryClient.invalidateQueries({
+          queryKey: posQueryKeys.orderDetail(payload.orderId),
+        });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['pos', 'order'] });
+      }
+    };
+
+    const handleSocketReconnect = () => {
+      void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
+      void queryClient.invalidateQueries({ queryKey: ['pos', 'order'] });
+    };
+
+    const handleQrAutoCancelled = (raw: unknown) => {
+      const parsed = QrAutoCancelledPayloadSchema.safeParse(raw);
+      if (parsed.success) {
+        clearAddonBadge(parsed.data.orderId);
+        notifyRef.current('pos.socket.qrAutoCancelled', {
+          variant: 'warning',
+          vars: {
+            tableLabel: parsed.data.tableLabel ?? 'Bàn',
+            detail: parsed.data.reason,
+          },
+          duration: 7000,
+        });
+        autoCancelCallbackRef.current?.(parsed.data);
+        void queryClient.invalidateQueries({
+          queryKey: posQueryKeys.orderDetail(parsed.data.orderId),
+        });
+      }
       void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
     };
 
     socket.on(SocketEvents.ORDER_QR_NEW, handleQrNew);
     socket.on(SocketEvents.ORDER_QR_ADDON, handleQrAddon);
+    socket.on(SocketEvents.ORDER_QR_AUTO_CANCELLED, handleQrAutoCancelled);
     socket.on(SocketEvents.TABLE_GRID_SYNC, handleGridSync);
+    socket.on('connect', handleSocketReconnect);
 
     return () => {
       socket.off(SocketEvents.ORDER_QR_NEW, handleQrNew);
       socket.off(SocketEvents.ORDER_QR_ADDON, handleQrAddon);
+      socket.off(SocketEvents.ORDER_QR_AUTO_CANCELLED, handleQrAutoCancelled);
       socket.off(SocketEvents.TABLE_GRID_SYNC, handleGridSync);
+      socket.off('connect', handleSocketReconnect);
     };
-  }, [socket, queryClient]);
+  }, [socket, queryClient, clearAddonBadge]);
 
   return {
     addonBadgesByOrderId,

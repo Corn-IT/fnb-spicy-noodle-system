@@ -16,7 +16,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { toast } from '@/components/ui/toast';
+import { useAppMessages } from '@/hooks/use-app-messages';
 import {
   buildInitialSelectedByGroup,
   computeOrderModifiersPayload,
@@ -47,6 +47,7 @@ export function ModifierSelectorSheet({
   onOpenChange,
   onConfirm,
 }: ModifierSelectorSheetProps) {
+  const { notify } = useAppMessages();
   const [quantity, setQuantity] = React.useState(1);
   const [selectedByGroup, setSelectedByGroup] = React.useState<Record<number, number[]>>({});
   const [manualSubstituteByModifierId, setManualSubstituteByModifierId] = React.useState<
@@ -68,6 +69,10 @@ export function ModifierSelectorSheet({
   const isAllRequiredSelected = isProductModifierSelectionValid(product, selectedByGroup);
 
   const handleToggleModifier = (group: ModifierGroup, modifierId: number) => {
+    const targetMod = group.modifiers.find((m) => m.id === modifierId);
+    if (targetMod && targetMod.isAvailable === false) {
+      return;
+    }
     setSelectedByGroup((prev) => {
       const current = prev[group.id] ?? [];
       if (group.maxSelect === 1 && !group.isAutoSelect && !group.allowSubstitution) {
@@ -75,10 +80,9 @@ export function ModifierSelectorSheet({
       }
       if (current.includes(modifierId)) {
         if (group.allowSubstitution && current.length <= 1) {
-          toast({
+          notify('qr.modifier.minSubstituteRequired', {
             variant: 'warning',
-            title: 'Cần giữ lại ít nhất 1 đồ ăn chính',
-            description: `Nhóm "${group.name}" phải giữ tối thiểu 1 thành phần để thay thế cho các món bỏ chọn.`,
+            vars: { groupName: group.name },
           });
           return prev;
         }
@@ -119,7 +123,7 @@ export function ModifierSelectorSheet({
       >
         <SheetHeader className="text-left pr-10">
           <SheetTitle className="flex flex-wrap items-baseline gap-2 text-lg font-bold">
-            <Flame className="h-5 w-5 text-rose-600 self-center shrink-0" />
+            <Flame className="h-5 w-5 text-accent-text self-center shrink-0" />
             <span>{product.name}</span>
             {product.subtitle ? (
               <span className="text-sm font-semibold text-muted-foreground">
@@ -138,9 +142,7 @@ export function ModifierSelectorSheet({
             const isRadio =
               group.maxSelect === 1 && !group.isAutoSelect && !group.allowSubstitution;
             const isAutoGroup = Boolean(
-              group.isAutoSelect ||
-                group.allowSubstitution ||
-                group.modifiers.some((m) => m.isDefaultChecked),
+              group.isAutoSelect || group.allowSubstitution,
             );
 
             return (
@@ -169,7 +171,7 @@ export function ModifierSelectorSheet({
                       className={cn(
                         'rounded px-2 py-0.5 text-xs font-medium',
                         group.isRequired
-                          ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                          ? 'bg-primary/15 text-accent-text'
                           : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
                       )}
                     >
@@ -180,7 +182,8 @@ export function ModifierSelectorSheet({
 
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {group.modifiers.map((mod) => {
-                    const isSelected = chosenIds.includes(mod.id);
+                    const isOutOfStock = mod.isAvailable === false;
+                    const isSelected = !isOutOfStock && chosenIds.includes(mod.id);
                     const subInfo =
                       group.allowSubstitution && !isSelected
                         ? resolveSubstituteForUncheckedModifier(
@@ -196,13 +199,17 @@ export function ModifierSelectorSheet({
                         key={mod.id}
                         className={cn(
                           'flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all',
-                          isSelected
-                            ? 'border-rose-600 bg-rose-50 font-semibold text-rose-700 dark:border-rose-500 dark:bg-rose-950/60 dark:text-rose-200'
-                            : group.allowSubstitution
+                          isOutOfStock
+                            ? group.allowSubstitution
                               ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
-                              : isAutoGroup
-                                ? 'border-dashed border-border bg-muted/40 text-muted-foreground'
-                                : 'border-border bg-card hover:bg-muted/50',
+                              : 'border-dashed border-border/80 bg-muted/50 text-muted-foreground opacity-85'
+                            : isSelected
+                              ? 'border-primary bg-primary/10 font-semibold text-accent-text'
+                              : group.allowSubstitution
+                                ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
+                                : isAutoGroup
+                                  ? 'border-dashed border-border bg-muted/40 text-muted-foreground'
+                                  : 'border-border bg-card hover:bg-muted/50',
                         )}
                       >
                         <button
@@ -210,33 +217,55 @@ export function ModifierSelectorSheet({
                           data-testid={`modifier-option-${mod.id}`}
                           role={isRadio ? 'radio' : 'checkbox'}
                           aria-checked={isSelected}
+                          aria-disabled={isOutOfStock}
+                          disabled={isOutOfStock}
                           onClick={() => handleToggleModifier(group, mod.id)}
-                          className="flex w-full items-start justify-between gap-2 text-left text-xs sm:text-sm"
+                          className={cn(
+                            'flex w-full items-start justify-between gap-2 text-left text-xs sm:text-sm',
+                            isOutOfStock && 'cursor-not-allowed',
+                          )}
                         >
                           <div className="flex items-start gap-2 min-w-0">
                             <span
                               className={cn(
                                 'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
-                                isSelected
-                                  ? 'border-rose-600 bg-rose-600 text-white'
-                                  : 'border-muted-foreground/50 bg-background',
+                                isOutOfStock
+                                  ? 'border-muted-foreground/30 bg-muted'
+                                  : isSelected
+                                    ? 'border-primary bg-primary text-primary-foreground'
+                                    : 'border-muted-foreground/50 bg-background',
                               )}
                             >
                               {isSelected ? <Check className="h-3 w-3 stroke-[3]" /> : null}
                             </span>
-                            <span
-                              className={cn(
-                                'font-bold leading-snug',
-                                !isSelected && isAutoGroup && !group.allowSubstitution
-                                  ? 'line-through opacity-75'
-                                  : '',
-                              )}
-                            >
-                              {mod.name}
-                            </span>
+                            <div className="min-w-0">
+                              <span
+                                className={cn(
+                                  'block font-bold leading-snug',
+                                  isOutOfStock || (!isSelected && isAutoGroup && !group.allowSubstitution)
+                                    ? 'line-through opacity-70'
+                                    : '',
+                                )}
+                              >
+                                {mod.name}
+                              </span>
+                              {isOutOfStock ? (
+                                <span
+                                  data-testid={`modifier-out-of-stock-${mod.id}`}
+                                  className="mt-0.5 block text-[10px] font-semibold text-rose-600 dark:text-rose-400"
+                                >
+                                  Tạm hết
+                                </span>
+                              ) : null}
+                            </div>
                           </div>
                           {mod.extraPrice > 0 ? (
-                            <span className="shrink-0 text-xs font-extrabold text-rose-600 dark:text-rose-400">
+                            <span
+                              className={cn(
+                                'shrink-0 text-xs font-extrabold text-price',
+                                isOutOfStock && 'line-through opacity-60',
+                              )}
+                            >
                               +{mod.extraPrice >= 1000 ? `${mod.extraPrice / 1000}k` : `${mod.extraPrice}đ`}
                             </span>
                           ) : null}
@@ -275,13 +304,13 @@ export function ModifierSelectorSheet({
                           </div>
                         ) : null}
 
-                        {group.allowSubstitution && isSelected && mod.defaultSubstituteName ? (
+                        {!isOutOfStock && group.allowSubstitution && isSelected && mod.defaultSubstituteName ? (
                           <span className="mt-1 pl-6 text-[10px] font-medium text-muted-foreground">
                             (Bỏ tích → Thay bằng {mod.defaultSubstituteName})
                           </span>
                         ) : null}
 
-                        {!group.allowSubstitution && isAutoGroup && !isSelected ? (
+                        {!isOutOfStock && !group.allowSubstitution && isAutoGroup && !isSelected ? (
                           <span className="mt-1 pl-6 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
                             Không {mod.name}
                           </span>
@@ -343,7 +372,7 @@ export function ModifierSelectorSheet({
             data-testid="confirm-modifier-btn"
             disabled={!isAllRequiredSelected}
             onClick={handleSubmit}
-            className="w-full bg-rose-600 font-bold text-white hover:bg-rose-700"
+            className="w-full bg-primary font-bold text-primary-foreground hover:bg-primary/90"
           >
             Thêm vào giỏ — {lineTotal.toLocaleString('vi-VN')} đ
           </Button>

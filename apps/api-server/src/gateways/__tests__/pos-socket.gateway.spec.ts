@@ -81,10 +81,82 @@ describe('PosSocketGateway', () => {
     expect(client.join).not.toHaveBeenCalled();
   });
 
-  it('should publish POS and QR events to their contracted rooms', () => {
-    const emissions: Array<{ room: string; event: string; payload: unknown }> = [];
+  it('should reject WebSocket handshakes from untrusted cross-origin domains', async () => {
+    const gateway = new PosSocketGateway(
+      { verifyAsync: vi.fn() } as unknown as JwtService,
+      { diningTable: { findUnique: vi.fn() } } as unknown as PrismaService,
+    );
+    let middleware: ((client: unknown, next: (err?: Error) => void) => Promise<void>) | undefined;
+    gateway.afterInit({
+      use: (fn: (client: unknown, next: (err?: Error) => void) => Promise<void>) => {
+        middleware = fn;
+      },
+    } as never);
+
+    const client = {
+      handshake: {
+        headers: { origin: 'https://evil-attacker.com' },
+        auth: { token: 'valid.jwt.token' },
+      },
+      data: {},
+      join: vi.fn(),
+    };
+    const next = vi.fn();
+
+    await middleware?.(client, next);
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(client.join).not.toHaveBeenCalled();
+  });
+
+  it('should reject guest QR socket from joining an order room that is VOIDED or TAKEAWAY (anti-IDOR)', async () => {
+    const prisma = {
+      diningTable: {
+        findUnique: vi.fn().mockResolvedValue({ id: 5, tableNumber: 5, isActive: true }),
+      },
+      order: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 999,
+          tableId: null,
+          orderType: 'TAKEAWAY',
+          orderSource: 'POS_CASHIER',
+          status: 'SERVING',
+        }),
+      },
+    } as unknown as PrismaService;
+    const gateway = new PosSocketGateway({} as JwtService, prisma);
+    let middleware: ((client: unknown, next: (err?: Error) => void) => Promise<void>) | undefined;
+    gateway.afterInit({
+      use: (fn: (client: unknown, next: (err?: Error) => void) => Promise<void>) => {
+        middleware = fn;
+      },
+    } as never);
+
+    const client = {
+      handshake: { auth: { qrToken: 'table-5-qr-token', orderId: 999 } },
+      data: {},
+      join: vi.fn(),
+    };
+    const next = vi.fn();
+
+    await middleware?.(client, next);
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(client.join).not.toHaveBeenCalled();
+  });
+
+  it('should publish POS and QR events to their contracted rooms and global broadcasts', () => {
+    const emissions: Array<{ room: string | null; event: string; payload: unknown }> = [];
     const gateway = new PosSocketGateway({} as JwtService, {} as PrismaService);
-    (gateway as unknown as { server: { to: (room: string) => { emit: (event: string, payload: unknown) => void } } }).server = {
+    (
+      gateway as unknown as {
+        server: {
+          emit: (event: string, payload: unknown) => void;
+          to: (room: string) => { emit: (event: string, payload: unknown) => void };
+        };
+      }
+    ).server = {
+      emit: (event, payload) => emissions.push({ room: null, event, payload }),
       to: (room) => ({ emit: (event, payload) => emissions.push({ room, event, payload }) }),
     };
     const payload = { orderId: 42 };
@@ -94,6 +166,12 @@ describe('PosSocketGateway', () => {
     gateway.emitOrderStatusUpdated(42, payload);
     gateway.emitOrderSessionRedirected(42, payload);
     gateway.emitTableGridSync(payload);
+    gateway.emitMenuUpdated({ updatedAt: 't1' });
+    gateway.emitScheduleUpdated(payload);
+    gateway.emitPayrollUpdated(payload);
+    gateway.emitStoreSettingsUpdated({ version: 'v1' });
+    const perms = UserPermissionsSchema.parse({ pos: { view: true } });
+    gateway.emitPermissionsUpdated(7, perms);
 
     expect(emissions).toEqual([
       { room: SocketRooms.POS_CASHIER, event: SocketEvents.ORDER_QR_NEW, payload },
@@ -103,6 +181,15 @@ describe('PosSocketGateway', () => {
       { room: SocketRooms.orderSession(42), event: SocketEvents.ORDER_STATUS_UPDATED, payload },
       { room: SocketRooms.orderSession(42), event: SocketEvents.ORDER_SESSION_REDIRECTED, payload },
       { room: SocketRooms.POS_CASHIER, event: SocketEvents.TABLE_GRID_SYNC, payload },
+      { room: null, event: SocketEvents.MENU_UPDATED, payload: { updatedAt: 't1' } },
+      { room: SocketRooms.POS_CASHIER, event: SocketEvents.SCHEDULE_UPDATED, payload },
+      { room: SocketRooms.POS_CASHIER, event: SocketEvents.PAYROLL_UPDATED, payload },
+      { room: null, event: SocketEvents.STORE_SETTINGS_UPDATED, payload: { version: 'v1' } },
+      {
+        room: SocketRooms.userAccount(7),
+        event: SocketEvents.PERMISSIONS_UPDATED,
+        payload: { userId: 7, permissions: perms, updatedAt: expect.any(String) },
+      },
     ]);
   });
 });

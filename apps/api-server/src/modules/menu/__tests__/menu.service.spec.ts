@@ -159,4 +159,161 @@ describe('MenuService', () => {
     })).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(tx.product.create).not.toHaveBeenCalled();
   });
+
+  it('should sync non-hidden stations & categories, expose activeOrder, and preserve modifier isAvailable in getPublicMenu', async () => {
+    const prisma = {
+      diningTable: { findUnique: vi.fn().mockResolvedValue({ id: 5, name: 'Bàn 05', status: 'OCCUPIED', activeOrderId: 900 }) },
+      product: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            ...productRow,
+            id: 1,
+            station: 'BEP_NAU',
+            modifierGroups: [{
+              id: 20,
+              name: 'Đồ ăn chính',
+              isRequired: false,
+              maxSelect: 3,
+              isAutoSelect: true,
+              allowSubstitution: true,
+              modifiers: [
+                { id: 201, name: 'Tôm', extraPrice: new Prisma.Decimal('0.00'), isDefaultChecked: true, isAvailable: false, defaultSubstituteName: 'Mực' },
+                { id: 202, name: 'Mực', extraPrice: new Prisma.Decimal('0.00'), isDefaultChecked: true, isAvailable: true, defaultSubstituteName: 'Tôm' },
+              ],
+            }],
+          },
+          {
+            ...productRow,
+            id: 2,
+            station: 'HIDDEN_ST',
+          },
+        ]),
+      },
+      masterData: {
+        findMany: vi.fn()
+          .mockResolvedValueOnce([
+            { id: 10, name: 'Bếp Nấu', isActive: true, metadata: { code: 'BEP_NAU', sortOrder: 1 } },
+            { id: 11, name: 'Trạm Ẩn', isActive: true, metadata: { code: 'HIDDEN_ST', isHidden: true, sortOrder: 2 } },
+          ])
+          .mockResolvedValueOnce([
+            { id: 100, name: 'Mì Cay', isActive: true, metadata: { code: 'MI_CAY', stationCode: 'BEP_NAU', sortOrder: 1 } },
+            { id: 101, name: 'Mục Ẩn', isActive: true, metadata: { code: 'HIDDEN_CAT', isHidden: true, sortOrder: 2 } },
+          ]),
+      },
+      order: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 900,
+          orderCode: 'HD-20261114-0900',
+          status: 'SERVING',
+          totalAmount: new Prisma.Decimal('45000.00'),
+          createdAt: new Date('2026-11-14T04:00:00.000Z'),
+          items: [
+            {
+              id: 1,
+              productId: 1,
+              product: { name: 'Mì bò' },
+              quantity: 1,
+              unitPrice: new Prisma.Decimal('45000.00'),
+              batchNo: 1,
+              kitchenStatus: 'PRINTED',
+              itemNote: null,
+              modifiersSnapshot: [{ groupId: 20, modifierId: 202, name: 'Mực', extraPrice: '0.00' }],
+              createdAt: new Date('2026-11-14T04:00:00.000Z'),
+            },
+          ],
+        }),
+      },
+    };
+    const service = new MenuService(prisma as never);
+
+    const result = await service.getPublicMenu('b'.repeat(64));
+
+    expect(result.stations).toEqual([{ id: 10, code: 'BEP_NAU', name: 'Bếp Nấu', sortOrder: 1 }]);
+    expect(result.categories).toEqual([{ id: 100, code: 'MI_CAY', name: 'Mì Cay', stationCode: 'BEP_NAU', sortOrder: 1 }]);
+    expect(result.products).toHaveLength(1);
+    expect(result.products[0]?.modifierGroups[0]?.modifiers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 201, name: 'Tôm', isAvailable: false }),
+        expect.objectContaining({ id: 202, name: 'Mực', isAvailable: true }),
+      ]),
+    );
+    expect(result.activeOrder).toMatchObject({
+      orderId: 900,
+      orderCode: 'HD-20261114-0900',
+      status: 'SERVING',
+      totalAmount: 45000,
+    });
+  });
+
+  it('should create new products, update existing products (clearing blank fields), and delete omitted products in importProductsExcel', async () => {
+    const tx = {
+      product: {
+        findMany: vi.fn().mockResolvedValue([
+          { ...productRow, id: 1, name: 'Mì bò', subtitle: 'Cay nhẹ', categoryId: 10, sortOrder: 1 },
+          { ...productRow, id: 2, name: 'Trà sữa cũ', subtitle: null, categoryId: 10, sortOrder: 2 },
+        ]),
+        findUnique: vi.fn().mockResolvedValue({ _count: { orderItems: 0, comboChildren: 0 } }),
+        update: vi.fn().mockResolvedValue({ ...productRow, id: 1 }),
+        create: vi.fn().mockResolvedValue({ ...productRow, id: 3, name: 'Bánh mì mới' }),
+        delete: vi.fn().mockResolvedValue({ id: 2 }),
+      },
+      orderItem: {
+        count: vi.fn().mockResolvedValue(0),
+      },
+      masterData: {
+        findMany: vi.fn()
+          .mockResolvedValueOnce([{ name: 'Bếp Nấu', metadata: { code: 'BEP_NAU' } }])
+          .mockResolvedValueOnce([{ id: 10, name: 'Mì Cay', normalizedName: 'mi cay', isActive: true }]),
+        create: vi.fn().mockResolvedValue({ id: 11, name: 'Ăn Sáng', normalizedName: 'an sang', isActive: true }),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (op: (client: typeof tx) => Promise<unknown>) => op(tx)),
+    };
+    const posSocketGateway = { emitMenuUpdated: vi.fn() };
+    const service = new MenuService(prisma as never, posSocketGateway as never);
+
+    const res = await service.importProductsExcel({
+      syncMissingAsDeleted: true,
+      items: [
+        {
+          name: 'Mì bò',
+          subtitle: null,
+          categoryName: null,
+          station: 'Bếp Nấu',
+          price: 49000,
+          modifierGroupsText: null,
+          isAvailable: true,
+          sortOrder: 1,
+        },
+        {
+          name: 'Bánh mì mới',
+          subtitle: 'Giòn nóng',
+          categoryName: 'Ăn Sáng',
+          station: 'Bếp Chiên',
+          price: 30000,
+          isAvailable: true,
+          sortOrder: 2,
+        },
+      ],
+    });
+
+    expect(res).toEqual({
+      createdCount: 1,
+      updatedCount: 1,
+      deletedCount: 1,
+      skippedActiveOrderProducts: [],
+    });
+    expect(tx.product.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 1 },
+      data: expect.objectContaining({
+        subtitle: null,
+        category: { disconnect: true },
+        modifierGroups: { deleteMany: {} },
+      }),
+    }));
+    expect(tx.product.create).toHaveBeenCalledTimes(1);
+    expect(tx.product.delete).toHaveBeenCalledWith({ where: { id: 2 } });
+    expect(posSocketGateway.emitMenuUpdated).toHaveBeenCalledTimes(1);
+  });
 });

@@ -6,8 +6,9 @@ import { cn } from '@/utils/cn';
 
 export type ToastVariant = 'default' | 'destructive' | 'success' | 'warning' | 'info';
 
-export const DEFAULT_TOAST_DURATION_MS = 5000;
-export const MAX_VISIBLE_TOASTS = 4;
+export const DEFAULT_TOAST_DURATION_MS = 2200;
+export const ALERT_TOAST_DURATION_MS = 3000;
+export const MAX_VISIBLE_TOASTS = 3;
 
 export interface ToastMessage {
   id: string;
@@ -31,7 +32,16 @@ export const useToastStore = create<ToastStore>((set) => ({
     set((state) => ({
       toasts: [
         ...state.toasts.slice(-(MAX_VISIBLE_TOASTS - 1)),
-        { variant: 'default', duration: DEFAULT_TOAST_DURATION_MS, ...toast, id },
+        {
+          variant: 'default',
+          duration:
+            toast.duration ??
+            (toast.variant === 'destructive' || toast.variant === 'warning'
+              ? ALERT_TOAST_DURATION_MS
+              : DEFAULT_TOAST_DURATION_MS),
+          ...toast,
+          id,
+        },
       ],
     }));
     return id;
@@ -103,14 +113,14 @@ export function Toaster() {
     <div
       aria-live="polite"
       data-testid="toast-viewport-top-right"
-      className="pointer-events-none fixed right-4 top-16 z-[100] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2.5"
+      className="pointer-events-none fixed left-3 right-3 top-14 z-[100] flex flex-col gap-2 sm:left-auto sm:right-4 sm:top-16 sm:w-full sm:max-w-sm"
     >
       {toasts.map((item) => (
         <div
           key={item.id}
           role="alert"
           className={cn(
-            'pointer-events-none flex items-start justify-between gap-3 rounded-xl border border-l-4 p-3.5 shadow-xl backdrop-blur-md transition-all',
+            'pointer-events-none flex items-start justify-between gap-2.5 rounded-xl border border-l-4 p-3 shadow-lg backdrop-blur-md transition-all',
             item.variant === 'destructive' &&
               'border-rose-300 border-l-rose-600 bg-rose-50/95 text-rose-950 dark:border-rose-800/80 dark:border-l-rose-500 dark:bg-rose-950/95 dark:text-rose-50',
             item.variant === 'success' &&

@@ -1,11 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type InvoiceFilterQuery,
   type OrderDetailResponse,
   type OrderStatus,
   type OrderType,
   type PaymentMethod,
+  type PendingPaymentEdit,
+  type ReviewInvoicePaymentEditInput,
+  type UpdateInvoicePaymentMethodInput,
   type VoidInvoiceRequest,
+  type DiscountSnapshot,
 } from '@fnb/shared';
 
 import { apiClient } from '@/lib/api-client';
@@ -19,25 +23,59 @@ export interface InvoiceListItem {
   takeawayNumber: number | null;
   status: OrderStatus;
   paymentMethod: PaymentMethod | null;
+  cashAmount: number;
+  transferAmount: number;
+  subtotalAmount?: number;
+  discountAmount?: number;
+  discountId?: number | null;
+  discountSnapshot?: DiscountSnapshot | null;
   totalAmount: number;
   createdAt: string;
   paidAt?: string | null;
   note: string | null;
-  voidReason?: string | null;
+  pendingPaymentEdit?: PendingPaymentEdit | null;
 }
 
 export interface InvoiceListResponse {
   page: number;
   limit: number;
   total: number;
+  summary?: {
+    totalPaidAmount: number;
+    totalCashAmount: number;
+    totalTransferAmount: number;
+    totalDiscountAmount?: number;
+    paidCount: number;
+  };
   items: InvoiceListItem[];
+}
+
+export interface UpdateInvoicePaymentMethodResponse {
+  orderId: number;
+  orderCode: string;
+  status: 'APPLIED' | 'PENDING_APPROVAL';
+  paymentMethod?: PaymentMethod;
+  cashAmount?: number;
+  transferAmount?: number;
+  pendingPaymentEdit?: PendingPaymentEdit | null;
+  syncedSettlementIds?: number[];
+}
+
+export interface ReviewInvoicePaymentEditResponse {
+  orderId: number;
+  orderCode: string;
+  status: 'APPROVED' | 'REJECTED';
+  paymentMethod?: PaymentMethod;
+  cashAmount?: number;
+  transferAmount?: number;
+  syncedSettlementIds?: number[];
 }
 
 export interface VoidInvoiceResponse {
   orderId: number;
   orderCode: string;
   status: OrderStatus;
-  voidReason: string | null;
+  voidReason: string;
 }
 
 export function getTodayVietnamDate(): string {
@@ -66,6 +104,7 @@ export function useInvoicesQuery(filter: InvoiceFilterQuery) {
           orderType: filter.orderType,
         },
       }),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -84,6 +123,44 @@ export function useReprintInvoiceMutation() {
   });
 }
 
+export function useUpdateInvoicePaymentMethodMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ orderId, body }: { orderId: number; body: UpdateInvoicePaymentMethodInput }) =>
+      apiClient.patch<UpdateInvoicePaymentMethodResponse>(
+        `/api/v1/invoices/${orderId}/payment-method`,
+        body,
+      ),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      void queryClient.invalidateQueries({
+        queryKey: ['invoices', 'detail', variables.orderId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['cashflow'] });
+    },
+  });
+}
+
+export function useReviewInvoicePaymentEditMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ orderId, body }: { orderId: number; body: ReviewInvoicePaymentEditInput }) =>
+      apiClient.post<ReviewInvoicePaymentEditResponse>(
+        `/api/v1/invoices/${orderId}/payment-method/review`,
+        body,
+      ),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      void queryClient.invalidateQueries({
+        queryKey: ['invoices', 'detail', variables.orderId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['cashflow'] });
+    },
+  });
+}
+
 export function useVoidInvoiceMutation() {
   const queryClient = useQueryClient();
 
@@ -95,6 +172,8 @@ export function useVoidInvoiceMutation() {
       void queryClient.invalidateQueries({
         queryKey: ['invoices', 'detail', variables.orderId],
       });
+      void queryClient.invalidateQueries({ queryKey: ['discounts'] });
+      void queryClient.invalidateQueries({ queryKey: ['payment-qr'] });
       void queryClient.invalidateQueries({ queryKey: ['cashflow'] });
     },
   });

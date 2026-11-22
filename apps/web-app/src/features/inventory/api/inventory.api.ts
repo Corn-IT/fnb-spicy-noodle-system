@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type CreateInventoryImportBatchResponse,
   type CreateInventoryImportBatchInput,
@@ -7,6 +7,7 @@ import {
   type InventoryImportFilterQuery,
   type MdmCategory,
   type MdmItem,
+  type UpdateInventoryImportInput,
 } from '@fnb/shared';
 
 export type {
@@ -40,6 +41,7 @@ export function useInventoryImportsQuery(filter: InventoryImportFilterQuery) {
           ingredientMdmId: filter.ingredientMdmId,
         },
       }),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -67,6 +69,20 @@ export function useCreateInventoryImportBatchMutation() {
         '/api/v1/inventory-imports',
         body,
       ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['inventory-imports'] });
+      void queryClient.invalidateQueries({ queryKey: ['mdm', 'lookup'] });
+      void queryClient.invalidateQueries({ queryKey: ['cashflow'] });
+    },
+  });
+}
+
+export function useUpdateInventoryImportMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: UpdateInventoryImportInput }) =>
+      apiClient.put<InventoryImportRecord>(`/api/v1/inventory-imports/${id}`, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['inventory-imports'] });
       void queryClient.invalidateQueries({ queryKey: ['mdm', 'lookup'] });

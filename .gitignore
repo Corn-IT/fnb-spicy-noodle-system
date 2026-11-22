@@ -1,23 +1,32 @@
 # Dependencies
 node_modules/
+.pnp
+.pnp.js
 
-# Build
+# Build outputs
 dist/
+build/
 .turbo/
-*.tsbuildinfo
+coverage/
 
-# Environment
+# Environment variables
 .env
 .env.*
 !.env.example
-*.env.local
+!.env.production.example
 
 # Database
 apps/api-server/prisma/*.db
 
-# Coverage
-coverage/
+# Logs
+logs
+*.log
 *.lcov
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # Cloned external repos (shallow clones, not part of source)
 .antigravity/skills/
@@ -27,6 +36,13 @@ references/
 _bmad/
 _bmad-output/
 
-# OS
+# Editor & OS
 .DS_Store
 Thumbs.db
+*.swp
+.idea/
+
+# Temporary inspect files & local tooling binaries
+tmp_*.txt
+.codegraph/
+cloudflared.exe

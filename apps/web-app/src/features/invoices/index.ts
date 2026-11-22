@@ -3,10 +3,12 @@ export {
   useInvoiceDetailQuery,
   useInvoicesQuery,
   useReprintInvoiceMutation,
-  useVoidInvoiceMutation,
+  useReviewInvoicePaymentEditMutation,
+  useUpdateInvoicePaymentMethodMutation,
   type InvoiceListItem,
   type InvoiceListResponse,
-  type VoidInvoiceResponse,
+  type ReviewInvoicePaymentEditResponse,
+  type UpdateInvoicePaymentMethodResponse,
 } from './api/invoices.api';
 export {
   InvoiceDetailModal,
@@ -18,7 +20,3 @@ export {
   type InvoiceSearchField,
 } from './components/invoice-dual-filter-bar';
 export { InvoicesPage } from './components/invoices-page';
-export {
-  VoidInvoiceDialog,
-  type VoidInvoiceDialogProps,
-} from './components/void-invoice-dialog';

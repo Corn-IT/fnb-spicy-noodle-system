@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Input } from '@/components/ui/input';
 import {
   Sheet,
@@ -12,7 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { toast } from '@/components/ui/toast';
+import { useAppMessages } from '@/hooks/use-app-messages';
 import {
   getBusinessDateIso,
   useCreateInventoryImportBatchMutation,
@@ -47,7 +48,7 @@ function createEmptyLine(): DraftImportLine {
     ingredientName: '',
     unitName: '',
     unitPrice: '',
-    quantity: '1',
+    quantity: '',
   };
 }
 
@@ -55,6 +56,7 @@ export function InventoryImportDrawer({
   open,
   onOpenChange,
 }: InventoryImportDrawerProps) {
+  const { notify, resolveErrorMessage } = useAppMessages();
   const todayIso = React.useMemo(() => getBusinessDateIso(), []);
   const [importDate, setImportDate] = React.useState(todayIso);
   const [paymentSource, setPaymentSource] = React.useState<PaymentSource>('CASH_DRAWER');
@@ -85,10 +87,6 @@ export function InventoryImportDrawer({
           ingredientMdmId: selection.ingredientMdmId,
           ingredientName: selection.ingredientName,
           unitName: selection.defaultUnit ?? line.unitName,
-          unitPrice:
-            selection.lastPrice !== undefined
-              ? String(selection.lastPrice)
-              : line.unitPrice,
         };
       }),
     );
@@ -121,13 +119,26 @@ export function InventoryImportDrawer({
   }, [lines]);
 
   const handleSubmit = async () => {
+    const nonEmptyLines = lines.filter(
+      (line) =>
+        line.ingredientName.trim() !== '' ||
+        line.unitPrice.trim() !== '' ||
+        line.quantity.trim() !== '',
+    );
+
+    if (nonEmptyLines.length === 0) {
+      notify('inventory.create.emptySkippedSuccess');
+      onOpenChange(false);
+      return;
+    }
+
     const payload = {
       importDate,
       paymentSource,
       supplierMdmId,
       supplierName: supplierName.trim(),
       note: note.trim() || undefined,
-      items: lines.map((line) => ({
+      items: nonEmptyLines.map((line) => ({
         ...(line.ingredientMdmId ? { ingredientMdmId: line.ingredientMdmId } : {}),
         ingredientName: line.ingredientName.trim(),
         unitName: line.unitName.trim(),
@@ -138,26 +149,25 @@ export function InventoryImportDrawer({
 
     const parsed = CreateInventoryImportBatchSchema.safeParse(payload);
     if (!parsed.success) {
-      toast({
-        variant: 'destructive',
-        title: 'Dữ liệu phiếu nhập chưa hợp lệ',
-        description: 'Vui lòng chọn nhà cung cấp và điền đầy đủ nguyên liệu, ĐVT, đơn giá, số lượng.',
-      });
+      notify('inventory.create.invalidData', { variant: 'destructive' });
       return;
     }
 
     try {
       await createBatchMutation.mutateAsync(parsed.data);
-      toast({
-        title: 'Đã lưu phiếu nhập hàng',
-        description: `Đã nhập ${parsed.data.items.length} mặt hàng vào kho thành công.`,
+      notify('inventory.create.success', {
+        vars: { itemCount: parsed.data.items.length },
       });
       onOpenChange(false);
     } catch (err) {
-      toast({
+      const resolvedErr = resolveErrorMessage(
+        'inventory.create.error',
+        err,
+        'Vui lòng thử lại.',
+      );
+      notify('inventory.create.error', {
         variant: 'destructive',
-        title: 'Lỗi khi lưu phiếu nhập kho',
-        description: err instanceof Error ? err.message : 'Vui lòng thử lại.',
+        vars: { reason: resolvedErr.description ?? 'Vui lòng thử lại.' },
       });
     }
   };
@@ -218,11 +228,11 @@ export function InventoryImportDrawer({
                   className={cn(
                     'rounded-lg border px-2.5 py-2 text-left text-xs transition-colors',
                     paymentSource === 'CASH_DRAWER'
-                      ? 'border-primary bg-primary/10 font-bold text-primary'
+                      ? 'border-primary bg-primary/10 font-bold text-accent-text'
                       : 'bg-background text-muted-foreground hover:bg-muted',
                   )}
                 >
-                  <div>Tiền két (CASH_DRAWER)</div>
+                  <div>Tiền két</div>
                   <div className="text-[10px] font-normal">Trừ vào tiền mặt kết ca</div>
                 </button>
                 <button
@@ -232,11 +242,11 @@ export function InventoryImportDrawer({
                   className={cn(
                     'rounded-lg border px-2.5 py-2 text-left text-xs transition-colors',
                     paymentSource === 'EXTERNAL'
-                      ? 'border-primary bg-primary/10 font-bold text-primary'
+                      ? 'border-primary bg-primary/10 font-bold text-accent-text'
                       : 'bg-background text-muted-foreground hover:bg-muted',
                   )}
                 >
-                  <div>Quỹ ngoài (EXTERNAL)</div>
+                  <div>Quỹ ngoài</div>
                   <div className="text-[10px] font-normal">Chủ CK • Không trừ két</div>
                 </button>
               </div>
@@ -293,6 +303,7 @@ export function InventoryImportDrawer({
                         type="button"
                         variant="ghost"
                         size="sm"
+                        aria-label={`Xoá dòng ${idx + 1}`}
                         data-testid={`remove-import-row-btn-${idx}`}
                         onClick={() => removeLine(idx)}
                       >
@@ -330,13 +341,12 @@ export function InventoryImportDrawer({
                       <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                         Đơn giá (đ) *
                       </label>
-                      <Input
-                        type="number"
-                        min={0}
+                      <CurrencyInput
                         data-testid={`import-price-input-${idx}`}
                         value={line.unitPrice}
-                        onChange={(e) => updateLineField(idx, 'unitPrice', e.target.value)}
-                        placeholder="0"
+                        onValueChange={(rawDigits) => updateLineField(idx, 'unitPrice', rawDigits)}
+                        placeholder="VD: 100.000"
+                        suffix="đ"
                       />
                     </div>
 
@@ -360,7 +370,7 @@ export function InventoryImportDrawer({
                     <span className="text-muted-foreground">Thành tiền:</span>
                     <span
                       data-testid={`import-line-total-${idx}`}
-                      className="font-bold text-primary"
+                      className="font-bold text-price"
                     >
                       {lineTotal.toLocaleString('vi-VN')} đ
                     </span>
@@ -374,7 +384,7 @@ export function InventoryImportDrawer({
             <span className="text-sm font-semibold text-foreground">
               Tổng cộng phiếu nhập này:
             </span>
-            <span data-testid="import-drawer-batch-total" className="text-lg font-extrabold text-primary">
+            <span data-testid="import-drawer-batch-total" className="text-lg font-extrabold text-price">
               {batchTotal.toLocaleString('vi-VN')} đ
             </span>
           </div>

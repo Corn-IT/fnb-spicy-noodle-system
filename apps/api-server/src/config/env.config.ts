@@ -10,9 +10,6 @@ const EnvironmentSchema = z.object({
   port: z.number().int().min(1).max(65_535),
   corsOrigin: z.string().min(1),
   nodeEnv: z.enum(['development', 'production', 'test']),
-  vietQrBankId: z.string().min(1).optional(),
-  vietQrAccountNo: z.string().min(1).optional(),
-  vietQrAccountName: z.string().min(1).optional(),
 });
 
 export type EnvConfig = z.infer<typeof EnvironmentSchema>;
@@ -26,8 +23,5 @@ export function parseEnvConfig(environment: NodeJS.ProcessEnv): EnvConfig {
     port: Number(environment.FNB_PORT ?? environment.PORT ?? '3000'),
     corsOrigin: environment.FNB_CORS_ORIGIN ?? environment.CORS_ORIGIN ?? 'http://localhost:5173',
     nodeEnv: environment.NODE_ENV ?? 'development',
-    vietQrBankId: environment.FNB_VIETQR_BANK_ID ?? environment.VIETQR_BANK_ID,
-    vietQrAccountNo: environment.FNB_VIETQR_ACCOUNT_NO ?? environment.VIETQR_ACCOUNT_NO,
-    vietQrAccountName: environment.FNB_VIETQR_ACCOUNT_NAME ?? environment.VIETQR_ACCOUNT_NAME,
   });
 }

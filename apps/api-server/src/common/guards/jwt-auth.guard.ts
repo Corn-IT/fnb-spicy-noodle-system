@@ -9,9 +9,13 @@ import { JwtService } from '@nestjs/jwt';
 import { ErrorCodes, UserPermissionsSchema, type AuthPrincipal } from '@fnb/shared';
 import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  assertActiveSessionMatches,
+  extractTokenSessionId,
+} from '../security/session-validation.util';
 
 type JwtRequest = Request & { user?: AuthPrincipal };
-type AccessTokenPayload = { sub?: unknown; tokenType?: unknown };
+type AccessTokenPayload = { sub?: unknown; tokenType?: unknown; sid?: unknown };
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -50,11 +54,23 @@ export class JwtAuthGuard implements CanActivate {
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, employeeId: true, username: true, isSuperAdmin: true, permissions: true, isActive: true },
+      select: {
+        id: true,
+        employeeId: true,
+        username: true,
+        isSuperAdmin: true,
+        permissions: true,
+        isActive: true,
+        activeSessionId: true,
+        lastRevokedNotice: true,
+      },
     });
     if (!user?.isActive) {
       throw this.unauthorized(ErrorCodes.AUTH_TOKEN_INVALID, 'Tài khoản không hoạt động');
     }
+
+    const tokenSid = extractTokenSessionId(payload);
+    assertActiveSessionMatches(user, tokenSid);
 
     const parsedPermissions = UserPermissionsSchema.safeParse(user.permissions);
     if (!parsedPermissions.success) {
@@ -67,6 +83,7 @@ export class JwtAuthGuard implements CanActivate {
       username: user.username,
       isSuperAdmin: user.isSuperAdmin,
       permissions: parsedPermissions.data,
+      ...(tokenSid ? { sessionId: tokenSid } : {}),
     };
     return true;
   }

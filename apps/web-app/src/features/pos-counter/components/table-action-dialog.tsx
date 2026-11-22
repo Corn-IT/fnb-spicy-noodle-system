@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { useAppMessages } from '@/hooks/use-app-messages';
 import { cn } from '@/utils/cn';
 
 export interface TableActionDialogProps {
@@ -36,6 +37,7 @@ export function TableActionDialog({
   isSubmitting,
   onConfirm,
 }: TableActionDialogProps) {
+  const { resolveMessage } = useAppMessages();
   const [action, setAction] = React.useState<TableActionTypeValue>(TableActionType.MOVE);
   const [targetTableId, setTargetTableId] = React.useState<number | null>(null);
   const [reason, setReason] = React.useState('Khách yêu cầu đổi chỗ ngồi');
@@ -70,15 +72,18 @@ export function TableActionDialog({
     });
   };
 
+  const dialogCopy = resolveMessage('pos.dialog.tableAction', {
+    tableLabel: order.tableLabel,
+  });
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="table-action-dialog">
         <DialogHeader>
-          <DialogTitle>Chuyển / Gộp / Hoán đổi Bàn — {order.tableLabel}</DialogTitle>
-          <DialogDescription>
-            Chọn thao tác bàn và bàn đích. Nếu đã có món in bếp, hệ thống sẽ tự động in Phiếu
-            Thông báo Đổi bàn.
-          </DialogDescription>
+          <DialogTitle>{dialogCopy.title}</DialogTitle>
+          {dialogCopy.description ? (
+            <DialogDescription>{dialogCopy.description}</DialogDescription>
+          ) : null}
         </DialogHeader>
 
         {isTakeaway ? (
@@ -138,7 +143,7 @@ export function TableActionDialog({
                       className={cn(
                         'flex items-center justify-center text-center rounded-lg border p-2 text-xs font-bold transition active:scale-95',
                         targetTableId === t.id
-                          ? 'border-rose-600 bg-rose-600 text-white shadow-xs'
+                          ? 'border-primary bg-primary text-primary-foreground shadow-xs'
                           : 'border-border bg-card hover:bg-muted',
                       )}
                     >
@@ -160,6 +165,16 @@ export function TableActionDialog({
                 onChange={(e) => setReason(e.target.value)}
               />
             </div>
+
+            {action === TableActionType.MERGE &&
+            (Boolean(order.discountSnapshot) || (order.discountAmount ?? 0) > 0) ? (
+              <div
+                data-testid="merge-discount-drop-warning"
+                className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs font-medium text-amber-800 dark:text-amber-300"
+              >
+                Cảnh báo: Bàn nguồn đang có ưu đãi giảm giá. Khi gộp bàn, giảm giá của bàn nguồn sẽ tự động bị huỷ và bàn đích sẽ tính lại tổng tiền.
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -178,9 +193,13 @@ export function TableActionDialog({
               data-testid="confirm-table-action-btn"
               disabled={!targetTableId || !reason.trim() || isSubmitting}
               onClick={handleConfirm}
-              className="bg-rose-600 text-white hover:bg-rose-700 font-bold active:scale-[0.98] transition-transform select-none shadow-xs"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold active:scale-[0.98] transition-transform select-none shadow-xs"
             >
-              Thực hiện {action}
+              {action === TableActionType.MOVE
+                ? 'Xác nhận Chuyển bàn'
+                : action === TableActionType.MERGE
+                  ? 'Xác nhận Gộp bàn'
+                  : 'Xác nhận Hoán đổi bàn'}
             </Button>
           ) : null}
         </DialogFooter>

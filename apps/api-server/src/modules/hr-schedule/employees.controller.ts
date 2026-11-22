@@ -20,7 +20,9 @@ import { EmployeesService } from './employees.service';
 @Controller('api/v1/employees')
 @UseGuards(JwtAuthGuard, RbacGuard)
 export class EmployeesController {
-  constructor(@Inject(EmployeesService) private readonly employeesService: EmployeesService) {}
+  constructor(
+    @Inject(EmployeesService) private readonly employeesService: EmployeesService,
+  ) {}
 
   @Get()
   @RequirePermission('employees', 'view')
@@ -48,14 +50,21 @@ export class EmployeesController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body(new ZodValidationPipe(UpdateEmployeeSchema)) body: UpdateEmployeeInput,
+    @CurrentUser() user: AuthPrincipal,
   ) {
-    return this.employeesService.updateEmployee(id, body);
+    return this.employeesService.updateEmployee(id, body, user);
   }
 
   @Delete(':id')
   @RequirePermission('employees', 'delete')
-  delete(@Param('id', ParseIntPipe) id: number) {
-    return this.employeesService.softDeleteEmployee(id);
+  delete(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthPrincipal) {
+    return this.employeesService.softDeleteEmployee(id, user);
+  }
+
+  @Delete(':id/permanent')
+  @RequirePermission('employees', 'delete')
+  permanentDelete(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthPrincipal) {
+    return this.employeesService.permanentDeleteEmployee(id, user);
   }
 
   @Patch(':id/status')
@@ -63,7 +72,8 @@ export class EmployeesController {
   setStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body(new ZodValidationPipe(SetEmployeeActiveStatusSchema)) body: SetEmployeeActiveStatusInput,
+    @CurrentUser() user: AuthPrincipal,
   ) {
-    return this.employeesService.setEmployeeActiveStatus(id, body.isActive);
+    return this.employeesService.setEmployeeActiveStatus(id, body.isActive, user);
   }
 }

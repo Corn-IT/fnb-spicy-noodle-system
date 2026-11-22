@@ -10,9 +10,9 @@ BACKUP_FILE="/tmp/fnb_pos_${TIMESTAMP}.sql.gz"
 echo "[$(date)] Starting backup..."
 
 PGPASSWORD="${POSTGRES_PASSWORD}" pg_dump \
-  -h db \
-  -U fnb \
-  -d fnb_pos \
+  -h "${POSTGRES_HOST:-postgres}" \
+  -U "${POSTGRES_USER:-postgres}" \
+  -d "${POSTGRES_DB:-fnb_pos}" \
   --no-owner \
   --no-privileges \
   | gzip > "${BACKUP_FILE}"

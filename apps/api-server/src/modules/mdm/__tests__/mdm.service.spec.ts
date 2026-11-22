@@ -100,20 +100,31 @@ describe('MdmService', () => {
     expect(prisma.masterData.findFirst).not.toHaveBeenCalled();
   });
 
-  it('should list only active lookup values matching category and keyword', async () => {
-    const prisma = { masterData: { findMany: vi.fn().mockResolvedValue([{ id: 1 }]) } };
+  it('should list only active lookup values matching category and keyword ordered by metadata sortOrder', async () => {
+    const prisma = {
+      masterData: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 2, name: 'Bò Tươi', metadata: { sortOrder: 2 } },
+          { id: 1, name: 'Ba Chỉ Bò Mỹ', metadata: { sortOrder: 1 } },
+        ]),
+      },
+    };
     const service = new MdmService(prisma as never);
 
-    await service.lookup({ category: MdmCategory.INGREDIENT, keyword: 'bo', page: 1, limit: 20, activeOnly: true });
+    const rows = await service.lookup({ category: MdmCategory.INGREDIENT, keyword: 'bo', page: 1, limit: 20, activeOnly: true });
 
+    expect(rows.map((r) => r.name)).toEqual(['Ba Chỉ Bò Mỹ', 'Bò Tươi']);
     expect(prisma.masterData.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         category: 'INGREDIENT',
         isActive: true,
         normalizedName: { not: '__internal_cashflow_default_opening_budget__' },
-        name: { contains: 'bo', mode: 'insensitive' },
+        OR: [
+          { name: { contains: 'bo', mode: 'insensitive' } },
+          { normalizedName: { contains: 'bo', mode: 'insensitive' } },
+        ],
       },
-      orderBy: { name: 'asc' },
+      orderBy: { id: 'asc' },
     }));
   });
 
@@ -205,29 +216,56 @@ describe('MdmService', () => {
     await expect(service.findOrCreate(MdmCategory.INGREDIENT, 'Bò viên')).rejects.toBe(databaseError);
   });
 
-  it('should list inactive master data when activeOnly is false and no keyword was provided', async () => {
-    const findMany = vi.fn().mockResolvedValue([]);
-    const count = vi.fn().mockResolvedValue(23);
-    const prisma = { masterData: { findMany, count } };
+  it('should list and paginate inactive master data sorted by metadata sortOrder when activeOnly is false', async () => {
+    const pool = Array.from({ length: 13 }, (_, idx) => ({
+      id: idx + 1,
+      category: 'UNIT',
+      name: `Đơn vị ${13 - idx}`,
+      normalizedName: `don vi ${13 - idx}`,
+      metadata: { sortOrder: 13 - idx },
+      isActive: idx % 2 === 0,
+      createdAt: new Date('2026-11-08T00:00:00.000Z'),
+    }));
+    const findMany = vi.fn().mockResolvedValue(pool);
+    const prisma = { masterData: { findMany } };
     const service = new MdmService(prisma as never);
 
     const result = await service.list({ category: MdmCategory.UNIT, page: 2, limit: 10, activeOnly: false });
 
-    expect(result).toEqual({ page: 2, limit: 10, total: 23, items: [] });
+    expect(result.page).toBe(2);
+    expect(result.limit).toBe(10);
+    expect(result.total).toBe(13);
+    expect(result.items.map((i) => i.name)).toEqual(['Đơn vị 11', 'Đơn vị 12', 'Đơn vị 13']);
     const where = { category: 'UNIT', normalizedName: { not: '__internal_cashflow_default_opening_budget__' } };
     expect(findMany).toHaveBeenCalledWith({
       where,
-      orderBy: { name: 'asc' },
-      skip: 10,
-      take: 10,
+      orderBy: { id: 'asc' },
     });
-    expect(count).toHaveBeenCalledWith({ where });
   });
 
   it('should filter active master data by keyword in the admin list', async () => {
-    const findMany = vi.fn().mockResolvedValue([]);
-    const count = vi.fn().mockResolvedValue(2);
-    const prisma = { masterData: { findMany, count } };
+    const matched = [
+      {
+        id: 2,
+        category: 'INGREDIENT',
+        name: 'Bò Tươi',
+        normalizedName: 'bo tuoi',
+        metadata: { sortOrder: 2 },
+        isActive: true,
+        createdAt: new Date('2026-11-08T00:00:00.000Z'),
+      },
+      {
+        id: 1,
+        category: 'INGREDIENT',
+        name: 'Ba Chỉ Bò Mỹ',
+        normalizedName: 'ba chi bo my',
+        metadata: { sortOrder: 1 },
+        isActive: true,
+        createdAt: new Date('2026-11-08T00:00:00.000Z'),
+      },
+    ];
+    const findMany = vi.fn().mockResolvedValue(matched);
+    const prisma = { masterData: { findMany } };
     const service = new MdmService(prisma as never);
 
     const result = await service.list({ category: MdmCategory.INGREDIENT, keyword: 'bo', page: 1, limit: 20, activeOnly: true });
@@ -236,11 +274,14 @@ describe('MdmService', () => {
       category: 'INGREDIENT',
       isActive: true,
       normalizedName: { not: '__internal_cashflow_default_opening_budget__' },
-      name: { contains: 'bo', mode: 'insensitive' },
+      OR: [
+        { name: { contains: 'bo', mode: 'insensitive' } },
+        { normalizedName: { contains: 'bo', mode: 'insensitive' } },
+      ],
     };
-    expect(result).toEqual({ page: 1, limit: 20, total: 2, items: [] });
+    expect(result.total).toBe(2);
+    expect(result.items.map((item) => item.name)).toEqual(['Ba Chỉ Bò Mỹ', 'Bò Tươi']);
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
-    expect(count).toHaveBeenCalledWith({ where });
   });
 
   it('should return all active values when lookup has no keyword', async () => {
@@ -326,16 +367,110 @@ describe('MdmService', () => {
     await expect(service.softDisable(99)).rejects.toMatchObject({ status: 404 });
   });
 
-  it('should soft-disable an existing master-data record', async () => {
+  it('should soft-disable an existing master-data record when delete delegate is unavailable and hard-delete unused record when available', async () => {
+    const prismaLegacy = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({ id: 5, category: 'UNIT', name: 'Kg', normalizedName: 'kg', metadata: {} }),
+        update: vi.fn().mockResolvedValue({ id: 5, isActive: false }),
+      },
+    };
+    const legacyService = new MdmService(prismaLegacy as never);
+    await expect(legacyService.softDisable(5)).resolves.toMatchObject({ id: 5, isActive: false });
+    expect(prismaLegacy.masterData.update).toHaveBeenCalledWith({ where: { id: 5 }, data: { isActive: false } });
+
+    const prismaFull = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({ id: 6, category: 'SUPPLIER', name: 'Chợ Mới', normalizedName: 'cho moi', metadata: {} }),
+        delete: vi.fn().mockResolvedValue({ id: 6, category: 'SUPPLIER', name: 'Chợ Mới', normalizedName: 'cho moi', isActive: true }),
+      },
+      inventoryImport: { count: vi.fn().mockResolvedValue(0) },
+    };
+    const fullService = new MdmService(prismaFull as never);
+    await expect(fullService.softDisable(6)).resolves.toMatchObject({ id: 6 });
+    expect(prismaFull.masterData.delete).toHaveBeenCalledWith({ where: { id: 6 } });
+  });
+
+  it('should allow updating normalizedName manually and reject duplicate or invalid normalizedName', async () => {
     const prisma = {
       masterData: {
-        findUnique: vi.fn().mockResolvedValue({ id: 5 }),
-        update: vi.fn().mockResolvedValue({ id: 5, isActive: false }),
+        findUnique: vi.fn().mockResolvedValue({
+          id: 10,
+          category: 'POSITION',
+          name: 'Thu Ngân Quầy',
+          normalizedName: 'thu ngan quay',
+          metadata: {},
+          isActive: true,
+        }),
+        findFirst: vi.fn().mockResolvedValue(null),
+        update: vi.fn().mockResolvedValue({
+          id: 10,
+          category: 'POSITION',
+          name: 'Thu Ngân Quầy',
+          normalizedName: 'thu-ngan-ca',
+          metadata: { description: 'Quầy chính' },
+          isActive: true,
+        }),
       },
     };
     const service = new MdmService(prisma as never);
 
-    await expect(service.softDisable(5)).resolves.toMatchObject({ id: 5, isActive: false });
-    expect(prisma.masterData.update).toHaveBeenCalledWith({ where: { id: 5 }, data: { isActive: false } });
+    await service.update(10, { normalizedName: 'Thu-Ngân-Ca', metadata: { description: 'Quầy chính' } });
+
+    expect(prisma.masterData.update).toHaveBeenCalledWith({
+      where: { id: 10 },
+      data: { normalizedName: 'thu-ngan-ca', metadata: { description: 'Quầy chính' } },
+    });
+  });
+
+  it('should block deactivating or deleting records that still have active references', async () => {
+    const prismaDeactivate = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 11,
+          category: 'POSITION',
+          name: 'Thu Ngân Quầy',
+          normalizedName: 'thu ngan quay',
+          metadata: {},
+          isActive: true,
+        }),
+        update: vi.fn(),
+      },
+      employee: { count: vi.fn().mockResolvedValue(2) },
+    };
+    const service = new MdmService(prismaDeactivate as never);
+
+    await expect(service.update(11, { isActive: false })).rejects.toThrow(/2 nhân viên/);
+    await expect(service.softDisable(11)).rejects.toThrow(/2 hồ sơ nhân viên/);
+    expect(prismaDeactivate.masterData.update).not.toHaveBeenCalled();
+  });
+
+  it('should sync product stations when MENU_CATEGORY defaultStation changes and no active order items exist', async () => {
+    const tx = {
+      masterData: { update: vi.fn().mockResolvedValue({ id: 12, category: 'MENU_CATEGORY', name: 'Topoki', normalizedName: 'topoki', metadata: { defaultStation: 'BEP_NAU' }, isActive: true }) },
+      product: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    };
+    const prisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 12,
+          category: 'MENU_CATEGORY',
+          name: 'Topoki',
+          normalizedName: 'topoki',
+          metadata: { defaultStation: 'BEP_CHIEN' },
+          isActive: true,
+        }),
+      },
+      orderItem: { count: vi.fn().mockResolvedValue(0) },
+      product: { updateMany: tx.product.updateMany },
+      $transaction: vi.fn(async (cb: (client: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+    const service = new MdmService(prisma as never);
+
+    await service.update(12, { metadata: { defaultStation: 'BEP_NAU' } });
+
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { categoryId: 12, station: { not: 'COMBO' }, sortOrder: { gte: 0 } },
+      data: { station: 'BEP_NAU' },
+    });
   });
 });

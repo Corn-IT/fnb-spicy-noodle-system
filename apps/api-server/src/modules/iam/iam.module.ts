@@ -6,12 +6,13 @@ import { RbacGuard } from '../../common/guards/rbac.guard';
 import { configuredJwtModule } from '../../common/utils/jwt-module-options';
 import { IamController } from './iam.controller';
 import { ProfileController } from './profile.controller';
+import { PublicAvatarController } from './public-avatar.controller';
 import { UsersController } from './users.controller';
 import { IamService } from './iam.service';
 
 @Module({
   imports: [ConfigModule, PrismaModule, configuredJwtModule()],
-  controllers: [IamController, UsersController, ProfileController],
+  controllers: [IamController, UsersController, ProfileController, PublicAvatarController],
   providers: [IamService, JwtAuthGuard, RbacGuard],
   exports: [IamService],
 })

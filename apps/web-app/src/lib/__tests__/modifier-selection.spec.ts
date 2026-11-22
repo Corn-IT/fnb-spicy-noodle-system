@@ -164,4 +164,97 @@ describe('modifier-selection engine', () => {
       { groupId: 4, modifierId: 401 },
     ]);
   });
+
+  it('skips out-of-stock (isAvailable: false) modifiers on auto-select and filters them out of substitute options', () => {
+    const noodleWithUnavailableShrimp: Product = {
+      ...sampleSeafoodNoodle,
+      modifierGroups: sampleSeafoodNoodle.modifierGroups.map((group) =>
+        group.id === 3
+          ? {
+              ...group,
+              modifiers: group.modifiers.map((m) =>
+                m.id === 301 ? { ...m, isAvailable: false } : m,
+              ),
+            }
+          : group,
+      ),
+    };
+
+    const initial = buildInitialSelectedByGroup(noodleWithUnavailableShrimp);
+    expect(initial[3]).toEqual([302, 303]);
+
+    const mainGroup = noodleWithUnavailableShrimp.modifierGroups[2]!;
+    const shrimp = mainGroup.modifiers[0]!;
+    const subForShrimp = resolveSubstituteForUncheckedModifier(
+      mainGroup,
+      shrimp,
+      initial[3] ?? [],
+      {},
+    );
+    expect(subForShrimp.availableSubstitutes.map((m) => m.name)).toEqual(['Ngao', 'Mực']);
+    expect(subForShrimp.substituteName).toBe('Mực');
+  });
+
+  it('pre-selects radio defaults without printing default label or emitting REMOVED_DEFAULT when switched', () => {
+    const drinkWithDefaults: Product = {
+      id: 20,
+      name: 'Trà Đào',
+      subtitle: 'Hồng trà đào',
+      categoryId: 14,
+      categoryName: 'Trà Trái Cây',
+      price: 25000,
+      station: 'PHA_CHE',
+      isAvailable: true,
+      sortOrder: 1,
+      comboItems: [],
+      modifierGroups: [
+        {
+          id: 10,
+          name: 'Độ ngọt (Đường)',
+          isRequired: true,
+          maxSelect: 1,
+          isAutoSelect: false,
+          allowSubstitution: false,
+          modifiers: [
+            { id: 1001, name: 'Mặc định', extraPrice: 0, isDefaultChecked: true },
+            { id: 1002, name: 'Giảm ngọt', extraPrice: 0, isDefaultChecked: false },
+            { id: 1003, name: 'Thêm ngọt', extraPrice: 0, isDefaultChecked: false },
+          ],
+        },
+        {
+          id: 11,
+          name: 'Lượng đá',
+          isRequired: true,
+          maxSelect: 1,
+          isAutoSelect: false,
+          allowSubstitution: false,
+          modifiers: [
+            { id: 1101, name: 'Đá mặc định', extraPrice: 0, isDefaultChecked: true },
+            { id: 1102, name: 'Ít đá', extraPrice: 0, isDefaultChecked: false },
+          ],
+        },
+      ],
+    };
+
+    const initial = buildInitialSelectedByGroup(drinkWithDefaults);
+    expect(initial[10]).toEqual([1001]);
+    expect(initial[11]).toEqual([1101]);
+
+    const defaultPayload = computeOrderModifiersPayload(drinkWithDefaults, initial);
+    expect(defaultPayload.modifierLabels).toEqual([]);
+    expect(defaultPayload.modifiers).toEqual([
+      { groupId: 10, modifierId: 1001 },
+      { groupId: 11, modifierId: 1101 },
+    ]);
+
+    const changedPayload = computeOrderModifiersPayload(drinkWithDefaults, {
+      10: [1002],
+      11: [1102],
+    });
+    expect(changedPayload.modifierLabels).toEqual(['Giảm ngọt', 'Ít đá']);
+    expect(changedPayload.modifiers).toEqual([
+      { groupId: 10, modifierId: 1002 },
+      { groupId: 11, modifierId: 1102 },
+    ]);
+  });
 });

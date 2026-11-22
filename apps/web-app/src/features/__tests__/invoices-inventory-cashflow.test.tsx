@@ -1,5 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
-import { type OrderDetailResponse } from '@fnb/shared';
+import { type OrderDetailResponse, UserPermissionsSchema } from '@fnb/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,24 +24,19 @@ const cashierUser = {
   username: 'cashier01',
   fullName: 'Nguyễn Văn Anh',
   isSuperAdmin: false,
-  permissions: {
+  permissions: UserPermissionsSchema.parse({
     pos: {
       view: true,
       create: true,
       update: true,
-      delete: false,
       splitKitchen: true,
       tableAction: true,
       checkout: true,
     },
-    invoices: { view: true, reprint: true, void: false },
-    inventory: { view: true, create: true, update: false, delete: true },
-    cashflow: { view: true, create: true, config: false },
-    employees: { view: false, create: false, update: false, delete: false },
-    schedules: { view: false, update: false },
-    mdm: { view: false, write: false },
-    rbac: { view: false, manage: false },
-  },
+    invoices: { view: true, reprint: true },
+    inventory: { view: true, create: true, delete: true },
+    cashflow: { view: true, create: true },
+  }),
 };
 
 const superAdminUser = {
@@ -50,7 +45,7 @@ const superAdminUser = {
   username: 'superadmin',
   fullName: 'Chủ Quán Sơn Bảo',
   isSuperAdmin: true,
-  permissions: {
+  permissions: UserPermissionsSchema.parse({
     pos: {
       view: true,
       create: true,
@@ -59,15 +54,17 @@ const superAdminUser = {
       splitKitchen: true,
       tableAction: true,
       checkout: true,
+      qrSecurity: true,
     },
-    invoices: { view: true, reprint: true, void: true },
-    inventory: { view: true, create: true, update: true, delete: true },
-    cashflow: { view: true, create: true, config: true },
-    employees: { view: true, create: true, update: true, delete: true },
-    schedules: { view: true, update: true },
-    mdm: { view: true, write: true },
-    rbac: { view: true, manage: true },
-  },
+    menu: { view: true, create: true, update: true, delete: true, export: true },
+    invoices: { view: true, reprint: true, update: true, approve: true, export: true },
+    inventory: { view: true, create: true, update: true, delete: true, export: true },
+    cashflow: { view: true, create: true, compensate: true, config: true, export: true },
+    employees: { view: true, create: true, update: true, delete: true, export: true },
+    schedules: { view: true, create: true, update: true, delete: true, export: true },
+    mdm: { view: true, create: true, update: true, delete: true },
+    rbac: { view: true, create: true, update: true, resetPassword: true },
+  }),
 };
 
 describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashflow Settlement (Module 4)', () => {
@@ -79,7 +76,7 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
     useAuthStore.getState().clearAuth();
   });
 
-  describe('AC-11.1: Module 2 — Invoices 7-Column BaseTable, Dual Filter Bar, Detail Modal Reprint & Void Guard (EC-FIN-01)', () => {
+  describe('AC-11.1: Module 2 — Invoices Split Columns, Dual Filter Bar, Detail Modal Reprint & Payment Method Edit/Approval', () => {
     const mockInvoiceListResponse = {
       page: 1,
       limit: 20,
@@ -94,7 +91,10 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
           takeawayNumber: null,
           status: 'PAID' as const,
           paymentMethod: 'CASH' as const,
+          cashAmount: 185000,
+          transferAmount: 0,
           totalAmount: 185000,
+          pendingPaymentEdit: null,
           createdAt: '2026-11-08T02:15:30.000Z',
           note: 'Ít hành',
         },
@@ -107,7 +107,10 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
           takeawayNumber: 2,
           status: 'PAID' as const,
           paymentMethod: 'SPLIT' as const,
+          cashAmount: 100000,
+          transferAmount: 200000,
           totalAmount: 300000,
+          pendingPaymentEdit: null,
           createdAt: '2026-11-08T02:20:00.000Z',
           note: null,
         },
@@ -167,7 +170,7 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       ],
     };
 
-    it('should default Dual Filter to Today, combine right-side search criteria + keyword with AND, and completely hide Void button for cashier01', async () => {
+    it('should default Dual Filter to Today, combine right-side search criteria + keyword with AND, render split Tổng tiền & Phương thức columns, and hide Void/Delete/Edit/Approve actions from cashier01', async () => {
       useAuthStore.getState().setAuth({
         accessToken: 'cashier-token',
         user: cashierUser,
@@ -197,29 +200,30 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
         expect(screen.getByText('HD-20261108-0001')).toBeInTheDocument();
       });
 
-      // Verify 7 standard columns are rendered
+      // Verify split Tổng tiền & Phương thức columns and zero Void/Delete UI
+      expect(screen.getByText('Tổng tiền')).toBeInTheDocument();
+      expect(screen.getByText('Phương thức')).toBeInTheDocument();
       expect(screen.getByText('Bàn 05')).toBeInTheDocument();
       expect(screen.getByText('Mang về #02')).toBeInTheDocument();
-      expect(screen.getByTestId('payment-badge-501')).toHaveTextContent(/Tiền mặt|CASH/);
-      expect(screen.getByTestId('payment-badge-502')).toHaveTextContent(/Kết hợp|SPLIT/);
+      expect(screen.getByTestId('payment-badge-501')).toHaveTextContent(/Tiền mặt/);
+      expect(screen.getByTestId('payment-badge-502')).toHaveTextContent(/Kết hợp/);
 
-      // Default Dual Filter sends today's fromDate & toDate
+      // Default query sends status='PAID' and today's fromDate & toDate; status dropdown is hidden
       expect(getSpy).toHaveBeenCalledWith(
         '/api/v1/invoices',
         expect.objectContaining({
           params: expect.objectContaining({
+            status: 'PAID',
             fromDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
             toDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
           }),
         }),
       );
 
-      expect(screen.getByTestId('invoice-status-filter')).toBeInTheDocument();
+      expect(screen.queryByTestId('invoice-status-filter')).not.toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /Đã huỷ/i })).not.toBeInTheDocument();
       expect(screen.getByTestId('invoice-payment-filter')).toBeInTheDocument();
 
-      fireEvent.change(screen.getByTestId('invoice-status-filter'), {
-        target: { value: 'SERVING' },
-      });
       fireEvent.change(screen.getByTestId('invoice-payment-filter'), {
         target: { value: 'TRANSFER' },
       });
@@ -228,22 +232,34 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
         expect(getSpy).toHaveBeenCalledWith(
           '/api/v1/invoices',
           expect.objectContaining({
-            params: expect.objectContaining({ status: 'SERVING', paymentMethod: 'TRANSFER' }),
+            params: expect.objectContaining({ status: 'PAID', paymentMethod: 'TRANSFER' }),
           }),
         );
       });
 
-      // Void button is strictly hidden for cashier01
+      // Edit/Approve/Void buttons are absent for cashier01 without update/approve permissions
       expect(screen.queryByTestId('void-invoice-btn-501')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('void-invoice-btn-502')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-payment-btn-501')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-payment-btn-502')).not.toBeInTheDocument();
 
       // Switch search criteria on right side to 'table' (Số bàn) and type keyword 'Bàn 05'
+      // Verify typing does not query before Enter/Blur, then commit via Enter.
       fireEvent.change(screen.getByTestId('invoice-search-field-select'), {
         target: { value: 'table' },
       });
-      fireEvent.change(screen.getByTestId('invoice-keyword-input'), {
+      const keywordInput = screen.getByTestId('invoice-keyword-input');
+      fireEvent.change(keywordInput, {
         target: { value: 'Bàn 05' },
       });
+      expect(getSpy).not.toHaveBeenCalledWith(
+        '/api/v1/invoices',
+        expect.objectContaining({
+          params: expect.objectContaining({
+            keyword: 'Bàn 05',
+          }),
+        }),
+      );
+      fireEvent.keyDown(keywordInput, { key: 'Enter', code: 'Enter' });
 
       await waitFor(() => {
         expect(getSpy).toHaveBeenCalledWith(
@@ -258,31 +274,71 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       });
     });
 
-    it('should show Void button for Super Admin, enforce voidReason >= 10 chars (EC-FIN-01), and open detail modal with batch items, transfer logs, and reprint receipt', async () => {
+    it('should allow an employee with invoices:update to request a PTTT edit and allow an approver with invoices:approve to approve it, plus open detail modal and reprint receipt', async () => {
       useAuthStore.getState().setAuth({
-        accessToken: 'admin-token',
-        user: superAdminUser,
+        accessToken: 'staff-edit-token',
+        user: {
+          ...cashierUser,
+          permissions: {
+            ...cashierUser.permissions,
+            invoices: { ...cashierUser.permissions.invoices, view: true, reprint: true, update: true },
+          },
+        },
       });
 
       const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
 
+      const listWithPending = {
+        ...mockInvoiceListResponse,
+        items: [
+          {
+            ...mockInvoiceListResponse.items[0],
+            pendingPaymentEdit: {
+              paymentMethod: 'TRANSFER' as const,
+              cashAmount: 0,
+              transferAmount: 185000,
+              reason: 'Thu ngân bấm nhầm tiền mặt thay vì chuyển khoản QR',
+              requestedById: 2,
+              requestedByName: 'Nguyễn Thu Ngân',
+              requestedByUsername: 'cashier01',
+              requestedAt: '2026-11-08T03:00:00.000Z',
+            },
+          },
+          mockInvoiceListResponse.items[1],
+        ],
+      };
+
+      let listCallCount = 0;
       vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-        if (url === '/api/v1/invoices') return mockInvoiceListResponse;
+        if (url === '/api/v1/invoices') {
+          listCallCount += 1;
+          return listCallCount <= 1 ? mockInvoiceListResponse : listWithPending;
+        }
         if (url === '/api/v1/invoices/501') return mockOrderDetail501;
         throw new Error(`Unexpected GET ${url}`);
       });
 
+      const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValue({
+        orderId: 501,
+        orderCode: 'HD-20261108-0001',
+        status: 'PENDING_APPROVAL',
+        pendingPaymentEdit: listWithPending.items[0].pendingPaymentEdit,
+      });
+
       const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => {
-        if (url === '/api/v1/invoices/501/void') {
+        if (url === '/api/v1/invoices/501/reprint') {
+          return mockOrderDetail501;
+        }
+        if (url === '/api/v1/invoices/501/payment-method/review') {
           return {
             orderId: 501,
             orderCode: 'HD-20261108-0001',
-            status: 'VOIDED',
-            voidReason: 'Thu ngân bấm nhầm phương thức thanh toán đơn bàn 05',
+            status: 'APPROVED',
+            paymentMethod: 'TRANSFER',
+            cashAmount: 0,
+            transferAmount: 185000,
+            syncedSettlementIds: [1],
           };
-        }
-        if (url === '/api/v1/invoices/501/reprint') {
-          return mockOrderDetail501;
         }
         throw new Error(`Unexpected POST ${url}`);
       });
@@ -291,7 +347,7 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
         defaultOptions: { queries: { retry: false } },
       });
 
-      render(
+      const view = render(
         <QueryProvider client={queryClient}>
           <ThermalPrintProvider>
             <MemoryRouter future={routerFutureFlags}>
@@ -302,12 +358,11 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       );
 
       await waitFor(() => {
-        expect(screen.getByTestId('void-invoice-btn-501')).toBeInTheDocument();
+        expect(screen.getByTestId('edit-payment-btn-501')).toBeInTheDocument();
       });
 
-      // Open Detail Modal via Eye button
+      // Open Detail Modal via Eye button and reprint
       fireEvent.click(screen.getByTestId('view-invoice-btn-501'));
-
       await waitFor(() => {
         expect(screen.getByTestId('invoice-detail-modal')).toBeInTheDocument();
         expect(screen.getByText(/Mì Kim Chi Bò Mỹ/i)).toBeInTheDocument();
@@ -316,40 +371,62 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       expect(screen.getByText(/Lượt 2/i)).toBeInTheDocument();
       expect(screen.getByText(/Khách đổi chỗ mát hơn/i)).toBeInTheDocument();
 
-      // Click [In lại hoá đơn] inside modal
       fireEvent.click(screen.getByTestId('reprint-invoice-btn'));
       await waitFor(() => {
         expect(printSpy).toHaveBeenCalled();
       });
-      expect(screen.getByTestId('reprint-feedback')).toHaveAttribute('role', 'status');
-      expect(screen.getByTestId('reprint-feedback')).toHaveTextContent(
-        'Đã gửi lệnh in lại hoá đơn',
-      );
+      expect(screen.getByTestId('reprint-feedback')).toHaveTextContent('Đã gửi lệnh in lại hoá đơn');
 
-      // Close detail modal and open Void Dialog
       fireEvent.click(screen.getByTestId('close-invoice-detail-btn'));
-      fireEvent.click(screen.getByTestId('void-invoice-btn-501'));
 
-      expect(screen.getByTestId('void-invoice-dialog')).toBeInTheDocument();
-      const voidReasonInput = screen.getByTestId('void-reason-input');
-      const confirmVoidBtn = screen.getByTestId('confirm-void-invoice-btn');
-
-      // Short reason (< 10 chars) -> button disabled
-      fireEvent.change(voidReasonInput, { target: { value: 'Sai bill' } });
-      expect(confirmVoidBtn).toBeDisabled();
-
-      // Valid reason (>= 10 chars) -> button enabled & calls POST /api/v1/invoices/501/void
-      fireEvent.change(voidReasonInput, {
-        target: { value: 'Thu ngân bấm nhầm phương thức thanh toán đơn bàn 05' },
+      // Employee opens Edit PTTT dialog on 501, switches to TRANSFER, enters reason & submits
+      fireEvent.click(screen.getByTestId('edit-payment-btn-501'));
+      expect(screen.getByTestId('edit-payment-method-dialog')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('edit-pm-option-TRANSFER'));
+      fireEvent.change(screen.getByTestId('edit-pm-reason-input'), {
+        target: { value: 'Thu ngân bấm nhầm tiền mặt thay vì chuyển khoản QR' },
       });
-      expect(confirmVoidBtn).not.toBeDisabled();
-
-      fireEvent.click(confirmVoidBtn);
+      fireEvent.click(screen.getByTestId('submit-edit-pm-btn'));
 
       await waitFor(() => {
-        expect(postSpy).toHaveBeenCalledWith('/api/v1/invoices/501/void', {
-          voidReason: 'Thu ngân bấm nhầm phương thức thanh toán đơn bàn 05',
-        });
+        expect(patchSpy).toHaveBeenCalledWith(
+          '/api/v1/invoices/501/payment-method',
+          expect.objectContaining({
+            paymentMethod: 'TRANSFER',
+            reason: 'Thu ngân bấm nhầm tiền mặt thay vì chuyển khoản QR',
+          }),
+        );
+      });
+
+      // Switch to approver (Super Admin) to approve pending request
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: superAdminUser,
+      });
+      view.rerender(
+        <QueryProvider client={queryClient}>
+          <ThermalPrintProvider>
+            <MemoryRouter future={routerFutureFlags}>
+              <InvoicesPage />
+            </MemoryRouter>
+          </ThermalPrintProvider>
+        </QueryProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('review-payment-btn-501')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByTestId('review-payment-btn-501'));
+      expect(screen.getByTestId('review-payment-edit-dialog')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('approve-pm-edit-btn'));
+
+      await waitFor(() => {
+        expect(postSpy).toHaveBeenCalledWith(
+          '/api/v1/invoices/501/payment-method/review',
+          expect.objectContaining({
+            decision: 'APPROVE',
+          }),
+        );
       });
     });
 
@@ -360,7 +437,7 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
           ...cashierUser,
           permissions: {
             ...cashierUser.permissions,
-            invoices: { view: true, reprint: false, void: true },
+            invoices: { ...cashierUser.permissions.invoices, view: true, reprint: false },
           },
         },
       });
@@ -386,7 +463,7 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       await waitFor(() => expect(screen.getByTestId('invoice-detail-modal')).toBeInTheDocument());
 
       expect(screen.queryByTestId('reprint-invoice-btn')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('void-invoice-btn-501')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-payment-btn-501')).not.toBeInTheDocument();
     });
 
     it('should not print an invoice when the authorized reprint endpoint rejects the request', async () => {
@@ -426,6 +503,55 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
         'Không thể in lại hoá đơn',
       );
       expect(printSpy).not.toHaveBeenCalled();
+    });
+
+    it('should allow Super Admin to void a paid invoice with a reason >= 10 characters', async () => {
+      useAuthStore.getState().setAuth({ accessToken: 'super-token', user: superAdminUser });
+
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/invoices') return mockInvoiceListResponse;
+        throw new Error(`Unexpected GET ${url}`);
+      });
+      const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
+        orderId: 501,
+        orderCode: 'HD-20261108-0001',
+        status: 'VOIDED',
+        voidReason: 'Khách báo huỷ đơn nhập nhầm bàn',
+      });
+
+      render(
+        <QueryProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ThermalPrintProvider>
+            <MemoryRouter future={routerFutureFlags}>
+              <InvoicesPage />
+            </MemoryRouter>
+          </ThermalPrintProvider>
+        </QueryProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByTestId('void-invoice-btn-501')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('void-invoice-btn-501'));
+
+      expect(await screen.findByTestId('void-invoice-dialog')).toBeInTheDocument();
+      const submitBtn = screen.getByTestId('confirm-void-invoice-btn');
+      expect(submitBtn).toBeDisabled();
+
+      fireEvent.change(screen.getByTestId('void-invoice-reason-input'), {
+        target: { value: 'Quá ngắn' },
+      });
+      expect(submitBtn).toBeDisabled();
+
+      fireEvent.change(screen.getByTestId('void-invoice-reason-input'), {
+        target: { value: 'Khách báo huỷ đơn nhập nhầm bàn' },
+      });
+      expect(submitBtn).not.toBeDisabled();
+      fireEvent.click(submitBtn);
+
+      await waitFor(() => {
+        expect(postSpy).toHaveBeenCalledWith('/api/v1/invoices/501/void', {
+          voidReason: 'Khách báo huỷ đơn nhập nhầm bàn',
+        });
+      });
     });
   });
 
@@ -587,8 +713,10 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       const qtyInput0 = screen.getByTestId('import-qty-input-0') as HTMLInputElement;
 
       expect(unitInput0.value).toBe('Thùng');
-      expect(priceInput0.value).toBe('120000');
+      expect(priceInput0.value).toBe('');
+      expect(qtyInput0.value).toBe('');
 
+      fireEvent.change(priceInput0, { target: { value: '120000' } });
       fireEvent.change(qtyInput0, { target: { value: '2' } });
       expect(screen.getByTestId('import-line-total-0')).toHaveTextContent('240.000');
 
@@ -608,6 +736,9 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       fireEvent.change(screen.getByTestId('import-unit-input-1'), { target: { value: 'Bao' } });
       fireEvent.change(screen.getByTestId('import-price-input-1'), { target: { value: '30000' } });
       fireEvent.change(screen.getByTestId('import-qty-input-1'), { target: { value: '5' } });
+
+      // Add 3rd row and leave it completely empty -> should be ignored on submit
+      fireEvent.click(screen.getByTestId('add-import-row-btn'));
 
       // Submit batch
       fireEvent.click(screen.getByTestId('submit-import-batch-btn'));
@@ -686,6 +817,12 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
         target: { value: 'Nấm' },
       });
       fireEvent.click(await screen.findByTestId('ingredient-option-0-10'));
+      fireEvent.change(screen.getByTestId('import-price-input-0'), {
+        target: { value: '45000' },
+      });
+      fireEvent.change(screen.getByTestId('import-qty-input-0'), {
+        target: { value: '2' },
+      });
       fireEvent.click(screen.getByTestId('submit-import-batch-btn'));
 
       await waitFor(() => {
@@ -833,7 +970,7 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
           '/api/v1/cashflow/settle',
           expect.objectContaining({
             settlementDate: '2026-11-08',
-            shiftName: 'Ca Tối',
+            shiftName: 'CA_NGAY',
             actualCountedCash: 2800000,
             denominationsDetail: {
               '500000': 5,
@@ -898,6 +1035,168 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
         });
       });
     });
+
+    it('should allow compensating non-zero discrepancy settlements and hide raw technical keys in Cashflow UI', async () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'cashier-token',
+        user: {
+          ...cashierUser,
+          permissions: {
+            ...cashierUser.permissions,
+            cashflow: { ...cashierUser.permissions.cashflow, compensate: true },
+          },
+        },
+      });
+
+      const settlementsWithShortage = {
+        page: 1,
+        limit: 20,
+        total: 2,
+        items: [
+          mockSettlementsList.items[0],
+          {
+            ...mockSettlementsList.items[0],
+            id: 2,
+            shiftName: 'Ca Tối',
+            actualCountedCash: 2550000,
+            discrepancyAmount: -50000,
+            cashToHandOver: 1550000,
+            status: 'SHORTAGE' as const,
+            closedByName: 'Nguyễn Thu Ngân',
+            closedByUsername: 'cashier01',
+          },
+        ],
+      };
+
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/cashflow/preview') return mockPreviewResponse;
+        if (url === '/api/v1/cashflow/settlements') return settlementsWithShortage;
+        throw new Error(`Unexpected GET ${url}`);
+      });
+
+      const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
+        ...settlementsWithShortage.items[1],
+        actualCountedCash: 2600000,
+        discrepancyAmount: 0,
+        cashToHandOver: 1600000,
+        status: 'MATCHED',
+      });
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      render(
+        <QueryProvider client={queryClient}>
+          <MemoryRouter future={routerFutureFlags}>
+            <CashflowPage />
+          </MemoryRouter>
+        </QueryProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('compensate-settlement-btn-2')).toBeInTheDocument();
+      });
+
+      // Matched record (id=1, discrepancy=0) must NOT show Bù chênh lệch button
+      expect(screen.queryByTestId('compensate-settlement-btn-1')).not.toBeInTheDocument();
+
+      // Raw backend keys must not be shown
+      expect(screen.queryByText(/\(opening_budget\)|\(CASH_DRAWER\)|\(expected_cash\)|\(MATCHED\)|\(SHORTAGE\)/)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('compensate-settlement-btn-2'));
+      expect(screen.getByTestId('compensate-settlement-dialog')).toBeInTheDocument();
+
+      const amountInput = screen.getByTestId('compensate-amount-input') as HTMLInputElement;
+      expect(amountInput.value).toBe('50.000');
+
+      fireEvent.change(amountInput, {
+        target: { value: '30000' },
+      });
+      fireEvent.change(screen.getByTestId('compensate-note-input'), {
+        target: { value: 'Thu ngân đã nộp bù 30.000đ tiền mặt vào két' },
+      });
+      fireEvent.click(screen.getByTestId('confirm-compensate-settlement-btn'));
+
+      await waitFor(() => {
+        expect(postSpy).toHaveBeenCalledWith('/api/v1/cashflow/settlements/2/compensate', {
+          compensationAmount: 30000,
+          note: 'Thu ngân đã nộp bù 30.000đ tiền mặt vào két',
+        });
+      });
+    });
+
+    it('should enforce Blind Settlement mode for non-SuperAdmin by hiding theoretical numbers and prompting for note when discrepancy occurs', async () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'cashier-token',
+        user: cashierUser,
+      });
+
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/cashflow/preview') {
+          return {
+            settlementDate: '2026-11-17',
+            shiftName: 'CA_NGAY',
+            blindMode: true,
+            openingBudget: 1000000,
+            totalCashSales: null,
+            totalTransferSales: null,
+            totalCashImports: null,
+            expectedCashInDrawer: null,
+          };
+        }
+        if (url === '/api/v1/cashflow/settlements') return mockSettlementsList;
+        throw new Error(`Unexpected GET ${url}`);
+      });
+
+      const postSpy = vi
+        .spyOn(apiClient, 'post')
+        .mockRejectedValueOnce({
+          code: 'CASHFLOW_DISCREPANCY_NOTE_REQUIRED',
+          message: 'Vui lòng nhập ghi chú giải trình khi tiền thực đếm chênh lệch với tiền lý thuyết',
+        })
+        .mockResolvedValueOnce(mockSettlementsList.items[0]);
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      render(
+        <QueryProvider client={queryClient}>
+          <MemoryRouter future={routerFutureFlags}>
+            <CashflowPage />
+          </MemoryRouter>
+        </QueryProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('blind-settlement-banner')).toBeInTheDocument();
+      });
+
+      // Theoretical figures must be hidden in blind mode
+      expect(screen.queryByTestId('expected-cash-in-drawer')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('cash-sales-amount')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('discrepancy-amount')).not.toBeInTheDocument();
+
+      // First submit without note -> backend returns 422 CASHFLOW_DISCREPANCY_NOTE_REQUIRED
+      fireEvent.click(screen.getByTestId('submit-settlement-btn'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('blind-discrepancy-prompt')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('submit-settlement-btn')).toBeDisabled();
+
+      // Enter explanation note -> button unlocks and submits
+      fireEvent.change(screen.getByTestId('discrepancy-note-input'), {
+        target: { value: 'Đếm thiếu tờ 50k trong ngăn kéo' },
+      });
+      expect(screen.getByTestId('submit-settlement-btn')).not.toBeDisabled();
+      fireEvent.click(screen.getByTestId('submit-settlement-btn'));
+
+      await waitFor(() => {
+        expect(postSpy).toHaveBeenCalledTimes(2);
+      });
+    });
   });
 
   describe('AC-11.4: Feature Isolation Guard (Hard Invariant 1)', () => {
@@ -909,7 +1208,6 @@ describe('Story 11 — Invoices (Module 2), Inventory Imports (Module 3) & Cashf
       expect(typeof invoicesBarrel.InvoicesPage).toBe('function');
       expect(typeof invoicesBarrel.InvoiceDualFilterBar).toBe('function');
       expect(typeof invoicesBarrel.InvoiceDetailModal).toBe('function');
-      expect(typeof invoicesBarrel.VoidInvoiceDialog).toBe('function');
 
       expect(typeof inventoryBarrel.InventoryPage).toBe('function');
       expect(typeof inventoryBarrel.InventoryImportDrawer).toBe('function');

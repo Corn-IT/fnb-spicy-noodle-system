@@ -1,9 +1,8 @@
-import { ShieldAlert } from 'lucide-react';
 import * as React from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 
+import { SystemErrorView } from '@/components/error-display';
 import { type PermissionModuleKey } from '@/components/layout/command-palette';
-import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/stores/auth.store';
 
 export interface RbacRouteGuardProps {
@@ -19,13 +18,34 @@ export function RbacRouteGuard({
 }: RbacRouteGuardProps) {
   const accessToken = useAuthStore((state) => state.accessToken);
   const user = useAuthStore((state) => state.user);
+  const authNotice = useAuthStore((state) => state.authNotice);
   const location = useLocation();
-  const navigate = useNavigate();
 
   // HARD INVARIANT 8:
-  // Chưa đăng nhập (thiếu token/user) -> chuyển hướng về /login (401)
-  if (!accessToken || !user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+  // Chưa đăng nhập (thiếu user session) -> chuyển hướng về /login (401).
+  // Lưu ý: accessToken chỉ lưu trên RAM (không lưu localStorage để chống XSS);
+  // khi F5 còn user trong store, apiClient sẽ tự động làm mới accessToken qua HttpOnly Cookie.
+  if (!user && !accessToken) {
+    const resolvedNotice =
+      authNotice ?? (location.pathname !== '/' ? 'UNAUTHENTICATED' : undefined);
+    return (
+      <Navigate
+        to="/login"
+        state={{ from: location, ...(resolvedNotice ? { authNotice: resolvedNotice } : {}) }}
+        replace
+      />
+    );
+  }
+  if (!user) {
+    const resolvedNotice =
+      authNotice ?? (location.pathname !== '/' ? 'UNAUTHENTICATED' : undefined);
+    return (
+      <Navigate
+        to="/login"
+        state={{ from: location, ...(resolvedNotice ? { authNotice: resolvedNotice } : {}) }}
+        replace
+      />
+    );
   }
 
   // Đã đăng nhập nhưng thiếu quyền RBAC -> Hiển thị 403 Forbidden tại chỗ, TUYỆT ĐỐI KHÔNG đá ra /login
@@ -35,26 +55,17 @@ export function RbacRouteGuard({
 
   if (!isAllowed) {
     return (
-      <div
-        data-testid="rbac-forbidden-screen"
-        className="flex min-h-[60vh] flex-col items-center justify-center gap-4 rounded-xl border border-dashed bg-card p-8 text-center"
-      >
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400">
-          <ShieldAlert className="h-7 w-7" />
-        </div>
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold tracking-tight">
-            403 — Không đủ quyền truy cập
-          </h2>
-          <p className="max-w-md text-sm text-muted-foreground">
+      <SystemErrorView
+        variant="section"
+        statusKeyOverride="403"
+        testId="rbac-forbidden-screen"
+        accountContextNote={
+          <>
             Tài khoản <span className="font-semibold text-foreground">@{user.username}</span>{' '}
             không được cấp quyền xem màn hình này. Vui lòng liên hệ Quản lý hoặc Chủ quán.
-          </p>
-        </div>
-        <Button variant="outline" onClick={() => navigate('/profile')}>
-          Quay về Hồ sơ cá nhân
-        </Button>
-      </div>
+          </>
+        }
+      />
     );
   }
 

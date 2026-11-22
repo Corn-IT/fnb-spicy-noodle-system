@@ -4,21 +4,27 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   CashflowSettlementFilterQuerySchema,
+  CompensateSettlementRequestSchema,
   CreateSettlementRequestSchema,
   ErrorCodes,
   InternalMdmRecord,
   UpdateDefaultBudgetSchema,
   type CashflowSettlementFilterQuery,
+  type CompensateSettlementRequest,
   type CreateSettlementRequest,
   type UpdateDefaultBudgetInput,
 } from '@fnb/shared';
+import { AuditLogService } from '../../common/audit/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { businessDayRange, businessDateString, dateOnly, dateAtVietnamMidnight } from '../../common/utils/business-date.util';
+import { businessDateString, businessDayRange, dateOnly } from '../../common/utils/business-date.util';
+import { getShiftRange, queryShiftSalesTotals } from '../../common/utils/cashflow-settlement.util';
 
 const DEFAULT_BUDGET_KEY = InternalMdmRecord.CASHFLOW_DEFAULT_OPENING_BUDGET;
 const ZERO = new Prisma.Decimal(0);
@@ -33,11 +39,6 @@ const DENOMINATION_VALUES = {
   '2000': 2000,
   '1000': 1000,
 } as const;
-
-type SalesTotals = {
-  totalCashSales: Prisma.Decimal | null;
-  totalTransferSales: Prisma.Decimal | null;
-};
 
 type SettlementRecord = {
   id: number;
@@ -54,6 +55,7 @@ type SettlementRecord = {
   denominationsDetail: Prisma.JsonValue;
   note: string | null;
   closedBy: number;
+  closer?: { username: string; employee?: { fullName: string } | null } | null;
   createdAt: Date;
 };
 
@@ -61,11 +63,33 @@ type SettlementRecord = {
 export class CashflowService {
   private readonly logger = new Logger(CashflowService.name);
 
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(AuditLogService) private readonly auditLogService?: AuditLogService,
+  ) {}
 
-  async preview(now = new Date()) {
+  async getDefaultOpeningBudget(): Promise<number> {
+    const budget = await this.getOpeningBudget(this.prisma, false);
+    return budget.toNumber();
+  }
+
+  async preview(now = new Date(), isSuperAdmin = true) {
     const date = businessDateString(now);
     const { shiftName, start, end } = this.getCurrentShiftRange(now, date);
+    if (!isSuperAdmin) {
+      const openingBudget = await this.getOpeningBudget(this.prisma);
+      return {
+        settlementDate: date,
+        shiftName,
+        blindMode: true,
+        openingBudget: openingBudget.toNumber(),
+        totalCashSales: null,
+        totalTransferSales: null,
+        totalCashImports: null,
+        expectedCashInDrawer: null,
+      };
+    }
+
     const [openingBudget, totals, imports] = await Promise.all([
       this.getOpeningBudget(this.prisma),
       this.getSalesTotals(this.prisma, start, end),
@@ -75,6 +99,7 @@ export class CashflowService {
     return {
       settlementDate: date,
       shiftName,
+      blindMode: false,
       openingBudget: openingBudget.toNumber(),
       totalCashSales: totals.totalCashSales.toNumber(),
       totalTransferSales: totals.totalTransferSales.toNumber(),
@@ -93,12 +118,20 @@ export class CashflowService {
       });
     }
 
-    const { page, limit, fromDate, toDate } = parsed.data;
+    const { page, limit, fromDate, toDate, closerKeyword } = parsed.data;
     const where: Prisma.CashDrawerSettlementWhereInput = {
       ...(fromDate || toDate ? {
         settlementDate: {
           ...(fromDate ? { gte: dateOnly(fromDate) } : {}),
           ...(toDate ? { lte: dateOnly(toDate) } : {}),
+        },
+      } : {}),
+      ...(closerKeyword ? {
+        closer: {
+          OR: [
+            { username: { contains: closerKeyword, mode: 'insensitive' } },
+            { employee: { is: { fullName: { contains: closerKeyword, mode: 'insensitive' } } } },
+          ],
         },
       } : {}),
     };
@@ -109,6 +142,14 @@ export class CashflowService {
         orderBy: [{ settlementDate: 'desc' }, { createdAt: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
+        include: {
+          closer: {
+            select: {
+              username: true,
+              employee: { select: { fullName: true } },
+            },
+          },
+        },
       }),
     ]);
     return { page, limit, total, items: settlements.map((settlement) => this.toSettlementResponse(settlement)) };
@@ -125,7 +166,7 @@ export class CashflowService {
     }
     const request = parsed.data;
     const settlementDate = dateOnly(request.settlementDate);
-    const { start, end } = this.getShiftRange(request.settlementDate, request.shiftName);
+    const { start, end } = getShiftRange(request.settlementDate, request.shiftName);
     const actualCountedCash = this.countDenominations(request);
     if (!actualCountedCash.equals(new Prisma.Decimal(request.actualCountedCash.toString()))) {
       throw new UnprocessableEntityException({
@@ -185,10 +226,132 @@ export class CashflowService {
     this.logger.log(
       `Settlement completed: date=${request.settlementDate}, shift=${request.shiftName}, expected=${created.expectedCashInDrawer.toFixed(2)}, actual=${created.actualCountedCash.toFixed(2)}, discrepancy=${created.discrepancyAmount.toFixed(2)}`,
     );
+    const actualFormatted = `${created.actualCountedCash.toNumber().toLocaleString('vi-VN')}đ`;
+    const diffValue = created.discrepancyAmount.toNumber();
+    await this.auditLogService?.record({
+      module: 'CASHFLOW',
+      action: 'Chốt ca tiền mặt',
+      detail: `${request.settlementDate} (${actualFormatted})`,
+      message: 'chốt đối soát kết ca tiền mặt',
+      actor: userId,
+      metadata: {
+        settlementId: created.id,
+        settlementDate: request.settlementDate,
+        actualCountedCash: created.actualCountedCash.toNumber(),
+        discrepancyAmount: diffValue,
+      },
+    });
     return this.toSettlementResponse(created);
   }
 
-  async setDefaultBudget(input: UpdateDefaultBudgetInput) {
+  async compensateSettlement(id: number, input: CompensateSettlementRequest, userId: number) {
+    const parsed = CompensateSettlementRequestSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new UnprocessableEntityException({
+        code: ErrorCodes.VALIDATION_FAILED,
+        message: 'Ghi chú bù tiền kết ca không hợp lệ',
+        details: { fieldErrors: parsed.error.flatten().fieldErrors },
+      });
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.cashDrawerSettlement.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException({ message: 'Không tìm thấy bản ghi kết ca' });
+      if (existing.discrepancyAmount.isZero()) {
+        throw new ConflictException({
+          code: 'CASHFLOW_NO_DISCREPANCY',
+          message: 'Bản ghi kết ca đã khớp quỹ (chênh lệch 0đ), không cần bù chênh lệch',
+        });
+      }
+
+      const actorInfo = typeof tx.user?.findUnique === 'function'
+        ? await tx.user.findUnique({
+            where: { id: userId },
+            select: { username: true, employee: { select: { fullName: true } } },
+          })
+        : null;
+      const actorName = actorInfo?.employee?.fullName ?? `User #${userId}`;
+      const actorUsername = actorInfo?.username ?? `user_${userId}`;
+      const prevDiff = existing.discrepancyAmount.toNumber();
+      const compDecimal = parsed.data.compensationAmount !== undefined
+        ? new Prisma.Decimal(parsed.data.compensationAmount.toString())
+        : existing.discrepancyAmount.abs();
+      const newActualCash = existing.discrepancyAmount.lessThan(0)
+        ? existing.actualCountedCash.plus(compDecimal)
+        : existing.actualCountedCash.minus(compDecimal);
+      if (newActualCash.lessThan(0)) {
+        throw new UnprocessableEntityException({
+          code: ErrorCodes.VALIDATION_FAILED,
+          message: 'Số tiền thực đếm sau khi bù trừ không được âm',
+        });
+      }
+      const newDiscrepancy = newActualCash.minus(existing.expectedCashInDrawer);
+      const newStatus = newDiscrepancy.isZero()
+        ? 'MATCHED'
+        : newDiscrepancy.greaterThan(0) ? 'SURPLUS' : 'SHORTAGE';
+      const compFormatted = `${compDecimal.toNumber().toLocaleString('vi-VN')}đ`;
+      const prevDiffFormatted = `${prevDiff > 0 ? '+' : ''}${prevDiff.toLocaleString('vi-VN')}đ`;
+      const newDiffNum = newDiscrepancy.toNumber();
+      const newDiffFormatted = `${newDiffNum > 0 ? '+' : ''}${newDiffNum.toLocaleString('vi-VN')}đ`;
+      const tag = `[Đã bù ${compFormatted} (lệch ${prevDiffFormatted} → ${newDiffFormatted}) bởi ${actorName} (${actorUsername}): ${parsed.data.note}]`;
+      const mergedNote = existing.note?.trim() ? `${existing.note.trim()}\n${tag}` : tag;
+
+      const saved = await tx.cashDrawerSettlement.update({
+        where: { id },
+        data: {
+          actualCountedCash: newActualCash,
+          discrepancyAmount: newDiscrepancy,
+          status: newStatus,
+          note: mergedNote,
+        },
+        include: {
+          closer: {
+            select: {
+              username: true,
+              employee: { select: { fullName: true } },
+            },
+          },
+        },
+      });
+
+      const settlementDateText = businessDateString(existing.settlementDate);
+      const oldActualNum =
+        typeof (existing.actualCountedCash as { toNumber?: () => number })?.toNumber === 'function'
+          ? (existing.actualCountedCash as { toNumber: () => number }).toNumber()
+          : Number(existing.actualCountedCash ?? 0);
+      const newActualNum = oldActualNum + compDecimal.toNumber();
+      const oldActualFormatted = `${oldActualNum.toLocaleString('vi-VN')}đ`;
+      const newActualFormatted = `${newActualNum.toLocaleString('vi-VN')}đ`;
+      const changes = [
+        { field: 'Tiền thực đếm', from: oldActualFormatted, to: newActualFormatted },
+        { field: 'Chênh lệch', from: prevDiffFormatted, to: newDiffFormatted },
+        { field: 'Số tiền bù', from: '0đ', to: compFormatted },
+      ];
+      await this.auditLogService?.record({
+        module: 'CASHFLOW',
+        action: 'Bù chênh lệch kết ca',
+        detail: `${settlementDateText} (${compFormatted})`,
+        message: `bù chênh lệch kết ca (${parsed.data.note})`,
+        actor: { id: userId, fullName: actorName, username: actorUsername },
+        metadata: {
+          settlementId: id,
+          settlementDate: settlementDateText,
+          compensationAmount: compDecimal.toNumber(),
+          previousDiscrepancy: prevDiff,
+          newDiscrepancy: newDiffNum,
+          note: parsed.data.note,
+          changes,
+        },
+        tx,
+      });
+
+      return saved;
+    });
+
+    return this.toSettlementResponse(updated);
+  }
+
+  async setDefaultBudget(input: UpdateDefaultBudgetInput, userId?: number) {
     const parsed = UpdateDefaultBudgetSchema.safeParse(input);
     if (!parsed.success) {
       throw new UnprocessableEntityException({
@@ -198,6 +361,17 @@ export class CashflowService {
       });
     }
     const decimalValue = new Prisma.Decimal(parsed.data.openingBudget.toString());
+    let previousBudgetValue: number | null = null;
+    if (typeof this.prisma.masterData?.findUnique === 'function') {
+      const prevMaster = await this.prisma.masterData.findUnique({
+        where: { category_normalizedName: { category: 'UNIT', normalizedName: DEFAULT_BUDGET_KEY } },
+      });
+      const rawPrev = (prevMaster?.metadata as Record<string, unknown> | null)?.opening_budget;
+      if (rawPrev !== undefined && rawPrev !== null) {
+        const parsedPrev = Number(rawPrev);
+        if (!Number.isNaN(parsedPrev)) previousBudgetValue = parsedPrev;
+      }
+    }
     await this.prisma.masterData.upsert({
       where: { category_normalizedName: { category: 'UNIT', normalizedName: DEFAULT_BUDGET_KEY } },
       create: {
@@ -209,6 +383,30 @@ export class CashflowService {
       },
       update: { metadata: { opening_budget: decimalValue.toFixed(2) }, isActive: false },
     });
+    if (userId) {
+      const budgetFormatted = `${decimalValue.toNumber().toLocaleString('vi-VN')}đ`;
+      const changes =
+        previousBudgetValue !== null && previousBudgetValue !== decimalValue.toNumber()
+          ? [
+              {
+                field: 'Ngân sách đầu ngày',
+                from: `${previousBudgetValue.toLocaleString('vi-VN')}đ`,
+                to: budgetFormatted,
+              },
+            ]
+          : undefined;
+      await this.auditLogService?.record({
+        module: 'CASHFLOW',
+        action: 'Cấu hình ngân sách',
+        detail: budgetFormatted,
+        message: 'cấu hình ngân sách đầu ngày mặc định',
+        actor: userId,
+        metadata: {
+          openingBudget: decimalValue.toNumber(),
+          ...(changes ? { changes } : {}),
+        },
+      });
+    }
     return { openingBudget: decimalValue.toNumber() };
   }
 
@@ -240,28 +438,7 @@ export class CashflowService {
     start: Date,
     end: Date,
   ): Promise<{ totalCashSales: Prisma.Decimal; totalTransferSales: Prisma.Decimal }> {
-    const [totals] = await client.$queryRaw<SalesTotals[]>`
-      SELECT
-        COALESCE(SUM(CASE
-          WHEN payment_method = 'CASH' THEN total_amount
-          WHEN payment_method = 'SPLIT' THEN cash_amount
-          ELSE 0
-        END), 0)::numeric(12, 2) AS "totalCashSales",
-        COALESCE(SUM(CASE
-          WHEN payment_method = 'TRANSFER' THEN total_amount
-          WHEN payment_method = 'SPLIT' THEN transfer_amount
-          ELSE 0
-        END), 0)::numeric(12, 2) AS "totalTransferSales"
-      FROM orders
-      WHERE status = 'PAID'
-        AND payment_method IN ('CASH', 'TRANSFER', 'SPLIT')
-        AND paid_at >= ${start}
-        AND paid_at < ${end}
-    `;
-    return {
-      totalCashSales: totals?.totalCashSales ?? ZERO,
-      totalTransferSales: totals?.totalTransferSales ?? ZERO,
-    };
+    return queryShiftSalesTotals(client, start, end);
   }
 
   private async getCashImports(
@@ -283,38 +460,14 @@ export class CashflowService {
     }, ZERO);
   }
 
-  private getCurrentShiftRange(now: Date, date: string): { shiftName: string; start: Date; end: Date } {
-    const localHour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours();
-    const shiftName = localHour >= 8 && localHour < 15 ? 'Ca Sáng' : localHour >= 15 && localHour < 22 ? 'Ca Tối' : 'Ca Khác';
-    return { shiftName, ...this.getShiftRange(date, shiftName) };
-  }
-
-  private getShiftRange(date: string, shiftName: string): { start: Date; end: Date } {
-    const normalizedName = shiftName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('vi-VN');
-    const customHours = shiftName.match(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/);
-    const range = businessDayRange(date);
-    if (customHours) {
-      return {
-        start: this.timeAtBusinessDate(date, Number(customHours[1]), Number(customHours[2])),
-        end: this.timeAtBusinessDate(date, Number(customHours[3]), Number(customHours[4])),
-      };
-    }
-    if (normalizedName.includes('sang')) {
-      return { start: this.timeAtBusinessDate(date, 8, 0), end: this.timeAtBusinessDate(date, 15, 0) };
-    }
-    if (normalizedName.includes('toi')) {
-      return { start: this.timeAtBusinessDate(date, 15, 0), end: this.timeAtBusinessDate(date, 22, 0) };
-    }
-    return range;
-  }
-
-  private timeAtBusinessDate(date: string, hour: number, minute: number): Date {
-    const start = dateAtVietnamMidnight(date);
-    return new Date(start.getTime() + hour * 60 * 60 * 1000 + minute * 60 * 1000);
+  private getCurrentShiftRange(_now: Date, date: string): { shiftName: string; start: Date; end: Date } {
+    return { shiftName: 'CA_NGAY', ...businessDayRange(date) };
   }
 
   private toSettlementResponse(settlement: SettlementRecord) {
     const cashToHandOver = settlement.actualCountedCash.minus(settlement.openingBudget);
+    const closedByName = settlement.closer?.employee?.fullName;
+    const closedByUsername = settlement.closer?.username;
     return {
       id: settlement.id,
       settlementDate: businessDateString(settlement.settlementDate),
@@ -332,6 +485,8 @@ export class CashflowService {
       denominationsDetail: settlement.denominationsDetail,
       note: settlement.note,
       closedBy: settlement.closedBy,
+      ...(closedByName ? { closedByName } : {}),
+      ...(closedByUsername ? { closedByUsername } : {}),
       createdAt: settlement.createdAt.toISOString(),
     };
   }

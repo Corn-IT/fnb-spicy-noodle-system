@@ -41,26 +41,37 @@ export class RbacGuard implements CanActivate {
       throw this.forbidden(ErrorCodes.RBAC_SUPER_ADMIN_REQUIRED, 'Chỉ Super Admin mới được thực hiện thao tác này');
     }
 
-    const parsed = UserPermissionsSchema.safeParse(user.permissions);
+    const requirements = 'anyOf' in requirement ? requirement.anyOf : [requirement];
+    for (const req of requirements) {
+      if (this.hasSinglePermission(user.permissions, req.module, req.action)) {
+        return true;
+      }
+    }
+
+    throw this.forbidden(ErrorCodes.RBAC_PERMISSION_DENIED, 'Bạn không có quyền thực hiện thao tác này');
+  }
+
+  private hasSinglePermission(rawUserPermissions: unknown, module: string, action: string): boolean {
+    const parsed = UserPermissionsSchema.safeParse(rawUserPermissions);
     const modulePermissions = parsed.success
-      ? parsed.data[requirement.module as keyof typeof parsed.data]
+      ? parsed.data[module as keyof typeof parsed.data]
       : undefined;
     const allowed = modulePermissions && typeof modulePermissions === 'object'
-      ? (modulePermissions as Record<string, unknown>)[requirement.action] === true
+      ? (modulePermissions as Record<string, unknown>)[action] === true
       : false;
 
     if (allowed) return true;
 
-    if (requirement.module === 'pos' && ['splitKitchen', 'tableAction', 'checkout'].includes(requirement.action)) {
-      const rawPermissions = user.permissions as unknown as PermissionRecord;
+    if (module === 'pos' && ['splitKitchen', 'tableAction', 'checkout'].includes(action)) {
+      const rawPermissions = (rawUserPermissions ?? {}) as PermissionRecord;
       const rawPos = rawPermissions.pos && typeof rawPermissions.pos === 'object'
         ? rawPermissions.pos as PermissionRecord
         : {};
-      const rawSubPermission = rawPos[requirement.action];
+      const rawSubPermission = rawPos[action];
       if (rawSubPermission === undefined && (rawPos.create === true || rawPos.update === true)) return true;
     }
 
-    throw this.forbidden(ErrorCodes.RBAC_PERMISSION_DENIED, 'Bạn không có quyền thực hiện thao tác này');
+    return false;
   }
 
   private forbidden(code: string, message: string): ForbiddenException {

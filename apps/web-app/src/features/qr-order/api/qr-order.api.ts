@@ -10,13 +10,26 @@ import {
 
 import { apiClient } from '@/lib/api-client';
 
+export interface GuestQrCoordinates {
+  lat: number;
+  lng: number;
+}
+
 export const qrOrderQueryKeys = {
-  publicMenu: (qrToken: string) => ['public-menu', qrToken] as const,
+  publicMenu: (qrToken: string, coords?: GuestQrCoordinates | null) =>
+    coords ? (['public-menu', qrToken, coords] as const) : (['public-menu', qrToken] as const),
 };
 
-export async function fetchPublicMenu(qrToken: string): Promise<PublicMenuResponse> {
+export async function fetchPublicMenu(
+  qrToken: string,
+  coords?: GuestQrCoordinates | null,
+): Promise<PublicMenuResponse> {
   const raw = await apiClient.get<unknown>('/api/v1/public/menu', {
-    params: { token: qrToken },
+    params: {
+      token: qrToken,
+      lat: coords?.lat,
+      lng: coords?.lng,
+    },
     skipAuthRefresh: true,
   });
   return PublicMenuResponseSchema.parse(raw);
@@ -30,11 +43,14 @@ export async function submitQrOrder(input: CreateQrOrderInput): Promise<QrOrderR
   return QrOrderResponseSchema.parse(raw);
 }
 
-export function usePublicMenuQuery(qrToken: string) {
+export function usePublicMenuQuery(qrToken: string, coords?: GuestQrCoordinates | null) {
   return useQuery({
-    queryKey: qrOrderQueryKeys.publicMenu(qrToken),
-    queryFn: () => fetchPublicMenu(qrToken),
+    queryKey: qrOrderQueryKeys.publicMenu(qrToken, coords),
+    queryFn: () => fetchPublicMenu(qrToken, coords),
     enabled: Boolean(qrToken),
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: true,
   });
 }
 

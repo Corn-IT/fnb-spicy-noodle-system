@@ -13,6 +13,8 @@
     --popover-foreground: 222.2 84% 4.9%;
     --primary: 346.8 77.2% 49.8%;
     --primary-foreground: 355.7 100% 97.3%;
+    --accent-text: 346.8 77.2% 49.8%;
+    --price: 346.8 77.2% 49.8%;
     --secondary: 214.3 31.8% 91.4%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 210 40% 94.5%;
@@ -37,6 +39,8 @@
     --popover-foreground: 210 40% 98%;
     --primary: 346.8 77.2% 54%;
     --primary-foreground: 355.7 100% 98%;
+    --accent-text: 346.8 77.2% 54%;
+    --price: 346.8 77.2% 54%;
     --secondary: 217.2 32.6% 18.5%;
     --secondary-foreground: 210 40% 98%;
     --muted: 217.2 32.6% 16.5%;
@@ -65,6 +69,13 @@
   }
   html,
   body,
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow-x: hidden;
+  }
+  html,
+  body,
   button,
   input,
   select,
@@ -73,6 +84,10 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  select option {
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
   }
 }
 
@@ -104,6 +119,22 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  @keyframes top-progress-indeterminate {
+    0% {
+      transform: translateX(-100%) scaleX(0.35);
+    }
+    50% {
+      transform: translateX(35%) scaleX(0.55);
+    }
+    100% {
+      transform: translateX(100%) scaleX(0.3);
+    }
+  }
+  .animate-top-progress {
+    animation: top-progress-indeterminate 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    transform-origin: left center;
+  }
 }
 
 @media print {
@@ -117,18 +148,31 @@
   #thermal-print-container,
   #thermal-print-container * {
     visibility: visible;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   #thermal-print-container {
     position: absolute;
     left: 0;
     top: 0;
-    width: 72mm;
+    width: 80mm;
+    padding: 0 4mm;
+    box-sizing: border-box;
     color: #000 !important;
     background: #fff !important;
   }
+  #thermal-print-container img {
+    max-width: 100% !important;
+    display: block !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
   .ticket-page {
     width: 100%;
-    padding: 2mm 0;
+    padding: 2.5mm 3.5mm !important;
+    box-sizing: border-box;
     break-after: page;
     page-break-after: always;
   }

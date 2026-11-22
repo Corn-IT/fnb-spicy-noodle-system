@@ -250,4 +250,161 @@ describe('CashflowService', () => {
     await expect(service.settleShift(request(), 9)).rejects.toBeInstanceOf(ConflictException);
     expect(harness.tx.cashDrawerSettlement.create).not.toHaveBeenCalled();
   });
+
+  it('should compensate a non-zero discrepancy settlement to MATCHED and reject 0-discrepancy records', async () => {
+    const harness = createHarness();
+    const txWithUpdate = {
+      ...harness.tx,
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          username: 'cashier01',
+          employee: { fullName: 'Nguyễn Thu Ngân' },
+        }),
+      },
+      cashDrawerSettlement: {
+        ...harness.tx.cashDrawerSettlement,
+        findUnique: vi.fn(),
+        update: vi.fn(),
+      },
+    };
+    harness.prisma.$transaction.mockImplementation(async (callback: (client: typeof txWithUpdate) => Promise<unknown>) =>
+      callback(txWithUpdate),
+    );
+    const auditLogService = { record: vi.fn() };
+    const service = new CashflowService(harness.prisma as never, auditLogService as never);
+
+    txWithUpdate.cashDrawerSettlement.findUnique.mockResolvedValueOnce({
+      id: 10,
+      settlementDate: new Date('2026-11-08T00:00:00.000Z'),
+      shiftName: 'Ca Tối',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashSales: new Prisma.Decimal('1000000.00'),
+      totalTransferSales: new Prisma.Decimal('500000.00'),
+      totalCashImports: new Prisma.Decimal('200000.00'),
+      expectedCashInDrawer: new Prisma.Decimal('1800000.00'),
+      actualCountedCash: new Prisma.Decimal('1750000.00'),
+      discrepancyAmount: new Prisma.Decimal('-50000.00'),
+      status: 'SHORTAGE',
+      denominationsDetail: denominations,
+      note: 'Thiếu 50k',
+      closedBy: 2,
+      createdAt: new Date('2026-11-08T15:00:00.000Z'),
+    });
+    txWithUpdate.cashDrawerSettlement.update.mockResolvedValueOnce({
+      id: 10,
+      settlementDate: new Date('2026-11-08T00:00:00.000Z'),
+      shiftName: 'Ca Tối',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashSales: new Prisma.Decimal('1000000.00'),
+      totalTransferSales: new Prisma.Decimal('500000.00'),
+      totalCashImports: new Prisma.Decimal('200000.00'),
+      expectedCashInDrawer: new Prisma.Decimal('1800000.00'),
+      actualCountedCash: new Prisma.Decimal('1800000.00'),
+      discrepancyAmount: new Prisma.Decimal('0.00'),
+      status: 'MATCHED',
+      denominationsDetail: denominations,
+      note: 'Thiếu 50k\n[Đã bù chênh lệch -50.000đ bởi Nguyễn Thu Ngân (cashier01): Nộp bù 50k tiền mặt]',
+      closedBy: 2,
+      closer: { username: 'cashier01', employee: { fullName: 'Nguyễn Thu Ngân' } },
+      createdAt: new Date('2026-11-08T15:00:00.000Z'),
+    });
+
+    const compensated = await service.compensateSettlement(10, { note: 'Nộp bù 50k tiền mặt' }, 2);
+    expect(compensated).toMatchObject({
+      id: 10,
+      actualCountedCash: 1800000,
+      discrepancyAmount: 0,
+      status: 'MATCHED',
+      cashToHandOver: 800000,
+      closedByName: 'Nguyễn Thu Ngân',
+      closedByUsername: 'cashier01',
+    });
+    expect(auditLogService.record).toHaveBeenCalledWith(expect.objectContaining({
+      module: 'CASHFLOW',
+      action: 'Bù chênh lệch kết ca',
+      metadata: expect.objectContaining({
+        changes: expect.arrayContaining([
+          expect.objectContaining({ field: 'Chênh lệch' }),
+          expect.objectContaining({ field: 'Tiền thực đếm' }),
+        ]),
+      }),
+    }));
+
+    txWithUpdate.cashDrawerSettlement.findUnique.mockResolvedValueOnce({
+      id: 11,
+      discrepancyAmount: new Prisma.Decimal('0.00'),
+    });
+    await expect(service.compensateSettlement(11, { note: 'Không có chênh lệch' }, 2))
+      .rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('should add/subtract compensationAmount when provided and keep remaining discrepancy if partial', async () => {
+    const harness = createHarness();
+    const txWithUpdate = {
+      ...harness.tx,
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          username: 'cashier01',
+          employee: { fullName: 'Nguyễn Thu Ngân' },
+        }),
+      },
+      cashDrawerSettlement: {
+        ...harness.tx.cashDrawerSettlement,
+        findUnique: vi.fn(),
+        update: vi.fn(),
+      },
+    };
+    harness.prisma.$transaction.mockImplementation(async (callback: (client: typeof txWithUpdate) => Promise<unknown>) =>
+      callback(txWithUpdate),
+    );
+    const auditLogService = { record: vi.fn() };
+    const service = new CashflowService(harness.prisma as never, auditLogService as never);
+
+    txWithUpdate.cashDrawerSettlement.findUnique.mockResolvedValueOnce({
+      id: 12,
+      settlementDate: new Date('2026-11-08T00:00:00.000Z'),
+      shiftName: 'CA_NGAY',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashSales: new Prisma.Decimal('1000000.00'),
+      totalTransferSales: new Prisma.Decimal('0.00'),
+      totalCashImports: new Prisma.Decimal('200000.00'),
+      expectedCashInDrawer: new Prisma.Decimal('1800000.00'),
+      actualCountedCash: new Prisma.Decimal('1700000.00'),
+      discrepancyAmount: new Prisma.Decimal('-100000.00'),
+      status: 'SHORTAGE',
+      denominationsDetail: denominations,
+      note: 'Thiếu 100k',
+      closedBy: 2,
+      createdAt: new Date('2026-11-08T15:00:00.000Z'),
+    });
+    txWithUpdate.cashDrawerSettlement.update.mockResolvedValueOnce({
+      id: 12,
+      settlementDate: new Date('2026-11-08T00:00:00.000Z'),
+      shiftName: 'CA_NGAY',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashSales: new Prisma.Decimal('1000000.00'),
+      totalTransferSales: new Prisma.Decimal('0.00'),
+      totalCashImports: new Prisma.Decimal('200000.00'),
+      expectedCashInDrawer: new Prisma.Decimal('1800000.00'),
+      actualCountedCash: new Prisma.Decimal('1760000.00'),
+      discrepancyAmount: new Prisma.Decimal('-40000.00'),
+      status: 'SHORTAGE',
+      denominationsDetail: denominations,
+      note: 'Thiếu 100k\n[Đã bù chênh lệch 60.000đ bởi Nguyễn Thu Ngân (cashier01): Bù trước 60k]',
+      closedBy: 2,
+      closer: { username: 'cashier01', employee: { fullName: 'Nguyễn Thu Ngân' } },
+      createdAt: new Date('2026-11-08T15:00:00.000Z'),
+    });
+
+    const partial = await service.compensateSettlement(12, { compensationAmount: 60000, note: 'Bù trước 60k' }, 2);
+    expect(txWithUpdate.cashDrawerSettlement.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        actualCountedCash: new Prisma.Decimal('1760000.00'),
+        discrepancyAmount: new Prisma.Decimal('-40000.00'),
+        status: 'SHORTAGE',
+      }),
+    }));
+    expect(partial.discrepancyAmount).toBe(-40000);
+    expect(partial.status).toBe('SHORTAGE');
+  });
 });

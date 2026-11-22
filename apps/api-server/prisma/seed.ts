@@ -3,36 +3,33 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { hash } from 'bcryptjs';
-import { MdmCategory, ProductStation } from '@fnb/shared';
+import { MdmCategory, ProductStation, type UserPermissions } from '@fnb/shared';
 import { normalizeVietnameseString } from '../src/common/utils/normalized-string.util';
+import { seedSampleDiscounts } from './seed-discounts';
 import {
+  adminPermissions,
+  adminViewPermissions,
   cashierPermissions,
+  defaultOpeningBudgetSeed,
+  defaultPaymentAccountsSeed,
+  defaultQrSecurityConfigSeed,
+  defaultStoreSettingsSeed,
   masterDataSeed,
   productSeed,
+  seedEmployees,
   tableNames,
+  type SeedEmployeeDef,
   type SeedModifierDef,
 } from './seed-data';
 
 type SeedClient = Pick<PrismaClient, '$transaction'>;
 
-const seedEmployees = [
-  {
-    fullName: 'Nguyễn Minh Quân',
-    shortName: 'M.Quân',
-    username: 'superadmin',
-    position: 'Quản Lý Cửa Hàng',
-    specialty: 'Phục Vụ Bàn',
-    isSuperAdmin: true,
-  },
-  {
-    fullName: 'Trần Thị Lan',
-    shortName: 'T.Lan',
-    username: 'cashier01',
-    position: 'Thu Ngân Quầy',
-    specialty: 'Phục Vụ Bàn',
-    isSuperAdmin: false,
-  },
-] as const;
+function resolveAccountPermissions(roleKey: NonNullable<SeedEmployeeDef['account']>['roleKey']): UserPermissions | Record<string, never> {
+  if (roleKey === 'SUPERADMIN') return {};
+  if (roleKey === 'ADMIN') return adminPermissions;
+  if (roleKey === 'ADMIN_VIEW') return adminViewPermissions;
+  return cashierPermissions;
+}
 
 export async function seedDatabase(prisma: SeedClient): Promise<void> {
   const passwordHash = await hash('Password@123', 10);
@@ -55,16 +52,88 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
       masterDataIds.set(`${entry.category}:${entry.normalizedName}`, record.id);
     }
 
+    await tx.masterData.upsert({
+      where: {
+        category_normalizedName: {
+          category: defaultStoreSettingsSeed.category,
+          normalizedName: defaultStoreSettingsSeed.normalizedName,
+        },
+      },
+      update: {},
+      create: {
+        category: defaultStoreSettingsSeed.category,
+        name: defaultStoreSettingsSeed.name,
+        normalizedName: defaultStoreSettingsSeed.normalizedName,
+        metadata: {
+          ...defaultStoreSettingsSeed.settings,
+          updatedAt: new Date().toISOString(),
+        } as Prisma.InputJsonObject,
+        isActive: true,
+      },
+    });
+
+    await tx.masterData.upsert({
+      where: {
+        category_normalizedName: {
+          category: defaultQrSecurityConfigSeed.category,
+          normalizedName: defaultQrSecurityConfigSeed.normalizedName,
+        },
+      },
+      update: {},
+      create: {
+        category: defaultQrSecurityConfigSeed.category,
+        name: defaultQrSecurityConfigSeed.name,
+        normalizedName: defaultQrSecurityConfigSeed.normalizedName,
+        metadata: {
+          ...defaultQrSecurityConfigSeed.config,
+          updatedAt: new Date().toISOString(),
+        } as Prisma.InputJsonObject,
+        isActive: true,
+      },
+    });
+
+    await tx.masterData.upsert({
+      where: {
+        category_normalizedName: {
+          category: defaultOpeningBudgetSeed.category,
+          normalizedName: defaultOpeningBudgetSeed.normalizedName,
+        },
+      },
+      update: {},
+      create: {
+        category: defaultOpeningBudgetSeed.category,
+        name: defaultOpeningBudgetSeed.name,
+        normalizedName: defaultOpeningBudgetSeed.normalizedName,
+        metadata: {
+          opening_budget: defaultOpeningBudgetSeed.openingBudget,
+        } as Prisma.InputJsonObject,
+        isActive: false,
+      },
+    });
+
     for (const employee of seedEmployees) {
-      const positionId = masterDataIds.get(`${MdmCategory.POSITION}:${employee.position}`);
-      const specialtyId = masterDataIds.get(`${MdmCategory.SPECIALTY}:${employee.specialty}`);
-      if (!positionId || !specialtyId) throw new Error(`Missing master data for ${employee.username}`);
+      const positionId =
+        masterDataIds.get(`${MdmCategory.POSITION}:${employee.position}`) ??
+        masterDataIds.get(`${MdmCategory.POSITION}:${normalizeVietnameseString(employee.position)}`);
+      const specialtyId =
+        masterDataIds.get(`${MdmCategory.SPECIALTY}:${employee.specialty}`) ??
+        masterDataIds.get(`${MdmCategory.SPECIALTY}:${normalizeVietnameseString(employee.specialty)}`);
+      if (!positionId || !specialtyId) {
+        throw new Error(`Missing master data for ${employee.fullName}`);
+      }
 
       const existingEmployee = await tx.employee.findFirst({ where: { fullName: employee.fullName } });
       const employeeRecord = existingEmployee
         ? await tx.employee.update({
             where: { id: existingEmployee.id },
-            data: { shortName: employee.shortName, positionId, specialtyId, isDeleted: false },
+            data: {
+              shortName: employee.shortName,
+              positionId,
+              specialtyId,
+              ...(employee.phone ? { phone: employee.phone } : {}),
+              ...(employee.note ? { note: employee.note } : {}),
+              isDeleted: false,
+            },
           })
         : await tx.employee.create({
             data: {
@@ -72,26 +141,31 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
               shortName: employee.shortName,
               positionId,
               specialtyId,
+              ...(employee.phone ? { phone: employee.phone } : {}),
+              ...(employee.note ? { note: employee.note } : {}),
             },
           });
 
-      await tx.user.upsert({
-        where: { username: employee.username },
-        update: {
-          employeeId: employeeRecord.id,
-          passwordHash,
-          isSuperAdmin: employee.isSuperAdmin,
-          permissions: employee.isSuperAdmin ? {} : cashierPermissions as Prisma.InputJsonObject,
-          isActive: true,
-        },
-        create: {
-          employeeId: employeeRecord.id,
-          username: employee.username,
-          passwordHash,
-          isSuperAdmin: employee.isSuperAdmin,
-          permissions: employee.isSuperAdmin ? {} : cashierPermissions as Prisma.InputJsonObject,
-        },
-      });
+      if (employee.account) {
+        const permissionsPayload = resolveAccountPermissions(employee.account.roleKey) as Prisma.InputJsonObject;
+        await tx.user.upsert({
+          where: { username: employee.account.username },
+          update: {
+            employeeId: employeeRecord.id,
+            passwordHash,
+            isSuperAdmin: employee.account.isSuperAdmin,
+            permissions: permissionsPayload,
+            isActive: true,
+          },
+          create: {
+            employeeId: employeeRecord.id,
+            username: employee.account.username,
+            passwordHash,
+            isSuperAdmin: employee.account.isSuperAdmin,
+            permissions: permissionsPayload,
+          },
+        });
+      }
     }
 
     for (const name of tableNames) {
@@ -100,6 +174,33 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
         update: {},
         create: { name, qrToken: randomBytes(32).toString('hex') },
       });
+    }
+
+    if ('paymentAccount' in tx && tx.paymentAccount) {
+      for (const account of defaultPaymentAccountsSeed) {
+        await tx.paymentAccount.upsert({
+          where: {
+            bankCode_accountNo: {
+              bankCode: account.bankCode,
+              accountNo: account.accountNo,
+            },
+          },
+          update: {
+            label: account.label,
+            accountName: account.accountName,
+            priority: account.priority,
+            isActive: account.isActive,
+          },
+          create: {
+            label: account.label,
+            bankCode: account.bankCode,
+            accountNo: account.accountNo,
+            accountName: account.accountName,
+            priority: account.priority,
+            isActive: account.isActive,
+          },
+        });
+      }
     }
 
     const productIds = new Map<string, number>();
@@ -173,7 +274,8 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
         );
       }
     }
-  });
+    await seedSampleDiscounts(tx);
+  }, { maxWait: 15000, timeout: 120000 });
 }
 
 async function upsertModifierGroup(
@@ -222,15 +324,52 @@ export async function resetAndSeedMenu(prisma: PrismaClient): Promise<void> {
     await tx.modifierGroup.deleteMany({});
     await tx.product.deleteMany({});
     await tx.masterData.deleteMany({ where: { category: MdmCategory.MENU_CATEGORY } });
-  });
+  }, { maxWait: 15000, timeout: 120000 });
+  await seedDatabase(prisma);
+}
+
+export async function resetAllOperationalAndSeed(prisma: PrismaClient): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.diningTable.updateMany({ data: { status: 'AVAILABLE', activeOrderId: null } });
+    await tx.diningTable.deleteMany({ where: { name: { notIn: tableNames } } });
+    await tx.auditLog.deleteMany({});
+    await tx.workSchedule.deleteMany({});
+    await tx.inventoryImport.deleteMany({});
+    await tx.cashDrawerSettlement.deleteMany({});
+    await tx.orderItem.deleteMany({});
+    await tx.order.deleteMany({});
+    await tx.paymentAccount.deleteMany({});
+    await tx.discountTarget.deleteMany({});
+    await tx.discount.deleteMany({});
+    await tx.comboItem.deleteMany({});
+    await tx.modifier.deleteMany({});
+    await tx.modifierGroup.deleteMany({});
+    await tx.product.deleteMany({});
+    await tx.user.deleteMany({});
+    await tx.employee.deleteMany({});
+    await tx.masterData.deleteMany({
+      where: {
+        NOT: {
+          category: 'SYSTEM_CONFIG',
+          normalizedName: { in: ['store_settings', 'store_logo', 'store_favicon', 'store_qr_logo'] },
+        },
+      },
+    });
+  }, { maxWait: 15000, timeout: 120000 });
   await seedDatabase(prisma);
 }
 
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
+  const isResetAll = process.argv.includes('--reset-all');
   try {
-    await resetAndSeedMenu(prisma);
-    console.info('Database menu reset & seed completed.');
+    if (isResetAll) {
+      await resetAllOperationalAndSeed(prisma);
+      console.info('Full database operational reset & seed completed.');
+    } else {
+      await resetAndSeedMenu(prisma);
+      console.info('Database menu reset & seed completed.');
+    }
   } finally {
     await prisma.$disconnect();
   }

@@ -7,6 +7,7 @@ import {
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import {
   Dialog,
   DialogContent,
@@ -15,8 +16,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { useAppMessages } from '@/hooks/use-app-messages';
 import { cn } from '@/utils/cn';
+import { formatVnd } from '@/utils/currency';
 
 export interface CheckoutConfirmDialogProps {
   open: boolean;
@@ -33,6 +35,7 @@ export function CheckoutConfirmDialog({
   isSubmitting,
   onConfirmCheckout,
 }: CheckoutConfirmDialogProps) {
+  const { resolveMessage } = useAppMessages();
   const [paymentMethod, setPaymentMethod] = React.useState<PaymentMethodValue>(
     PaymentMethod.CASH,
   );
@@ -96,19 +99,38 @@ export function CheckoutConfirmDialog({
     onConfirmCheckout(payload);
   };
 
+  const confirmCopy = resolveMessage('pos.confirm.checkout', {
+    tableLabel: order.tableLabel,
+    orderCode: order.orderCode,
+    totalAmount: totalAmount.toLocaleString('vi-VN'),
+  });
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="checkout-confirm-dialog">
         <DialogHeader>
-          <DialogTitle>
-            Xác nhận Thanh toán (Đóng đơn) — {order.tableLabel} ({order.orderCode})
-          </DialogTitle>
+          <DialogTitle>{confirmCopy.title}</DialogTitle>
           <DialogDescription>
-            Tổng thanh toán:{' '}
-            <strong className="text-base text-rose-600">
-              {totalAmount.toLocaleString('vi-VN')} đ
-            </strong>
-            . Sau khi xác nhận, đơn chuyển sang Đã thanh toán và giải phóng bàn về trống.
+            {confirmCopy.isOverridden && confirmCopy.description ? (
+              confirmCopy.description
+            ) : (
+              <>
+                {(order.discountAmount ?? 0) > 0 ? (
+                  <span className="block text-xs text-muted-foreground mb-1">
+                    Tiền hàng:{' '}
+                    {(order.subtotalAmount ?? totalAmount + (order.discountAmount ?? 0)).toLocaleString(
+                      'vi-VN',
+                    )}{' '}
+                    đ • Giảm giá: -{(order.discountAmount ?? 0).toLocaleString('vi-VN')} đ
+                  </span>
+                ) : null}
+                Tổng thanh toán:{' '}
+                <strong className="text-base text-price">
+                  {totalAmount.toLocaleString('vi-VN')} đ
+                </strong>
+                . Sau khi xác nhận, đơn chuyển sang Đã thanh toán và giải phóng bàn về trống.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -144,26 +166,26 @@ export function CheckoutConfirmDialog({
                 <label htmlFor="split-cash-amount" className="text-xs font-semibold">
                   Tiền mặt thu vào két (CASH)
                 </label>
-                <Input
+                <CurrencyInput
                   id="split-cash-amount"
-                  type="number"
                   data-testid="split-cash-input"
-                  placeholder="Nhập số tiền mặt..."
+                  placeholder="VD: 100.000"
+                  suffix="đ"
                   value={cashInput}
-                  onChange={(e) => setCashInput(e.target.value)}
+                  onValueChange={(rawDigits) => setCashInput(rawDigits)}
                 />
               </div>
               <div className="space-y-1">
                 <label htmlFor="split-transfer-amount" className="text-xs font-semibold">
                   Tiền chuyển khoản ngân hàng (TRANSFER)
                 </label>
-                <Input
+                <CurrencyInput
                   id="split-transfer-amount"
-                  type="number"
                   data-testid="split-transfer-input"
-                  placeholder="Nhập số tiền chuyển khoản..."
+                  placeholder="VD: 100.000"
+                  suffix="đ"
                   value={transferInput}
-                  onChange={(e) => setTransferInput(e.target.value)}
+                  onValueChange={(rawDigits) => setTransferInput(rawDigits)}
                 />
               </div>
               <p
@@ -175,9 +197,9 @@ export function CheckoutConfirmDialog({
               >
                 {isSplitValid
                   ? '✓ Tổng tiền mặt + chuyển khoản khớp hoàn toàn với hoá đơn.'
-                  : `Cần khớp đúng ${totalAmount.toLocaleString('vi-VN')} đ (Hiện tại: ${(
-                      parsedCash + parsedTransfer
-                    ).toLocaleString('vi-VN')} đ)`}
+                  : `Cần khớp đúng ${formatVnd(totalAmount)} (Hiện tại: ${formatVnd(
+                      parsedCash + parsedTransfer,
+                    )})`}
               </p>
             </div>
           ) : null}

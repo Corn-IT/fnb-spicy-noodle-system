@@ -1,21 +1,35 @@
 import { type OrderDetailResponse } from '@fnb/shared';
 import {
+  AlertTriangle,
   ArrowLeftRight,
   CheckCircle,
   CreditCard,
+  Layers,
   Loader2,
+  Maximize2,
   Minus,
   Plus,
   Printer,
   QrCode,
   ShoppingBag,
+  Split,
+  Tag,
   Trash2,
+  X,
 } from 'lucide-react';
 import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { type OrderPendingAlertState } from '@/lib/qr-pending-reminder';
 import { cn } from '@/utils/cn';
 import { type PosMenuSelectedItem } from './pos-menu-panel';
 
@@ -33,12 +47,19 @@ export interface LiveInvoicePanelProps {
   order: OrderDetailResponse | null;
   draftTarget: LiveInvoiceDraftTarget | null;
   draftItems: PosMenuSelectedItem[];
+  canCreate?: boolean;
+  canUpdate?: boolean;
+  canSplitKitchen?: boolean;
+  canTableAction?: boolean;
+  canCheckout?: boolean;
   isSplitPending: boolean;
   isProvisionalPending: boolean;
   isApprovingQr: boolean;
   isSubmittingDraft: boolean;
   isCancellingOrder?: boolean;
+  isDiscountPending?: boolean;
   isReprintPending?: boolean;
+  pendingAlert?: OrderPendingAlertState | null;
   onUpdateDraftQty: (index: number, delta: number) => void;
   onRemoveDraftItem: (index: number) => void;
   onSubmitDraftOrder: () => void;
@@ -49,20 +70,31 @@ export interface LiveInvoicePanelProps {
   onSplitKitchen: () => void;
   onReprintKitchen?: (batchNo?: number) => void;
   onPrintProvisionalBill: () => void;
+  onOpenSplitProvisionalBill?: () => void;
   onOpenCheckout: () => void;
+  onOpenSplitCheckout?: () => void;
   onCancelOrder?: (reason?: string) => void;
+  onOpenDiscount?: () => void;
+  onRemoveDiscount?: () => void;
 }
 
 export function LiveInvoicePanel({
   order,
   draftTarget,
   draftItems,
+  canCreate = true,
+  canUpdate = true,
+  canSplitKitchen = true,
+  canTableAction = true,
+  canCheckout = true,
   isSplitPending,
   isProvisionalPending,
   isApprovingQr,
   isSubmittingDraft,
   isCancellingOrder = false,
+  isDiscountPending = false,
   isReprintPending = false,
+  pendingAlert = null,
   onUpdateDraftQty,
   onRemoveDraftItem,
   onSubmitDraftOrder,
@@ -73,11 +105,20 @@ export function LiveInvoicePanel({
   onSplitKitchen,
   onReprintKitchen,
   onPrintProvisionalBill,
+  onOpenSplitProvisionalBill,
   onOpenCheckout,
+  onOpenSplitCheckout,
   onCancelOrder,
+  onOpenDiscount,
+  onRemoveDiscount,
 }: LiveInvoicePanelProps) {
   const [confirmDeleteItemId, setConfirmDeleteItemId] = React.useState<number | null>(null);
   const [confirmDeleteDraftIndex, setConfirmDeleteDraftIndex] = React.useState<number | null>(null);
+  const [provisionalMenuOpen, setProvisionalMenuOpen] = React.useState(false);
+  const [checkoutMenuOpen, setCheckoutMenuOpen] = React.useState(false);
+  const [zoomOpen, setZoomOpen] = React.useState(false);
+  const canPerformAnyAction =
+    canCreate || canUpdate || canSplitKitchen || canTableAction || canCheckout;
 
   if (!order && draftTarget) {
     const draftTotal = draftItems.reduce(
@@ -124,72 +165,79 @@ export function LiveInvoicePanel({
                         {item.modifierLabels.join(', ')}
                       </p>
                     ) : null}
-                    <p className="text-xs font-bold text-rose-600 dark:text-rose-400">
+                    <p className="text-xs font-bold text-price">
                       {(item.unitPrice * item.quantity).toLocaleString('vi-VN')} đ
                     </p>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="outline"
-                      className="h-7 w-7"
-                      onClick={() => onUpdateDraftQty(idx, -1)}
-                    >
-                      <Minus className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="w-6 text-center text-xs font-bold">{item.quantity}</span>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="outline"
-                      className="h-7 w-7"
-                      onClick={() => onUpdateDraftQty(idx, 1)}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </Button>
-                    <Popover
-                      open={confirmDeleteDraftIndex === idx}
-                      onOpenChange={(open) => setConfirmDeleteDraftIndex(open ? idx : null)}
-                    >
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent side="bottom" align="end" sideOffset={4} className="w-48 p-2.5 shadow-lg border bg-popover text-popover-foreground">
-                        <p className="text-xs font-semibold mb-2">Bỏ món khỏi giỏ?</p>
-                        <div className="flex items-center justify-end gap-1.5">
+                  {canCreate ? (
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="outline"
+                        aria-label={`Giảm số lượng ${item.name}`}
+                        className="h-7 w-7"
+                        onClick={() => onUpdateDraftQty(idx, -1)}
+                      >
+                        <Minus className="h-3.5 w-3.5" />
+                      </Button>
+                      <span className="w-6 text-center text-xs font-bold">{item.quantity}</span>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="outline"
+                        aria-label={`Tăng số lượng ${item.name}`}
+                        className="h-7 w-7"
+                        onClick={() => onUpdateDraftQty(idx, 1)}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </Button>
+                      <Popover
+                        open={confirmDeleteDraftIndex === idx}
+                        onOpenChange={(open) => setConfirmDeleteDraftIndex(open ? idx : null)}
+                      >
+                        <PopoverTrigger asChild>
                           <Button
                             type="button"
-                            size="sm"
+                            size="icon"
                             variant="ghost"
-                            className="h-6 px-2 text-xs"
-                            onClick={() => setConfirmDeleteDraftIndex(null)}
+                            aria-label={`Xoá ${item.name} khỏi giỏ`}
+                            className="h-7 w-7 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
                           >
-                            Huỷ
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="destructive"
-                            className="h-6 px-2.5 text-xs font-bold"
-                            onClick={() => {
-                              setConfirmDeleteDraftIndex(null);
-                              onRemoveDraftItem(idx);
-                            }}
-                          >
-                            Xoá
-                          </Button>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  </div>
+                        </PopoverTrigger>
+                        <PopoverContent side="bottom" align="end" sideOffset={4} className="w-48 p-2.5 shadow-lg border bg-popover text-popover-foreground">
+                          <p className="text-xs font-semibold mb-2">Bỏ món khỏi giỏ?</p>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 px-2 text-xs"
+                              onClick={() => setConfirmDeleteDraftIndex(null)}
+                            >
+                              Huỷ
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="destructive"
+                              className="h-6 px-2.5 text-xs font-bold"
+                              onClick={() => {
+                                setConfirmDeleteDraftIndex(null);
+                                onRemoveDraftItem(idx);
+                              }}
+                            >
+                              Xoá
+                            </Button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  ) : (
+                    <span className="text-xs font-bold tabular-nums">x{item.quantity}</span>
+                  )}
                 </div>
               ))
             )}
@@ -199,19 +247,21 @@ export function LiveInvoicePanel({
         <div className="border-t pt-3">
           <div className="mb-3 flex items-center justify-between">
             <span className="text-sm font-medium text-muted-foreground">Tổng cộng tạm tính</span>
-            <span className="text-lg font-bold text-rose-600 dark:text-rose-400">
+            <span className="text-lg font-bold text-price">
               {draftTotal.toLocaleString('vi-VN')} đ
             </span>
           </div>
-          <Button
-            type="button"
-            data-testid="pos-submit-new-order-btn"
-            disabled={draftItems.length === 0 || isSubmittingDraft}
-            onClick={onSubmitDraftOrder}
-            className="w-full h-10 bg-rose-600 font-bold text-white hover:bg-rose-700 active:scale-[0.99] touch-manipulation shadow-sm"
-          >
-            {isSubmittingDraft ? 'Đang tạo đơn...' : 'Xác nhận Tạo Đơn'}
-          </Button>
+          {canCreate ? (
+            <Button
+              type="button"
+              data-testid="pos-submit-new-order-btn"
+              disabled={draftItems.length === 0 || isSubmittingDraft}
+              onClick={onSubmitDraftOrder}
+              className="w-full h-10 bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.99] touch-manipulation shadow-sm"
+            >
+              {isSubmittingDraft ? 'Đang tạo đơn...' : 'Xác nhận Tạo Đơn'}
+            </Button>
+          ) : null}
         </div>
       </div>
     );
@@ -222,17 +272,20 @@ export function LiveInvoicePanel({
       <div className="flex h-full flex-col items-center justify-center bg-card p-6 text-center">
         <p className="text-sm font-semibold text-foreground">Chưa chọn bàn hoặc đơn hàng</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Click vào một bàn trên sơ đồ hoặc bấm [TẠO ĐƠN MANG VỀ] để bắt đầu.
+          {canCreate
+            ? 'Click vào một bàn trên sơ đồ hoặc bấm [TẠO ĐƠN MANG VỀ] để bắt đầu.'
+            : 'Click vào một bàn đang phục vụ trên sơ đồ để xem chi tiết.'}
         </p>
       </div>
     );
   }
 
+  const isOrderActive = order.status === 'PENDING' || order.status === 'SERVING';
   const activeItems = order.items.filter((item) => item.kitchenStatus !== 'CANCELLED');
   const isAllCancelled = order.items.length > 0 && activeItems.length === 0;
   const hasNewItems = order.items.some((item) => item.kitchenStatus === 'NEW');
   const hasPrintedItems = order.items.some((item) => item.kitchenStatus === 'PRINTED');
-  const isSplitDisabled = isSplitPending || !hasNewItems;
+  const isSplitDisabled = isSplitPending || !hasNewItems || !isOrderActive;
 
   // Group items by batchNo
   const batchesMap = new Map<number, OrderDetailResponse['items']>();
@@ -251,7 +304,7 @@ export function LiveInvoicePanel({
 
   const resolvedStatusLabel =
     order.status === 'PENDING'
-      ? 'Chờ duyệt QR'
+      ? 'Mới gọi món'
       : order.status === 'SERVING'
         ? 'Đang phục vụ'
         : order.status === 'PAID'
@@ -270,8 +323,8 @@ export function LiveInvoicePanel({
         : order.orderSource;
 
   return (
-    <div className="flex h-full flex-col justify-between bg-card p-3 sm:p-4">
-      <div className="flex items-start justify-between border-b pb-2.5 sm:pb-3">
+    <div className="flex h-full flex-col justify-between bg-card px-3 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-2.5">
+      <div className="flex items-start justify-between border-b pb-2">
         <div className="min-w-0 flex-1 pr-2">
           <div className="flex items-center gap-2">
             <h2 data-testid="invoice-header-label" className="text-base sm:text-lg font-bold truncate">
@@ -291,28 +344,70 @@ export function LiveInvoicePanel({
               {resolvedStatusLabel}
             </Badge>
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
-            Mã HĐ: <span className="font-mono font-semibold">{order.orderCode}</span> • Nguồn:{' '}
-            <span className="whitespace-nowrap">{resolvedOrderSourceLabel}</span>
-          </p>
+          <div className="mt-0.5 space-y-0.5 text-xs text-muted-foreground leading-relaxed">
+            <div>
+              Mã HĐ: <span className="font-mono font-semibold">{order.orderCode}</span>
+            </div>
+            <div>
+              Nguồn: <span className="whitespace-nowrap">{resolvedOrderSourceLabel}</span>
+            </div>
+          </div>
         </div>
 
-        {order.status === 'PENDING' && order.orderSource === 'QR_CODE' ? (
+        <div className="flex items-center gap-1.5 shrink-0">
+          {canUpdate && order.status === 'PENDING' && order.orderSource === 'QR_CODE' ? (
+            <Button
+              type="button"
+              size="sm"
+              data-testid="approve-qr-order-btn"
+              disabled={isApprovingQr}
+              onClick={onApproveQrOrder}
+              className="bg-amber-500 font-bold text-white hover:bg-amber-600"
+            >
+              <CheckCircle className="h-4 w-4 shrink-0" />
+              <span>Duyệt đơn QR</span>
+            </Button>
+          ) : null}
           <Button
             type="button"
-            size="sm"
-            data-testid="approve-qr-order-btn"
-            disabled={isApprovingQr}
-            onClick={onApproveQrOrder}
-            className="bg-amber-500 font-bold text-white hover:bg-amber-600"
+            variant="ghost"
+            size="icon"
+            data-testid="zoom-invoice-btn"
+            title="Phóng to danh sách món"
+            aria-label="Phóng to danh sách món"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            onClick={() => setZoomOpen(true)}
           >
-            <CheckCircle className="h-4 w-4 shrink-0" />
-            <span>Duyệt đơn QR</span>
+            <Maximize2 className="h-4 w-4" />
           </Button>
-        ) : null}
+        </div>
       </div>
 
-      <div className="my-3 flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain touch-pan-y pr-1">
+      {pendingAlert?.isOverdue ? (
+        <div
+          data-testid="invoice-overdue-qr-alert"
+          role="alert"
+          className="mt-2 flex items-start gap-2 rounded-lg border border-red-600 bg-red-600/15 px-2.5 py-2 text-xs font-bold text-red-900 dark:border-red-500 dark:bg-red-950/60 dark:text-red-100"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400 mt-0.5 animate-pulse" />
+          <div className="leading-snug">
+            <span>
+              {pendingAlert.kind === 'ADDON'
+                ? `Món gọi thêm QR đã chờ ${pendingAlert.elapsedMinutes} phút chưa tách bếp.`
+                : `Đơn QR mới đã chờ ${pendingAlert.elapsedMinutes} phút chưa duyệt.`}
+            </span>
+            {pendingAlert.remainingBeforeCancelMinutes !== null ? (
+              <span className="block text-[11px] font-semibold opacity-90">
+                {pendingAlert.remainingBeforeCancelMinutes > 0
+                  ? `Tự động huỷ sau khoảng ${pendingAlert.remainingBeforeCancelMinutes} phút nữa nếu chưa xác nhận.`
+                  : 'Đang chờ hệ thống tự động huỷ đơn/món quá hạn...'}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="my-2 flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain touch-pan-y pr-1">
         {order.items.length === 0 ? (
           <div className="flex h-36 flex-col items-center justify-center rounded-xl border border-dashed text-center text-muted-foreground p-4">
             <ShoppingBag className="h-8 w-8 mb-2 opacity-40 text-muted-foreground" />
@@ -326,7 +421,7 @@ export function LiveInvoicePanel({
             <div key={batchNo} className="space-y-2">
               <div className="flex items-center justify-between rounded bg-muted px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
                 <span>{batchNo === 1 ? 'Lượt 1' : `GỌI THÊM - LƯỢT ${batchNo}`}</span>
-                {hasPrintedInBatch ? (
+                {canSplitKitchen && hasPrintedInBatch ? (
                   <Button
                     type="button"
                     size="sm"
@@ -360,13 +455,13 @@ export function LiveInvoicePanel({
                   >
                     <div className="min-w-0 flex-1 pr-2 space-y-0.5">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="font-semibold">
+                        <span className="font-semibold leading-snug">
                           {item.quantity}x {item.name}
                         </span>
                         <Badge
                           variant="outline"
                           className={cn(
-                            'text-[10px] px-2 py-0.5 font-bold',
+                            'text-[10px] px-1.5 py-0.5 font-bold shrink-0',
                             isNew &&
                               'border-amber-500/80 bg-amber-50 text-amber-800 dark:border-amber-400/70 dark:bg-amber-950/60 dark:text-amber-200',
                             isPrinted &&
@@ -388,12 +483,12 @@ export function LiveInvoicePanel({
                           Ghi chú: {item.itemNote}
                         </p>
                       ) : null}
-                      <p className="text-xs font-bold text-rose-600 dark:text-rose-400 tabular-nums">
+                      <p className="text-xs font-bold text-price tabular-nums">
                         {item.lineTotal.toLocaleString('vi-VN')} đ
                       </p>
                     </div>
 
-                    {!isCancelled ? (
+                    {!isCancelled && canUpdate && isOrderActive ? (
                       <div className="flex shrink-0 items-center gap-1.5">
                         {isNew ? (
                           <>
@@ -401,7 +496,8 @@ export function LiveInvoicePanel({
                               type="button"
                               size="icon"
                               variant="outline"
-                              className="h-7 w-7"
+                              aria-label={`Giảm số lượng ${item.name}`}
+                              className="h-8 w-8"
                               disabled={item.quantity <= 1}
                               onClick={() =>
                                 onUpdateOrderItemQuantity(item.id, item.quantity - 1)
@@ -413,7 +509,8 @@ export function LiveInvoicePanel({
                               type="button"
                               size="icon"
                               variant="outline"
-                              className="h-7 w-7"
+                              aria-label={`Tăng số lượng ${item.name}`}
+                              className="h-8 w-8"
                               onClick={() =>
                                 onUpdateOrderItemQuantity(item.id, item.quantity + 1)
                               }
@@ -431,6 +528,7 @@ export function LiveInvoicePanel({
                                   type="button"
                                   size="sm"
                                   variant="ghost"
+                                  aria-label={`Xoá món ${item.name}`}
                                   data-testid={`delete-new-item-${item.id}`}
                                   className="text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/50"
                                 >
@@ -479,7 +577,7 @@ export function LiveInvoicePanel({
                             variant="outline"
                             data-testid={`cancel-printed-item-${item.id}`}
                             onClick={() => onRemoveOrCancelOrderItem(item.id)}
-                            className="border-rose-500 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-400/70 dark:text-rose-300 dark:hover:bg-rose-950/50"
+                            className="h-8 px-2.5 border-rose-500 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-400/70 dark:text-rose-300 dark:hover:bg-rose-950/50 whitespace-nowrap"
                           >
                             Huỷ món bếp
                           </Button>
@@ -497,11 +595,86 @@ export function LiveInvoicePanel({
       </div>
 
       <div className="border-t pt-2.5 sm:pt-3">
+        {(() => {
+          const hasDiscount =
+            Boolean(order.discountSnapshot) || (order.discountAmount ?? 0) > 0;
+          const discountAmount = order.discountAmount ?? 0;
+          const subtotalAmount = order.subtotalAmount ?? order.totalAmount + discountAmount;
+          const discountLabel =
+            order.discountSnapshot?.kind === 'CODE'
+              ? (order.discountSnapshot.code ?? order.discountSnapshot.name)
+              : (order.discountSnapshot?.name ?? 'Giảm tay');
+
+          return (
+            <>
+              {canCheckout && order.status === 'SERVING' && order.items.length > 0 && onOpenDiscount ? (
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    data-testid="btn-open-discount"
+                    disabled={isDiscountPending}
+                    onClick={onOpenDiscount}
+                    className="h-7 gap-1.5 px-2.5 text-xs font-semibold"
+                  >
+                    <Tag className="h-3.5 w-3.5 text-accent-text" />
+                    <span>{hasDiscount ? `Đổi ưu đãi (${discountLabel})` : 'Áp dụng giảm giá'}</span>
+                  </Button>
+
+                  {hasDiscount && onRemoveDiscount ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      data-testid="btn-remove-discount"
+                      disabled={isDiscountPending}
+                      onClick={onRemoveDiscount}
+                      className="h-7 gap-1 px-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/30"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      <span>Gỡ</span>
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {hasDiscount ? (
+                <div className="mb-1.5 space-y-1 text-xs">
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Tạm tính</span>
+                    <span data-testid="invoice-subtotal-amount" className="font-semibold tabular-nums">
+                      {subtotalAmount.toLocaleString('vi-VN')} đ
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400">
+                    <span className="truncate pr-2">Giảm giá ({discountLabel})</span>
+                    <span data-testid="invoice-discount-amount" className="font-bold tabular-nums">
+                      -{discountAmount.toLocaleString('vi-VN')} đ
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
+              {order.discountWarning ? (
+                <div
+                  data-testid="invoice-discount-warning"
+                  className="mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-medium text-amber-800 dark:text-amber-300"
+                >
+                  {order.discountWarning === 'MIN_ORDER_NOT_MET'
+                    ? 'Chưa đạt đơn tối thiểu nên mức giảm hiện tại tạm về 0 đ.'
+                    : 'Không có món thuộc phạm vi ưu đãi nên mức giảm tạm về 0 đ.'}
+                </div>
+              ) : null}
+            </>
+          );
+        })()}
+
         <div className="mb-2.5 sm:mb-3 flex items-center justify-between">
           <span className="text-xs sm:text-sm font-semibold text-muted-foreground">Tổng thanh toán</span>
           <span
             data-testid="invoice-total-amount"
-            className="text-lg sm:text-xl font-extrabold text-rose-600 dark:text-rose-400 tabular-nums"
+            className="text-lg sm:text-xl font-extrabold text-price tabular-nums"
           >
             {order.totalAmount.toLocaleString('vi-VN')} đ
           </span>
@@ -514,26 +687,28 @@ export function LiveInvoicePanel({
                 ? 'Đơn mang về chưa có món nào. Bạn có thể huỷ đơn nếu không tiếp tục.'
                 : 'Đơn chưa có món nào. Bạn có thể huỷ đơn để giải phóng bàn.'}
             </div>
-            <Button
-              type="button"
-              data-testid="btn-void-empty-order"
-              disabled={isCancellingOrder}
-              onClick={() =>
-                onCancelOrder?.(
-                  order.orderType === 'TAKEAWAY'
-                    ? 'Thu ngân huỷ đơn mang về rỗng'
-                    : 'Thu ngân huỷ đơn bàn rỗng',
-                )
-              }
-              className="w-full h-10 px-3 text-xs xl:text-sm bg-rose-600 font-bold text-white hover:bg-rose-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
-            >
-              {isCancellingOrder ? (
-                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-              ) : (
-                <Trash2 className="h-4 w-4 shrink-0" />
-              )}
-              <span>{order.orderType === 'TAKEAWAY' ? 'Huỷ đơn mang về' : 'Huỷ đơn & Giải phóng bàn'}</span>
-            </Button>
+            {canUpdate && isOrderActive ? (
+              <Button
+                type="button"
+                data-testid="btn-void-empty-order"
+                disabled={isCancellingOrder}
+                onClick={() =>
+                  onCancelOrder?.(
+                    order.orderType === 'TAKEAWAY'
+                      ? 'Thu ngân huỷ đơn mang về rỗng'
+                      : 'Thu ngân huỷ đơn bàn rỗng',
+                  )
+                }
+                className="w-full h-10 px-3 text-xs xl:text-sm bg-rose-600 font-bold text-white hover:bg-rose-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
+              >
+                {isCancellingOrder ? (
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                ) : (
+                  <Trash2 className="h-4 w-4 shrink-0" />
+                )}
+                <span>{order.orderType === 'TAKEAWAY' ? 'Huỷ đơn mang về' : 'Huỷ đơn & Giải phóng bàn'}</span>
+              </Button>
+            ) : null}
           </div>
         ) : isAllCancelled ? (
           <div className="space-y-2">
@@ -542,102 +717,289 @@ export function LiveInvoicePanel({
                 ? 'Tất cả món đã bị huỷ. Hãy huỷ đơn mang về.'
                 : 'Tất cả món đã bị huỷ. Hãy huỷ đơn để giải phóng bàn.'}
             </div>
-            <Button
-              type="button"
-              data-testid="btn-void-order"
-              disabled={isCancellingOrder}
-              onClick={() => onCancelOrder?.()}
-              className="w-full h-10 px-3 text-xs xl:text-sm bg-rose-600 font-bold text-white hover:bg-rose-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
-            >
-              {isCancellingOrder ? (
-                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-              ) : (
-                <Trash2 className="h-4 w-4 shrink-0" />
-              )}
-              <span>{order.orderType === 'TAKEAWAY' ? 'Huỷ đơn mang về' : 'Huỷ đơn & Giải phóng bàn'}</span>
-            </Button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              data-testid="btn-table-action"
-              onClick={onOpenTableAction}
-              className="h-10 px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
-            >
-              <ArrowLeftRight className="h-4 w-4 shrink-0" />
-              <span>Đổi / Gộp bàn</span>
-            </Button>
-
-            {hasNewItems ? (
+            {canUpdate && isOrderActive ? (
               <Button
                 type="button"
-                data-testid="btn-split-kitchen"
-                disabled={isSplitDisabled}
-                onClick={onSplitKitchen}
-                className="h-10 px-3 text-xs xl:text-sm bg-amber-600 font-bold text-white hover:bg-amber-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
+                data-testid="btn-void-order"
+                disabled={isCancellingOrder}
+                onClick={() => onCancelOrder?.()}
+                className="w-full h-10 px-3 text-xs xl:text-sm bg-rose-600 font-bold text-white hover:bg-rose-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
               >
-                {isSplitPending ? (
+                {isCancellingOrder ? (
                   <Loader2 className="h-4 w-4 animate-spin shrink-0" />
                 ) : (
-                  <Printer className="h-4 w-4 shrink-0" />
+                  <Trash2 className="h-4 w-4 shrink-0" />
                 )}
-                <span>Tách đơn</span>
+                <span>{order.orderType === 'TAKEAWAY' ? 'Huỷ đơn mang về' : 'Huỷ đơn & Giải phóng bàn'}</span>
               </Button>
-            ) : hasPrintedItems ? (
+            ) : null}
+          </div>
+        ) : !canPerformAnyAction ? null : (
+          <div className="space-y-2">
+            <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-2">
+              {canTableAction ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-testid="btn-table-action"
+                  disabled={!isOrderActive}
+                  onClick={onOpenTableAction}
+                  className="h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
+                >
+                  <ArrowLeftRight className="h-4 w-4 shrink-0" />
+                  <span className="truncate">Đổi / Gộp bàn</span>
+                </Button>
+              ) : null}
+
+              {canSplitKitchen ? (
+                <Button
+                  type="button"
+                  data-testid="btn-split-kitchen"
+                  disabled={isSplitDisabled}
+                  onClick={onSplitKitchen}
+                  className="h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm bg-amber-600 font-bold text-white hover:bg-amber-700 disabled:bg-muted disabled:text-muted-foreground disabled:border disabled:border-border disabled:opacity-100 disabled:shadow-none touch-manipulation active:scale-[0.98] shadow-xs"
+                >
+                  {isSplitPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                  ) : (
+                    <Printer className="h-4 w-4 shrink-0" />
+                  )}
+                  <span className="truncate">Tách bếp</span>
+                </Button>
+              ) : null}
+
+              {/* In tạm tính (QR): Bấm hiển thị lựa chọn Tất cả / Tách đơn */}
+              <Popover open={provisionalMenuOpen} onOpenChange={setProvisionalMenuOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    data-testid="btn-provisional-bill"
+                    disabled={isProvisionalPending || order.status !== 'SERVING'}
+                    className="h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
+                  >
+                    <QrCode className="h-4 w-4 shrink-0" />
+                    <span className="truncate">In tạm tính (QR)</span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  sideOffset={6}
+                  className="w-52 p-2 space-y-1.5 shadow-xl border bg-popover text-popover-foreground"
+                >
+                  <p className="px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Chọn chế độ In tạm tính
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    data-testid="provisional-option-all"
+                    onClick={() => {
+                      setProvisionalMenuOpen(false);
+                      onPrintProvisionalBill();
+                    }}
+                    className="w-full justify-start gap-2 font-bold text-xs"
+                  >
+                    <Layers className="h-3.5 w-3.5 shrink-0" />
+                    <span>Tất cả ({order.totalAmount.toLocaleString('vi-VN')} đ)</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    data-testid="provisional-option-split"
+                    disabled={Boolean(order.discountSnapshot) || (order.discountAmount ?? 0) > 0}
+                    title={
+                      Boolean(order.discountSnapshot) || (order.discountAmount ?? 0) > 0
+                        ? 'Không thể tách món khi đơn đang áp dụng giảm giá'
+                        : undefined
+                    }
+                    onClick={() => {
+                      setProvisionalMenuOpen(false);
+                      onOpenSplitProvisionalBill?.();
+                    }}
+                    className="w-full justify-start gap-2 font-semibold text-xs"
+                  >
+                    <Split className="h-3.5 w-3.5 shrink-0 text-accent-text" />
+                    <span>Tách đơn (Chọn từng món)</span>
+                  </Button>
+                </PopoverContent>
+              </Popover>
+
+              {/* Thanh toán: Bấm hiển thị lựa chọn Tất cả / Tách đơn */}
+              {canCheckout ? (
+                <Popover open={checkoutMenuOpen} onOpenChange={setCheckoutMenuOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      data-testid="btn-checkout"
+                      disabled={order.status !== 'SERVING'}
+                      className="h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm bg-emerald-600 font-bold text-white hover:bg-emerald-700 disabled:bg-muted disabled:text-muted-foreground disabled:border disabled:border-border disabled:opacity-100 disabled:shadow-none touch-manipulation active:scale-[0.98] shadow-xs"
+                    >
+                      <CreditCard className="h-4 w-4 shrink-0" />
+                      <span className="truncate">Thanh toán</span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    side="top"
+                    align="end"
+                    sideOffset={6}
+                    className="w-52 p-2 space-y-1.5 shadow-xl border bg-popover text-popover-foreground"
+                  >
+                    <p className="px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Chọn chế độ Thanh toán
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      data-testid="checkout-option-all"
+                      onClick={() => {
+                        setCheckoutMenuOpen(false);
+                        onOpenCheckout();
+                      }}
+                      className="w-full justify-start gap-2 bg-emerald-600 text-white hover:bg-emerald-700 font-bold text-xs"
+                    >
+                      <Layers className="h-3.5 w-3.5 shrink-0" />
+                      <span>Tất cả ({order.totalAmount.toLocaleString('vi-VN')} đ)</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      data-testid="checkout-option-split"
+                      disabled={Boolean(order.discountSnapshot) || (order.discountAmount ?? 0) > 0}
+                      title={
+                        Boolean(order.discountSnapshot) || (order.discountAmount ?? 0) > 0
+                          ? 'Không thể tách món khi đơn đang áp dụng giảm giá'
+                          : undefined
+                      }
+                      onClick={() => {
+                        setCheckoutMenuOpen(false);
+                        onOpenSplitCheckout?.();
+                      }}
+                      className="w-full justify-start gap-2 font-semibold text-xs"
+                    >
+                      <Split className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                      <span>Tách đơn (Chọn từng món)</span>
+                    </Button>
+                  </PopoverContent>
+                </Popover>
+              ) : null}
+            </div>
+
+            {canSplitKitchen && hasPrintedItems ? (
               <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 data-testid="btn-reprint-kitchen"
                 disabled={isReprintPending}
                 onClick={() => onReprintKitchen?.()}
-                className="h-10 px-3 text-xs xl:text-sm bg-slate-700 font-bold text-white hover:bg-slate-800 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
-                title="In lại phiếu bếp của đơn"
+                className="w-full h-8 text-xs font-semibold gap-1.5"
+                title="In lại toàn bộ phiếu bếp của đơn"
               >
                 {isReprintPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
                 ) : (
-                  <Printer className="h-4 w-4 shrink-0" />
+                  <Printer className="h-3.5 w-3.5 shrink-0" />
                 )}
-                <span>In lại bếp</span>
+                <span>In lại toàn bộ phiếu bếp</span>
               </Button>
-            ) : (
-              <Button
-                type="button"
-                data-testid="btn-split-kitchen"
-                disabled={true}
-                className="h-10 px-3 text-xs xl:text-sm bg-amber-600 font-bold text-white disabled:opacity-50 touch-manipulation shadow-xs"
-              >
-                <Printer className="h-4 w-4 shrink-0" />
-                <span>Tách đơn</span>
-              </Button>
-            )}
-
-            <Button
-              type="button"
-              variant="secondary"
-              data-testid="btn-provisional-bill"
-              disabled={isProvisionalPending || order.status !== 'SERVING'}
-              onClick={onPrintProvisionalBill}
-              className="h-10 px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
-            >
-              <QrCode className="h-4 w-4 shrink-0" />
-              <span>In tạm tính (QR)</span>
-            </Button>
-
-            <Button
-              type="button"
-              data-testid="btn-checkout"
-              disabled={order.status !== 'SERVING'}
-              onClick={onOpenCheckout}
-              className="h-10 px-3 text-xs xl:text-sm bg-emerald-600 font-bold text-white hover:bg-emerald-700 disabled:opacity-50 touch-manipulation active:scale-[0.98] shadow-xs"
-            >
-              <CreditCard className="h-4 w-4 shrink-0" />
-              <span>Thanh toán</span>
-            </Button>
+            ) : null}
           </div>
         )}
       </div>
+
+      <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
+        <DialogContent
+          closeLabel="Đóng"
+          className="flex max-h-[90dvh] w-[calc(100vw-2rem)] sm:max-w-3xl lg:max-w-4xl flex-col p-0 gap-0 overflow-hidden"
+          data-testid="zoom-invoice-dialog"
+        >
+          <DialogHeader className="border-b px-5 py-3.5 pr-20">
+            <DialogTitle className="flex flex-wrap items-center gap-2 text-lg font-bold">
+              <span>{resolvedHeaderLabel}</span>
+              <Badge
+                className={cn(
+                  'shrink-0 font-bold px-2.5 py-0.5 text-xs',
+                  order.status === 'PENDING' && 'bg-amber-500 text-white',
+                  order.status === 'SERVING' && 'bg-rose-600 text-white',
+                  order.status === 'PAID' && 'bg-emerald-600 text-white',
+                  order.status === 'VOIDED' && 'bg-slate-600 text-white',
+                  order.status === 'MERGED' && 'bg-purple-600 text-white',
+                )}
+              >
+                {resolvedStatusLabel}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Mã HĐ: <span className="font-mono font-semibold text-foreground">{order.orderCode}</span> • Nguồn: {resolvedOrderSourceLabel} • Tổng số lượng: {activeItems.reduce((sum, item) => sum + item.quantity, 0)} món
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto px-5 py-3.5 space-y-4">
+            {sortedBatches.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                Đơn chưa có món nào.
+              </div>
+            ) : (
+              sortedBatches.map(([batchNo, batchItems]) => (
+                <div key={batchNo} className="space-y-2">
+                  <div className="rounded bg-muted px-3 py-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    {batchNo === 1 ? 'Lượt 1' : `GỌI THÊM - LƯỢT ${batchNo}`}
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {batchItems.map((item) => {
+                      const isCancelled = item.kitchenStatus === 'CANCELLED';
+                      const isPrinted = item.kitchenStatus === 'PRINTED';
+                      return (
+                        <div
+                          key={item.id}
+                          className={cn(
+                            'flex items-start justify-between gap-2 rounded-lg border p-3 text-sm',
+                            isCancelled && 'bg-muted/40 opacity-60 line-through',
+                          )}
+                        >
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-semibold">
+                                {item.quantity}x {item.name}
+                              </span>
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                {item.kitchenStatus === 'NEW' ? 'Mới gọi' : isPrinted ? 'Đã in bếp' : 'Đã huỷ'}
+                              </Badge>
+                            </div>
+                            {item.modifiers.length > 0 ? (
+                              <p className="text-xs text-muted-foreground">{item.modifiers.join(', ')}</p>
+                            ) : null}
+                            {item.itemNote ? (
+                              <p className="text-xs italic text-amber-600 dark:text-amber-300">
+                                Ghi chú: {item.itemNote}
+                              </p>
+                            ) : null}
+                          </div>
+                          <span className="shrink-0 font-bold text-price tabular-nums">
+                            {item.lineTotal.toLocaleString('vi-VN')} đ
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="flex items-center justify-between border-t bg-muted/20 px-5 py-3">
+            <span className="text-sm font-medium text-muted-foreground">Tổng thanh toán</span>
+            <span className="text-xl font-black text-price tabular-nums">
+              {order.totalAmount.toLocaleString('vi-VN')} đ
+            </span>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

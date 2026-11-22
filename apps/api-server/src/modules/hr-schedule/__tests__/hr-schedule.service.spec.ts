@@ -1,4 +1,4 @@
-import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ErrorCodes, MdmCategory } from '@fnb/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -384,7 +384,10 @@ describe('EmployeesService and SchedulesService', () => {
     await service.softDeleteEmployee(12);
 
     expect(harness.prisma.$transaction).toHaveBeenCalledOnce();
-    expect(harness.tx.employee.update).toHaveBeenCalledWith({ where: { id: 12 }, data: { isDeleted: true } });
+    expect(harness.tx.employee.update).toHaveBeenCalledWith({
+      where: { id: 12 },
+      data: { isDeleted: true, deletedAt: expect.any(Date) },
+    });
     expect(harness.tx.user.updateMany).toHaveBeenCalledWith({ where: { employeeId: 12 }, data: { isActive: false } });
   });
 
@@ -402,26 +405,82 @@ describe('EmployeesService and SchedulesService', () => {
     });
 
     expect(harness.prisma.$transaction).toHaveBeenCalledOnce();
-    expect(harness.tx.employee.update).toHaveBeenCalledWith({ where: { id: 12 }, data: { isDeleted: false } });
+    expect(harness.tx.employee.update).toHaveBeenCalledWith({
+      where: { id: 12 },
+      data: { isDeleted: false, deletedAt: null },
+    });
     expect(harness.tx.user.updateMany).toHaveBeenCalledWith({ where: { employeeId: 12 }, data: { isActive: true } });
   });
 
-  it('should paginate only active employees and include safe linked-account details', async () => {
+  it('should forbid deactivating, soft-deleting, or permanently deleting a Super Admin employee', async () => {
     const harness = createHarness();
-    harness.prisma.employee.findMany.mockResolvedValue([activeEmployee(12, {
-      user: { id: 4, username: 'anh', isActive: true },
-    })]);
-    harness.prisma.employee.count.mockResolvedValue(1);
+    harness.tx.employee.findUnique.mockResolvedValue({
+      id: 1,
+      fullName: 'Chủ Quán Sơn Bảo',
+      shortName: 'S.Bảo',
+      isDeleted: false,
+      deletedAt: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      user: { isSuperAdmin: true },
+    });
+    const service = new EmployeesService(harness.prisma as never, harness.mdm as unknown as MdmService);
+
+    await expect(service.setEmployeeActiveStatus(1, false)).rejects.toMatchObject({
+      status: 403,
+      response: { code: ErrorCodes.RBAC_SUPER_ADMIN_REQUIRED },
+    });
+    await expect(service.softDeleteEmployee(1)).rejects.toMatchObject({
+      status: 403,
+      response: { code: ErrorCodes.RBAC_SUPER_ADMIN_REQUIRED },
+    });
+    await expect(service.permanentDeleteEmployee(1)).rejects.toMatchObject({
+      status: 403,
+      response: { code: ErrorCodes.RBAC_SUPER_ADMIN_REQUIRED },
+    });
+    expect(harness.tx.employee.update).not.toHaveBeenCalled();
+    expect(harness.tx.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('should sort by hierarchy, paginate active employees, and include safe linked-account details', async () => {
+    const harness = createHarness();
+    const employeesPool = Array.from({ length: 11 }, (_, idx) =>
+      activeEmployee(idx + 1, {
+        fullName: `Nhân viên Anh ${idx + 1}`,
+        position: {
+          id: idx === 10 ? 8 : 2,
+          name: idx === 10 ? 'Nhân Viên Phục Vụ' : 'Quản Lý Cửa Hàng',
+          metadata: { sortOrder: idx === 10 ? 8 : 2 },
+        },
+        user: idx === 10 ? { id: 4, username: 'anh', isActive: true, isSuperAdmin: false } : null,
+      }),
+    );
+    harness.prisma.employee.findMany.mockResolvedValue(employeesPool);
     const service = new EmployeesService(harness.prisma as never, harness.mdm as unknown as MdmService);
 
     const result = await service.listEmployees({ page: 2, limit: 10, keyword: 'anh', includeDeleted: false });
 
     expect(harness.prisma.employee.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ isDeleted: false }),
-      skip: 10,
-      take: 10,
     }));
-    expect(result).toMatchObject({ page: 2, limit: 10, total: 1, items: [{ user: { username: 'anh', isActive: true } }] });
+    expect(result).toMatchObject({ page: 2, limit: 10, total: 11, items: [{ id: 11, user: { username: 'anh', isActive: true } }] });
+  });
+
+  it('should match Vietnamese employee names using non-diacritic keyword search', async () => {
+    const harness = createHarness();
+    const employeesPool = [
+      activeEmployee(1, { fullName: 'Nguyễn Văn Anh', shortName: 'V.Anh', phone: '0909888777' }),
+      activeEmployee(2, { fullName: 'Trần Thị Lan', shortName: 'T.Lan', phone: '0901000003', user: { id: 3, username: 'thungan', isActive: true, isSuperAdmin: false } }),
+    ];
+    harness.prisma.employee.findMany.mockResolvedValue(employeesPool);
+    const service = new EmployeesService(harness.prisma as never, harness.mdm as unknown as MdmService);
+
+    const byName = await service.listEmployees({ page: 1, limit: 20, keyword: 'van anh', includeDeleted: false });
+    const byPhone = await service.listEmployees({ page: 1, limit: 20, keyword: '090100', includeDeleted: false });
+    const byUser = await service.listEmployees({ page: 1, limit: 20, keyword: 'thungan', includeDeleted: false });
+
+    expect(byName.items.map((item) => item.id)).toEqual([1]);
+    expect(byPhone.items.map((item) => item.id)).toEqual([2]);
+    expect(byUser.items.map((item) => item.id)).toEqual([2]);
   });
 
   it('should support deleted employee, position and specialty filters without a keyword', async () => {
@@ -682,6 +741,57 @@ describe('EmployeesService and SchedulesService', () => {
     const service = new EmployeesService(harness.prisma as never, harness.mdm as unknown as MdmService);
 
     await expect(service.softDeleteEmployee(500)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('should enforce >= 30 days cooldown before allowing permanent employee deletion', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const harness = createHarness();
+    const txWithDelete = {
+      ...harness.tx,
+      employee: {
+        ...harness.tx.employee,
+        delete: vi.fn().mockResolvedValue({ id: 12 }),
+      },
+      user: {
+        ...harness.tx.user,
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    harness.prisma.$transaction.mockImplementation(async (callback: (client: typeof txWithDelete) => Promise<unknown>) =>
+      callback(txWithDelete),
+    );
+    const service = new EmployeesService(harness.prisma as never, harness.mdm as unknown as MdmService);
+
+    txWithDelete.employee.findUnique.mockResolvedValueOnce({
+      id: 12,
+      fullName: 'Nguyễn Văn Anh',
+      isDeleted: false,
+      deletedAt: null,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    });
+    await expect(service.permanentDeleteEmployee(12)).rejects.toBeInstanceOf(ConflictException);
+
+    txWithDelete.employee.findUnique.mockResolvedValueOnce({
+      id: 12,
+      fullName: 'Nguyễn Văn Anh',
+      isDeleted: true,
+      deletedAt: new Date('2026-11-01T00:00:00.000Z'),
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    });
+    await expect(service.permanentDeleteEmployee(12)).rejects.toBeInstanceOf(ConflictException);
+
+    txWithDelete.employee.findUnique.mockResolvedValueOnce({
+      id: 12,
+      fullName: 'Nguyễn Văn Anh',
+      isDeleted: true,
+      deletedAt: new Date('2026-10-10T00:00:00.000Z'),
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    });
+    await expect(service.permanentDeleteEmployee(12)).resolves.toEqual({ id: 12, deleted: true });
+    expect(txWithDelete.user.deleteMany).toHaveBeenCalledWith({ where: { employeeId: 12 } });
+    expect(txWithDelete.employee.delete).toHaveBeenCalledWith({ where: { id: 12 } });
+    vi.useRealTimers();
   });
 });
 

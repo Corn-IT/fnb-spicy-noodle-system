@@ -50,7 +50,7 @@ describe('loginWithCredentials', () => {
       user: { username: 'cashier01', fullName: 'Cashier One', avatarUrl: 'https://assets.example/avatar.png' },
     });
     const storedAuth = JSON.parse(localStorage.getItem('fnb-auth') || '{}');
-    expect(storedAuth?.state?.accessToken).toBe('access-token');
+    expect(storedAuth?.state?.accessToken).toBeUndefined();
     expect(storedAuth?.state?.user?.username).toBe('cashier01');
     expect(useUiPreferencesStore.getState()).toMatchObject({ theme: 'dark', sidebarWidth: 280 });
     expect(useUiPreferencesStore.getState().columnWidths).toEqual({ orders: { name: 240 } });
@@ -70,7 +70,7 @@ describe('loginWithCredentials', () => {
     });
 
     const storedAuth = JSON.parse(localStorage.getItem('fnb-auth') || '{}');
-    expect(storedAuth?.state?.accessToken).toBe('sample-jwt');
+    expect(storedAuth?.state?.accessToken).toBeUndefined();
     expect(storedAuth?.state?.user?.username).toBe('admin');
 
     useAuthStore.getState().clearAuth();

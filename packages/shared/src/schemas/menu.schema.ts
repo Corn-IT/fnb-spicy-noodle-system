@@ -8,6 +8,7 @@ export const ModifierSchema = z.object({
   name: z.string().trim().min(1).max(120),
   extraPrice: MoneyAmountSchema,
   isDefaultChecked: z.boolean().optional(),
+  isAvailable: z.boolean().optional(),
   defaultSubstituteName: z.string().trim().max(120).nullable().optional(),
 }).strict();
 export type Modifier = z.infer<typeof ModifierSchema>;
@@ -27,6 +28,7 @@ const ModifierInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   extraPrice: MoneyAmountSchema.default(0),
   isDefaultChecked: z.boolean().default(false),
+  isAvailable: z.boolean().default(true),
   defaultSubstituteName: z.string().trim().max(120).nullable().optional(),
 }).strict();
 
@@ -108,6 +110,57 @@ export const DiningTableSchema = z.object({
 }).strict();
 export type DiningTable = z.infer<typeof DiningTableSchema>;
 
+export const PublicMenuStationSchema = z.object({
+  id: IdSchema,
+  code: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  sortOrder: z.number().int(),
+}).strict();
+export type PublicMenuStation = z.infer<typeof PublicMenuStationSchema>;
+
+export const PublicMenuCategorySchema = z.object({
+  id: IdSchema,
+  code: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  stationCode: z.string().trim().min(1).nullable().optional(),
+  sortOrder: z.number().int(),
+}).strict();
+export type PublicMenuCategory = z.infer<typeof PublicMenuCategorySchema>;
+
+export const PublicMenuActiveOrderItemSchema = z.object({
+  id: IdSchema,
+  productId: IdSchema,
+  productName: z.string().trim().min(1),
+  quantity: z.number().int().positive(),
+  unitPrice: MoneyAmountSchema,
+  lineTotal: MoneyAmountSchema,
+  batchNo: z.number().int().positive(),
+  kitchenStatus: z.enum(['NEW', 'PRINTED', 'CANCELLED']),
+  itemNote: z.string().nullable(),
+  modifiers: z.array(z.object({
+    groupId: IdSchema.optional(),
+    modifierId: IdSchema.optional(),
+    name: z.string().trim().min(1),
+    extraPrice: MoneyAmountSchema.optional(),
+    action: z.string().optional(),
+    substituteModifierId: IdSchema.optional(),
+    substituteName: z.string().optional(),
+    substitutedFromName: z.string().optional(),
+  })),
+  createdAt: z.string(),
+}).strict();
+export type PublicMenuActiveOrderItem = z.infer<typeof PublicMenuActiveOrderItemSchema>;
+
+export const PublicMenuActiveOrderSchema = z.object({
+  orderId: IdSchema,
+  orderCode: z.string().trim().min(1),
+  status: z.enum(['PENDING', 'SERVING']),
+  totalAmount: MoneyAmountSchema,
+  items: z.array(PublicMenuActiveOrderItemSchema),
+  createdAt: z.string(),
+}).strict();
+export type PublicMenuActiveOrder = z.infer<typeof PublicMenuActiveOrderSchema>;
+
 export const PublicMenuResponseSchema = z.object({
   table: z.object({
     tableId: IdSchema,
@@ -115,6 +168,9 @@ export const PublicMenuResponseSchema = z.object({
     status: TableStatusSchema,
     activeOrderId: IdSchema.nullable(),
   }).strict(),
+  stations: z.array(PublicMenuStationSchema).optional(),
+  categories: z.array(PublicMenuCategorySchema).optional(),
+  activeOrder: PublicMenuActiveOrderSchema.nullable().optional(),
   products: z.array(ProductSchema),
   updatedAt: z.string().optional(),
 }).strict();
@@ -122,3 +178,29 @@ export type PublicMenuResponse = z.infer<typeof PublicMenuResponseSchema>;
 
 export const PublicMenuQuerySchema = z.object({ token: QrTokenSchema }).strict();
 export type PublicMenuQuery = z.infer<typeof PublicMenuQuerySchema>;
+
+export const ImportMenuExcelItemSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  subtitle: z.string().trim().max(255).nullable().optional(),
+  categoryName: z.string().trim().max(120).nullable().optional(),
+  station: z.string().trim().max(64).optional(),
+  price: MoneyAmountSchema,
+  modifierGroupsText: z.string().trim().max(4000).nullable().optional(),
+  isAvailable: z.boolean().default(true),
+  sortOrder: z.number().int().nonnegative().default(0),
+}).strict();
+export type ImportMenuExcelItem = z.infer<typeof ImportMenuExcelItemSchema>;
+
+export const ImportMenuExcelRequestSchema = z.object({
+  items: z.array(ImportMenuExcelItemSchema).max(2000),
+  syncMissingAsDeleted: z.boolean().default(true),
+}).strict();
+export type ImportMenuExcelRequest = z.infer<typeof ImportMenuExcelRequestSchema>;
+
+export const ImportMenuExcelResponseSchema = z.object({
+  createdCount: z.number().int().nonnegative(),
+  updatedCount: z.number().int().nonnegative(),
+  deletedCount: z.number().int().nonnegative(),
+  skippedActiveOrderProducts: z.array(z.string()).default([]),
+}).strict();
+export type ImportMenuExcelResponse = z.infer<typeof ImportMenuExcelResponseSchema>;

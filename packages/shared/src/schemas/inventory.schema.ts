@@ -33,6 +33,28 @@ export const CreateInventoryImportBatchSchema = z.object({
 });
 export type CreateInventoryImportBatchInput = z.infer<typeof CreateInventoryImportBatchSchema>;
 
+export const UpdateInventoryImportSchema = z.object({
+  supplierMdmId: IdSchema.optional(),
+  supplierName: z.string().trim().min(1).max(160).optional(),
+  ingredientMdmId: IdSchema.optional(),
+  ingredientName: z.string().trim().min(1).max(160).optional(),
+  unitName: z.string().trim().min(1).max(80),
+  unitPrice: MoneyAmountSchema,
+  quantity: QuantitySchema,
+  paymentSource: PaymentSourceSchema,
+  importDate: IsoDateSchema,
+  note: z.string().trim().max(1000).nullable().optional(),
+}).strict()
+  .refine((item) => Boolean(item.ingredientName || item.ingredientMdmId), {
+    message: 'Phải chọn hoặc nhập tên nguyên liệu',
+    path: ['ingredientName'],
+  })
+  .refine((item) => item.unitPrice * item.quantity <= 9_999_999_999.99, {
+    message: 'Thành tiền vượt giới hạn NUMERIC(12,2)',
+    path: ['quantity'],
+  });
+export type UpdateInventoryImportInput = z.infer<typeof UpdateInventoryImportSchema>;
+
 export const InventoryImportRecordSchema = z.object({
   id: IdSchema,
   ingredientMdmId: IdSchema,

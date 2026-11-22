@@ -9,28 +9,34 @@ const inventoryCashflowMigration = readFileSync(
   resolve(prismaDirectory, 'migrations/20261108000000_inventory_cashflow_config_and_settlement_lock/migration.sql'),
   'utf8',
 );
+const discountsMigration = readFileSync(
+  resolve(prismaDirectory, 'migrations/20261115134905_add_discounts/migration.sql'),
+  'utf8',
+);
 
 describe('Prisma schema and initial migration', () => {
-  it('should define exactly the thirteen physical models from the ERD', () => {
+  it('should define all seventeen physical models including payment_accounts, discounts, and audit_logs', () => {
     const tableNames = [
       'master_data', 'employees', 'users', 'dining_tables', 'products', 'combo_items',
-      'modifier_groups', 'modifiers', 'orders', 'order_items', 'inventory_imports',
-      'cash_drawer_settlements', 'work_schedules',
+      'modifier_groups', 'modifiers', 'payment_accounts', 'orders', 'discounts', 'discount_targets',
+      'order_items', 'inventory_imports', 'cash_drawer_settlements', 'work_schedules', 'audit_logs',
     ];
 
     expect([...schema.matchAll(/@@map\("([a-z_]+)"\)/g)].map((match) => match[1])).toEqual(tableNames);
-    expect([...schema.matchAll(/^model\s+/gm)]).toHaveLength(13);
+    expect([...schema.matchAll(/^model\s+/gm)]).toHaveLength(17);
   });
 
   it('should keep every monetary column as Decimal(12, 2)', () => {
     const monetaryFields = [
-      'price', 'extraPrice', 'cashAmount', 'transferAmount', 'totalAmount', 'unitPrice',
+      'price', 'extraPrice', 'cashAmount', 'transferAmount', 'subtotalAmount', 'discountAmount',
+      'totalAmount', 'unitPrice', 'value', 'maxDiscountAmount', 'minOrderAmount',
       'totalCost', 'openingBudget', 'totalCashSales', 'totalTransferSales', 'totalCashImports',
       'expectedCashInDrawer', 'actualCountedCash', 'discrepancyAmount',
+      'dailyLimit', 'monthlyLimit', 'yearlyLimit',
     ];
 
     for (const field of monetaryFields) {
-      const fieldDefinition = schema.split('\n').find((line) => new RegExp(`\\b${field}\\s+Decimal\\b`).test(line));
+      const fieldDefinition = schema.split('\n').find((line) => new RegExp(`\\b${field}\\s+Decimal\\??\\b`).test(line));
       expect(fieldDefinition).toContain('@db.Decimal(12, 2)');
     }
 
@@ -55,5 +61,17 @@ describe('Prisma schema and initial migration', () => {
     expect(inventoryCashflowMigration).toContain('uq_settlement_date_shift');
     expect(inventoryCashflowMigration).toContain('idx_imports_created_payment');
     expect(inventoryCashflowMigration).not.toContain('CREATE TABLE');
+  });
+
+  it('should enforce discount integrity constraints and indexes in SQL', () => {
+    for (const identifier of [
+      'chk_order_discount_amounts',
+      'chk_discount_value',
+      'chk_discount_usage',
+      'chk_discount_target_one',
+      'idx_orders_discount_id',
+    ]) {
+      expect(discountsMigration).toContain(identifier);
+    }
   });
 });

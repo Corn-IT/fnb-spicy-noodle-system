@@ -7,6 +7,7 @@ export type ThemeMode = 'light' | 'dark';
 
 export interface UiPreferencesState {
   theme: ThemeMode;
+  hasExplicitTheme: boolean;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   columnWidths: Record<string, Record<string, number>>;
@@ -66,11 +67,12 @@ export const useUiPreferencesStore = create<UiPreferencesState>()(
   persist(
     (set, get) => ({
       theme: 'light',
+      hasExplicitTheme: false,
       sidebarWidth: 260,
       sidebarCollapsed: false,
       columnWidths: {},
-      setTheme: (theme) => set({ theme }),
-      toggleTheme: () => set({ theme: get().theme === 'dark' ? 'light' : 'dark' }),
+      setTheme: (theme) => set({ theme, hasExplicitTheme: true }),
+      toggleTheme: () => set({ theme: get().theme === 'dark' ? 'light' : 'dark', hasExplicitTheme: true }),
       setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
       setTableColumnWidths: (tableId, widths) =>
@@ -89,6 +91,10 @@ export const useUiPreferencesStore = create<UiPreferencesState>()(
             prefs.theme === 'dark' || prefs.theme === 'light'
               ? prefs.theme
               : state.theme,
+          hasExplicitTheme:
+            prefs.theme === 'dark' || prefs.theme === 'light'
+              ? true
+              : state.hasExplicitTheme,
           sidebarWidth:
             typeof prefs.sidebarWidth === 'number'
               ? clampSidebarWidth(prefs.sidebarWidth)
@@ -106,6 +112,7 @@ export const useUiPreferencesStore = create<UiPreferencesState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         theme: state.theme,
+        hasExplicitTheme: state.hasExplicitTheme,
         sidebarWidth: state.sidebarWidth,
         sidebarCollapsed: state.sidebarCollapsed,
         columnWidths: state.columnWidths,

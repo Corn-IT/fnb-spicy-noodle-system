@@ -1,18 +1,26 @@
+import { randomBytes } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import {
+  ApplicableDiscountsResponseSchema,
+  ApplyPosDiscountRequestSchema,
   ApproveQrOrderSchema,
   CheckoutOrderRequestSchema,
+  CreateDiningTableSchema,
   CreatePosOrderSchema,
   CreateQrOrderSchema,
+  DiscountSnapshotSchema,
+  ErrorCodes,
   OrderDetailResponseSchema,
   PatchOrderItemsResponseSchema,
   PatchOrderItemsSchema,
@@ -20,23 +28,48 @@ import {
   PosTableGridResponseSchema,
   ProvisionalBillResponseSchema,
   QrOrderResponseSchema,
+  QrTokenSchema,
+  RotateTableQrResponseSchema,
+  SplitCheckoutOrderRequestSchema,
+  SplitProvisionalBillRequestSchema,
+  UpdateDiningTableSchema,
   VoidInvoiceRequestSchema,
-  type CheckoutOrderRequest,
+  calculateOrderDiscount,
+  getVietQrBankShortName,
+  type ApplyPosDiscountRequest,
   type ApproveQrOrderInput,
+  type AuthPrincipal,
+  type CheckoutOrderRequest,
+  type CreateDiningTableInput,
   type CreateOrderItemInput,
   type CreatePosOrderInput,
   type CreateQrOrderInput,
+  type DiscountSnapshot,
   type PatchOrderItemsInput,
   type QrOrderResponse,
   type ReprintKitchenRequest,
+  type SplitCheckoutOrderRequest,
+  type SplitProvisionalBillRequest,
   type TableActionRequest,
+  type UpdateDiningTableInput,
   type VoidInvoiceRequest,
 } from '@fnb/shared';
 import type { ZodType } from 'zod';
 import type { EnvConfig } from '../../config/env.config';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { AuditLogService, formatPaymentMethodVi } from '../../common/audit/audit-log.service';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
+import { DiscountsService } from '../discounts/discounts.service';
+import { PaymentQrService, type QrSelectionResult } from '../payment-qr/payment-qr.service';
 import { KitchenSplitService } from './kitchen-split.service';
+import {
+  computeTotalsFromRows,
+  extractDiscountSnapshot,
+  hasOrderDiscount,
+  recomputeOrderTotals,
+  snapshotToCalcRule,
+  toCalcItems,
+} from './order-totals.helper';
 import { TableTransferService } from './table-transfer.service';
 
 type PricingModifier = {
@@ -44,6 +77,7 @@ type PricingModifier = {
   name: string;
   extraPrice: Prisma.Decimal;
   isDefaultChecked?: boolean;
+  isAvailable?: boolean;
   defaultSubstituteName?: string | null;
 };
 type PricingGroup = {
@@ -79,8 +113,13 @@ type OrderRow = {
   takeawayNumber: number | null;
   status: string;
   paymentMethod?: string | null;
+  paymentAccountId?: number | null;
   cashAmount?: Prisma.Decimal;
   transferAmount?: Prisma.Decimal;
+  subtotalAmount?: Prisma.Decimal;
+  discountAmount?: Prisma.Decimal;
+  discountId?: number | null;
+  discountSnapshot?: unknown;
   totalAmount: Prisma.Decimal;
   mergedIntoOrderId?: number | null;
   cashierId?: number | null;
@@ -97,10 +136,13 @@ type OrderRow = {
     modifiersSnapshot: unknown;
     itemNote: string | null;
     batchNo: number;
+    itemSource?: string;
     kitchenStatus: string;
+    createdAt?: Date;
     product: {
       id: number;
       name: string;
+      categoryId?: number | null;
       station: string;
       comboParents?: Array<{ childProductId: number; quantity: number; childProduct?: { name?: string; station: string } }>;
     };
@@ -121,10 +163,21 @@ export class PosService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(PosSocketGateway) private readonly gateway: PosSocketGateway,
-    @Inject(ConfigService) private readonly config: ConfigService<EnvConfig, true>,
+    @Optional() @Inject(ConfigService) _config: ConfigService<EnvConfig, true>,
     @Inject(KitchenSplitService) private readonly kitchenSplitService: KitchenSplitService,
     @Inject(TableTransferService) private readonly tableTransferService: TableTransferService,
+    @Optional() @Inject(AuditLogService) private readonly auditLogService?: AuditLogService,
+    @Optional() @Inject(PaymentQrService) private readonly paymentQrService?: PaymentQrService,
+    @Optional() @Inject(DiscountsService) private readonly discountsService?: DiscountsService,
   ) {}
+
+  private get qrService(): PaymentQrService {
+    return this.paymentQrService ?? new PaymentQrService(this.prisma, this.auditLogService);
+  }
+
+  private get discountSvc(): DiscountsService {
+    return this.discountsService ?? new DiscountsService(this.prisma, this.auditLogService);
+  }
 
   async createOrder(input: CreatePosOrderInput, cashierId: number) {
     const parsed = this.parseRequest(CreatePosOrderSchema, input);
@@ -159,6 +212,8 @@ export class PosService {
           status: 'SERVING',
           cashierId,
           note: parsed.note,
+          subtotalAmount: totalAmount,
+          discountAmount: new Prisma.Decimal(0),
           totalAmount,
           createdAt: now,
           items: { create: items.map((item) => ({ ...item, batchNo: 1 })) },
@@ -171,6 +226,16 @@ export class PosService {
     });
 
     this.gateway.emitTableGridSync({ orderId: created.orderId, tableId: created.tableId, status: created.status });
+    const isTakeaway = created.orderType === 'TAKEAWAY';
+    const targetDesc = created.tableLabel ?? 'Mang về';
+    await this.auditLogService?.record({
+      module: 'POS',
+      action: isTakeaway ? 'Tạo đơn mang về' : 'Tạo đơn tại bàn',
+      detail: `${created.orderCode} (${targetDesc})`,
+      message: `${isTakeaway ? 'tạo đơn mang về' : 'tạo đơn ăn tại bàn'} ${created.orderCode} (${targetDesc})`,
+      actor: cashierId,
+      metadata: { orderId: created.orderId, orderCode: created.orderCode, tableLabel: targetDesc },
+    });
     return created;
   }
 
@@ -197,6 +262,9 @@ export class PosService {
             include: { table: { select: { id: true, name: true } } },
           }) as OrderRow | null;
           if (!source) throw new NotFoundException({ message: 'Không tìm thấy phiên đơn hàng QR' });
+          if (!this.isQrOrderAccessibleFromTable(source, qrTable)) {
+            throw new ForbiddenException({ message: 'Phiên đơn hàng không thuộc bàn của mã QR này' });
+          }
           if (source.status === 'MERGED' && typeof source.mergedIntoOrderId === 'number' && !lockIds.includes(source.mergedIntoOrderId)) {
             throw new RetryQrOrderWithActiveSession(existingOrderId);
           }
@@ -251,9 +319,11 @@ export class PosService {
             takeawayNumber: null,
             status: 'PENDING',
             note: parsed.note,
+            subtotalAmount: totalAmount,
+            discountAmount: new Prisma.Decimal(0),
             totalAmount,
             createdAt: now,
-            items: { create: items.map((item) => ({ ...item, batchNo: 1 })) },
+            items: { create: items.map((item) => ({ ...item, batchNo: 1, itemSource: 'QR_CODE' })) },
           },
         });
         await tx.diningTable.update({ where: { id: table.id }, data: { status: 'PENDING', activeOrderId: order.id } });
@@ -266,7 +336,11 @@ export class PosService {
           batchNo: 1,
           totalAmount: totalAmount.toNumber(),
         });
-        return { kind: 'new' as const, response, payload: { ...response, tableId: table.id, tableLabel: table.name } };
+        return {
+          kind: 'new' as const,
+          response,
+          payload: { ...response, tableId: table.id, tableLabel: table.name, pendingQrSince: now.toISOString() },
+        };
       });
     } catch (error) {
       if (error instanceof RetryQrOrderWithActiveSession) {
@@ -283,8 +357,26 @@ export class PosService {
   async getTableGrid() {
     const [tables, takeaways] = await Promise.all([
       this.prisma.diningTable.findMany({
+        where: { status: { in: ['AVAILABLE', 'PENDING', 'OCCUPIED'] } },
         orderBy: { id: 'asc' },
-        include: { activeOrder: { select: { id: true, orderCode: true, orderType: true, tableId: true, takeawayNumber: true, status: true, totalAmount: true, createdAt: true } } },
+        include: {
+          activeOrder: {
+            select: {
+              id: true,
+              orderCode: true,
+              orderType: true,
+              orderSource: true,
+              tableId: true,
+              takeawayNumber: true,
+              status: true,
+              subtotalAmount: true,
+              discountAmount: true,
+              totalAmount: true,
+              createdAt: true,
+              items: { select: { batchNo: true, kitchenStatus: true, itemSource: true, createdAt: true } },
+            },
+          },
+        },
       }),
       this.prisma.order.findMany({
         where: { orderType: 'TAKEAWAY', status: 'SERVING' },
@@ -292,15 +384,243 @@ export class PosService {
       }),
     ]);
     return PosTableGridResponseSchema.parse({
-      tables: tables.map((table) => ({
-        id: table.id,
-        name: table.name,
-        status: table.status,
-        activeOrderId: table.activeOrderId,
-        activeOrder: table.activeOrder ? this.orderSummary(table.activeOrder, table.name) : null,
-      })),
-      takeaways: takeaways.map((order) => this.orderSummary(order, null)),
+      tables: tables.map((table) => {
+        const rawQrToken = (table as { qrToken?: unknown }).qrToken;
+        const validQrToken = QrTokenSchema.safeParse(rawQrToken).success
+          ? (rawQrToken as string)
+          : undefined;
+        return {
+          id: table.id,
+          name: table.name,
+          ...(validQrToken ? { qrToken: validQrToken } : {}),
+          status: table.status,
+          activeOrderId: table.activeOrderId,
+          activeOrder: table.activeOrder ? this.orderSummary(table.activeOrder as unknown as OrderRow, table.name) : null,
+        };
+      }),
+      takeaways: takeaways.map((order) => this.orderSummary(order as unknown as OrderRow, null)),
     });
+  }
+
+  async createTable(input: CreateDiningTableInput, userId?: number) {
+    const parsed = this.parseRequest(CreateDiningTableSchema, input);
+    const trimmedName = parsed.name.trim();
+    if (/mang\s*v[eề]|takeaway/i.test(trimmedName)) {
+      throw new BadRequestException({
+        code: 'INVALID_TABLE_NAME',
+        message: 'Không được tạo bàn tên "Mang về" trong sơ đồ bàn vật lý (Invariant 2)',
+      });
+    }
+
+    if (typeof this.prisma.diningTable?.findFirst === 'function') {
+      const duplicate = await this.prisma.diningTable.findFirst({
+        where: {
+          status: { in: ['AVAILABLE', 'PENDING', 'OCCUPIED'] },
+          name: { equals: trimmedName, mode: 'insensitive' },
+        },
+      });
+      if (duplicate) {
+        throw this.conflict('POS_TABLE_DUPLICATE', `Tên bàn "${trimmedName}" đã tồn tại`);
+      }
+    }
+
+    const qrToken = randomBytes(32).toString('hex');
+    const created = await this.prisma.diningTable.create({
+      data: {
+        name: trimmedName,
+        qrToken,
+        status: 'AVAILABLE',
+        activeOrderId: null,
+      },
+    });
+    this.gateway.emitTableGridSync({ tableId: created.id });
+    if (userId) {
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Thêm bàn',
+        detail: created.name,
+        message: `thêm bàn mới "${created.name}" vào sơ đồ bàn`,
+        actor: userId,
+        metadata: { tableId: created.id, tableLabel: created.name },
+      });
+    }
+    return {
+      id: created.id,
+      name: created.name,
+      status: created.status,
+      activeOrderId: created.activeOrderId,
+    };
+  }
+
+  async updateTable(id: number, input: UpdateDiningTableInput, userId?: number) {
+    const parsed = this.parseRequest(UpdateDiningTableSchema, input);
+    const trimmedName = parsed.name.trim();
+    if (/mang\s*v[eề]|takeaway/i.test(trimmedName)) {
+      throw new BadRequestException({
+        code: 'INVALID_TABLE_NAME',
+        message: 'Không được đổi tên bàn thành "Mang về" (Invariant 2)',
+      });
+    }
+
+    const existing = await this.prisma.diningTable.findUnique({ where: { id } });
+    if (!existing || existing.status === 'DELETED') {
+      throw new NotFoundException({ message: 'Không tìm thấy bàn vật lý' });
+    }
+
+    if (existing.status !== 'AVAILABLE' || existing.activeOrderId !== null) {
+      throw this.conflict(
+        'POS_TABLE_NOT_AVAILABLE',
+        `Không thể đổi tên bàn "${existing.name}" khi bàn đang có khách hoặc đang có đơn phục vụ. Vui lòng hoàn tất thanh toán trước khi đổi tên bàn.`,
+      );
+    }
+
+    if (typeof this.prisma.diningTable?.findFirst === 'function') {
+      const duplicate = await this.prisma.diningTable.findFirst({
+        where: {
+          id: { not: id },
+          status: { in: ['AVAILABLE', 'PENDING', 'OCCUPIED'] },
+          name: { equals: trimmedName, mode: 'insensitive' },
+        },
+      });
+      if (duplicate) {
+        throw this.conflict('POS_TABLE_DUPLICATE', `Tên bàn "${trimmedName}" đã tồn tại`);
+      }
+    }
+
+    const updated = await this.prisma.diningTable.update({
+      where: { id },
+      data: { name: trimmedName },
+    });
+    this.gateway.emitTableGridSync({ tableId: updated.id });
+    if (userId) {
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Đổi tên bàn',
+        detail: `${existing.name} -> ${updated.name}`,
+        message: 'đổi tên bàn',
+        actor: userId,
+        metadata: {
+          tableId: updated.id,
+          tableLabel: updated.name,
+          changes: [{ field: 'Tên bàn', from: existing.name, to: updated.name }],
+        },
+      });
+    }
+    return {
+      id: updated.id,
+      name: updated.name,
+      status: updated.status,
+      activeOrderId: updated.activeOrderId,
+    };
+  }
+
+  async deleteTable(id: number, userId?: number) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.lockTables(tx, [id]);
+      const existing = await tx.diningTable.findUnique({ where: { id } });
+      if (!existing || existing.status === 'DELETED') {
+        throw new NotFoundException({ message: 'Không tìm thấy bàn vật lý' });
+      }
+
+      if (existing.status !== 'AVAILABLE' || existing.activeOrderId !== null) {
+        throw this.conflict(
+          'POS_TABLE_NOT_AVAILABLE',
+          'Không thể xoá bàn đang có khách hoặc đang có đơn phục vụ',
+        );
+      }
+
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      if (typeof tx.order?.count === 'function') {
+        const recentOrderCount = await tx.order.count({
+          where: {
+            tableId: id,
+            createdAt: { gte: thirtyDaysAgo },
+          },
+        });
+        if (recentOrderCount > 0) {
+          throw new BadRequestException({
+            code: 'TABLE_HAS_RECENT_ORDERS',
+            message: `Bàn "${existing.name}" đã phát sinh ${recentOrderCount} hoá đơn trong vòng 30 ngày qua nên không thể xoá. Chỉ cho phép xoá bàn khi không có hoá đơn nào trong 30 ngày gần nhất.`,
+          });
+        }
+
+        const totalOrderCount = await tx.order.count({ where: { tableId: id } });
+        if (totalOrderCount > 0) {
+          await tx.diningTable.update({
+            where: { id },
+            data: {
+              status: 'DELETED',
+              name: `${existing.name}_archived_${Date.now()}`,
+            },
+          });
+          return { deleted: true, id, archived: true, tableName: existing.name };
+        }
+      }
+
+      await tx.diningTable.delete({ where: { id } });
+      return { deleted: true, id, archived: false, tableName: existing.name };
+    });
+
+    this.gateway.emitTableGridSync({ tableId: id });
+    if (userId) {
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Xoá bàn',
+        detail: result.tableName,
+        message: `xoá bàn "${result.tableName}" khỏi sơ đồ bàn`,
+        actor: userId,
+        metadata: { tableId: id, tableLabel: result.tableName },
+      });
+    }
+    return { deleted: result.deleted, id: result.id, archived: result.archived };
+  }
+
+  async rotateTableQr(id: number, userId?: number) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.lockTables(tx, [id]);
+      const existing = await tx.diningTable.findUnique({ where: { id } });
+      if (!existing || existing.status === 'DELETED') {
+        throw new NotFoundException({ message: 'Không tìm thấy bàn vật lý' });
+      }
+
+      const nextQrToken = randomBytes(32).toString('hex');
+      const updated = await tx.diningTable.update({
+        where: { id },
+        data: { qrToken: nextQrToken },
+      });
+
+      return {
+        previousQrToken: existing.qrToken,
+        table: RotateTableQrResponseSchema.parse({
+          id: updated.id,
+          name: updated.name,
+          qrToken: updated.qrToken,
+          status: updated.status,
+          activeOrderId: updated.activeOrderId,
+        }),
+      };
+    });
+
+    this.gateway.emitTableGridSync({ tableId: id });
+    if (userId) {
+      const oldShort = typeof result.previousQrToken === 'string' && result.previousQrToken.length >= 8
+        ? `${result.previousQrToken.slice(0, 6)}...`
+        : '***';
+      const newShort = `${result.table.qrToken.slice(0, 6)}...`;
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Đổi mã QR bàn',
+        detail: result.table.name,
+        message: `đổi mã QR cho bàn "${result.table.name}"`,
+        actor: userId,
+        metadata: {
+          tableId: result.table.id,
+          tableLabel: result.table.name,
+          changes: [{ field: 'Mã QR bàn', from: oldShort, to: newShort }],
+        },
+      });
+    }
+    return result.table;
   }
 
   async getOrder(id: number) {
@@ -325,7 +645,7 @@ export class PosService {
       if (!snapshot) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng QR' });
       await this.lockOrders(tx, [id]);
       if (snapshot.tableId !== null) await this.lockTables(tx, [snapshot.tableId]);
-      const current = await tx.order.findUnique({ where: { id } }) as OrderRow | null;
+      const current = await tx.order.findUnique({ where: { id }, include: { table: { select: { name: true } } } }) as OrderRow | null;
       if (!current) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng QR' });
       if (current.status !== 'PENDING' || current.orderSource !== 'QR_CODE') {
         throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể duyệt đơn QR đang chờ xác nhận');
@@ -344,11 +664,27 @@ export class PosService {
             : { status: 'AVAILABLE', activeOrderId: null },
         });
       }
-      return updated as OrderRow;
+      return {
+        order: updated as OrderRow,
+        tableLabel: current.table?.name ?? (current.orderType === 'TAKEAWAY' ? `Mang về #${String(current.takeawayNumber ?? 0).padStart(2, '0')}` : null),
+      };
     });
-    this.gateway.emitOrderStatusUpdated(id, { status: order.status, message: parsed.approved ? 'Bếp đang chế biến' : 'Đơn hàng đã bị từ chối' });
-    this.gateway.emitTableGridSync({ orderId: id, status: order.status });
-    return { orderId: id, status: order.status };
+    this.gateway.emitOrderStatusUpdated(id, { status: order.order.status, message: parsed.approved ? 'Bếp đang chế biến' : 'Đơn hàng đã bị từ chối' });
+    this.gateway.emitTableGridSync({ orderId: id, status: order.order.status });
+    await this.auditLogService?.record({
+      module: 'POS',
+      action: parsed.approved ? 'Duyệt đơn QR' : 'Từ chối đơn QR',
+      detail: order.order.orderCode,
+      message: `${parsed.approved ? 'duyệt đơn gọi món QR' : 'từ chối đơn gọi món QR'}`,
+      actor: cashierId,
+      metadata: {
+        orderId: id,
+        orderCode: order.order.orderCode,
+        ...(order.tableLabel ? { tableLabel: order.tableLabel } : {}),
+        ...(!parsed.approved && parsed.reason ? { reason: parsed.reason } : {}),
+      },
+    });
+    return { orderId: id, status: order.order.status };
   }
 
   async cancelOrder(id: number, input: VoidInvoiceRequest, cashierId?: number) {
@@ -358,7 +694,7 @@ export class PosService {
       if (!snapshot) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
       await this.lockOrders(tx, [id]);
       if (snapshot.tableId !== null) await this.lockTables(tx, [snapshot.tableId]);
-      const current = await tx.order.findUnique({ where: { id } }) as OrderRow | null;
+      const current = await tx.order.findUnique({ where: { id }, include: { table: { select: { name: true } } } }) as OrderRow | null;
       if (!current) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
       if (!['PENDING', 'SERVING'].includes(current.status)) {
         throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể huỷ đơn hàng đang mở hoặc đang phục vụ');
@@ -372,6 +708,11 @@ export class PosService {
         data: {
           status: 'VOIDED',
           voidReason: parsed.voidReason,
+          subtotalAmount: new Prisma.Decimal(0),
+          discountAmount: new Prisma.Decimal(0),
+          discountId: null,
+          discountSnapshot: Prisma.JsonNull,
+          paymentAccountId: null,
           totalAmount: new Prisma.Decimal(0),
           cashierId: cashierId ?? current.cashierId,
         },
@@ -383,15 +724,31 @@ export class PosService {
           data: { status: 'AVAILABLE', activeOrderId: null },
         });
       }
-      return { order: updated as OrderRow, tableId: current.tableId };
+      const tableLabel = current.table?.name ?? (current.orderType === 'TAKEAWAY' ? `Mang về #${String(current.takeawayNumber ?? 0).padStart(2, '0')}` : null);
+      return { order: updated as OrderRow, tableId: current.tableId, tableLabel };
     });
 
     this.gateway.emitOrderStatusUpdated(id, { status: 'VOIDED', message: 'Đơn hàng đã được huỷ và giải phóng bàn' });
     this.gateway.emitTableGridSync({ orderId: id, tableId: result.tableId, status: 'AVAILABLE' });
+    if (cashierId) {
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Huỷ đơn',
+        detail: `${result.order.orderCode} (${parsed.voidReason})`,
+        message: 'huỷ đơn đang phục vụ',
+        actor: cashierId,
+        metadata: {
+          orderId: id,
+          orderCode: result.order.orderCode,
+          ...(result.tableLabel ? { tableLabel: result.tableLabel } : {}),
+          reason: parsed.voidReason,
+        },
+      });
+    }
     return { orderId: id, status: 'VOIDED', tableId: result.tableId };
   }
 
-  async patchOrderItems(id: number, input: PatchOrderItemsInput) {
+  async patchOrderItems(id: number, input: PatchOrderItemsInput, userId?: number) {
     const parsed = this.parseRequest(PatchOrderItemsSchema, input);
     const result = await this.prisma.$transaction(async (tx) => {
       const snapshot = await tx.order.findUnique({ where: { id }, select: { id: true, tableId: true } });
@@ -426,6 +783,7 @@ export class PosService {
         } else throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Món đã huỷ không thể sửa tiếp');
       }
 
+      const replacementsByOrderItemId = new Map<number, Awaited<ReturnType<typeof this.resolveItems>>[number]>();
       for (const update of parsed.updates ?? []) {
         const item = itemsById.get(update.orderItemId);
         if (!item || changedIds.has(update.orderItemId)) throw new NotFoundException({ message: 'Không tìm thấy món trong đơn hàng' });
@@ -439,6 +797,7 @@ export class PosService {
           itemNote: update.itemNote === undefined ? (item.itemNote ?? undefined) : (update.itemNote ?? undefined),
         };
         const [replacement] = await this.resolveItems(tx, [replacementInput]);
+        replacementsByOrderItemId.set(update.orderItemId, replacement);
         if (item.kitchenStatus === 'NEW') {
           await tx.orderItem.update({ where: { id: item.id }, data: {
             quantity: replacement.quantity,
@@ -459,50 +818,456 @@ export class PosService {
         }
       }
 
+      let resolvedAddedItems: Awaited<ReturnType<typeof this.resolveItems>> = [];
       if (parsed.addItems?.length) {
-        const added = await this.resolveItems(tx, parsed.addItems);
+        resolvedAddedItems = await this.resolveItems(tx, parsed.addItems);
         const aggregate = await tx.orderItem.aggregate({ where: { orderId: id }, _max: { batchNo: true } });
-        await tx.orderItem.createMany({ data: added.map((item) => ({
+        await tx.orderItem.createMany({ data: resolvedAddedItems.map((item) => ({
           orderId: id, ...item, batchNo: (aggregate._max.batchNo ?? 0) + 1, kitchenStatus: 'NEW',
         })) });
       }
 
-      const remainingItems = await tx.orderItem.findMany({
-        where: { orderId: id, kitchenStatus: { in: ['NEW', 'PRINTED'] } },
-        select: { quantity: true, unitPrice: true },
-      });
-      const totalAmount = this.totalForItems(remainingItems);
-      await tx.order.update({ where: { id }, data: { totalAmount } });
-      return PatchOrderItemsResponseSchema.parse({
-        orderId: id,
-        totalAmount: totalAmount.toNumber(),
-        requireCancellationSlip: slips.length > 0,
-        kitchenCancellationSlips: slips,
-      });
+      const totals = await recomputeOrderTotals(tx, id, order.discountSnapshot ?? null);
+      const totalAmount = totals.totalDecimal;
+
+      const auditChanges: Array<{ field: string; from: string; to: string }> = [];
+      for (const itemId of parsed.removeItemIds ?? []) {
+        const item = itemsById.get(itemId);
+        if (item) {
+          const itemName = (item as { product?: { name?: string } }).product?.name ?? `Món #${item.productId}`;
+          const mods = this.modifierNames(item.modifiersSnapshot);
+          const desc = `${item.quantity}x ${itemName}${mods.length ? ` (${mods.join(', ')})` : ''}`;
+          auditChanges.push({ field: 'Xoá / huỷ món', from: desc, to: 'Đã bỏ khỏi đơn' });
+        }
+      }
+      for (const update of parsed.updates ?? []) {
+        const item = itemsById.get(update.orderItemId);
+        if (item) {
+          const itemName = (item as { product?: { name?: string } }).product?.name ?? `Món #${item.productId}`;
+          const oldMods = this.modifierNames(item.modifiersSnapshot);
+          const replacement = replacementsByOrderItemId.get(update.orderItemId);
+          const nextQty = update.quantity ?? item.quantity;
+          const nextMods = replacement ? this.modifierNames(replacement.modifiersSnapshot) : oldMods;
+          const oldNote = item.itemNote ?? '';
+          const nextNote = update.itemNote === undefined ? oldNote : (update.itemNote ?? '');
+          const oldDesc = `SL ${item.quantity}${oldMods.length ? ` • ${oldMods.join(', ')}` : ''}${oldNote ? ` • "${oldNote}"` : ''}`;
+          const newDesc = `SL ${nextQty}${nextMods.length ? ` • ${nextMods.join(', ')}` : ''}${nextNote ? ` • "${nextNote}"` : ''}`;
+          if (oldDesc !== newDesc) {
+            auditChanges.push({ field: `Sửa ${itemName}`, from: oldDesc, to: newDesc });
+          }
+        }
+      }
+      if (resolvedAddedItems.length > 0) {
+        const addedIds = [...new Set(resolvedAddedItems.map((i) => i.productId))];
+        const addedProducts = addedIds.length && typeof tx.product?.findMany === 'function'
+          ? await tx.product.findMany({ where: { id: { in: addedIds } }, select: { id: true, name: true } })
+          : [];
+        const nameById = new Map((addedProducts ?? []).map((p) => [p.id, p.name]));
+        for (const added of resolvedAddedItems) {
+          const name = nameById.get(added.productId) ?? `Món #${added.productId}`;
+          const mods = this.modifierNames(added.modifiersSnapshot);
+          const desc = `${added.quantity}x ${name}${mods.length ? ` (${mods.join(', ')})` : ''}`;
+          auditChanges.push({ field: 'Thêm món', from: 'Chưa có', to: desc });
+        }
+      }
+      const prevTotalNum = Number(order.totalAmount ?? 0);
+      const nextTotalNum = totalAmount.toNumber();
+      if (prevTotalNum !== nextTotalNum) {
+        auditChanges.push({
+          field: 'Tổng tạm tính',
+          from: `${prevTotalNum.toLocaleString('vi-VN')}đ`,
+          to: `${nextTotalNum.toLocaleString('vi-VN')}đ`,
+        });
+      }
+
+      return {
+        response: PatchOrderItemsResponseSchema.parse({
+          orderId: id,
+          subtotalAmount: totals.subtotalAmount,
+          discountAmount: totals.discountAmount,
+          totalAmount: totals.totalAmount,
+          discountWarning: totals.warningCode,
+          requireCancellationSlip: slips.length > 0,
+          kitchenCancellationSlips: slips,
+        }),
+        orderCode: order.orderCode,
+        tableLabel,
+        changes: auditChanges,
+      };
     });
 
-    this.gateway.emitTableGridSync({ orderId: id, totalAmount: result.totalAmount });
-    return result;
+    this.gateway.emitTableGridSync({ orderId: id, totalAmount: result.response.totalAmount });
+    if (userId) {
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Điều chỉnh món',
+        detail: `${result.orderCode ?? `#${id}`}`,
+        message: 'điều chỉnh món trong đơn',
+        actor: userId,
+        metadata: {
+          orderId: id,
+          ...(result.orderCode ? { orderCode: result.orderCode } : {}),
+          ...(result.tableLabel ? { tableLabel: result.tableLabel } : {}),
+          totalAmount: result.response.totalAmount,
+          ...(result.changes.length > 0 ? { changes: result.changes } : {}),
+        },
+      });
+    }
+    return result.response;
   }
 
   async tableAction(id: number, input: TableActionRequest, userId?: number) {
-    return this.tableTransferService.executeTableAction(id, input, userId);
+    const res = await this.tableTransferService.executeTableAction(id, input, userId);
+    if (userId) {
+      const tableActionLabels: Record<TableActionRequest['action'], { title: string; verb: string }> = {
+        MOVE: { title: 'Chuyển bàn', verb: 'chuyển bàn' },
+        MERGE: { title: 'Gộp bàn', verb: 'gộp bàn' },
+        SWAP: { title: 'Đổi bàn', verb: 'đổi chỗ 2 bàn' },
+      };
+      const label = tableActionLabels[input.action];
+      const slip = res.kitchenTransferSlip;
+      const detailText = slip
+        ? `từ ${slip.fromLabel} sang ${slip.toLabel} (đơn ${slip.orderCode})`
+        : `cho đơn #${id} sang bàn #${input.targetTableId}`;
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: label.title,
+        detail: detailText,
+        message: `${label.verb} ${detailText}`,
+        actor: userId,
+        metadata: {
+          orderId: id,
+          reason: input.reason,
+          ...(slip ? { orderCode: slip.orderCode, fromLabel: slip.fromLabel, toLabel: slip.toLabel } : { targetTableId: input.targetTableId }),
+        },
+      });
+    }
+    return res;
   }
 
-  async getProvisionalBill(id: number) {
-    const order = await this.prisma.order.findUnique({
+  async getApplicableDiscounts(id: number) {
+    const order = (await this.prisma.order.findUnique({
       where: { id },
-      include: { table: { select: { id: true, name: true, status: true } }, items: { include: { product: { select: { name: true } } }, orderBy: [{ batchNo: 'asc' }, { id: 'asc' }] } },
-    }) as OrderRow | null;
+      include: {
+        items: {
+          where: { kitchenStatus: { in: ['NEW', 'PRINTED'] } },
+          include: { product: { select: { id: true, categoryId: true } } },
+        },
+      },
+    })) as OrderRow | null;
     if (!order) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
-    if (order.status !== 'SERVING') throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể in tạm tính cho đơn đang phục vụ');
 
-    const bankId = this.config.get('vietQrBankId');
-    const accountNo = this.config.get('vietQrAccountNo');
-    const accountName = this.config.get('vietQrAccountName');
-    const vietQrPayload = bankId && accountNo && accountName
-      ? this.vietQrUrl(bankId, accountNo, accountName, order.totalAmount, order.orderCode)
-      : undefined;
+    const activeItems = (order.items ?? []).filter((item) => item.kitchenStatus !== 'CANCELLED');
+    const calcItems = toCalcItems(activeItems);
+    const subtotalAmount = calculateOrderDiscount(calcItems, null).subtotalAmount;
+    const currentDiscountSnapshot = extractDiscountSnapshot(order.discountSnapshot);
+    const items = await this.discountSvc.findApplicableForOrderItems(calcItems);
+
+    return ApplicableDiscountsResponseSchema.parse({
+      subtotalAmount,
+      currentDiscountSnapshot,
+      items,
+    });
+  }
+
+  async applyDiscount(id: number, input: ApplyPosDiscountRequest, user: AuthPrincipal) {
+    const parsed = this.parseRequest(ApplyPosDiscountRequestSchema, input);
+    const isManual = 'manual' in parsed;
+    if (isManual) {
+      const hasManualPermission = user.isSuperAdmin || Boolean(user.permissions?.pos?.manualDiscount);
+      if (!hasManualPermission) {
+        throw new ForbiddenException({
+          code: ErrorCodes.RBAC_PERMISSION_DENIED,
+          message: 'Bạn không có quyền áp dụng giảm giá thủ công trực tiếp trên đơn',
+        });
+      }
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const head = await tx.order.findUnique({ where: { id }, select: { id: true, tableId: true } });
+      if (!head) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+      await this.lockOrders(tx, [id]);
+      if (head.tableId !== null) await this.lockTables(tx, [head.tableId]);
+
+      const order = (await tx.order.findUnique({
+        where: { id },
+        include: {
+          table: { select: { id: true, name: true } },
+          items: {
+            orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
+            include: { product: { include: { comboParents: { include: { childProduct: true } } } } },
+          },
+        },
+      })) as OrderRow | null;
+      if (!order) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+      if (order.status !== 'SERVING') {
+        throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Chỉ có thể áp dụng giảm giá cho đơn đang phục vụ');
+      }
+
+      const activeItems = (order.items ?? []).filter((item) => item.kitchenStatus !== 'CANCELLED');
+      const calcItems = toCalcItems(activeItems);
+      const subtotalOnly = calculateOrderDiscount(calcItems, null).subtotalAmount;
+      if (activeItems.length === 0 || subtotalOnly <= 0) {
+        throw this.conflict(ErrorCodes.DISCOUNT_NOT_APPLICABLE, 'Đơn hàng chưa có món hợp lệ để giảm giá');
+      }
+
+      let nextDiscountId: number | null = null;
+      let nextSnapshot: DiscountSnapshot;
+
+      if (isManual) {
+        if (parsed.manual.valueType === 'FIXED' && parsed.manual.value > subtotalOnly) {
+          throw new UnprocessableEntityException({
+            code: ErrorCodes.VALIDATION_FAILED,
+            message: 'Số tiền giảm giá thủ công không được vượt quá tổng tiền món',
+          });
+        }
+        nextSnapshot = DiscountSnapshotSchema.parse({
+          kind: 'MANUAL',
+          discountId: null,
+          code: null,
+          name:
+            parsed.manual.valueType === 'PERCENT'
+              ? `Giảm tay ${parsed.manual.value}%`
+              : `Giảm tay ${parsed.manual.value.toLocaleString('vi-VN')}đ`,
+          valueType: parsed.manual.valueType,
+          value: parsed.manual.value,
+          maxDiscountAmount: null,
+          scope: 'ORDER',
+          targetCategoryIds: [],
+          targetProductIds: [],
+          minOrderAmount: null,
+          appliedAt: new Date().toISOString(),
+          appliedBy: user.id,
+          reason: parsed.manual.reason,
+        });
+      } else {
+        const resolved = await this.discountSvc.findValidDiscountByCodeOrId(
+          tx,
+          'code' in parsed ? { code: parsed.code } : { discountId: parsed.discountId },
+        );
+        nextDiscountId = resolved.discount.id;
+        nextSnapshot = DiscountSnapshotSchema.parse({
+          kind: 'CODE',
+          discountId: resolved.discount.id,
+          code: resolved.discount.code,
+          name: resolved.discount.name,
+          valueType: resolved.discount.valueType as 'PERCENT' | 'FIXED',
+          value: Number(resolved.discount.value),
+          maxDiscountAmount:
+            resolved.discount.maxDiscountAmount !== null ? Number(resolved.discount.maxDiscountAmount) : null,
+          scope: resolved.discount.scope as 'ORDER' | 'CATEGORY' | 'PRODUCT',
+          targetCategoryIds: resolved.targetCategoryIds,
+          targetProductIds: resolved.targetProductIds,
+          minOrderAmount:
+            resolved.discount.minOrderAmount !== null ? Number(resolved.discount.minOrderAmount) : null,
+          appliedAt: new Date().toISOString(),
+          appliedBy: user.id,
+          reason: null,
+        });
+
+        const previewCalc = calculateOrderDiscount(calcItems, snapshotToCalcRule(nextSnapshot));
+        if (previewCalc.warningCode === 'MIN_ORDER_NOT_MET') {
+          throw this.conflict(
+            ErrorCodes.DISCOUNT_NOT_APPLICABLE,
+            previewCalc.warningMessage ?? 'Đơn hàng chưa đạt giá trị tối thiểu để áp dụng mã giảm giá',
+          );
+        }
+        if (previewCalc.warningCode === 'NOT_APPLICABLE' || previewCalc.discountAmount <= 0) {
+          throw this.conflict(
+            ErrorCodes.DISCOUNT_NOT_APPLICABLE,
+            previewCalc.warningMessage ?? 'Đơn hàng hiện không có món phù hợp để áp dụng mã giảm giá',
+          );
+        }
+      }
+
+      const totals = computeTotalsFromRows(activeItems, nextSnapshot);
+      const updated = (await tx.order.update({
+        where: { id },
+        data: {
+          discountId: nextDiscountId,
+          discountSnapshot: nextSnapshot as unknown as Prisma.InputJsonValue,
+          subtotalAmount: totals.subtotalDecimal,
+          discountAmount: totals.discountDecimal,
+          totalAmount: totals.totalDecimal,
+        },
+        include: {
+          table: { select: { id: true, name: true } },
+          items: {
+            orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
+            include: { product: { include: { comboParents: { include: { childProduct: true } } } } },
+          },
+        },
+      })) as OrderRow;
+
+      const hydrated: OrderRow = {
+        ...order,
+        ...updated,
+        items: updated.items ?? order.items,
+        table: updated.table ?? order.table,
+        discountId: nextDiscountId,
+        discountSnapshot: nextSnapshot,
+        subtotalAmount: totals.subtotalDecimal,
+        discountAmount: totals.discountDecimal,
+        totalAmount: totals.totalDecimal,
+      };
+      return {
+        detail: this.orderDetail(hydrated),
+        orderCode: order.orderCode,
+        tableId: order.tableId,
+        snapshot: nextSnapshot,
+        discountAmount: totals.discountAmount,
+      };
+    });
+
+    this.gateway.emitTableGridSync({
+      orderId: id,
+      tableId: result.tableId,
+      totalAmount: result.detail.totalAmount,
+    });
+    await this.auditLogService?.record({
+      module: 'POS',
+      action: isManual ? 'Áp giảm giá tay' : 'Áp mã giảm giá',
+      detail: `${result.orderCode} (-${result.discountAmount.toLocaleString('vi-VN')}đ)${result.snapshot.code ? ` • ${result.snapshot.code}` : ''}`,
+      message: isManual
+        ? `áp giảm giá thủ công ${result.discountAmount.toLocaleString('vi-VN')}đ cho đơn ${result.orderCode}`
+        : `áp mã giảm giá ${result.snapshot.code} (-${result.discountAmount.toLocaleString('vi-VN')}đ) cho đơn ${result.orderCode}`,
+      actor: user.id,
+      metadata: {
+        orderId: id,
+        orderCode: result.orderCode,
+        discountId: result.snapshot.discountId,
+        discountCode: result.snapshot.code,
+        discountAmount: result.discountAmount,
+        totalAmount: result.detail.totalAmount,
+        ...(result.snapshot.reason ? { reason: result.snapshot.reason } : {}),
+      },
+    });
+    return result.detail;
+  }
+
+  async removeDiscount(id: number, userId?: number) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const head = await tx.order.findUnique({ where: { id }, select: { id: true, tableId: true } });
+      if (!head) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+      await this.lockOrders(tx, [id]);
+      if (head.tableId !== null) await this.lockTables(tx, [head.tableId]);
+
+      const order = (await tx.order.findUnique({
+        where: { id },
+        include: {
+          table: { select: { id: true, name: true } },
+          items: {
+            orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
+            include: { product: { include: { comboParents: { include: { childProduct: true } } } } },
+          },
+        },
+      })) as OrderRow | null;
+      if (!order) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+      if (order.status !== 'SERVING') {
+        throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Chỉ có thể gỡ giảm giá cho đơn đang phục vụ');
+      }
+
+      const previousSnapshot = extractDiscountSnapshot(order.discountSnapshot);
+      const totals = computeTotalsFromRows(order.items ?? [], null);
+      const zeroDecimal = new Prisma.Decimal(0);
+      const updated = (await tx.order.update({
+        where: { id },
+        data: {
+          discountId: null,
+          discountSnapshot: Prisma.JsonNull,
+          subtotalAmount: totals.subtotalDecimal,
+          discountAmount: zeroDecimal,
+          totalAmount: totals.totalDecimal,
+        },
+        include: {
+          table: { select: { id: true, name: true } },
+          items: {
+            orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
+            include: { product: { include: { comboParents: { include: { childProduct: true } } } } },
+          },
+        },
+      })) as OrderRow;
+
+      const hydrated: OrderRow = {
+        ...order,
+        ...updated,
+        items: updated.items ?? order.items,
+        table: updated.table ?? order.table,
+        discountId: null,
+        discountSnapshot: null,
+        subtotalAmount: totals.subtotalDecimal,
+        discountAmount: zeroDecimal,
+        totalAmount: totals.totalDecimal,
+      };
+      return {
+        detail: this.orderDetail(hydrated),
+        orderCode: order.orderCode,
+        tableId: order.tableId,
+        hadDiscount: previousSnapshot !== null,
+        previousCode: previousSnapshot?.code ?? null,
+      };
+    });
+
+    this.gateway.emitTableGridSync({
+      orderId: id,
+      tableId: result.tableId,
+      totalAmount: result.detail.totalAmount,
+    });
+    if (userId && result.hadDiscount) {
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Gỡ giảm giá',
+        detail: `${result.orderCode}${result.previousCode ? ` (${result.previousCode})` : ''}`,
+        message: `gỡ giảm giá khỏi đơn ${result.orderCode}`,
+        actor: userId,
+        metadata: {
+          orderId: id,
+          orderCode: result.orderCode,
+          previousCode: result.previousCode,
+          totalAmount: result.detail.totalAmount,
+        },
+      });
+    }
+    return result.detail;
+  }
+
+  async getProvisionalBill(id: number, userId?: number) {
+    const { order, qrSelection } = await this.prisma.$transaction(async (tx) => {
+      await this.lockOrders(tx, [id]);
+      const found = (await tx.order.findUnique({
+        where: { id },
+        include: {
+          table: { select: { id: true, name: true, status: true } },
+          items: {
+            include: { product: { select: { name: true, categoryId: true } } },
+            orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
+          },
+        },
+      })) as OrderRow | null;
+      if (!found) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+      if (found.status !== 'SERVING') {
+        throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể in tạm tính cho đơn đang phục vụ');
+      }
+
+      const selection = await this.qrService.selectForAmount(tx, found.totalAmount);
+      await tx.order.update({
+        where: { id: found.id },
+        data: { paymentAccountId: selection.account.id },
+      });
+
+      return { order: found, qrSelection: selection };
+    });
+
+    await this.recordQrSelectionAudit(qrSelection, order.orderCode, order.totalAmount.toNumber(), userId);
+
+    const tableCode = this.orderTableCode(order);
+    const totals = computeTotalsFromRows(order.items ?? [], order.discountSnapshot);
+    const vietQrPayload = this.qrService.buildVietQrUrl(
+      qrSelection.account,
+      order.totalAmount,
+      order.orderCode,
+      tableCode,
+    );
 
     return ProvisionalBillResponseSchema.parse({
       orderId: order.id,
@@ -510,17 +1275,146 @@ export class PosService {
       orderType: order.orderType,
       tableId: order.tableId,
       takeawayNumber: order.takeawayNumber,
-      items: (order.items ?? []).filter((item) => item.kitchenStatus !== 'CANCELLED').map((item) => ({
-        name: item.product.name,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice.toNumber(),
-        lineTotal: item.unitPrice.mul(item.quantity).toNumber(),
-        modifiers: this.modifierNames(item.modifiersSnapshot),
-        note: item.itemNote,
-      })),
+      items: (order.items ?? [])
+        .filter((item) => item.kitchenStatus !== 'CANCELLED')
+        .map((item) => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice.toNumber(),
+          lineTotal: item.unitPrice.mul(item.quantity).toNumber(),
+          modifiers: this.modifierNames(item.modifiersSnapshot),
+          note: item.itemNote,
+        })),
+      subtotalAmount: order.subtotalAmount !== undefined ? order.subtotalAmount.toNumber() : totals.subtotalAmount,
+      discountAmount: order.discountAmount !== undefined ? order.discountAmount.toNumber() : totals.discountAmount,
+      discountSnapshot: totals.snapshot,
+      discountWarning: totals.warningCode,
       totalAmount: order.totalAmount.toNumber(),
       status: 'SERVING',
       vietQrPayload,
+      paymentAccount: qrSelection.brief,
+      qrRotated: qrSelection.rotated,
+      qrOverLimit: qrSelection.overLimit,
+    });
+  }
+
+  async getSplitProvisionalBill(id: number, input: SplitProvisionalBillRequest, userId?: number) {
+    const parsed = this.parseRequest(SplitProvisionalBillRequestSchema, input);
+    const order = (await this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        table: { select: { id: true, name: true, status: true } },
+        items: {
+          include: { product: { select: { id: true, name: true } } },
+          orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
+        },
+      },
+    })) as OrderRow | null;
+    if (!order) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+    if (order.status !== 'SERVING') {
+      throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể in tạm tính tách đơn cho đơn đang phục vụ');
+    }
+    if (hasOrderDiscount(order)) {
+      throw this.conflict(
+        ErrorCodes.POS_DISCOUNT_BLOCKS_SPLIT,
+        'Đơn hàng đang áp dụng giảm giá, vui lòng gỡ giảm giá trước khi tách tạm tính',
+      );
+    }
+
+    const activeItems = (order.items ?? []).filter((item) => item.kitchenStatus !== 'CANCELLED');
+    const activeItemMap = new Map(activeItems.map((item) => [item.id, item]));
+    const selectedQtyByItemId = new Map<number, number>();
+    for (const sel of parsed.items) {
+      const current = selectedQtyByItemId.get(sel.orderItemId) ?? 0;
+      selectedQtyByItemId.set(sel.orderItemId, current + sel.quantity);
+    }
+
+    let splitTotal = new Prisma.Decimal(0);
+    const billItems: Array<{
+      name: string;
+      quantity: number;
+      unitPrice: number;
+      lineTotal: number;
+      modifiers: string[];
+      note: string | null;
+    }> = [];
+
+    for (const [itemId, selectedQty] of selectedQtyByItemId.entries()) {
+      const item = activeItemMap.get(itemId);
+      if (!item) {
+        throw new BadRequestException({ message: `Món #${itemId} không tồn tại trong đơn hoặc đã huỷ` });
+      }
+      if (selectedQty <= 0 || selectedQty > item.quantity) {
+        throw new BadRequestException({
+          message: `Số lượng tách của món "${item.product.name}" không hợp lệ (tối đa ${item.quantity})`,
+        });
+      }
+      const lineTotal = item.unitPrice.mul(selectedQty);
+      splitTotal = splitTotal.add(lineTotal);
+      billItems.push({
+        name: item.product.name,
+        quantity: selectedQty,
+        unitPrice: item.unitPrice.toNumber(),
+        lineTotal: lineTotal.toNumber(),
+        modifiers: this.modifierNames(item.modifiersSnapshot),
+        note: item.itemNote,
+      });
+    }
+    splitTotal = splitTotal.toDecimalPlaces(2);
+
+    const qrSelection = await this.qrService.selectForAmount(this.prisma, splitTotal);
+    await this.recordQrSelectionAudit(qrSelection, `${order.orderCode} (Tách đơn)`, splitTotal.toNumber(), userId);
+
+    const tableCode = this.orderTableCode(order);
+    const vietQrPayload = this.qrService.buildVietQrUrl(
+      qrSelection.account,
+      splitTotal,
+      order.orderCode,
+      tableCode,
+    );
+
+    return ProvisionalBillResponseSchema.parse({
+      orderId: order.id,
+      orderCode: order.orderCode,
+      orderType: order.orderType,
+      tableId: order.tableId,
+      takeawayNumber: order.takeawayNumber,
+      items: billItems,
+      subtotalAmount: splitTotal.toNumber(),
+      discountAmount: 0,
+      discountSnapshot: null,
+      discountWarning: null,
+      totalAmount: splitTotal.toNumber(),
+      status: 'SERVING',
+      vietQrPayload,
+      paymentAccount: qrSelection.brief,
+      qrRotated: qrSelection.rotated,
+      qrOverLimit: qrSelection.overLimit,
+    });
+  }
+
+  private async recordQrSelectionAudit(
+    selection: QrSelectionResult,
+    orderCode: string,
+    amount: number,
+    actorId?: number,
+  ): Promise<void> {
+    if (!selection.rotated && !selection.overLimit) return;
+    const bankLabel = `${getVietQrBankShortName(selection.account.bankCode)} - ${selection.account.accountNo}`;
+    const action = selection.overLimit ? 'Vượt hạn mức tất cả QR' : 'Tự động xoay vòng QR';
+    await this.auditLogService?.record({
+      module: 'PAYMENT_QR',
+      action,
+      detail: `${selection.account.label} (${bankLabel}) cho đơn ${orderCode}`,
+      actor: actorId,
+      metadata: {
+        paymentAccountId: selection.account.id,
+        label: selection.account.label,
+        orderCode,
+        amount,
+        rotated: selection.rotated,
+        overLimit: selection.overLimit,
+      },
     });
   }
 
@@ -530,10 +1424,27 @@ export class PosService {
       const snapshot = await tx.order.findUnique({ where: { id }, select: { id: true, tableId: true } });
       if (!snapshot) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
       await this.lockOrders(tx, [id]);
-      const order = await tx.order.findUnique({ where: { id } }) as OrderRow | null;
+      const order = await tx.order.findUnique({ where: { id }, include: { table: { select: { name: true } } } }) as OrderRow | null;
       if (!order) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
       if (order.status !== 'SERVING') throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Đơn hàng không còn mở để thanh toán');
       if (order.tableId !== null) await this.lockTables(tx, [order.tableId]);
+
+      const appliedDiscountAmount = Number(order.discountAmount ?? 0);
+      if (order.discountId !== null && order.discountId !== undefined && appliedDiscountAmount > 0) {
+        await tx.$queryRaw`SELECT id FROM discounts WHERE id = ${order.discountId} ORDER BY id ASC FOR UPDATE`;
+        const affectedRows = await tx.$executeRaw`
+          UPDATE discounts
+          SET used_count = used_count + 1, updated_at = NOW()
+          WHERE id = ${order.discountId}
+            AND (usage_limit IS NULL OR used_count < usage_limit)
+        `;
+        if (Number(affectedRows) === 0) {
+          throw this.conflict(
+            ErrorCodes.DISCOUNT_USAGE_EXHAUSTED,
+            'Mã giảm giá đã hết lượt sử dụng trong lúc chờ thanh toán',
+          );
+        }
+      }
 
       const totalCents = this.toCents(order.totalAmount);
       if (parsed.totalAmount !== undefined && this.toCents(parsed.totalAmount) !== totalCents) {
@@ -555,11 +1466,20 @@ export class PosService {
       }
 
       const paidAt = new Date();
+      let resolvedPaymentAccountId: number | null = order.paymentAccountId ?? null;
+      if (parsed.paymentMethod === 'CASH') {
+        resolvedPaymentAccountId = null;
+      } else if (resolvedPaymentAccountId === null) {
+        const qrSelection = await this.qrService.selectForAmount(tx, this.fromCents(transferCents), paidAt);
+        resolvedPaymentAccountId = qrSelection.account.id;
+      }
+
       const updated = await tx.order.update({
         where: { id },
         data: {
           status: 'PAID',
           paymentMethod: parsed.paymentMethod,
+          paymentAccountId: resolvedPaymentAccountId,
           cashAmount: this.fromCents(cashCents),
           transferAmount: this.fromCents(transferCents),
           paidAt,
@@ -569,17 +1489,320 @@ export class PosService {
       if (order.tableId !== null) {
         await tx.diningTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE', activeOrderId: null } });
       }
-      return { order: updated as OrderRow, paidAt, tableId: order.tableId };
+      const tableLabel = order.table?.name ?? (order.orderType === 'TAKEAWAY' ? `Mang về #${String(order.takeawayNumber ?? 0).padStart(2, '0')}` : null);
+      return { order: updated as OrderRow, paidAt, tableId: order.tableId, tableLabel };
     });
 
     const payload = { orderId: id, status: 'PAID', paidAt: result.paidAt.toISOString() };
     this.gateway.emitOrderStatusUpdated(id, payload);
     this.gateway.emitTableGridSync({ orderId: id, tableId: result.tableId, status: 'PAID' });
+    const methodLabel = formatPaymentMethodVi(parsed.paymentMethod);
+    const totalFormatted = `${result.order.totalAmount.toNumber().toLocaleString('vi-VN')}đ`;
+    await this.auditLogService?.record({
+      module: 'POS',
+      action: 'Thanh toán đơn',
+      detail: `${result.order.orderCode} (${methodLabel} - ${totalFormatted})`,
+      message: `thanh toán đơn hàng (tổng tiền ${totalFormatted})`,
+      actor: cashierId,
+      metadata: {
+        orderId: id,
+        orderCode: result.order.orderCode,
+        ...(result.tableLabel ? { tableLabel: result.tableLabel } : {}),
+        paymentMethodLabel: methodLabel,
+        totalAmount: result.order.totalAmount.toNumber(),
+      },
+    });
     return payload;
   }
 
+  async splitCheckout(id: number, input: SplitCheckoutOrderRequest, cashierId: number) {
+    const parsed = this.parseRequest(SplitCheckoutOrderRequestSchema, input);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const snapshot = await tx.order.findUnique({
+        where: { id },
+        select: { id: true, tableId: true },
+      });
+      if (!snapshot) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+
+      // Invariant 5: Lock orders first, then dining_tables
+      await this.lockOrders(tx, [id]);
+      if (snapshot.tableId !== null) await this.lockTables(tx, [snapshot.tableId]);
+
+      const order = await tx.order.findUnique({
+        where: { id },
+        include: {
+          table: { select: { id: true, name: true } },
+          items: {
+            orderBy: [{ batchNo: 'asc' }, { id: 'asc' }],
+            include: { product: { select: { id: true, name: true, station: true } } },
+          },
+        },
+      }) as OrderRow | null;
+      if (!order) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
+      if (order.status !== 'SERVING') {
+        throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể tách thanh toán cho đơn đang phục vụ');
+      }
+      if (hasOrderDiscount(order)) {
+        throw this.conflict(
+          ErrorCodes.POS_DISCOUNT_BLOCKS_SPLIT,
+          'Đơn hàng đang áp dụng giảm giá, vui lòng gỡ giảm giá trước khi tách thanh toán',
+        );
+      }
+
+      const activeItems = (order.items ?? []).filter((item) => item.kitchenStatus !== 'CANCELLED');
+      if (activeItems.length === 0) {
+        throw new BadRequestException({ message: 'Đơn hàng không còn món hợp lệ để thanh toán' });
+      }
+
+      const activeItemMap = new Map(activeItems.map((item) => [item.id, item]));
+      const selectedQtyByItemId = new Map<number, number>();
+      for (const sel of parsed.items) {
+        const current = selectedQtyByItemId.get(sel.orderItemId) ?? 0;
+        selectedQtyByItemId.set(sel.orderItemId, current + sel.quantity);
+      }
+
+      let splitTotal = new Prisma.Decimal(0);
+      for (const [itemId, selectedQty] of selectedQtyByItemId.entries()) {
+        const item = activeItemMap.get(itemId);
+        if (!item) {
+          throw new BadRequestException({ message: `Món #${itemId} không tồn tại trong đơn hoặc đã huỷ` });
+        }
+        if (selectedQty <= 0 || selectedQty > item.quantity) {
+          throw new BadRequestException({
+            message: `Số lượng tách của món "${item.product.name}" không hợp lệ (tối đa ${item.quantity})`,
+          });
+        }
+        splitTotal = splitTotal.add(item.unitPrice.mul(selectedQty));
+      }
+      splitTotal = splitTotal.toDecimalPlaces(2);
+
+      const splitTotalCents = this.toCents(splitTotal);
+      let cashCents = 0;
+      let transferCents = 0;
+      if (parsed.paymentMethod === 'CASH') {
+        cashCents = splitTotalCents;
+      } else if (parsed.paymentMethod === 'TRANSFER') {
+        transferCents = splitTotalCents;
+      } else {
+        cashCents = this.toCents(parsed.cashAmount);
+        transferCents = this.toCents(parsed.transferAmount);
+        if (cashCents <= 0 || transferCents <= 0 || cashCents + transferCents !== splitTotalCents) {
+          throw new UnprocessableEntityException({
+            code: 'VALIDATION_FAILED',
+            message: 'Tiền mặt và chuyển khoản phải lớn hơn 0 và cộng lại bằng tổng tiền tách đơn',
+          });
+        }
+      }
+
+      const isFullSelection = activeItems.every(
+        (item) => (selectedQtyByItemId.get(item.id) ?? 0) === item.quantity,
+      );
+
+      const paidAt = new Date();
+      let resolvedPaymentAccountId: number | null = null;
+      if (parsed.paymentMethod === 'TRANSFER' || parsed.paymentMethod === 'SPLIT') {
+        if (parsed.paymentAccountId !== undefined) {
+          const specified = await tx.paymentAccount.findUnique({ where: { id: parsed.paymentAccountId } });
+          if (specified) {
+            resolvedPaymentAccountId = specified.id;
+          }
+        }
+        if (resolvedPaymentAccountId === null) {
+          if (isFullSelection && order.paymentAccountId) {
+            resolvedPaymentAccountId = order.paymentAccountId;
+          } else {
+            const qrSelection = await this.qrService.selectForAmount(tx, this.fromCents(transferCents), paidAt);
+            resolvedPaymentAccountId = qrSelection.account.id;
+          }
+        }
+      }
+
+      if (isFullSelection) {
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'PAID',
+            paymentMethod: parsed.paymentMethod,
+            paymentAccountId: resolvedPaymentAccountId,
+            cashAmount: this.fromCents(cashCents),
+            transferAmount: this.fromCents(transferCents),
+            paidAt,
+            cashierId,
+          },
+        });
+        if (order.tableId !== null) {
+          await tx.diningTable.update({
+            where: { id: order.tableId },
+            data: { status: 'AVAILABLE', activeOrderId: null },
+          });
+        }
+        return {
+          isFullCheckout: true,
+          paidOrderId: order.id,
+          paidOrderCode: order.orderCode,
+          remainingOrderId: null,
+          remainingTotalAmount: 0,
+          paidTotalAmount: splitTotal.toNumber(),
+          paidAt,
+          tableId: order.tableId,
+          status: 'PAID' as const,
+        };
+      }
+
+      const businessDay = this.businessDay(paidAt);
+      await this.lockOrderSequence(tx, businessDay.key);
+      const splitOrderCode = await this.nextOrderCode(tx, businessDay);
+      const splitTakeawayNumber =
+        order.orderType === 'TAKEAWAY' ? await this.nextTakeawayNumber(tx, businessDay) : null;
+
+      const paidOrder = await tx.order.create({
+        data: {
+          orderCode: splitOrderCode,
+          orderType: order.orderType as 'DINE_IN' | 'TAKEAWAY',
+          orderSource: 'POS_COUNTER',
+          tableId: order.orderType === 'DINE_IN' ? order.tableId : null,
+          takeawayNumber: splitTakeawayNumber,
+          status: 'PAID',
+          paymentMethod: parsed.paymentMethod,
+          paymentAccountId: resolvedPaymentAccountId,
+          cashAmount: this.fromCents(cashCents),
+          transferAmount: this.fromCents(transferCents),
+          subtotalAmount: splitTotal,
+          discountAmount: new Prisma.Decimal(0),
+          totalAmount: splitTotal,
+          cashierId,
+          note: `Tách thanh toán từ đơn ${order.orderCode}`,
+          createdAt: paidAt,
+          paidAt,
+        },
+      });
+
+      for (const [itemId, selectedQty] of selectedQtyByItemId.entries()) {
+        const item = activeItemMap.get(itemId)!;
+        if (selectedQty === item.quantity) {
+          await tx.orderItem.update({
+            where: { id: item.id },
+            data: { orderId: paidOrder.id },
+          });
+        } else {
+          await tx.orderItem.update({
+            where: { id: item.id },
+            data: { quantity: item.quantity - selectedQty },
+          });
+          await tx.orderItem.create({
+            data: {
+              orderId: paidOrder.id,
+              productId: item.productId,
+              quantity: selectedQty,
+              unitPrice: item.unitPrice,
+              modifiersSnapshot: (item.modifiersSnapshot ?? []) as Prisma.InputJsonValue,
+              itemNote: item.itemNote,
+              batchNo: item.batchNo,
+              ...(item.itemSource ? { itemSource: item.itemSource } : {}),
+              kitchenStatus: item.kitchenStatus as 'NEW' | 'PRINTED',
+            },
+          });
+        }
+      }
+
+      const remainingItems = await tx.orderItem.findMany({
+        where: { orderId: order.id, kitchenStatus: { in: ['NEW', 'PRINTED'] } },
+        select: { quantity: true, unitPrice: true },
+      });
+      const remainingTotal = this.totalForItems(remainingItems);
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          subtotalAmount: remainingTotal,
+          discountAmount: new Prisma.Decimal(0),
+          totalAmount: remainingTotal,
+        },
+      });
+
+      return {
+        isFullCheckout: false,
+        paidOrderId: paidOrder.id,
+        paidOrderCode: paidOrder.orderCode,
+        remainingOrderId: order.id,
+        remainingTotalAmount: remainingTotal.toNumber(),
+        paidTotalAmount: splitTotal.toNumber(),
+        paidAt,
+        tableId: order.tableId,
+        status: 'SERVING' as const,
+      };
+    });
+
+    if (result.isFullCheckout) {
+      this.gateway.emitOrderStatusUpdated(id, {
+        orderId: id,
+        status: 'PAID',
+        paidAt: result.paidAt.toISOString(),
+      });
+    }
+    this.gateway.emitTableGridSync({
+      orderId: id,
+      tableId: result.tableId,
+      status: result.status,
+    });
+    const splitMethodLabel = formatPaymentMethodVi(parsed.paymentMethod);
+    const paidFormatted = `${result.paidTotalAmount.toLocaleString('vi-VN')}đ`;
+    await this.auditLogService?.record({
+      module: 'POS',
+      action: 'Tách thanh toán',
+      detail: `${result.paidOrderCode} (${splitMethodLabel} - ${paidFormatted})`,
+      message: `tách thanh toán hoá đơn ${result.paidOrderCode} qua ${splitMethodLabel} (số tiền ${paidFormatted})`,
+      actor: cashierId,
+      metadata: {
+        orderId: id,
+        paidOrderId: result.paidOrderId,
+        orderCode: result.paidOrderCode,
+        paymentMethodLabel: splitMethodLabel,
+        totalAmount: result.paidTotalAmount,
+      },
+    });
+
+    return {
+      isFullCheckout: result.isFullCheckout,
+      paidOrderId: result.paidOrderId,
+      paidOrderCode: result.paidOrderCode,
+      remainingOrderId: result.remainingOrderId,
+      remainingTotalAmount: result.remainingTotalAmount,
+      paidTotalAmount: result.paidTotalAmount,
+      paidAt: result.paidAt.toISOString(),
+      status: result.status,
+    };
+  }
+
   async splitKitchen(id: number, userId?: number) {
-    return this.kitchenSplitService.splitKitchen(id, userId);
+    const res = await this.kitchenSplitService.splitKitchen(id, userId);
+    if (userId && Array.isArray(res.tickets) && res.tickets.length > 0) {
+      const orderMeta = typeof this.prisma.order?.findUnique === 'function'
+        ? await this.prisma.order.findUnique({
+            where: { id },
+            select: { orderCode: true, orderType: true, takeawayNumber: true, table: { select: { name: true } } },
+          })
+        : null;
+      const tableLabel =
+        orderMeta?.table?.name ??
+        (orderMeta?.orderType === 'TAKEAWAY'
+          ? `Mang về #${String(orderMeta.takeawayNumber ?? 0).padStart(2, '0')}`
+          : undefined);
+      await this.auditLogService?.record({
+        module: 'POS',
+        action: 'Tách phiếu bếp',
+        detail: `${orderMeta?.orderCode ?? `Đơn #${id}`} (${res.tickets.length} phiếu bếp)`,
+        message: `gửi tách ${res.tickets.length} phiếu chế biến xuống bếp`,
+        actor: userId,
+        metadata: {
+          orderId: id,
+          ...(orderMeta?.orderCode ? { orderCode: orderMeta.orderCode } : {}),
+          ...(tableLabel ? { tableLabel } : {}),
+          ticketCount: res.tickets.length,
+        },
+      });
+    }
+    return res;
   }
 
   async reprintKitchen(id: number, options?: ReprintKitchenRequest, userId?: number) {
@@ -600,12 +1823,37 @@ export class PosService {
         modifiersSnapshot: item.modifiersSnapshot,
         itemNote: item.itemNote,
         batchNo,
+        itemSource: 'QR_CODE',
         kitchenStatus: 'NEW',
       })),
     });
-    const totalAmount = order.totalAmount.add(addedTotal);
-    await tx.order.update({ where: { id: order.id }, data: { totalAmount } });
-    return { batchNo, totalAmount: totalAmount.toNumber() };
+    const existingSnapshot = extractDiscountSnapshot(order.discountSnapshot);
+    const foundRows =
+      typeof tx.orderItem?.findMany === 'function'
+        ? await tx.orderItem.findMany({
+            where: { orderId: order.id, kitchenStatus: { in: ['NEW', 'PRINTED'] } },
+            include: { product: { select: { categoryId: true } } },
+          })
+        : undefined;
+    if (Array.isArray(foundRows)) {
+      const totals = computeTotalsFromRows(foundRows, existingSnapshot);
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          subtotalAmount: totals.subtotalDecimal,
+          discountAmount: totals.discountDecimal,
+          totalAmount: totals.totalDecimal,
+        },
+      });
+      return { batchNo, totalAmount: totals.totalAmount };
+    }
+    const nextSubtotal = (order.subtotalAmount ?? order.totalAmount).add(addedTotal);
+    const nextTotal = order.totalAmount.add(addedTotal);
+    await tx.order.update({
+      where: { id: order.id },
+      data: { subtotalAmount: nextSubtotal, discountAmount: new Prisma.Decimal(0), totalAmount: nextTotal },
+    });
+    return { batchNo, totalAmount: nextTotal.toNumber() };
   }
 
   private async resolveItems(tx: Prisma.TransactionClient, itemInputs: CreateOrderItemInput[]): Promise<ResolvedOrderItem[]> {
@@ -635,11 +1883,12 @@ export class PosService {
         const selections = input.modifiers.filter((selection) => selection.groupId === group.id);
         const positiveSelections = selections.filter((selection) => !selection.action || selection.action === 'SELECTED');
         const exceptionSelections = selections.filter((selection) => selection.action === 'REMOVED_DEFAULT' || selection.action === 'SUBSTITUTED');
-        const hasAutoDefaults = Boolean(group.isAutoSelect || group.allowSubstitution || group.modifiers.some((m) => m.isDefaultChecked));
+        const isCheckboxAutoGroup = Boolean(group.isAutoSelect || group.allowSubstitution);
+        const hasImplicitRadioDefault = !isCheckboxAutoGroup && group.modifiers.some((m) => m.isDefaultChecked);
 
         if (
           positiveSelections.length > group.maxSelect ||
-          (!hasAutoDefaults && group.isRequired && positiveSelections.length === 0)
+          (!isCheckboxAutoGroup && !hasImplicitRadioDefault && group.isRequired && positiveSelections.length === 0)
         ) {
           throw new UnprocessableEntityException({ code: 'VALIDATION_FAILED', message: `Lựa chọn món bổ sung không hợp lệ: ${group.name}` });
         }
@@ -652,7 +1901,9 @@ export class PosService {
         }
 
         const remainingGroupModifiers = group.modifiers.filter(
-          (candidate) => !exceptionSelections.some((ex) => ex.modifierId === candidate.id),
+          (candidate) =>
+            candidate.isAvailable !== false &&
+            !exceptionSelections.some((ex) => ex.modifierId === candidate.id),
         );
 
         for (const selection of selections) {
@@ -660,6 +1911,13 @@ export class PosService {
           selectedIds.add(selection.modifierId);
           const modifier = group.modifiers.find((candidate) => candidate.id === selection.modifierId);
           if (!modifier) throw new UnprocessableEntityException({ code: 'VALIDATION_FAILED', message: `Tuỳ chọn không thuộc nhóm ${group.name}` });
+
+          if (selection.action !== 'REMOVED_DEFAULT' && selection.action !== 'SUBSTITUTED' && modifier.isAvailable === false) {
+            throw new UnprocessableEntityException({
+              code: 'VALIDATION_FAILED',
+              message: `Tuỳ chọn "${modifier.name}" hiện đang tạm hết`,
+            });
+          }
 
           if (selection.action === 'REMOVED_DEFAULT') {
             snapshots.push({
@@ -673,14 +1931,29 @@ export class PosService {
           }
 
           if (selection.action === 'SUBSTITUTED') {
+            if (selection.substituteModifierId) {
+              const targetMod = group.modifiers.find((m) => m.id === selection.substituteModifierId);
+              if (!targetMod || targetMod.isAvailable === false) {
+                throw new UnprocessableEntityException({
+                  code: 'VALIDATION_FAILED',
+                  message: 'Món thay thế hiện không khả dụng hoặc tạm hết',
+                });
+              }
+            }
             const explicitSubModifier = selection.substituteModifierId
               ? remainingGroupModifiers.find((m) => m.id === selection.substituteModifierId)
               : undefined;
+            const defaultSubIsAvailable = Boolean(
+              modifier.defaultSubstituteName?.trim() &&
+              !group.modifiers.some(
+                (m) => m.name === modifier.defaultSubstituteName?.trim() && m.isAvailable === false,
+              ),
+            );
             const replacementName = remainingGroupModifiers.length === 1
               ? remainingGroupModifiers[0]!.name
               : (explicitSubModifier?.name
                 ?? selection.substituteName?.trim()
-                ?? modifier.defaultSubstituteName?.trim()
+                ?? (defaultSubIsAvailable ? modifier.defaultSubstituteName?.trim() : undefined)
                 ?? remainingGroupModifiers[0]?.name
                 ?? '');
             const formattedName = replacementName
@@ -734,6 +2007,8 @@ export class PosService {
       takeawayNumber: order.takeawayNumber,
       tableLabel: label,
       status: order.status,
+      subtotalAmount: order.subtotalAmount !== undefined ? order.subtotalAmount.toNumber() : order.totalAmount.toNumber(),
+      discountAmount: order.discountAmount !== undefined ? order.discountAmount.toNumber() : 0,
       totalAmount: order.totalAmount.toNumber(),
     });
   }
@@ -742,6 +2017,39 @@ export class PosService {
     const resolvedTableLabel = order.orderType === 'TAKEAWAY' && order.takeawayNumber !== null
       ? `Mang về #${String(order.takeawayNumber).padStart(2, '0')}`
       : tableLabel;
+
+    let hasUnprintedAddon: boolean | undefined;
+    let unprintedAddonBatchNo: number | null | undefined;
+    let pendingQrSince: string | null | undefined;
+    let pendingQrKind: 'NEW' | 'ADDON' | null | undefined;
+
+    if (order.status === 'PENDING' && order.orderSource === 'QR_CODE') {
+      pendingQrKind = 'NEW';
+      pendingQrSince = (order.createdAt ?? new Date(0)).toISOString();
+    }
+
+    if (order.status === 'SERVING' && Array.isArray(order.items)) {
+      const newItems = order.items.filter((i) => i.kitchenStatus === 'NEW');
+      // Chỉ kích hoạt gọi thêm khi có món NEW từ Lượt 2 trở đi (batchNo >= 2)
+      const isAddon = newItems.length > 0 && newItems.some((i) => i.batchNo >= 2);
+      if (isAddon) {
+        hasUnprintedAddon = true;
+        unprintedAddonBatchNo = Math.max(...newItems.map((i) => i.batchNo));
+      }
+      const qrAddonItems = newItems.filter((i) => i.batchNo >= 2 && i.itemSource === 'QR_CODE');
+      if (qrAddonItems.length > 0) {
+        pendingQrKind = 'ADDON';
+        const earliestMs = Math.min(
+          ...qrAddonItems.map((i) =>
+            i.createdAt instanceof Date
+              ? i.createdAt.getTime()
+              : (order.createdAt?.getTime() ?? Date.now()),
+          ),
+        );
+        pendingQrSince = new Date(earliestMs).toISOString();
+      }
+    }
+
     return {
       orderId: order.id,
       orderCode: order.orderCode,
@@ -750,8 +2058,14 @@ export class PosService {
       tableLabel: resolvedTableLabel,
       takeawayNumber: order.takeawayNumber ?? null,
       status: order.status,
+      subtotalAmount: order.subtotalAmount !== undefined ? order.subtotalAmount.toNumber() : order.totalAmount.toNumber(),
+      discountAmount: order.discountAmount !== undefined ? order.discountAmount.toNumber() : 0,
       totalAmount: order.totalAmount.toNumber(),
       createdAt: (order.createdAt ?? new Date(0)).toISOString(),
+      ...(hasUnprintedAddon !== undefined ? { hasUnprintedAddon } : {}),
+      ...(unprintedAddonBatchNo !== undefined ? { unprintedAddonBatchNo } : {}),
+      ...(pendingQrSince !== undefined ? { pendingQrSince } : {}),
+      ...(pendingQrKind !== undefined ? { pendingQrKind } : {}),
     };
   }
 
@@ -759,6 +2073,7 @@ export class PosService {
     const tableLabel = order.orderType === 'TAKEAWAY' && order.takeawayNumber !== null
       ? `Mang về #${String(order.takeawayNumber).padStart(2, '0')}`
       : order.table?.name ?? null;
+    const totals = computeTotalsFromRows(order.items ?? [], order.discountSnapshot);
     return OrderDetailResponseSchema.parse({
       orderId: order.id,
       orderCode: order.orderCode,
@@ -771,6 +2086,11 @@ export class PosService {
       paymentMethod: order.paymentMethod ?? null,
       cashAmount: (order.cashAmount ?? new Prisma.Decimal(0)).toNumber(),
       transferAmount: (order.transferAmount ?? new Prisma.Decimal(0)).toNumber(),
+      subtotalAmount: order.subtotalAmount !== undefined ? order.subtotalAmount.toNumber() : totals.subtotalAmount,
+      discountAmount: order.discountAmount !== undefined ? order.discountAmount.toNumber() : totals.discountAmount,
+      discountId: order.discountId ?? null,
+      discountSnapshot: totals.snapshot,
+      discountWarning: totals.warningCode,
       totalAmount: order.totalAmount.toNumber(),
       note: order.note ?? null,
       createdAt: (order.createdAt ?? new Date(0)).toISOString(),
@@ -779,6 +2099,7 @@ export class PosService {
       items: (order.items ?? []).map((item) => ({
         id: item.id,
         productId: item.productId,
+        categoryId: item.product.categoryId ?? null,
         name: item.product.name,
         quantity: item.quantity,
         unitPrice: item.unitPrice.toNumber(),
@@ -850,10 +2171,19 @@ export class PosService {
     });
   }
 
-  private vietQrUrl(bankId: string, accountNo: string, accountName: string, amount: Prisma.Decimal, orderCode: string): string {
-    const numericAmount = amount.toFixed(0);
-    const query = new URLSearchParams({ amount: numericAmount, addInfo: `TT ${orderCode}`, accountName });
-    return `https://img.vietqr.io/image/${encodeURIComponent(bankId)}-${encodeURIComponent(accountNo)}-compact2.png?${query.toString()}`;
+  private orderTableCode(order: { table?: { name?: string | null } | null; tableId?: number | null; orderType?: string | null; takeawayNumber?: number | null }): string {
+    if (order.orderType === 'TAKEAWAY' || order.takeawayNumber) {
+      return `MV${String(order.takeawayNumber ?? 1).padStart(2, '0')}`;
+    }
+    if (order.table?.name) {
+      const digits = order.table.name.match(/\d+/);
+      if (digits) return `B${digits[0].padStart(2, '0')}`;
+      return order.table.name.replace(/\s+/g, '').toUpperCase();
+    }
+    if (order.tableId) {
+      return `B${String(order.tableId).padStart(2, '0')}`;
+    }
+    return '';
   }
 
   private toCents(amount: Prisma.Decimal | number): number {
@@ -919,6 +2249,24 @@ export class PosService {
       });
     }
     return parsed.data;
+  }
+
+  private isQrOrderAccessibleFromTable(
+    order: { id: number; tableId: number | null; tableTransferLogs?: unknown },
+    qrTable: { id: number; name: string; activeOrderId: number | null },
+  ): boolean {
+    if (order.id === qrTable.activeOrderId || order.tableId === qrTable.id) {
+      return true;
+    }
+    if (!Array.isArray(order.tableTransferLogs)) {
+      return false;
+    }
+    return order.tableTransferLogs.some(
+      (entry) =>
+        typeof entry === 'object'
+        && entry !== null
+        && (entry as { fromTable?: unknown }).fromTable === qrTable.name,
+    );
   }
 
   private conflict(code: string, message: string): ConflictException {

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type CreateEmployeeInput,
   type EmployeeFilterQuery,
@@ -28,10 +28,11 @@ export interface EmployeeRecord {
   attachmentUrls: string[];
   note: string | null;
   isDeleted: boolean;
+  deletedAt: string | null;
   createdAt: string;
   position: { id: number; name: string } | null;
   specialty: { id: number; name: string } | null;
-  user: { id: number; username: string; isActive: boolean } | null;
+  user: { id: number; username: string; isActive: boolean; isSuperAdmin?: boolean } | null;
 }
 
 export interface EmployeeListResponse {
@@ -41,21 +42,25 @@ export interface EmployeeListResponse {
   items: EmployeeRecord[];
 }
 
+export async function fetchEmployees(filter: EmployeeFilterQuery) {
+  return apiClient.get<EmployeeListResponse>('/api/v1/employees', {
+    params: {
+      page: filter.page,
+      limit: filter.limit,
+      keyword: filter.keyword || undefined,
+      positionId: filter.positionId,
+      specialtyId: filter.specialtyId,
+      includeDeleted: filter.includeDeleted || undefined,
+      inactiveOnly: filter.inactiveOnly || undefined,
+    },
+  });
+}
+
 export function useEmployeesQuery(filter: EmployeeFilterQuery) {
   return useQuery({
     queryKey: ['employees', filter],
-    queryFn: () =>
-      apiClient.get<EmployeeListResponse>('/api/v1/employees', {
-        params: {
-          page: filter.page,
-          limit: filter.limit,
-          keyword: filter.keyword || undefined,
-          positionId: filter.positionId,
-          specialtyId: filter.specialtyId,
-          includeDeleted: filter.includeDeleted || undefined,
-          inactiveOnly: filter.inactiveOnly || undefined,
-        },
-      }),
+    queryFn: () => fetchEmployees(filter),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -85,6 +90,8 @@ export function useCreateEmployeeMutation() {
       apiClient.post<EmployeeRecord>('/api/v1/employees', body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['employees'] });
+      void queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      void queryClient.invalidateQueries({ queryKey: ['payroll'] });
     },
   });
 }
@@ -97,6 +104,8 @@ export function useUpdateEmployeeMutation(id: number) {
       apiClient.put<EmployeeRecord>(`/api/v1/employees/${id}`, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['employees'] });
+      void queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      void queryClient.invalidateQueries({ queryKey: ['payroll'] });
     },
   });
 }
@@ -109,6 +118,22 @@ export function useDeleteEmployeeMutation() {
       apiClient.delete<EmployeeRecord>(`/api/v1/employees/${id}`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['employees'] });
+      void queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      void queryClient.invalidateQueries({ queryKey: ['payroll'] });
+    },
+  });
+}
+
+export function usePermanentDeleteEmployeeMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiClient.delete<{ id: number; deleted: boolean }>(`/api/v1/employees/${id}/permanent`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['employees'] });
+      void queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      void queryClient.invalidateQueries({ queryKey: ['payroll'] });
     },
   });
 }
@@ -125,6 +150,7 @@ export function useSetEmployeeActiveMutation() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['employees'] });
       void queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      void queryClient.invalidateQueries({ queryKey: ['payroll'] });
     },
   });
 }

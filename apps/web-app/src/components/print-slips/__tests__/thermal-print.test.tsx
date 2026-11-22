@@ -1,5 +1,11 @@
 import { QueryClient } from '@tanstack/react-query';
-import { type PosTableGridResponse, type OrderDetailResponse } from '@fnb/shared';
+import {
+  DEFAULT_STORE_SETTINGS,
+  type OrderDetailResponse,
+  type PosTableGridResponse,
+  type PublicStoreSettingsResponse,
+  UserPermissionsSchema,
+} from '@fnb/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -248,10 +254,10 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       expect(container.querySelectorAll('.ticket-page')).toHaveLength(2);
       expect(screen.getAllByText(/^PHIẾU BÁO HUỶ MÓN$/)).toHaveLength(2);
       expect(
-        screen.getByText(/PHIẾU BÁO HUỶ MÓN: BÀN 07 - HUỶ 01 MÌ BÒ CẤP 3/i),
+        screen.getByText(/^BÀN 07 - HUỶ 01 MÌ BÒ CẤP 3$/i),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/PHIẾU BÁO HUỶ MÓN: BÀN 07 - HUỶ 02 TRÀ ĐÀO CAM SẢ/i),
+        screen.getByText(/^BÀN 07 - HUỶ 02 TRÀ ĐÀO CAM SẢ$/i),
       ).toBeInTheDocument();
     });
 
@@ -316,7 +322,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
           username: 'cashier01',
           fullName: 'Nguyễn Văn Anh',
           isSuperAdmin: false,
-          permissions: {
+          permissions: UserPermissionsSchema.parse({
             pos: {
               view: true,
               create: true,
@@ -326,14 +332,10 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
               tableAction: true,
               checkout: true,
             },
-            invoices: { view: true, reprint: true, void: false },
-            inventory: { view: true, create: true, update: false, delete: true },
-            cashflow: { view: true, create: true, config: false },
-            employees: { view: false, create: false, update: false, delete: false },
-            schedules: { view: false, update: false },
-            mdm: { view: false, write: false },
-            rbac: { view: false, manage: false },
-          },
+            invoices: { view: true, reprint: true },
+            inventory: { view: true, create: true, delete: true },
+            cashflow: { view: true, create: true },
+          }),
         },
       });
 
@@ -523,6 +525,14 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
                 totalAmount: 220000,
                 status: 'SERVING',
                 vietQrPayload: qrUrl,
+                paymentAccount: {
+                  id: 1,
+                  label: 'TK Chính (Vietcombank)',
+                  bankCode: 'VCB',
+                  bankName: 'Vietcombank',
+                  accountNo: '0123456789',
+                  accountName: 'QUAN MI CAY SON BAO',
+                },
                 items: [
                   {
                     name: 'Mì Kim Chi Bò Mỹ',
@@ -568,7 +578,13 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       // Verify slip content is rendered in #thermal-print-container
       expect(screen.getByText(/PHIẾU TẠM TÍNH/)).toBeInTheDocument();
       expect(screen.getByText(/Phiếu này dùng để kiểm tra món ăn/)).toBeInTheDocument();
-      expect(screen.getByText(/TT HD-20261108-0039/)).toBeInTheDocument();
+      expect(screen.getByText(/TT B07 HD-20261108-0039/)).toBeInTheDocument();
+      expect(screen.getByTestId('provisional-vietqr-bank-account')).toHaveTextContent(
+        'Vietcombank — STK: 0123456789',
+      );
+      expect(screen.getByTestId('provisional-vietqr-account-name')).toHaveTextContent(
+        'QUAN MI CAY SON BAO',
+      );
 
       const qrImg = screen.getByTestId('provisional-vietqr-image') as HTMLImageElement;
       expect(qrImg).toBeInTheDocument();
@@ -632,6 +648,506 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
         expect(qrImg.src.startsWith('data:image/svg+xml;utf8,')).toBe(true);
         expect(printSpy).toHaveBeenCalledTimes(1);
       });
+    });
+  });
+
+  describe('AC-14.11: Dynamic Store Header/Footer & Logo Toggle on Thermal Slips', () => {
+    const customSettings = {
+      ...DEFAULT_STORE_SETTINGS,
+      storeName: 'Mì Cay Seoul',
+      subtitle: 'Chi nhánh 1',
+      description: 'Mì cay 7 cấp độ',
+      brandColor: '#2563EB',
+      defaultTheme: 'light' as const,
+      qr: { storeName: '', subtitle: '', welcomeMessage: '', theme: 'system' as const },
+      receipt: {
+        printName: 'QUÁN MÌ CAY SEOUL',
+        address: '123 Lê Lợi, Hà Nội',
+        phone: '0909123456',
+        footerNote: 'Dòng 1 cảm ơn\nDòng 2 hẹn gặp lại',
+        showLogo: false,
+      },
+      navLabels: {},
+      pageHeaders: {},
+      updatedAt: '2026-11-15T10:00:00.000Z',
+      assets: {
+        logo: '2026-11-15T10:00:00.000Z',
+        favicon: null,
+        qrLogo: null,
+      },
+    };
+
+    it('renders dynamic receipt header, address, phone, multiline footer and omits logo img when showLogo=false', () => {
+      render(
+        <OfficialReceiptSlip
+          orderCode="HD-20261115-0001"
+          tableLabel="BÀN 02"
+          paymentMethod="CASH"
+          cashAmount={100000}
+          transferAmount={0}
+          totalAmount={100000}
+          items={[
+            {
+              name: 'Mì Bò',
+              quantity: 1,
+              unitPrice: 100000,
+              lineTotal: 100000,
+              modifiers: [],
+              note: null,
+            },
+          ]}
+          storeSettings={customSettings}
+        />,
+      );
+
+      expect(screen.getByText('QUÁN MÌ CAY SEOUL')).toBeInTheDocument();
+      expect(screen.getByText('123 Lê Lợi, Hà Nội')).toBeInTheDocument();
+      expect(screen.getByText('ĐT: 0909123456')).toBeInTheDocument();
+      expect(screen.getByText(/Dòng 1 cảm ơn/)).toBeInTheDocument();
+      expect(screen.getByText(/Dòng 2 hẹn gặp lại/)).toBeInTheDocument();
+      expect(screen.queryByTestId('official-receipt-logo')).not.toBeInTheDocument();
+    });
+
+    it('renders monochrome logo img on both official and provisional slips when showLogo=true and asset exists', () => {
+      const withLogo = {
+        ...customSettings,
+        receipt: { ...customSettings.receipt, showLogo: true },
+      };
+
+      const { unmount } = render(
+        <OfficialReceiptSlip
+          orderCode="HD-20261115-0002"
+          tableLabel="BÀN 03"
+          paymentMethod="CASH"
+          cashAmount={50000}
+          transferAmount={0}
+          totalAmount={50000}
+          items={[]}
+          storeSettings={withLogo}
+        />,
+      );
+      const officialLogo = screen.getByTestId('official-receipt-logo') as HTMLImageElement;
+      expect(officialLogo.src).toContain('/api/v1/public/store-assets/logo?v=');
+      unmount();
+
+      render(
+        <ThermalPrintProvider>
+          <ProvisionalVietQrSlip
+            bill={{
+              orderId: 700,
+              orderCode: 'HD-20261115-0003',
+              orderType: 'DINE_IN',
+              tableId: 4,
+              takeawayNumber: null,
+              totalAmount: 50000,
+              status: 'SERVING',
+              items: [],
+            }}
+            storeSettings={withLogo}
+          />
+        </ThermalPrintProvider>,
+      );
+      const provisionalLogo = screen.getByTestId('provisional-receipt-logo') as HTMLImageElement;
+      expect(provisionalLogo.src).toContain('/api/v1/public/store-assets/logo?v=');
+      expect(screen.getByText('QUÁN MÌ CAY SEOUL')).toBeInTheDocument();
+      expect(screen.getByText('123 Lê Lợi, Hà Nội')).toBeInTheDocument();
+    });
+  });
+
+  describe('Story 16 — Custom PrintTemplates across all 5 80mm Thermal Slips (AC-16.1 to AC-16.8)', () => {
+    const makePublicSettings = (
+      overrides: Partial<PublicStoreSettingsResponse> = {},
+    ): PublicStoreSettingsResponse => ({
+      ...DEFAULT_STORE_SETTINGS,
+      updatedAt: '2026-11-15T10:00:00.000Z',
+      assets: { logo: '2026-11-15T10:00:00.000Z', favicon: null, qrLogo: null },
+      ...overrides,
+    });
+
+    it('customizes ProvisionalVietQrSlip blocks and keeps VietQR + total locked even when optional blocks are disabled (AC-16.3, AC-16.4, AC-16.5)', () => {
+      const settings = makePublicSettings({
+        receipt: { ...DEFAULT_STORE_SETTINGS.receipt, showLogo: true },
+        printTemplates: {
+          ...DEFAULT_STORE_SETTINGS.printTemplates,
+          provisional: {
+            title: 'TẠM TÍNH BÀN',
+            footerNote: 'Kiểm tra món kỹ trước khi thanh toán',
+            blocks: {
+              logo: false,
+              address: false,
+              phone: false,
+              orderCode: false,
+              cashier: false,
+              itemModifiers: false,
+              itemNotes: false,
+              discountLine: true,
+              bankInfo: false,
+            },
+          },
+        },
+      });
+
+      render(
+        <ThermalPrintProvider>
+          <ProvisionalVietQrSlip
+            bill={{
+              orderId: 901,
+              orderCode: 'HD-20261115-0901',
+              orderType: 'DINE_IN',
+              tableId: 5,
+              takeawayNumber: null,
+              totalAmount: 110000,
+              status: 'SERVING',
+              cashierName: 'Nguyễn Minh Quân',
+              paymentAccount: {
+                id: 1,
+                label: 'MB Chính',
+                bankName: 'MB Bank',
+                bankCode: 'MB',
+                accountNo: '0123456789',
+                accountName: 'CHU QUAN TEST',
+              },
+              items: [
+                {
+                  name: 'Mì Bò Mỹ',
+                  quantity: 2,
+                  unitPrice: 55000,
+                  lineTotal: 110000,
+                  modifiers: ['Cấp độ 3'],
+                  note: 'Ít hành',
+                },
+              ],
+            }}
+            storeSettings={settings}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      expect(screen.getByText('TẠM TÍNH BÀN')).toBeInTheDocument();
+      expect(screen.getByTestId('provisional-discount-line')).toBeInTheDocument();
+      expect(screen.getByTestId('provisional-receipt-footer')).toHaveTextContent(
+        'Kiểm tra món kỹ trước khi thanh toán',
+      );
+      expect(screen.queryByTestId('provisional-receipt-logo')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('provisional-vietqr-bank-account')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Nguyễn Minh Quân/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Cấp độ 3/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Ít hành/)).not.toBeInTheDocument();
+      // Hard Invariant 4 locked elements remain visible:
+      expect(screen.getByText('Mì Bò Mỹ')).toBeInTheDocument();
+      expect(screen.getByTestId('provisional-total-amount')).toHaveTextContent('110.000 đ');
+      expect(screen.getByTestId('provisional-vietqr-image')).toBeInTheDocument();
+      expect(screen.getByText(/Nội dung CK:/)).toBeInTheDocument();
+    });
+
+    it('hides optional cashier & payment breakdown on OfficialReceiptSlip while preserving logo when only provisional logo is toggled off (AC-16.2, AC-16.3)', () => {
+      const settings = makePublicSettings({
+        receipt: { ...DEFAULT_STORE_SETTINGS.receipt, showLogo: true },
+        printTemplates: {
+          ...DEFAULT_STORE_SETTINGS.printTemplates,
+          provisional: {
+            ...DEFAULT_STORE_SETTINGS.printTemplates.provisional,
+            blocks: { ...DEFAULT_STORE_SETTINGS.printTemplates.provisional.blocks, logo: false },
+          },
+          official: {
+            title: 'HOÁ ĐƠN BÁN LẺ',
+            footerNote: 'Cảm ơn quý khách nhiều!',
+            blocks: {
+              logo: true,
+              address: false,
+              phone: false,
+              orderCode: false,
+              cashier: false,
+              paymentBreakdown: false,
+              itemModifiers: true,
+              itemNotes: false,
+            },
+          },
+        },
+      });
+
+      render(
+        <OfficialReceiptSlip
+          orderCode="HD-20261115-0902"
+          tableLabel="BÀN 08"
+          cashierName="Trần Thị Lan"
+          paymentMethod="SPLIT"
+          cashAmount={40000}
+          transferAmount={60000}
+          totalAmount={100000}
+          items={[
+            {
+              name: 'Mì Kim Chi',
+              quantity: 1,
+              unitPrice: 100000,
+              lineTotal: 100000,
+              modifiers: ['Cấp độ 1'],
+              note: 'Không giá',
+            },
+          ]}
+          storeSettings={settings}
+        />,
+      );
+
+      expect(screen.getByText('HOÁ ĐƠN BÁN LẺ')).toBeInTheDocument();
+      expect(screen.getByTestId('official-receipt-logo')).toBeInTheDocument();
+      expect(screen.queryByText(/Trần Thị Lan/)).not.toBeInTheDocument();
+      expect(screen.queryByTestId('official-receipt-payment-breakdown')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Không giá/)).not.toBeInTheDocument();
+      expect(screen.getByText(/\+ Cấp độ 1/)).toBeInTheDocument();
+      expect(screen.getByTestId('official-receipt-total-amount')).toHaveTextContent('100.000 đ');
+      expect(screen.getByTestId('official-receipt-footer')).toHaveTextContent(
+        'Cảm ơn quý khách nhiều!',
+      );
+    });
+
+    it('applies kitchen and kitchenCancel fontSize scales (sm/md/lg) and custom TableTransferNoticeSlip placeholders (AC-16.4, AC-16.6, AC-16.7)', () => {
+      const settings = makePublicSettings({
+        printTemplates: {
+          ...DEFAULT_STORE_SETTINGS.printTemplates,
+          kitchen: {
+            title: 'BẾP CHÍNH',
+            footerNote: 'Ưu tiên bàn VIP',
+            fontSize: 'lg',
+            blocks: {
+              stationLogo: false,
+              orderCode: false,
+              time: false,
+              itemNotes: false,
+            },
+          },
+          kitchenCancel: {
+            title: 'HUỶ GẤP',
+            footerNote: 'Ngừng chế biến ngay',
+            fontSize: 'sm',
+            blocks: {
+              time: false,
+              reason: true,
+            },
+          },
+          tableTransfer: {
+            title: 'CHUYỂN BÀN BẾP',
+            footerNote: 'Đưa từ {fromTable} qua {toTable} gấp!',
+            blocks: {
+              time: false,
+              cashier: true,
+            },
+          },
+        },
+      });
+
+      const { unmount } = render(
+        <KitchenSplitSlip
+          orderCode="HD-20261115-0903"
+          tableLabel="BÀN 04"
+          orderNote="Làm nhanh"
+          tickets={[
+            {
+              station: 'BEP_NAU',
+              stationTitle: 'BẾP NẤU (MÌ CAY)',
+              logoType: 'CHEF_HAT_NOODLE',
+              batchNo: 2,
+              batchLabel: '[GỌI THÊM - LƯỢT 2]',
+              items: [{ name: 'Mì Hải Sản', qty: 1, modifiers: ['Cấp độ 2'], note: 'Ít cay' }],
+            },
+          ]}
+          storeSettings={settings}
+        />,
+      );
+
+      const kitchenPage = screen.getByTestId('kitchen-ticket-page-BEP_NAU');
+      expect(kitchenPage).toHaveAttribute('data-font-size', 'lg');
+      expect(kitchenPage.className).toContain('text-sm');
+      expect(kitchenPage.className).toContain('break-words');
+      expect(screen.getByText('BẾP NẤU (MÌ CAY)')).toBeInTheDocument();
+      expect(screen.getByTestId('kitchen-addon-batch-banner-BEP_NAU')).toBeInTheDocument();
+      expect(screen.getByTestId('kitchen-custom-title-BEP_NAU')).toHaveTextContent('BẾP CHÍNH');
+      expect(screen.getByTestId('kitchen-custom-footer-BEP_NAU')).toHaveTextContent(
+        'Ưu tiên bàn VIP',
+      );
+      expect(screen.queryByTestId('kitchen-item-note-0')).not.toBeInTheDocument();
+      unmount();
+
+      const { unmount: unmountCancel } = render(
+        <KitchenCancelItemSlip
+          orderCode="HD-20261115-0903"
+          slips={[{ station: 'BEP_CHIEN', tableLabel: 'BÀN 04', itemName: 'Khoai Chiên', quantity: 1 }]}
+          storeSettings={settings}
+        />,
+      );
+      const cancelPage = screen.getByTestId('kitchen-cancel-slip-BEP_CHIEN-0');
+      expect(cancelPage).toHaveAttribute('data-font-size', 'sm');
+      expect(cancelPage.className).toContain('text-[11px]');
+      expect(screen.getByText('HUỶ GẤP')).toBeInTheDocument();
+      expect(screen.getByTestId('kitchen-cancel-reason-BEP_CHIEN-0')).toHaveTextContent(
+        'Ngừng chế biến ngay',
+      );
+      unmountCancel();
+
+      render(
+        <TableTransferNoticeSlip
+          orderCode="HD-20261115-0903"
+          fromLabel="Bàn 02"
+          toLabel="Bàn 09"
+          affectedStations={['BEP_NAU']}
+          cashierName="Trần Thị Lan"
+          storeSettings={settings}
+        />,
+      );
+      expect(screen.getByText('CHUYỂN BÀN BẾP')).toBeInTheDocument();
+      expect(screen.getByTestId('table-transfer-cashier')).toHaveTextContent('Trần Thị Lan');
+      expect(screen.getByTestId('table-transfer-footer')).toHaveTextContent(
+        'Đưa từ BÀN 02 qua BÀN 09 gấp!',
+      );
+    });
+  });
+
+  describe('Story 18 — Discount 3-Line Breakdown on Provisional & Official Receipts', () => {
+    it('renders TỔNG CỘNG TIỀN MÓN, GIẢM GIÁ (<code>), and TỔNG THANH TOÁN automatically when discountAmount > 0 even if discountLine toggle is false', () => {
+      const settings: PublicStoreSettingsResponse = {
+        ...DEFAULT_STORE_SETTINGS,
+        updatedAt: '2026-11-15T10:00:00.000Z',
+        assets: { logo: null, favicon: null, qrLogo: null },
+        printTemplates: {
+          ...DEFAULT_STORE_SETTINGS.printTemplates,
+          provisional: {
+            ...DEFAULT_STORE_SETTINGS.printTemplates.provisional,
+            blocks: {
+              ...DEFAULT_STORE_SETTINGS.printTemplates.provisional.blocks,
+              discountLine: false,
+            },
+          },
+        },
+      };
+
+      const { unmount } = render(
+        <ThermalPrintProvider>
+          <ProvisionalVietQrSlip
+            storeSettings={settings}
+            bill={{
+              orderId: 902,
+              orderCode: 'HD-20261115-0902',
+              orderType: 'DINE_IN',
+              tableId: 4,
+              takeawayNumber: null,
+              subtotalAmount: 200000,
+              discountAmount: 20000,
+              discountSnapshot: {
+                kind: 'CODE',
+                discountId: 1,
+                code: 'GIAM10',
+                name: 'Giảm 10%',
+                valueType: 'PERCENT',
+                value: 10,
+                maxDiscountAmount: 20000,
+                scope: 'ORDER',
+                targetCategoryIds: [],
+                targetProductIds: [],
+                minOrderAmount: null,
+                appliedAt: '2026-11-15T10:00:00.000Z',
+                appliedBy: 1,
+                reason: null,
+              },
+              totalAmount: 180000,
+              status: 'SERVING',
+              paymentAccount: {
+                id: 1,
+                label: 'VPBank',
+                bankName: 'VPBank',
+                bankCode: 'VPB',
+                accountNo: '186877721',
+                accountName: 'CHU QUAN',
+              },
+              items: [
+                {
+                  name: 'Mì Cay Bò Mỹ',
+                  quantity: 2,
+                  unitPrice: 100000,
+                  lineTotal: 200000,
+                  modifiers: [],
+                  note: null,
+                },
+              ],
+            }}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      expect(screen.getByTestId('provisional-subtotal-amount')).toHaveTextContent('200.000 đ');
+      expect(screen.getByTestId('provisional-discount-line')).toHaveTextContent('GIẢM GIÁ (GIAM10)');
+      expect(screen.getByTestId('provisional-discount-line')).toHaveTextContent('-20.000 đ');
+      expect(screen.getByTestId('provisional-total-amount')).toHaveTextContent('180.000 đ');
+      unmount();
+
+      render(
+        <ThermalPrintProvider>
+          <OfficialReceiptSlip
+            storeSettings={settings}
+            orderCode="HD-20261115-0902"
+            tableLabel="Bàn 04"
+            paymentMethod="CASH"
+            cashAmount={180000}
+            transferAmount={0}
+            subtotalAmount={200000}
+            discountAmount={20000}
+            discountLabel="GIAM10"
+            totalAmount={180000}
+            items={[
+              {
+                name: 'Mì Cay Bò Mỹ',
+                quantity: 2,
+                unitPrice: 100000,
+                lineTotal: 200000,
+                modifiers: [],
+                note: null,
+              },
+            ]}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      expect(screen.getByTestId('official-receipt-subtotal-amount')).toHaveTextContent('200.000 đ');
+      expect(screen.getByTestId('official-receipt-discount-line')).toHaveTextContent('GIẢM GIÁ (GIAM10)');
+      expect(screen.getByTestId('official-receipt-discount-line')).toHaveTextContent('-20.000 đ');
+      expect(screen.getByTestId('official-receipt-total-amount')).toHaveTextContent('180.000 đ');
+    });
+
+    it('formats ISO paidAt timestamps into Asia/Ho_Chi_Minh local time and wraps payment method label cleanly', () => {
+      render(
+        <ThermalPrintProvider>
+          <OfficialReceiptSlip
+            orderCode="HD-20261117-0001"
+            tableLabel="Bàn 02"
+            cashierName="Nguyễn Minh Quân"
+            paidAt="2026-11-16T23:58:55.562Z"
+            paymentMethod="SPLIT"
+            cashAmount={49000}
+            transferAmount={100000}
+            totalAmount={149000}
+            items={[
+              {
+                name: 'Mì Hải Sản',
+                quantity: 1,
+                unitPrice: 55000,
+                lineTotal: 55000,
+                modifiers: [],
+                note: null,
+              },
+            ]}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      const slip = screen.getByTestId('official-receipt-slip');
+      expect(slip).toHaveTextContent('06:58:55 17/11/2026');
+      expect(slip.textContent).not.toContain('2026-11-16T23:58:55.562Z');
+      expect(screen.getByTestId('official-receipt-payment-method')).toHaveTextContent(
+        'HỖN HỢP TIỀN MẶT + QR (SPLIT)',
+      );
+      expect(screen.getByTestId('official-receipt-payment-method').parentElement).toHaveClass(
+        'flex-wrap',
+        'gap-x-2',
+      );
     });
   });
 });

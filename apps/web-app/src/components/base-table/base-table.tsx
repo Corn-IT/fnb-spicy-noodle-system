@@ -5,12 +5,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RotateCcw, Search } from 'lucide-react';
 import * as React from 'react';
 
 import { useColumnResizeSync } from '@/components/base-table/use-column-resize-sync';
+import { Skeleton } from '@/components/loading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useCommitSearch } from '@/lib/use-commit-search';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { cn } from '@/utils/cn';
 
@@ -28,6 +30,8 @@ export interface BaseTableProps<TData> {
   data: TData[];
   columns: ColumnDef<TData, unknown>[];
   isLoading?: boolean;
+  isFetching?: boolean;
+  isPlaceholderData?: boolean;
   emptyMessage?: string;
   searchPlaceholder?: string;
   searchValue?: string;
@@ -43,11 +47,21 @@ export interface BaseTableProps<TData> {
 interface MemoizedTableBodyProps<TData> {
   table: ReturnType<typeof useReactTable<TData>>;
   onRowClick?: (row: TData) => void;
+  isTransitioning?: boolean;
 }
 
-function TableBodyInner<TData>({ table, onRowClick }: MemoizedTableBodyProps<TData>) {
+function TableBodyInner<TData>({
+  table,
+  onRowClick,
+  isTransitioning = false,
+}: MemoizedTableBodyProps<TData>) {
   return (
-    <tbody className="divide-y divide-border bg-card">
+    <tbody
+      className={cn(
+        'divide-y divide-border bg-card transition-opacity duration-150',
+        isTransitioning && 'opacity-65',
+      )}
+    >
       {table.getRowModel().rows.map((row) => (
         <tr
           key={row.id}
@@ -76,7 +90,9 @@ function TableBodyInner<TData>({ table, onRowClick }: MemoizedTableBodyProps<TDa
 
 const MemoizedTableBody = React.memo(
   TableBodyInner,
-  (prev, next) => prev.table.options.data === next.table.options.data,
+  (prev, next) =>
+    prev.table.options.data === next.table.options.data &&
+    prev.isTransitioning === next.isTransitioning,
 ) as typeof TableBodyInner;
 
 export function BaseTable<TData>({
@@ -84,6 +100,8 @@ export function BaseTable<TData>({
   data,
   columns,
   isLoading = false,
+  isFetching = false,
+  isPlaceholderData = false,
   emptyMessage = 'Không có dữ liệu phù hợp.',
   searchPlaceholder = 'Nhập từ khoá tìm kiếm...',
   searchValue,
@@ -106,16 +124,33 @@ export function BaseTable<TData>({
   const tableRef = React.useRef<HTMLTableElement | null>(null);
   const rafIdRef = React.useRef<number | null>(null);
 
+  const normalizedColumns = React.useMemo(
+    () =>
+      columns.map((col) => {
+        if (typeof col.header !== 'string') return col;
+        // Ensure headers like STT, THAO TÁC, PHƯƠNG THỨC never collapse to ellipsis (...)
+        const minHeaderWidth = Math.max(56, Math.ceil(col.header.length * 8.5) + 34);
+        const existingMin = col.minSize ?? 0;
+        const existingSize = col.size ?? 150;
+        return {
+          ...col,
+          minSize: Math.max(existingMin, minHeaderWidth),
+          size: Math.max(existingSize, minHeaderWidth),
+        };
+      }),
+    [columns],
+  );
+
   const table = useReactTable({
     data,
-    columns,
+    columns: normalizedColumns,
     state: {
       columnSizing,
     },
     onColumnSizingChange: setColumnSizing,
     columnResizeMode: 'onChange',
     defaultColumn: {
-      minSize: 60,
+      minSize: 56,
       size: 150,
       maxSize: 900,
     },
@@ -162,6 +197,14 @@ export function BaseTable<TData>({
     };
   }, [columnSizeVars]);
 
+  const commitSearch = React.useCallback(
+    (nextValue: string) => {
+      onSearchChange?.(nextValue);
+    },
+    [onSearchChange],
+  );
+  const search = useCommitSearch(searchValue ?? '', commitSearch);
+
   const showToolbar =
     Boolean(toolbarLeft) || Boolean(toolbarRight) || Boolean(onSearchChange);
 
@@ -172,14 +215,40 @@ export function BaseTable<TData>({
           <div className="flex flex-wrap items-center gap-2">{toolbarLeft}</div>
           <div className="flex flex-wrap items-center gap-2">
             {onSearchChange ? (
-              <div className="relative w-full sm:w-64">
+              <div ref={search.containerRef} className="relative w-full sm:w-72 lg:w-80">
                 <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  value={searchValue ?? ''}
-                  onChange={(e) => onSearchChange(e.target.value)}
+                  {...search.inputProps}
+                  type="search"
+                  name={`table-search-${tableId}`}
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-bwignore="true"
+                  data-form-type="other"
                   placeholder={searchPlaceholder}
-                  className="pl-8 w-full"
+                  className="pl-8 pr-8 w-full [&::-webkit-search-cancel-button]:hidden"
                 />
+                <button
+                  type="button"
+                  data-testid="table-search-reset-btn"
+                  disabled={!search.draft && !searchValue}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    search.clear();
+                    onSearchChange?.('');
+                  }}
+                  title="Đặt lại tìm kiếm"
+                  aria-label="Đặt lại tìm kiếm"
+                  className={cn(
+                    'absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex h-6 w-6 items-center justify-center rounded transition-colors',
+                    search.draft || searchValue
+                      ? 'text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer'
+                      : 'text-muted-foreground/45 cursor-default',
+                  )}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </button>
               </div>
             ) : null}
             {toolbarRight}
@@ -187,16 +256,26 @@ export function BaseTable<TData>({
         </div>
       ) : null}
 
-      <div className="w-full overflow-x-auto rounded-xl border bg-card shadow-sm touch-pan-x">
-        <table
-          ref={tableRef}
-          style={{
-            ...(columnSizeVars as React.CSSProperties),
-            minWidth: '100%',
-            width: table.getTotalSize(),
-          }}
-          className="w-full table-fixed border-collapse text-left"
-        >
+      <div className="relative w-full overflow-hidden rounded-xl border bg-card shadow-sm">
+        {!isLoading && (isFetching || isPlaceholderData) ? (
+          <div
+            aria-hidden="true"
+            data-testid="base-table-fetching-bar"
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden bg-primary/15"
+          >
+            <div className="animate-top-progress h-full w-1/2 rounded-r-full bg-primary" />
+          </div>
+        ) : null}
+        <div className="w-full overflow-x-auto touch-pan-x">
+          <table
+            ref={tableRef}
+            style={{
+              ...(columnSizeVars as React.CSSProperties),
+              minWidth: '100%',
+              width: table.getTotalSize(),
+            }}
+            className="w-full table-fixed border-collapse text-left"
+          >
           <thead className="border-b bg-muted/60 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -206,10 +285,10 @@ export function BaseTable<TData>({
                     style={{
                       width: `calc(var(--header-${header.id}-size) * 1px)`,
                     }}
-                    className="relative select-none px-2.5 sm:px-3 py-2.5 sm:py-3 font-semibold text-xs"
+                    className="relative select-none whitespace-nowrap px-2.5 sm:px-3 py-2.5 sm:py-3 font-semibold text-xs"
                   >
                     <div
-                      className="truncate pr-1.5"
+                      className="whitespace-nowrap pr-2"
                       title={
                         typeof header.column.columnDef.header === 'string'
                           ? header.column.columnDef.header
@@ -247,14 +326,19 @@ export function BaseTable<TData>({
                 <tr key={`skeleton-${rowIdx}`}>
                   {columns.map((_, colIdx) => (
                     <td key={`skeleton-${rowIdx}-${colIdx}`} className="px-3 py-3">
-                      <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
+                      <Skeleton className="h-4 w-3/4" />
                     </td>
                   ))}
                 </tr>
               ))}
             </tbody>
           ) : data.length === 0 ? (
-            <tbody>
+            <tbody
+              className={cn(
+                'transition-opacity duration-150',
+                (isFetching || isPlaceholderData) && 'opacity-65',
+              )}
+            >
               <tr>
                 <td
                   colSpan={columns.length || 1}
@@ -265,21 +349,26 @@ export function BaseTable<TData>({
               </tr>
             </tbody>
           ) : isResizingColumn ? (
-            <MemoizedTableBody table={table} onRowClick={onRowClick} />
+            <MemoizedTableBody
+              table={table}
+              onRowClick={onRowClick}
+              isTransitioning={isFetching || isPlaceholderData}
+            />
           ) : (
-            <TableBodyInner table={table} onRowClick={onRowClick} />
+            <TableBodyInner
+              table={table}
+              onRowClick={onRowClick}
+              isTransitioning={isFetching || isPlaceholderData}
+            />
           )}
+          </table>
+        </div>
 
-          {footerSummary ? (
-            <tfoot className="border-t bg-muted/40 font-semibold text-foreground">
-              <tr>
-                <td colSpan={columns.length || 1} className="px-3 py-2.5 text-sm">
-                  {footerSummary}
-                </td>
-              </tr>
-            </tfoot>
-          ) : null}
-        </table>
+        {footerSummary ? (
+          <div className="border-t bg-muted/40 px-3 py-2.5 text-sm font-semibold text-foreground">
+            {footerSummary}
+          </div>
+        ) : null}
       </div>
 
       {pagination ? (

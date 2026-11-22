@@ -34,6 +34,17 @@ export function IngredientMdmCombobox({
     setQueryText(value);
   }, [value]);
 
+  React.useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
   const { data: mdmRecords = [] } = useMdmLookupQuery(MdmCategory.INGREDIENT);
   const mdmItems = mdmRecords.filter((item) => item.category === MdmCategory.INGREDIENT);
 
@@ -58,6 +69,18 @@ export function IngredientMdmCombobox({
   }, [mdmItems, queryText]);
 
   const handlePickExisting = (item: MdmItem) => {
+    if (selectedId === item.id) {
+      setQueryText('');
+      setOpen(true);
+      onSelectIngredient({
+        ingredientMdmId: undefined,
+        ingredientName: '',
+        defaultUnit: undefined,
+        lastPrice: undefined,
+      });
+      return;
+    }
+
     const meta = (item.metadata ?? {}) as {
       default_unit?: unknown;
       last_price?: unknown;
@@ -101,6 +124,7 @@ export function IngredientMdmCombobox({
           data-testid={`ingredient-combobox-input-${rowIndex}`}
           value={queryText}
           onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
           onChange={(e) => {
             const nextVal = e.target.value;
             setQueryText(nextVal);
@@ -148,7 +172,7 @@ export function IngredientMdmCombobox({
                     </div>
                   ) : null}
                 </div>
-                {isSelected ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
+                {isSelected ? <Check className="h-3.5 w-3.5 text-accent-text" /> : null}
               </button>
             );
           })}
@@ -158,7 +182,7 @@ export function IngredientMdmCombobox({
               type="button"
               data-testid={`ingredient-create-new-${rowIndex}`}
               onClick={handlePickNewName}
-              className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t px-2.5 py-2 text-left text-xs font-semibold text-primary hover:bg-accent"
+              className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t px-2.5 py-2 text-left text-xs font-semibold text-accent-text hover:bg-accent"
             >
               <PlusCircle className="h-3.5 w-3.5 shrink-0" />
               <span>+ Tạo mới nguyên liệu: &apos;{queryText.trim()}&apos;</span>

@@ -24,11 +24,23 @@ export function SupplierMdmCombobox({
 }: SupplierMdmComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [queryText, setQueryText] = React.useState(value);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
   const { data: records = [] } = useMdmLookupQuery(MdmCategory.SUPPLIER);
 
   React.useEffect(() => {
     setQueryText(value);
   }, [value]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
 
   const suppliers = React.useMemo(
     () => records.filter((item) => item.category === MdmCategory.SUPPLIER),
@@ -54,6 +66,12 @@ export function SupplierMdmCombobox({
   }, [suppliers, queryText]);
 
   const pickExisting = (item: MdmItem) => {
+    if (selectedId === item.id) {
+      setQueryText('');
+      setOpen(true);
+      onSelectSupplier({ supplierMdmId: undefined, supplierName: '' });
+      return;
+    }
     setQueryText(item.name);
     setOpen(false);
     onSelectSupplier({ supplierMdmId: item.id, supplierName: item.name });
@@ -67,7 +85,7 @@ export function SupplierMdmCombobox({
   };
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
         <Input
@@ -75,11 +93,12 @@ export function SupplierMdmCombobox({
           aria-label="Nhà cung cấp từ MDM"
           value={queryText}
           onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
           onChange={(event) => {
             const nextValue = event.target.value;
             setQueryText(nextValue);
             setOpen(true);
-            onSelectSupplier({ supplierName: nextValue });
+            onSelectSupplier({ supplierMdmId: undefined, supplierName: nextValue });
           }}
           placeholder="Tìm hoặc gõ tên nhà cung cấp..."
           className="pl-8 text-sm"
@@ -100,7 +119,7 @@ export function SupplierMdmCombobox({
               )}
             >
               <span className="font-medium">{item.name}</span>
-              {selectedId === item.id ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
+              {selectedId === item.id ? <Check className="h-3.5 w-3.5 text-accent-text" /> : null}
             </button>
           ))}
 
@@ -109,7 +128,7 @@ export function SupplierMdmCombobox({
               type="button"
               data-testid="supplier-create-new"
               onClick={pickNewName}
-              className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t px-2.5 py-2 text-left text-xs font-semibold text-primary hover:bg-accent"
+              className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t px-2.5 py-2 text-left text-xs font-semibold text-accent-text hover:bg-accent"
             >
               <PlusCircle className="h-3.5 w-3.5 shrink-0" />
               <span>+ Tạo nhà cung cấp: &apos;{queryText.trim()}&apos;</span>

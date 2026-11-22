@@ -1,0 +1,23 @@
+FROM node:20-alpine AS web-builder
+WORKDIR /app
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json turbo.json ./
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY apps/web-app/package.json ./apps/web-app/package.json
+RUN pnpm install --frozen-lockfile
+
+COPY packages/shared ./packages/shared
+COPY apps/web-app ./apps/web-app
+
+ARG VITE_API_BASE_URL=
+ARG VITE_SOCKET_URL=
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ENV VITE_SOCKET_URL=${VITE_SOCKET_URL}
+
+RUN pnpm --filter @fnb/shared build \
+  && pnpm --filter @fnb/web-app build
+
+FROM caddy:2-alpine
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=web-builder /app/apps/web-app/dist /srv/web-app

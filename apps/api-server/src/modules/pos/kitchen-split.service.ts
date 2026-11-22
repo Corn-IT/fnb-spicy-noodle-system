@@ -5,11 +5,20 @@ import type { KitchenStation, ReprintKitchenRequest, SplitKitchenResponse } from
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 
-const stationPrintInfo = {
+const stationPrintInfo: Record<string, { stationTitle: string; logoType: string }> = {
   BEP_NAU: { stationTitle: 'BẾP NẤU (MÌ CAY)', logoType: 'CHEF_HAT_NOODLE' },
   BEP_CHIEN: { stationTitle: 'BẾP CHIÊN', logoType: 'FRENCH_FRIES' },
   PHA_CHE: { stationTitle: 'QUẦY NƯỚC UỐNG', logoType: 'DRINK_CUP' },
-} as const satisfies Record<KitchenStation, { stationTitle: string; logoType: string }>;
+};
+
+function getStationPrintInfo(station: KitchenStation): { stationTitle: string; logoType: string } {
+  return (
+    stationPrintInfo[station] ?? {
+      stationTitle: `TRẠM BẾP (${station})`,
+      logoType: 'CHEF_HAT_NOODLE',
+    }
+  );
+}
 
 type TicketItem = SplitKitchenResponse['tickets'][number]['items'][number];
 
@@ -127,7 +136,7 @@ export class KitchenSplitService {
         batchNo,
         tickets: [...tickets.entries()].map(([station, items]) => ({
           station,
-          ...stationPrintInfo[station],
+          ...getStationPrintInfo(station),
           batchNo,
           ...(batchLabel ? { batchLabel } : {}),
           ...(transferNotice ? { transferNotice } : {}),
@@ -219,14 +228,14 @@ export class KitchenSplitService {
 
     const targetBatchNo = options?.batchNo ?? order.items[0]?.batchNo ?? 1;
     const batchLabel = targetBatchNo > 1 ? `[GỌI THÊM - LƯỢT ${targetBatchNo}]` : undefined;
-    const reprintLabel = '*** BẢN SAO - IN LẠI (KHÔNG LÀM TRÙNG) ***';
+    const reprintLabel = '*** BẢN SAO - IN LẠI ***';
     const transferNotice = this.latestTransferNotice(order.tableTransferLogs);
 
     const response = SplitKitchenResponseSchema.parse({
       batchNo: targetBatchNo,
       tickets: [...tickets.entries()].map(([station, items]) => ({
         station,
-        ...stationPrintInfo[station],
+        ...getStationPrintInfo(station),
         batchNo: targetBatchNo,
         reprintLabel,
         ...(batchLabel ? { batchLabel } : {}),

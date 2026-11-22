@@ -323,8 +323,8 @@ describe('IamService', () => {
       refreshToken: 'refresh',
       user: { username: 'cashier01', employee: { fullName: 'Cashier One' }, uiPreferences: { theme: 'dark' } },
     });
-    expect(jwt.signAsync).toHaveBeenNthCalledWith(1, expect.objectContaining({ sub: 4, tokenType: 'access' }));
-    expect(jwt.signAsync).toHaveBeenNthCalledWith(2, { sub: 4, tokenType: 'refresh' }, { expiresIn: '7d' });
+    expect(jwt.signAsync).toHaveBeenNthCalledWith(1, expect.objectContaining({ sub: 4, tokenType: 'access', sid: expect.any(String) }));
+    expect(jwt.signAsync).toHaveBeenNthCalledWith(2, expect.objectContaining({ sub: 4, tokenType: 'refresh', sid: expect.any(String) }), { expiresIn: '7d' });
   });
 
   it('should update editable employee profile fields without changing position or specialty', async () => {
@@ -425,8 +425,8 @@ describe('IAM and MDM controller access boundaries', () => {
     expect(lookupGuards).toEqual([JwtAuthGuard]);
     expect(listGuards).toEqual([JwtAuthGuard, RbacGuard]);
     expect(Reflect.getMetadata(AUTHORIZATION_METADATA, MdmController.prototype.list)).toEqual({ module: 'mdm', action: 'view' });
-    expect(Reflect.getMetadata(AUTHORIZATION_METADATA, MdmController.prototype.create)).toEqual({ module: 'mdm', action: 'write' });
-    expect(Reflect.getMetadata(AUTHORIZATION_METADATA, MdmController.prototype.update)).toEqual({ module: 'mdm', action: 'write' });
-    expect(Reflect.getMetadata(AUTHORIZATION_METADATA, MdmController.prototype.disable)).toEqual({ module: 'mdm', action: 'write' });
+    expect(Reflect.getMetadata(AUTHORIZATION_METADATA, MdmController.prototype.create)).toEqual({ module: 'mdm', action: 'create' });
+    expect(Reflect.getMetadata(AUTHORIZATION_METADATA, MdmController.prototype.update)).toEqual({ module: 'mdm', action: 'update' });
+    expect(Reflect.getMetadata(AUTHORIZATION_METADATA, MdmController.prototype.disable)).toEqual({ module: 'mdm', action: 'delete' });
   });
 });

@@ -1,41 +1,96 @@
-version: '3.8'
 services:
-  caddy:
-    image: caddy:2-alpine
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-    depends_on: [api]
-
-  api:
-    build: ./apps/api-server
-    environment:
-      - FNB_DATABASE_URL=postgresql://fnb:${DB_PASSWORD}@db:5432/fnb_pos
-      - NODE_ENV=production
-    depends_on: [db]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  db:
+  postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c effective_cache_size=1536MB
+      -c work_mem=8MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=80
+    mem_limit: 1200m
+    cpus: 1.0
     environment:
       POSTGRES_DB: fnb_pos
-      POSTGRES_USER: fnb
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - fnb_internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fnb_pos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  backup:
-    image: postgres:16-alpine
-    entrypoint: /bin/sh -c "cron && crond -f"
+  api-server:
+    build:
+      context: .
+      dockerfile: apps/api-server/Dockerfile
+    restart: unless-stopped
+    mem_limit: 1200m
+    cpus: 1.0
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=768"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env.production
+    networks:
+      - fnb_internal
+    expose:
+      - "3000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/v1/health | grep -q '\"status\":\"ok\"' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
     volumes:
-      - ./scripts/backup.sh:/backup.sh
-    depends_on: [db]
+      - caddy_data:/data
+      # Nếu dùng Cloudflare Origin Certificate, bỏ dấu # dòng dưới và đặt file origin.crt, origin.key vào ./certs/
+      # - ./certs:/etc/caddy/certs:ro
+    networks:
+      - fnb_internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      api-server:
+        condition: service_healthy
+
+networks:
+  fnb_internal:
+    driver: bridge
 
 volumes:
-  caddy_data:
   pgdata:
+  caddy_data:

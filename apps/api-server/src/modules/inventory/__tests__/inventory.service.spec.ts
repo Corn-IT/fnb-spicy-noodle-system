@@ -238,4 +238,83 @@ describe('InventoryService', () => {
     await expect(service.softDelete(12, cashier())).rejects.toBeInstanceOf(ConflictException);
     expect(harness.tx.inventoryImport.update).not.toHaveBeenCalled();
   });
+
+  it('should update an inventory import record and recalculate totalCost using Decimal', async () => {
+    const harness = createHarness();
+    harness.tx.inventoryImport.findUnique.mockResolvedValue({
+      id: 20,
+      isDeleted: false,
+      importDate: new Date('2026-11-10T00:00:00.000Z'),
+      supplierId: 10,
+      supplierNameSnapshot: 'Cửa Hàng Hải Sản',
+      itemId: 11,
+      itemNameSnapshot: 'Mực Ống Tươi',
+      unitId: 12,
+      unitNameSnapshot: 'kg',
+      unitPrice: new Prisma.Decimal('100000'),
+      quantity: new Prisma.Decimal('2'),
+      totalCost: new Prisma.Decimal('200000'),
+      paymentSource: PaymentSource.CASH_DRAWER,
+      note: 'Cũ',
+      createdAt: new Date('2026-11-10T03:00:00.000Z'),
+    });
+    harness.mdm.findOrCreate
+      .mockResolvedValueOnce({ id: 22, category: MdmCategory.UNIT, name: 'kg' })
+      .mockResolvedValueOnce({ id: 21, category: MdmCategory.INGREDIENT, name: 'Tôm Sú' })
+      .mockResolvedValueOnce({ id: 20, category: MdmCategory.SUPPLIER, name: 'Chợ Đầu Mối' });
+    harness.tx.inventoryImport.update.mockResolvedValue({
+      id: 20,
+      isDeleted: false,
+      ingredientMdmId: 21,
+      supplierMdmId: 20,
+      supplierNameSnapshot: 'Chợ Đầu Mối',
+      itemNameSnapshot: 'Tôm Sú',
+      unitName: 'kg',
+      unitPrice: new Prisma.Decimal('150000'),
+      quantity: new Prisma.Decimal('3.5'),
+      totalCost: new Prisma.Decimal('525000'),
+      paymentSource: PaymentSource.EXTERNAL,
+      importDate: new Date('2026-11-10T00:00:00.000Z'),
+      note: 'Đã cập nhật',
+      createdBy: 1,
+      createdAt: new Date('2026-11-10T03:00:00.000Z'),
+    });
+    const auditLogService = { record: vi.fn() };
+    const service = new InventoryService(
+      harness.prisma as never,
+      harness.mdm as unknown as MdmService,
+      auditLogService as never,
+    );
+
+    const updated = await service.updateImport(20, {
+      importDate: '2026-11-10',
+      supplierName: 'Chợ Đầu Mối',
+      ingredientName: 'Tôm Sú',
+      unitName: 'kg',
+      unitPrice: 150000,
+      quantity: 3.5,
+      paymentSource: PaymentSource.EXTERNAL,
+      note: 'Đã cập nhật',
+    }, cashier());
+
+    expect(harness.tx.inventoryImport.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 20 },
+      data: expect.objectContaining({
+        totalCost: new Prisma.Decimal('525000'),
+        paymentSource: PaymentSource.EXTERNAL,
+      }),
+    }));
+    expect(updated.totalCost).toBe(525000);
+    expect(auditLogService.record).toHaveBeenCalledWith(expect.objectContaining({
+      module: 'INVENTORY',
+      action: 'Chỉnh sửa phiếu nhập kho',
+      metadata: expect.objectContaining({
+        changes: expect.arrayContaining([
+          expect.objectContaining({ field: 'Nguyên liệu', from: 'Mực Ống Tươi', to: 'Tôm Sú' }),
+          expect.objectContaining({ field: 'Nguồn tiền', from: 'Tiền két', to: 'Quỹ ngoài' }),
+          expect.objectContaining({ field: 'Ghi chú', from: 'Cũ', to: 'Đã cập nhật' }),
+        ]),
+      }),
+    }));
+  });
 });

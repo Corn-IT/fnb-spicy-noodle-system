@@ -14,6 +14,7 @@ import {
   TableTransferNoticeSlip,
   type TableTransferNoticeSlipProps,
 } from './table-transfer-notice-slip';
+import { TableQrSlip, type TableQrSlipProps } from './table-qr-slip';
 
 export type ThermalPrintJob =
   | {
@@ -40,6 +41,11 @@ export type ThermalPrintJob =
       id: string;
       type: 'OFFICIAL_RECEIPT';
       payload: OfficialReceiptSlipProps;
+    }
+  | {
+      id: string;
+      type: 'TABLE_QR';
+      payload: TableQrSlipProps;
     };
 
 export interface ThermalPrinterContextValue {
@@ -50,6 +56,7 @@ export interface ThermalPrinterContextValue {
   printKitchenCancelItem: (payload: KitchenCancelItemSlipProps) => void;
   printProvisionalVietQr: (payload: ProvisionalVietQrSlipData) => void;
   printOfficialReceipt: (payload: OfficialReceiptSlipProps) => void;
+  printTableQr: (payload: TableQrSlipProps) => void;
   clearPrintQueue: () => void;
 }
 
@@ -63,6 +70,7 @@ const defaultPrinterContext: ThermalPrinterContextValue = {
   printKitchenCancelItem: noop,
   printProvisionalVietQr: noop,
   printOfficialReceipt: noop,
+  printTableQr: noop,
   clearPrintQueue: noop,
 };
 
@@ -168,6 +176,13 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
           payload,
         });
       },
+      printTableQr: (payload) => {
+        enqueueReplacementOrAppend({
+          id: createJobId('table-qr'),
+          type: 'TABLE_QR',
+          payload,
+        });
+      },
       clearPrintQueue,
     }),
     [printQueue, activePrintJob, enqueueReplacementOrAppend, clearPrintQueue],
@@ -204,6 +219,10 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
 
         {currentRenderJob?.type === 'OFFICIAL_RECEIPT' ? (
           <OfficialReceiptSlip key={currentRenderJob.id} {...currentRenderJob.payload} />
+        ) : null}
+
+        {currentRenderJob?.type === 'TABLE_QR' ? (
+          <TableQrSlip key={currentRenderJob.id} {...currentRenderJob.payload} />
         ) : null}
       </div>
     </ThermalPrinterContext.Provider>

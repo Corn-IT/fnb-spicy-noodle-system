@@ -2,6 +2,7 @@ import { type OrderDetailResponse } from '@fnb/shared';
 import { ArrowRightLeft, Printer } from 'lucide-react';
 import * as React from 'react';
 
+import { ModalDetailSkeleton } from '@/components/loading';
 import { useThermalPrinter } from '@/components/print-slips';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { toast } from '@/components/ui/toast';
+import { useAppMessages } from '@/hooks/use-app-messages';
 import {
   useInvoiceDetailQuery,
   useReprintInvoiceMutation,
@@ -58,6 +59,7 @@ export function InvoiceDetailModal({
   open,
   onOpenChange,
 }: InvoiceDetailModalProps) {
+  const { notify, resolveMessage } = useAppMessages();
   const { data: detail, isLoading } = useInvoiceDetailQuery(open ? orderId : null);
   const reprintMutation = useReprintInvoiceMutation();
   const { printOfficialReceipt } = useThermalPrinter();
@@ -118,28 +120,35 @@ export function InvoiceDetailModal({
         paymentMethod: printableDetail.paymentMethod ?? 'CASH',
         cashAmount: printableDetail.cashAmount,
         transferAmount: printableDetail.transferAmount,
+        subtotalAmount: printableDetail.subtotalAmount,
+        discountAmount: printableDetail.discountAmount,
+        discountLabel:
+          printableDetail.discountSnapshot?.kind === 'CODE'
+            ? (printableDetail.discountSnapshot.code ?? printableDetail.discountSnapshot.name)
+            : (printableDetail.discountSnapshot?.name ?? null),
         totalAmount: printableDetail.totalAmount,
         items: activeItems,
       });
 
+      const okCopy = resolveMessage('invoices.reprintSuccess', {
+        orderCode: printableDetail.orderCode,
+      });
       setReprintFeedback({
         status: 'success',
-        message: `Đã gửi lệnh in lại hoá đơn ${printableDetail.orderCode} tới máy in 80mm.`,
+        message: okCopy.description ? `${okCopy.title} — ${okCopy.description}` : okCopy.title,
       });
-      toast({
-        title: 'Đã gửi lệnh in lại hoá đơn',
-        description: `Hoá đơn ${printableDetail.orderCode} đang được in ra máy in nhiệt 80mm.`,
+      notify('invoices.reprintSuccess', {
+        vars: { orderCode: printableDetail.orderCode },
       });
     } catch {
+      const errCopy = resolveMessage('invoices.reprintError');
       setReprintFeedback({
         status: 'error',
-        message: 'Không thể in lại hoá đơn. Vui lòng kiểm tra kết nối hoặc quyền in hoá đơn.',
+        message: errCopy.description
+          ? `${errCopy.title}. ${errCopy.description}`
+          : errCopy.title,
       });
-      toast({
-        variant: 'destructive',
-        title: 'Không thể in lại hoá đơn',
-        description: 'Vui lòng kiểm tra lại kết nối hoặc quyền in hoá đơn.',
-      });
+      notify('invoices.reprintError', { variant: 'destructive' });
     }
   };
 
@@ -149,8 +158,8 @@ export function InvoiceDetailModal({
         data-testid="invoice-detail-modal"
         className="flex max-h-[88dvh] sm:max-h-[85vh] w-[calc(100vw-2rem)] sm:max-w-2xl flex-col p-0 gap-0 overflow-hidden rounded-2xl border bg-card shadow-2xl"
       >
-        <DialogHeader className="p-4 sm:p-5 border-b shrink-0 text-left bg-card pr-12">
-          <DialogTitle className="flex items-center justify-between gap-2">
+        <DialogHeader className="px-4 py-3 sm:px-5 sm:py-3.5 border-b shrink-0 text-left bg-card pr-12">
+          <DialogTitle className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-base sm:text-lg font-bold">Chi tiết Hoá đơn {detail?.orderCode ?? ''}</span>
             {detail ? (
               <Badge
@@ -172,22 +181,42 @@ export function InvoiceDetailModal({
                       : detail.status === 'MERGED'
                         ? 'Đã gộp'
                         : detail.status === 'PENDING'
-                          ? 'Chờ duyệt QR'
+                          ? 'Mới gọi món'
                           : detail.status}
               </Badge>
             ) : null}
           </DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground mt-0.5">
-            Xem chi tiết các lượt gọi món (batch), lịch sử chuyển/gộp bàn và in lại bill nhiệt 80mm.
+            Xem chi tiết các lượt gọi món (batch), lịch sử chuyển/gộp bàn, in lại bill nhiệt 80mm và thông tin điều chỉnh PTTT.
           </DialogDescription>
         </DialogHeader>
 
         {isLoading || !detail ? (
-          <div className="flex-1 min-h-0 flex items-center justify-center py-12 text-center text-sm text-muted-foreground">
-            Đang tải chi tiết hoá đơn...
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <ModalDetailSkeleton />
           </div>
         ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y p-4 sm:p-5 space-y-4 text-sm">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y px-4 py-3 sm:px-5 sm:py-3.5 space-y-3 text-sm">
+            {detail.pendingPaymentEdit ? (
+              <div
+                data-testid="invoice-detail-pending-banner"
+                className="rounded-lg border border-amber-500/40 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200"
+              >
+                <div className="font-bold">Đang chờ duyệt điều chỉnh phương thức thanh toán</div>
+                <div className="mt-1">
+                  Đề xuất bởi <strong>{detail.pendingPaymentEdit.requestedByName}</strong> ({detail.pendingPaymentEdit.requestedByUsername}): chuyển sang{' '}
+                  <strong>
+                    {detail.pendingPaymentEdit.paymentMethod === 'CASH'
+                      ? 'Tiền mặt'
+                      : detail.pendingPaymentEdit.paymentMethod === 'TRANSFER'
+                        ? 'Chuyển khoản QR'
+                        : 'Tiền mặt + Chuyển khoản'}
+                  </strong>
+                  . Lý do: <span className="italic">{detail.pendingPaymentEdit.reason}</span>
+                </div>
+              </div>
+            ) : null}
+
             {/* Thông tin chung */}
             <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/30 p-3 text-xs sm:grid-cols-3">
               <div>
@@ -232,7 +261,16 @@ export function InvoiceDetailModal({
               </div>
               <div>
                 <div className="text-muted-foreground">Tổng cộng</div>
-                <div className="mt-0.5 text-sm font-bold text-primary">
+                {(detail.discountAmount ?? 0) > 0 ? (
+                  <div className="mt-0.5 text-[11px] text-emerald-700 dark:text-emerald-400">
+                    Tiền món:{' '}
+                    {(
+                      detail.subtotalAmount ?? detail.totalAmount + (detail.discountAmount ?? 0)
+                    ).toLocaleString('vi-VN')}{' '}
+                    đ • Giảm: -{(detail.discountAmount ?? 0).toLocaleString('vi-VN')} đ
+                  </div>
+                ) : null}
+                <div className="mt-0.5 text-sm font-bold text-price">
                   {detail.totalAmount.toLocaleString('vi-VN')} đ
                 </div>
               </div>
@@ -255,7 +293,7 @@ export function InvoiceDetailModal({
                         key={item.id}
                         className="flex items-start justify-between gap-2 py-2 text-xs"
                       >
-                        <div>
+                        <div className="min-w-0 flex-1 break-words">
                           <div className="font-semibold text-foreground">
                             {item.quantity}x {item.name}{' '}
                             {item.kitchenStatus === 'CANCELLED' ? (
@@ -275,7 +313,7 @@ export function InvoiceDetailModal({
                             </div>
                           ) : null}
                         </div>
-                        <div className="whitespace-nowrap font-semibold text-foreground">
+                        <div className="shrink-0 whitespace-nowrap font-semibold text-foreground">
                           {item.lineTotal.toLocaleString('vi-VN')} đ
                         </div>
                       </div>
@@ -317,7 +355,7 @@ export function InvoiceDetailModal({
           </div>
         )}
 
-        <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 flex flex-wrap items-center justify-between gap-2">
+        <DialogFooter className="px-4 py-2.5 sm:px-5 sm:py-3 border-t bg-muted/20 shrink-0 flex flex-wrap items-center justify-between gap-2">
           {reprintFeedback ? (
             <p
               data-testid="reprint-feedback"
@@ -328,6 +366,13 @@ export function InvoiceDetailModal({
               }`}
             >
               {reprintFeedback.message}
+            </p>
+          ) : detail?.status === 'VOIDED' ? (
+            <p
+              data-testid="voided-reprint-blocked-note"
+              className="mr-auto text-xs font-medium text-destructive"
+            >
+              Hoá đơn đã huỷ (VOIDED) — không hỗ trợ in lại
             </p>
           ) : null}
           <div className="flex items-center gap-2 ml-auto">
@@ -340,7 +385,7 @@ export function InvoiceDetailModal({
             >
               Đóng
             </Button>
-            {detail && canReprint ? (
+            {detail && canReprint && detail.status === 'PAID' ? (
               <Button
                 type="button"
                 data-testid="reprint-invoice-btn"

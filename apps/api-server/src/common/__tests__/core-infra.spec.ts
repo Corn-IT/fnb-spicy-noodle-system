@@ -152,6 +152,29 @@ describe('core infrastructure', () => {
         else process.env.NODE_ENV = previousNodeEnv;
       }
     });
+
+    it('should preserve Express body-parser 413 status codes instead of converting them to 500', () => {
+      const logger = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const filter = new GlobalExceptionFilter();
+      const { host, json, status } = createHost(randomUUID());
+
+      try {
+        const bodyParserTooLargeError = Object.assign(new Error('request entity too large'), {
+          status: 413,
+          statusCode: 413,
+          type: 'entity.too.large',
+        });
+        filter.catch(bodyParserTooLargeError, host);
+
+        expect(status).toHaveBeenCalledWith(413);
+        expect(json).toHaveBeenCalledWith(expect.objectContaining({
+          statusCode: 413,
+          message: 'Dữ liệu gửi lên vượt quá dung lượng cho phép',
+        }));
+      } finally {
+        logger.mockRestore();
+      }
+    });
   });
 
   describe('RequestIdMiddleware', () => {

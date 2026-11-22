@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type MdmItem,
   type MdmListResponse,
@@ -24,6 +24,7 @@ export function useMdmListQuery(filter: MdmLookupQuery) {
           activeOnly: filter.activeOnly,
         },
       }),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -35,6 +36,7 @@ export function useCreateMdmMutation() {
       apiClient.post<MdmItem>('/api/v1/mdm', body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['mdm'] });
+      void queryClient.invalidateQueries({ queryKey: ['menu'] });
     },
   });
 }
@@ -47,6 +49,20 @@ export function useUpdateMdmMutation(id: number) {
       apiClient.put<MdmItem>(`/api/v1/mdm/${id}`, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['mdm'] });
+      void queryClient.invalidateQueries({ queryKey: ['menu'] });
+    },
+  });
+}
+
+export function usePatchMdmItemMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: UpdateMdmInput }) =>
+      apiClient.put<MdmItem>(`/api/v1/mdm/${id}`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['mdm'] });
+      void queryClient.invalidateQueries({ queryKey: ['menu'] });
     },
   });
 }
@@ -59,6 +75,7 @@ export function useDeleteMdmMutation() {
       apiClient.delete<MdmItem>(`/api/v1/mdm/${id}`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['mdm'] });
+      void queryClient.invalidateQueries({ queryKey: ['menu'] });
     },
   });
 }

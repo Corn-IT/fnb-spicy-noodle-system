@@ -61,11 +61,16 @@ describe('@fnb/shared contracts', () => {
   it('defines stable error-code and socket room contracts', () => {
     expect(Object.values(contracts.ErrorCodes)).toEqual([
       'AUTH_TOKEN_MISSING', 'AUTH_TOKEN_EXPIRED', 'AUTH_TOKEN_INVALID', 'AUTH_CREDENTIALS_INVALID',
+      'AUTH_SESSION_REPLACED', 'AUTH_SESSION_REVOKED', 'AUTH_SESSION_CONFLICT_ONLINE',
       'RBAC_PERMISSION_DENIED', 'RBAC_SUPER_ADMIN_REQUIRED', 'POS_TABLE_NOT_AVAILABLE', 'POS_TABLE_NOT_OCCUPIED',
       'POS_ORDER_NOT_ACTIVE', 'POS_NO_NEW_ITEMS_TO_SPLIT', 'POS_TAKEAWAY_CANNOT_MERGE', 'POS_CONCURRENT_MODIFICATION',
       'CASHFLOW_ALREADY_SETTLED', 'CASHFLOW_BUDGET_NOT_SET', 'CASHFLOW_DISCREPANCY_NOTE_REQUIRED',
       'INVENTORY_ALREADY_DELETED', 'INVENTORY_PAST_SHIFT_FORBIDDEN', 'MDM_NAME_TAKEN',
       'HR_CITIZEN_ID_DUPLICATE', 'HR_USERNAME_TAKEN', 'HR_EMPLOYEE_DELETED', 'HR_EMPLOYEE_ACCOUNT_EXISTS', 'VALIDATION_FAILED',
+      'QR_WIFI_REQUIRED', 'QR_GEO_REQUIRED', 'QR_GEO_OUT_OF_RANGE',
+      'PAYMENT_QR_NOT_CONFIGURED', 'PAYMENT_QR_LOCKED_FIELD', 'PAYMENT_QR_IN_USE', 'PAYMENT_QR_CANNOT_DELETE_ACTIVE', 'PAYMENT_QR_LAST_ACTIVE', 'PAYMENT_QR_DUPLICATE_ACCOUNT',
+      'STORE_ASSET_INVALID_TYPE', 'STORE_ASSET_TOO_LARGE', 'STORE_SETTINGS_CONFLICT',
+      'DISCOUNT_NOT_FOUND', 'DISCOUNT_INACTIVE', 'DISCOUNT_EXPIRED', 'DISCOUNT_NOT_STARTED', 'DISCOUNT_OUT_OF_TIME_WINDOW', 'DISCOUNT_USAGE_EXHAUSTED', 'DISCOUNT_NOT_APPLICABLE', 'DISCOUNT_LOCKED_FIELDS', 'POS_DISCOUNT_BLOCKS_SPLIT',
     ]);
     expect(contracts.ErrorCodes.AUTH_TOKEN_EXPIRED).toBe('AUTH_TOKEN_EXPIRED');
     expect(contracts.ErrorCodes.CASHFLOW_DISCREPANCY_NOTE_REQUIRED).toBe('CASHFLOW_DISCREPANCY_NOTE_REQUIRED');
@@ -88,16 +93,29 @@ describe('@fnb/shared contracts', () => {
     }).success).toBe(true);
   });
 
-  it('synchronizes RBAC permissions with all eight modules and false defaults', () => {
+  it('synchronizes RBAC permissions with all nine modules and false defaults', () => {
     const parsed = contracts.UserPermissionsSchema.parse({ pos: { view: true, checkout: true } });
-    expect(parsed.pos).toMatchObject({ view: true, create: false, splitKitchen: false, checkout: true });
-    expect(parsed.invoices).toEqual({ view: false, reprint: false, void: false });
-    expect(parsed.inventory).toMatchObject({ view: false, create: false, update: false, delete: false });
-    expect(parsed.cashflow).toMatchObject({ view: false, create: false, config: false });
-    expect(parsed.employees).toMatchObject({ view: false, create: false, update: false, delete: false });
-    expect(parsed.schedules).toEqual({ view: false, update: false });
-    expect(parsed.mdm).toEqual({ view: false, write: false });
-    expect(parsed.rbac).toEqual({ view: false, manage: false });
+    expect(parsed.pos).toMatchObject({ view: true, create: false, splitKitchen: false, checkout: true, qrSecurity: false });
+    expect(parsed.menu).toEqual({
+      view: true, create: false, update: false, delete: false, manageStations: false, manageCategories: false, import: false, export: false,
+    });
+    expect(parsed.invoices).toEqual({ view: false, reprint: false, update: false, approve: false, void: false, export: false });
+    expect(parsed.inventory).toMatchObject({ view: false, create: false, update: false, delete: false, export: false });
+    expect(parsed.cashflow).toMatchObject({ view: false, create: false, compensate: false, config: false, export: false });
+    expect(parsed.employees).toMatchObject({ view: false, create: false, update: false, delete: false, export: false });
+    expect(parsed.schedules).toEqual({ view: false, create: false, update: false, delete: false, export: false });
+    expect(parsed.payroll).toEqual({ view: false, update: false, config: false, export: false });
+    expect(parsed.mdm).toEqual({ view: false, create: false, update: false, delete: false });
+    expect(parsed.rbac).toEqual({ view: false, create: false, update: false, resetPassword: false });
+    expect(parsed.paymentQr).toEqual({ view: false, create: false, update: false, delete: false });
+
+    const legacyParsed = contracts.UserPermissionsSchema.parse({
+      mdm: { view: true, write: true },
+      rbac: { view: true, manage: true },
+    });
+    expect(legacyParsed.mdm).toEqual({ view: true, create: true, update: true, delete: true });
+    expect(legacyParsed.rbac).toEqual({ view: true, create: true, update: true, resetPassword: true });
+
     expect(contracts.UserPermissionsSchema.safeParse({ pos: { view: 'yes' } }).success).toBe(false);
     expect(contracts.LoginRequestSchema.safeParse({ username: 'cashier', password: 'short' }).success).toBe(false);
     expect(contracts.AuthResponseSchema.safeParse({
@@ -452,6 +470,126 @@ describe('@fnb/shared contracts', () => {
         bankName: null, bankAccountNo: null, bankAccountName: null, avatarUrl: null,
         position: null, specialty: null,
       },
+    }).success).toBe(true);
+  });
+
+  it('validates VietQR bank constants and payment account rotation schemas', () => {
+    expect(contracts.VIETQR_BANKS.length).toBeGreaterThanOrEqual(20);
+    expect(contracts.findVietQrBank('vpb')?.shortName).toBe('VPBank');
+    expect(contracts.getVietQrBankShortName('VCB')).toBe('Vietcombank');
+
+    expect(contracts.CreatePaymentAccountRequestSchema.parse({
+      label: 'TK Chính',
+      bankCode: 'VPB',
+      accountNo: '186877721',
+      accountName: 'THAN THI LOAN',
+      dailyLimit: 50000000,
+    })).toEqual({
+      label: 'TK Chính',
+      bankCode: 'VPB',
+      accountNo: '186877721',
+      accountName: 'THAN THI LOAN',
+      isActive: true,
+      dailyLimit: 50000000,
+      monthlyLimit: null,
+      yearlyLimit: null,
+    });
+
+    expect(contracts.CreatePaymentAccountRequestSchema.safeParse({
+      label: 'TK 2',
+      bankCode: 'VPB',
+      accountNo: '186877721',
+      accountName: 'THAN THI LOAN',
+      dailyLimit: 0,
+    }).success).toBe(false);
+
+    expect(contracts.CreatePaymentAccountRequestSchema.safeParse({
+      label: 'TK Sai Hạn Mức',
+      bankCode: 'VPB',
+      accountNo: '186877721',
+      accountName: 'THAN THI LOAN',
+      dailyLimit: 500000,
+      monthlyLimit: 100000,
+    }).success).toBe(false);
+
+    expect(contracts.CreatePaymentAccountRequestSchema.safeParse({
+      label: 'TK Đúng Hạn Mức',
+      bankCode: 'VPB',
+      accountNo: '186877721',
+      accountName: 'THAN THI LOAN',
+      dailyLimit: 500000,
+      monthlyLimit: 5000000,
+      yearlyLimit: 50000000,
+    }).success).toBe(true);
+
+    expect(contracts.ReorderPaymentAccountsRequestSchema.safeParse({
+      orderedIds: [1, 2, 3],
+    }).success).toBe(true);
+    expect(contracts.ReorderPaymentAccountsRequestSchema.safeParse({
+      orderedIds: [1, 1],
+    }).success).toBe(false);
+
+    expect(contracts.SplitProvisionalBillRequestSchema.safeParse({
+      items: [{ orderItemId: 1, quantity: 2 }],
+    }).success).toBe(true);
+    expect(contracts.SplitProvisionalBillRequestSchema.safeParse({
+      items: [],
+    }).success).toBe(false);
+  });
+
+  it('validates user session history query and response contracts', () => {
+    expect(contracts.UserSessionHistoryQuerySchema.parse({})).toEqual({ limit: 5 });
+    expect(contracts.UserSessionHistoryQuerySchema.parse({ limit: '10' })).toEqual({ limit: 10 });
+    expect(contracts.UserSessionHistoryQuerySchema.safeParse({ limit: 25 }).success).toBe(false);
+    expect(contracts.UserSessionHistoryResponseSchema.safeParse({
+      user: {
+        id: 4,
+        username: 'thungan',
+        fullName: 'Trần Thị Lan',
+        isSuperAdmin: false,
+        isActive: true,
+      },
+      currentSession: {
+        isActiveSession: true,
+        isSocketOnline: true,
+        ipAddress: '192.168.1.25',
+        deviceLabel: 'Windows · Chrome',
+        startedAt: '2026-11-17T12:00:00.000Z',
+      },
+      items: [
+        {
+          id: 91,
+          eventType: 'SESSION_REPLACED',
+          actionLabel: 'Đăng nhập mới (đá phiên cũ)',
+          summary: 'đăng nhập từ Windows · Chrome',
+          actorUsername: 'thungan',
+          actorFullName: 'Trần Thị Lan',
+          ipAddress: '192.168.1.25',
+          deviceLabel: 'Windows · Chrome',
+          previousIp: '192.168.1.12',
+          previousDevice: 'iPhone · Safari',
+          createdAt: '2026-11-17T12:00:00.000Z',
+        },
+        {
+          id: 90,
+          eventType: 'LOGIN_FAILED',
+          actionLabel: 'Đăng nhập thất bại',
+          summary: 'thử đăng nhập thất bại (Sai mật khẩu)',
+          actorUsername: 'thungan',
+          actorFullName: 'Trần Thị Lan',
+          ipAddress: '192.168.1.88',
+          deviceLabel: 'Android · Chrome',
+          previousIp: null,
+          previousDevice: null,
+          createdAt: '2026-11-17T11:55:00.000Z',
+        },
+      ],
+    }).success).toBe(true);
+
+    expect(contracts.PermissionsUpdatedSocketPayloadSchema.safeParse({
+      userId: 4,
+      permissions: contracts.defaultUserPermissions,
+      updatedAt: '2026-11-17T12:00:00.000Z',
     }).success).toBe(true);
   });
 });

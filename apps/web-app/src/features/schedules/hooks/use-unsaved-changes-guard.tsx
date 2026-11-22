@@ -2,7 +2,9 @@ import * as React from 'react';
 import { useBlocker } from 'react-router-dom';
 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { clearPendingNavigation } from '@/components/loading';
 import { Button } from '@/components/ui/button';
+import { useAppMessages } from '@/hooks/use-app-messages';
 
 export function useUnsavedChangesGuard(isDirty: boolean) {
   // Layer 1: browser beforeunload
@@ -31,6 +33,12 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
     } as unknown as ReturnType<typeof useBlocker>;
   }
 
+  React.useEffect(() => {
+    if (blocker.state === 'blocked') {
+      clearPendingNavigation();
+    }
+  }, [blocker.state]);
+
   return blocker;
 }
 
@@ -39,16 +47,18 @@ export interface UnsavedChangesDialogProps {
 }
 
 export function UnsavedChangesDialog({ blocker }: UnsavedChangesDialogProps) {
+  const { resolveMessage } = useAppMessages();
   if (blocker.state !== 'blocked') return null;
+  const unsavedCopy = resolveMessage('schedules.confirm.unsavedChanges');
 
   return (
     <Dialog open onOpenChange={() => blocker.reset?.()}>
       <DialogContent data-testid="unsaved-changes-dialog">
         <DialogHeader>
-          <DialogTitle>Thay đổi chưa được lưu</DialogTitle>
-          <DialogDescription>
-            Bạn có thay đổi chưa lưu. Bạn có chắc muốn rời trang?
-          </DialogDescription>
+          <DialogTitle>{unsavedCopy.title}</DialogTitle>
+          {unsavedCopy.description ? (
+            <DialogDescription>{unsavedCopy.description}</DialogDescription>
+          ) : null}
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-0">
           <Button

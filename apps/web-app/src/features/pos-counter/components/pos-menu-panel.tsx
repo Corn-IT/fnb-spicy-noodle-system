@@ -1,11 +1,10 @@
 import {
-  ProductStation,
   type ModifierGroup,
   type OrderItemModifierSelection,
   type Product,
   type ProductStation as ProductStationType,
 } from '@fnb/shared';
-import { Check, Flame, Minus, Plus, RefreshCw, Settings2 } from 'lucide-react';
+import { Check, Flame, Minus, Plus, RefreshCw, Search, Settings2, X } from 'lucide-react';
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -19,7 +18,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { toast } from '@/components/ui/toast';
+import { Input } from '@/components/ui/input';
+import { useAppMessages } from '@/hooks/use-app-messages';
+import { useCommitSearch } from '@/lib/use-commit-search';
+import { useAuthStore } from '@/stores/auth.store';
+import { normalizeVietnameseText } from '@/utils/search';
+import {
+  parseStationOptions,
+  useKitchenStationsLookup,
+  useMenuCategoriesLookup,
+  useMenuSyncListener,
+} from '@/lib/menu-sync';
 import {
   buildInitialSelectedByGroup,
   computeOrderModifiersPayload,
@@ -43,18 +52,76 @@ export interface PosMenuPanelProps {
   onAddItem: (item: PosMenuSelectedItem) => void;
 }
 
-const STATION_FILTERS: Array<{ label: string; value: 'ALL' | ProductStationType }> = [
-  { label: 'Tất cả', value: 'ALL' },
-  { label: 'Bếp Nấu', value: ProductStation.BEP_NAU },
-  { label: 'Bếp Chiên', value: ProductStation.BEP_CHIEN },
-  { label: 'Pha Chế', value: ProductStation.PHA_CHE },
-  { label: 'Combo', value: ProductStation.COMBO },
-];
-
 export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
+  useMenuSyncListener();
+
+  const { notify } = useAppMessages();
   const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
+  const canAddItems = user
+    ? Boolean(user.isSuperAdmin || user.permissions?.pos?.create || user.permissions?.pos?.update)
+    : true;
+  const canManageMenu = user
+    ? Boolean(user.isSuperAdmin || user.permissions?.menu?.create || user.permissions?.menu?.update)
+    : true;
+  const { data: rawStations } = useKitchenStationsLookup();
+  const { data: rawCategories } = useMenuCategoriesLookup();
+
+  const allStations = React.useMemo(() => parseStationOptions(rawStations), [rawStations]);
+  const visibleStations = React.useMemo(
+    () => allStations.filter((st) => !st.isHidden),
+    [allStations],
+  );
+  const hiddenStationCodes = React.useMemo(
+    () => new Set(allStations.filter((st) => st.isHidden).map((st) => st.code)),
+    [allStations],
+  );
+
+  const hiddenCategoryIds = React.useMemo(() => {
+    const ids = new Set<number>();
+    for (const cat of rawCategories ?? []) {
+      if (cat.metadata?.isHidden) {
+        ids.add(cat.id);
+      }
+    }
+    return ids;
+  }, [rawCategories]);
+
+  const activeCategoryNameById = React.useMemo(() => {
+    const map = new Map<number, string>();
+    for (const cat of rawCategories ?? []) {
+      if (!cat.metadata?.isHidden) {
+        map.set(cat.id, cat.name);
+      }
+    }
+    return map;
+  }, [rawCategories]);
+
+  const availableProducts = React.useMemo(
+    () =>
+      products.filter((p) => {
+        if (!p.isAvailable) return false;
+        if (hiddenStationCodes.has(p.station)) return false;
+        if (p.categoryId && hiddenCategoryIds.has(p.categoryId)) return false;
+        return true;
+      }),
+    [products, hiddenStationCodes, hiddenCategoryIds],
+  );
+
+  const stationFilters = React.useMemo<Array<{ label: string; value: 'ALL' | ProductStationType }>>(
+    () => [
+      { label: 'Tất cả', value: 'ALL' },
+      ...visibleStations
+        .filter((st) => st.code !== 'COMBO' || availableProducts.some((p) => p.station === 'COMBO'))
+        .map((st) => ({ label: st.name, value: st.code })),
+    ],
+    [visibleStations, availableProducts],
+  );
+
   const [stationFilter, setStationFilter] = React.useState<'ALL' | ProductStationType>('ALL');
   const [categoryFilter, setCategoryFilter] = React.useState<'ALL' | number>('ALL');
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const menuSearch = useCommitSearch(searchQuery, setSearchQuery);
   const [modalProduct, setModalProduct] = React.useState<Product | null>(null);
   const [quantity, setQuantity] = React.useState(1);
   const [selectedByGroup, setSelectedByGroup] = React.useState<Record<number, number[]>>({});
@@ -63,12 +130,16 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
   >({});
   const [itemNote, setItemNote] = React.useState('');
 
-  const availableProducts = React.useMemo(
-    () => products.filter((p) => p.isAvailable),
-    [products],
-  );
+  const categoryOrderById = React.useMemo(() => {
+    const map = new Map<number, number>();
+    for (const cat of rawCategories ?? []) {
+      const sort = typeof cat.metadata?.sortOrder === 'number' ? cat.metadata.sortOrder : Number.MAX_SAFE_INTEGER;
+      map.set(cat.id, sort);
+    }
+    return map;
+  }, [rawCategories]);
 
-  // Tầng 2 động: Danh sách danh mục con có trong khu vực bếp đang chọn
+  // Tầng 2 động: Danh sách danh mục con có trong khu vực bếp đang chọn (sắp xếp theo MDM sortOrder)
   const dynamicSubcategories = React.useMemo(() => {
     const base =
       stationFilter === 'ALL'
@@ -76,22 +147,48 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
         : availableProducts.filter((p) => p.station === stationFilter);
     const map = new Map<number, string>();
     for (const p of base) {
-      if (p.categoryId && p.categoryName) {
-        map.set(p.categoryId, p.categoryName);
+      if (p.categoryId && !hiddenCategoryIds.has(p.categoryId)) {
+        const liveCatName = activeCategoryNameById.get(p.categoryId) ?? p.categoryName;
+        if (liveCatName) {
+          map.set(p.categoryId, liveCatName);
+        }
       }
     }
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [availableProducts, stationFilter]);
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort(
+        (a, b) =>
+          (categoryOrderById.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+            (categoryOrderById.get(b.id) ?? Number.MAX_SAFE_INTEGER) ||
+          a.name.localeCompare(b.name, 'vi'),
+      );
+  }, [availableProducts, stationFilter, hiddenCategoryIds, activeCategoryNameById, categoryOrderById]);
+
+  const normalizedSearchIndexById = React.useMemo(() => {
+    const map = new Map<number, string>();
+    for (const p of availableProducts) {
+      map.set(
+        p.id,
+        normalizeVietnameseText(`${p.name} ${p.subtitle ?? ''} ${p.categoryName ?? ''}`),
+      );
+    }
+    return map;
+  }, [availableProducts]);
 
   const filteredProducts = React.useMemo(() => {
+    const normalizedQuery = normalizeVietnameseText(searchQuery);
     return availableProducts.filter((p) => {
       if (stationFilter !== 'ALL' && p.station !== stationFilter) return false;
       if (categoryFilter !== 'ALL' && p.categoryId !== categoryFilter) return false;
+      if (normalizedQuery && !(normalizedSearchIndexById.get(p.id) ?? '').includes(normalizedQuery)) {
+        return false;
+      }
       return true;
     });
-  }, [availableProducts, stationFilter, categoryFilter]);
+  }, [availableProducts, stationFilter, categoryFilter, searchQuery, normalizedSearchIndexById]);
 
   const handleProductClick = (product: Product) => {
+    if (!canAddItems) return;
     if (product.modifierGroups.length > 0) {
       setModalProduct(product);
       setQuantity(1);
@@ -112,6 +209,10 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
   };
 
   const handleToggleModifier = (group: ModifierGroup, modifierId: number) => {
+    const targetMod = group.modifiers.find((m) => m.id === modifierId);
+    if (targetMod && targetMod.isAvailable === false) {
+      return;
+    }
     setSelectedByGroup((prev) => {
       const current = prev[group.id] ?? [];
       if (group.maxSelect === 1 && !group.isAutoSelect && !group.allowSubstitution) {
@@ -119,10 +220,9 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
       }
       if (current.includes(modifierId)) {
         if (group.allowSubstitution && current.length <= 1) {
-          toast({
+          notify('qr.modifier.minSubstituteRequired', {
             variant: 'warning',
-            title: 'Cần giữ lại ít nhất 1 đồ ăn chính',
-            description: `Nhóm "${group.name}" phải giữ tối thiểu 1 thành phần để thay thế cho các món bỏ chọn.`,
+            vars: { groupName: group.name },
           });
           return prev;
         }
@@ -166,9 +266,9 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-y-auto overscroll-contain touch-pan-y p-3 sm:p-4 pb-28 sm:pb-6">
       {/* Tầng 1: Khu vực Bếp + Nút tắt sang Quản trị Thực đơn */}
-      <div className="flex items-start justify-between gap-2 shrink-0">
-        <div className="flex flex-wrap items-center gap-1.5 py-0.5">
-          {STATION_FILTERS.map((tab) => {
+      <div className="flex items-center justify-between gap-2 shrink-0">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          {stationFilters.map((tab) => {
             const isActive = stationFilter === tab.value;
             return (
               <button
@@ -179,9 +279,9 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                   setCategoryFilter('ALL');
                 }}
                 className={cn(
-                  'inline-flex shrink-0 items-center justify-center rounded-full px-2.5 py-1 text-[11px] sm:px-3 sm:text-xs font-semibold transition-all active:scale-95 select-none',
+                  'inline-flex h-8 shrink-0 items-center justify-center rounded-full px-3 text-xs font-semibold transition-all active:scale-95 select-none whitespace-nowrap',
                   isActive
-                    ? 'bg-rose-600 text-white shadow-xs'
+                    ? 'bg-primary text-primary-foreground shadow-xs'
                     : 'bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground border border-border/50',
                 )}
               >
@@ -191,49 +291,52 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
           })}
         </div>
 
-        <button
-          type="button"
-          data-testid="pos-goto-menu-admin-btn"
-          onClick={() => navigate('/menu')}
-          className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
-          title="Cấu hình sản phẩm, danh mục con & nhóm tuỳ chọn"
-        >
-          <Settings2 className="h-3.5 w-3.5 text-primary" />
-          <span className="hidden sm:inline">Cấu hình Thực đơn</span>
-        </button>
+        {canManageMenu ? (
+          <button
+            type="button"
+            data-testid="pos-goto-menu-admin-btn"
+            onClick={() => navigate('/menu')}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-semibold text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors whitespace-nowrap"
+            title="Cấu hình sản phẩm, danh mục con & nhóm tuỳ chọn"
+          >
+            <Settings2 className="h-3.5 w-3.5 text-accent-text shrink-0" />
+            <span className="hidden sm:inline">Cấu hình Thực đơn</span>
+          </button>
+        ) : null}
       </div>
 
-      {/* Tầng 2: Danh mục con động từ MDM (VD: Mì cay, Bánh mì chảo, Lẩu...) */}
+      {/* Tầng 2: Danh mục con động từ MDM (Hiển thị đầy đủ dạng pill) */}
       {dynamicSubcategories.length > 0 ? (
         <div
-          className="flex flex-wrap items-center gap-1.5 py-0.5 shrink-0"
           data-testid="pos-subcategory-bar"
+          className="flex flex-wrap items-center gap-1.5 py-0.5 shrink-0"
         >
           <button
             type="button"
+            data-testid="pos-subcategory-pill-ALL"
             onClick={() => setCategoryFilter('ALL')}
             className={cn(
-              'inline-flex shrink-0 items-center justify-center rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-all select-none',
+              'inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-[11px] font-semibold transition-colors whitespace-nowrap',
               categoryFilter === 'ALL'
-                ? 'bg-foreground text-background shadow-2xs'
-                : 'bg-card text-muted-foreground hover:text-foreground border border-border/60',
+                ? 'bg-primary/15 text-accent-text border border-primary/40'
+                : 'bg-background text-muted-foreground border border-border hover:text-foreground',
             )}
           >
-            Tất cả danh mục
+            Tất cả danh mục ({dynamicSubcategories.length})
           </button>
           {dynamicSubcategories.map((cat) => {
-            const isActive = categoryFilter === cat.id;
+            const isSelected = categoryFilter === cat.id;
             return (
               <button
                 key={cat.id}
                 type="button"
                 data-testid={`pos-subcategory-pill-${cat.id}`}
-                onClick={() => setCategoryFilter(cat.id)}
+                onClick={() => setCategoryFilter(isSelected ? 'ALL' : cat.id)}
                 className={cn(
-                  'inline-flex shrink-0 items-center justify-center rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-all select-none',
-                  isActive
-                    ? 'bg-foreground text-background shadow-2xs'
-                    : 'bg-card text-muted-foreground hover:text-foreground border border-border/60',
+                  'inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-[11px] font-semibold transition-colors whitespace-nowrap',
+                  isSelected
+                    ? 'bg-primary/15 text-accent-text border border-primary/40'
+                    : 'bg-background text-muted-foreground border border-border hover:text-foreground',
                 )}
               >
                 {cat.name}
@@ -243,15 +346,57 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
         </div>
       ) : null}
 
+      {/* Tìm nhanh món ăn */}
+      <div ref={menuSearch.containerRef} className="relative shrink-0">
+        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Input
+          {...menuSearch.inputProps}
+          placeholder="Tìm nhanh món ăn..."
+          data-testid="pos-menu-search-input"
+          className="h-9 pl-8 pr-8 text-xs sm:text-sm"
+        />
+        {menuSearch.draft ? (
+          <button
+            type="button"
+            aria-label="Xoá từ khoá tìm món"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={menuSearch.clear}
+            className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+
       {/* Tầng 3: Lưới Sản phẩm kèm Subtitle động */}
+      {filteredProducts.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center text-muted-foreground">
+          <p className="text-sm font-semibold">Không tìm thấy món phù hợp</p>
+          {searchQuery ? (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="mt-2 text-xs font-semibold text-accent-text hover:underline"
+            >
+              Xoá bộ lọc tìm kiếm
+            </button>
+          ) : null}
+        </div>
+      ) : (
       <div className="grid grid-cols-[repeat(auto-fill,minmax(145px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(165px,1fr))] gap-2 sm:gap-2.5">
         {filteredProducts.map((product) => (
           <button
             key={product.id}
             type="button"
+            disabled={!canAddItems}
             data-testid={`pos-menu-product-${product.id}`}
             onClick={() => handleProductClick(product)}
-            className="group relative flex flex-col justify-between rounded-xl border border-border/60 bg-card p-2.5 sm:p-3 text-left shadow-xs transition-all hover:border-rose-500/60 hover:shadow-sm active:scale-[0.98]"
+            className={cn(
+              'group relative flex flex-col justify-between rounded-xl border border-border/60 bg-card p-2.5 sm:p-3 text-left shadow-xs transition-all',
+              canAddItems
+                ? 'hover:border-primary/60 hover:shadow-sm active:scale-[0.98]'
+                : 'cursor-default opacity-90',
+            )}
           >
             <div className="space-y-1">
               {product.categoryName ? (
@@ -274,17 +419,19 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
               ) : null}
             </div>
             <div className="mt-2.5 flex items-center justify-between gap-1.5 border-t border-border/40 pt-2">
-              <span className="text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400 tabular-nums whitespace-nowrap">
+              <span className="text-xs sm:text-sm font-bold text-price tabular-nums whitespace-nowrap">
                 {product.price.toLocaleString('vi-VN')} đ
               </span>
-              <span className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-full bg-rose-600 px-2.5 text-xs font-semibold leading-normal text-white shadow-xs transition-transform active:scale-95 whitespace-nowrap select-none">
-                <Plus className="h-3.5 w-3.5 shrink-0" />
-                <span>Thêm</span>
-              </span>
+              {canAddItems ? (
+                <span className="inline-flex h-7 shrink-0 items-center justify-center rounded-full bg-primary px-3 text-xs font-semibold leading-normal text-primary-foreground shadow-xs transition-transform active:scale-95 whitespace-nowrap select-none">
+                  <span>Thêm</span>
+                </span>
+              ) : null}
             </div>
           </button>
         ))}
       </div>
+      )}
 
       {/* Modal chọn phân cấp tuỳ chọn trong Sản phẩm */}
       <Dialog
@@ -295,11 +442,11 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
       >
         <DialogContent
           data-testid="pos-modifier-modal"
-          className="flex max-h-[90dvh] sm:max-h-[86vh] w-[calc(100vw-1.5rem)] sm:max-w-xl flex-col p-0 gap-0 overflow-hidden rounded-2xl border bg-card shadow-2xl"
+          className="flex max-h-[90dvh] sm:max-h-[86vh] w-[calc(100vw-1.5rem)] sm:max-w-2xl lg:max-w-3xl flex-col p-0 gap-0 overflow-hidden rounded-2xl border bg-card shadow-2xl"
         >
-          <DialogHeader className="p-4 sm:p-5 border-b shrink-0 text-left bg-card">
+          <DialogHeader className="px-4 py-3 sm:px-5 sm:py-3.5 border-b shrink-0 text-left bg-card">
             <DialogTitle className="flex flex-wrap items-baseline gap-2 text-base sm:text-lg font-bold">
-              <Flame className="h-5 w-5 text-rose-600 shrink-0 self-center" />
+              <Flame className="h-5 w-5 text-accent-text shrink-0 self-center" />
               <span>{modalProduct?.name}</span>
               {modalProduct?.subtitle ? (
                 <span
@@ -315,7 +462,7 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                 Đơn giá gốc: <strong>{modalProduct?.price.toLocaleString('vi-VN')} đ</strong>
               </span>
               {computedModalPayload.extraPrice > 0 ? (
-                <span className="font-bold text-rose-600 dark:text-rose-400">
+                <span className="font-bold text-price">
                   + Tuỳ chọn thêm: +{computedModalPayload.extraPrice.toLocaleString('vi-VN')} đ
                 </span>
               ) : null}
@@ -323,13 +470,11 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
           </DialogHeader>
 
           {modalProduct ? (
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y p-4 sm:p-5 space-y-5">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y px-4 py-3 sm:px-5 sm:py-3.5 space-y-3.5">
               {modalProduct.modifierGroups.map((group) => {
                 const chosenIds = selectedByGroup[group.id] ?? [];
                 const isAutoGroup = Boolean(
-                  group.isAutoSelect ||
-                    group.allowSubstitution ||
-                    group.modifiers.some((m) => m.isDefaultChecked),
+                  group.isAutoSelect || group.allowSubstitution,
                 );
 
                 return (
@@ -369,7 +514,8 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
 
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       {group.modifiers.map((mod) => {
-                        const isSelected = chosenIds.includes(mod.id);
+                        const isOutOfStock = mod.isAvailable === false;
+                        const isSelected = !isOutOfStock && chosenIds.includes(mod.id);
                         const subInfo =
                           group.allowSubstitution && !isSelected
                             ? resolveSubstituteForUncheckedModifier(
@@ -385,28 +531,39 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                             key={mod.id}
                             className={cn(
                               'flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all',
-                              isSelected
-                                ? 'border-rose-600 bg-rose-50/90 text-rose-900 dark:border-rose-500 dark:bg-rose-950/60 dark:text-rose-100 shadow-2xs'
-                                : group.allowSubstitution
+                              isOutOfStock
+                                ? group.allowSubstitution
                                   ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
-                                  : isAutoGroup
-                                    ? 'border-dashed border-border bg-muted/40 text-muted-foreground'
-                                    : 'border-border bg-card hover:bg-muted/50',
+                                  : 'border-dashed border-border/80 bg-muted/50 text-muted-foreground opacity-85'
+                                : isSelected
+                                  ? 'border-primary bg-primary/10 text-accent-text shadow-2xs'
+                                  : group.allowSubstitution
+                                    ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
+                                    : isAutoGroup
+                                      ? 'border-dashed border-border bg-muted/40 text-muted-foreground'
+                                      : 'border-border bg-card hover:bg-muted/50',
                             )}
                           >
                             <button
                               type="button"
                               data-testid={`pos-mod-option-${mod.id}`}
+                              disabled={isOutOfStock}
+                              aria-disabled={isOutOfStock}
                               onClick={() => handleToggleModifier(group, mod.id)}
-                              className="flex w-full items-start justify-between gap-2 text-left"
+                              className={cn(
+                                'flex w-full items-start justify-between gap-2 text-left',
+                                isOutOfStock && 'cursor-not-allowed',
+                              )}
                             >
                               <div className="flex items-start gap-2 min-w-0">
                                 <span
                                   className={cn(
                                     'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
-                                    isSelected
-                                      ? 'border-rose-600 bg-rose-600 text-white'
-                                      : 'border-muted-foreground/50 bg-background',
+                                    isOutOfStock
+                                      ? 'border-muted-foreground/30 bg-muted'
+                                      : isSelected
+                                        ? 'border-primary bg-primary text-primary-foreground'
+                                        : 'border-muted-foreground/50 bg-background',
                                   )}
                                 >
                                   {isSelected ? <Check className="h-3 w-3 stroke-[3]" /> : null}
@@ -415,18 +572,31 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                                   <span
                                     className={cn(
                                       'block text-xs font-bold leading-snug',
-                                      !isSelected && isAutoGroup && !group.allowSubstitution
-                                        ? 'line-through opacity-75'
+                                      isOutOfStock || (!isSelected && isAutoGroup && !group.allowSubstitution)
+                                        ? 'line-through opacity-70'
                                         : '',
                                     )}
                                   >
                                     {mod.name}
                                   </span>
+                                  {isOutOfStock ? (
+                                    <span
+                                      data-testid={`pos-mod-out-of-stock-${mod.id}`}
+                                      className="mt-0.5 block text-[10px] font-semibold text-rose-600 dark:text-rose-400"
+                                    >
+                                      Tạm hết
+                                    </span>
+                                  ) : null}
                                 </div>
                               </div>
 
                               {mod.extraPrice > 0 ? (
-                                <span className="shrink-0 text-[11px] font-extrabold text-rose-600 dark:text-rose-400">
+                                <span
+                                  className={cn(
+                                    'shrink-0 text-[11px] font-extrabold text-price',
+                                    isOutOfStock && 'line-through opacity-60',
+                                  )}
+                                >
                                   +{mod.extraPrice >= 1000 ? `${mod.extraPrice / 1000}k` : `${mod.extraPrice}đ`}
                                 </span>
                               ) : null}
@@ -470,14 +640,14 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                             ) : null}
 
                             {/* Subtitle gợi ý mặc định khi đang tích chọn Đồ ăn chính */}
-                            {group.allowSubstitution && isSelected && mod.defaultSubstituteName ? (
+                            {!isOutOfStock && group.allowSubstitution && isSelected && mod.defaultSubstituteName ? (
                               <span className="mt-1 pl-6 text-[10px] font-medium text-muted-foreground">
                                 (Bỏ tích → Thay bằng {mod.defaultSubstituteName})
                               </span>
                             ) : null}
 
                             {/* Subtitle khi bỏ tích Đồ ăn mặc định 0đ */}
-                            {!group.allowSubstitution && isAutoGroup && !isSelected ? (
+                            {!isOutOfStock && !group.allowSubstitution && isAutoGroup && !isSelected ? (
                               <span className="mt-1 pl-6 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
                                 Không {mod.name}
                               </span>
@@ -529,10 +699,10 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
             </div>
           ) : null}
 
-          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 flex flex-col-reverse sm:flex-row gap-2 sm:gap-2 sm:justify-between sm:items-center">
+          <DialogFooter className="px-4 py-2.5 sm:px-5 sm:py-3 border-t bg-muted/20 shrink-0 flex flex-col-reverse sm:flex-row gap-2 sm:gap-2 sm:justify-between sm:items-center">
             <div className="text-xs text-muted-foreground">
               Tổng cộng:{' '}
-              <strong className="text-sm text-rose-600 dark:text-rose-400">
+              <strong className="text-sm text-price">
                 {(
                   ((modalProduct?.price ?? 0) + computedModalPayload.extraPrice) *
                   quantity
@@ -549,7 +719,7 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                 data-testid="pos-confirm-modifier-btn"
                 disabled={!isModalValid}
                 onClick={handleConfirmModal}
-                className="bg-rose-600 font-bold text-white hover:bg-rose-700 active:scale-[0.98]"
+                className="bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.98]"
               >
                 Xác nhận thêm món
               </Button>

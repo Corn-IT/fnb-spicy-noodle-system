@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type CashflowSettlementFilterQuery,
+  type CompensateSettlementRequest,
   type CreateSettlementRequest,
   type SettlementResponse,
   type UpdateDefaultBudgetInput,
@@ -11,11 +12,12 @@ import { apiClient } from '@/lib/api-client';
 export interface CashflowPreviewResponse {
   settlementDate: string;
   shiftName: string;
+  blindMode?: boolean;
   openingBudget: number;
-  totalCashSales: number;
-  totalTransferSales: number;
-  totalCashImports: number;
-  expectedCashInDrawer: number;
+  totalCashSales: number | null;
+  totalTransferSales: number | null;
+  totalCashImports: number | null;
+  expectedCashInDrawer: number | null;
 }
 
 export interface CashflowSettlementListResponse {
@@ -32,18 +34,23 @@ export function useCashflowPreviewQuery() {
   });
 }
 
+export async function fetchCashflowSettlements(filter: CashflowSettlementFilterQuery) {
+  return apiClient.get<CashflowSettlementListResponse>('/api/v1/cashflow/settlements', {
+    params: {
+      page: filter.page,
+      limit: filter.limit,
+      fromDate: filter.fromDate,
+      toDate: filter.toDate,
+      closerKeyword: filter.closerKeyword,
+    },
+  });
+}
+
 export function useCashflowSettlementsQuery(filter: CashflowSettlementFilterQuery) {
   return useQuery({
     queryKey: ['cashflow', 'settlements', filter],
-    queryFn: () =>
-      apiClient.get<CashflowSettlementListResponse>('/api/v1/cashflow/settlements', {
-        params: {
-          page: filter.page,
-          limit: filter.limit,
-          fromDate: filter.fromDate,
-          toDate: filter.toDate,
-        },
-      }),
+    queryFn: () => fetchCashflowSettlements(filter),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -65,6 +72,18 @@ export function useUpdateDefaultBudgetMutation() {
   return useMutation({
     mutationFn: (body: UpdateDefaultBudgetInput) =>
       apiClient.put<{ openingBudget: number }>('/api/v1/cashflow/default-budget', body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['cashflow'] });
+    },
+  });
+}
+
+export function useCompensateSettlementMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ settlementId, body }: { settlementId: number; body: CompensateSettlementRequest }) =>
+      apiClient.post<SettlementResponse>(`/api/v1/cashflow/settlements/${settlementId}/compensate`, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['cashflow'] });
     },

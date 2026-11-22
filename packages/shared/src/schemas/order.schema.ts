@@ -8,6 +8,9 @@ import {
   TableActionTypeSchema,
 } from '../enums/order.enum';
 import { IdSchema, IsoDateTimeSchema, MoneyAmountSchema, PaginationFields, QrTokenSchema } from './common.schema';
+import { DiscountWarningCodeSchema } from '../enums/discount.enum';
+import { DiscountSnapshotSchema } from './discount.schema';
+import { PaymentAccountBriefSchema } from './payment-qr.schema';
 
 export const OrderItemModifierSnapshotSchema = z.object({
   groupId: IdSchema,
@@ -41,6 +44,8 @@ export const CreateQrOrderSchema = z.object({
   activeOrderId: IdSchema.optional(),
   items: OrderItemsInputSchema,
   note: z.string().trim().max(1000).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
 }).strict();
 export type CreateQrOrderInput = z.infer<typeof CreateQrOrderSchema>;
 
@@ -94,6 +99,8 @@ export const PosOrderCreationResponseSchema = z.object({
   takeawayNumber: IdSchema.nullable(),
   tableLabel: z.string().min(1).nullable(),
   status: OrderStatusSchema,
+  subtotalAmount: MoneyAmountSchema.optional(),
+  discountAmount: MoneyAmountSchema.optional(),
   totalAmount: MoneyAmountSchema,
 }).strict().refine((order) => order.orderType === 'TAKEAWAY'
   ? order.tableId === null && order.takeawayNumber !== null
@@ -113,6 +120,9 @@ export const QrOrderResponseSchema = z.object({
 }).strict();
 export type QrOrderResponse = z.infer<typeof QrOrderResponseSchema>;
 
+export const OrderItemSourceSchema = z.enum(['POS_COUNTER', 'QR_CODE']);
+export type OrderItemSource = z.infer<typeof OrderItemSourceSchema>;
+
 export const PosOrderSummarySchema = z.object({
   orderId: IdSchema,
   orderCode: z.string().min(1),
@@ -121,15 +131,35 @@ export const PosOrderSummarySchema = z.object({
   tableLabel: z.string().min(1).nullable(),
   takeawayNumber: IdSchema.nullable(),
   status: OrderStatusSchema,
+  subtotalAmount: MoneyAmountSchema.optional(),
+  discountAmount: MoneyAmountSchema.optional(),
   totalAmount: MoneyAmountSchema,
   createdAt: IsoDateTimeSchema,
+  hasUnprintedAddon: z.boolean().optional(),
+  unprintedAddonBatchNo: z.number().int().positive().nullable().optional(),
+  pendingQrSince: IsoDateTimeSchema.nullable().optional(),
+  pendingQrKind: z.enum(['NEW', 'ADDON']).nullable().optional(),
 }).strict();
 export type PosOrderSummary = z.infer<typeof PosOrderSummarySchema>;
+
+export const QrAutoCancelledPayloadSchema = z.object({
+  orderId: IdSchema,
+  orderCode: z.string().min(1),
+  tableId: IdSchema.nullable(),
+  tableLabel: z.string().min(1).nullable(),
+  kind: z.enum(['NEW', 'ADDON']),
+  cancelledItemCount: z.number().int().nonnegative(),
+  autoCancelMinutes: z.number().int().positive(),
+  cancelledAt: IsoDateTimeSchema,
+  reason: z.string().min(1),
+}).strict();
+export type QrAutoCancelledPayload = z.infer<typeof QrAutoCancelledPayloadSchema>;
 
 export const PosTableGridResponseSchema = z.object({
   tables: z.array(z.object({
     id: IdSchema,
     name: z.string().min(1),
+    qrToken: QrTokenSchema.optional(),
     status: z.enum(['AVAILABLE', 'PENDING', 'OCCUPIED']),
     activeOrderId: IdSchema.nullable(),
     activeOrder: PosOrderSummarySchema.nullable(),
@@ -138,9 +168,19 @@ export const PosTableGridResponseSchema = z.object({
 }).strict();
 export type PosTableGridResponse = z.infer<typeof PosTableGridResponseSchema>;
 
+export const RotateTableQrResponseSchema = z.object({
+  id: IdSchema,
+  name: z.string().min(1),
+  qrToken: QrTokenSchema,
+  status: z.enum(['AVAILABLE', 'PENDING', 'OCCUPIED']),
+  activeOrderId: IdSchema.nullable(),
+}).strict();
+export type RotateTableQrResponse = z.infer<typeof RotateTableQrResponseSchema>;
+
 const OrderDetailItemSchema = z.object({
   id: IdSchema,
   productId: IdSchema,
+  categoryId: IdSchema.nullable().optional(),
   name: z.string().min(1),
   quantity: z.number().int().positive(),
   unitPrice: MoneyAmountSchema,
@@ -163,10 +203,25 @@ export const OrderDetailResponseSchema = z.object({
   paymentMethod: PaymentMethodSchema.nullable(),
   cashAmount: MoneyAmountSchema,
   transferAmount: MoneyAmountSchema,
+  subtotalAmount: MoneyAmountSchema.optional(),
+  discountAmount: MoneyAmountSchema.optional(),
+  discountId: IdSchema.nullable().optional(),
+  discountSnapshot: DiscountSnapshotSchema.nullable().optional(),
+  discountWarning: DiscountWarningCodeSchema.nullable().optional(),
   totalAmount: MoneyAmountSchema,
   note: z.string().nullable(),
   createdAt: IsoDateTimeSchema,
   paidAt: IsoDateTimeSchema.nullable(),
+  pendingPaymentEdit: z.object({
+    paymentMethod: PaymentMethodSchema,
+    cashAmount: MoneyAmountSchema,
+    transferAmount: MoneyAmountSchema,
+    reason: z.string().trim().min(1),
+    requestedBy: IdSchema,
+    requestedByName: z.string().trim().min(1),
+    requestedByUsername: z.string().trim().min(1),
+    requestedAt: IsoDateTimeSchema,
+  }).strict().nullable().optional(),
   tableTransferLogs: z.array(z.unknown()),
   items: z.array(OrderDetailItemSchema),
 }).strict();
@@ -174,6 +229,9 @@ export type OrderDetailResponse = z.infer<typeof OrderDetailResponseSchema>;
 
 export const PatchOrderItemsResponseSchema = z.object({
   orderId: IdSchema,
+  subtotalAmount: MoneyAmountSchema.optional(),
+  discountAmount: MoneyAmountSchema.optional(),
+  discountWarning: DiscountWarningCodeSchema.nullable().optional(),
   totalAmount: MoneyAmountSchema,
   requireCancellationSlip: z.boolean(),
   kitchenCancellationSlips: z.array(z.object({
@@ -252,9 +310,16 @@ export const ProvisionalBillResponseSchema = z.object({
     modifiers: z.array(z.string()),
     note: z.string().nullable(),
   })),
+  subtotalAmount: MoneyAmountSchema.optional(),
+  discountAmount: MoneyAmountSchema.optional(),
+  discountSnapshot: DiscountSnapshotSchema.nullable().optional(),
+  discountWarning: DiscountWarningCodeSchema.nullable().optional(),
   totalAmount: MoneyAmountSchema,
   status: z.literal('SERVING'),
   vietQrPayload: z.string().optional(),
+  paymentAccount: PaymentAccountBriefSchema.optional(),
+  qrRotated: z.boolean().optional(),
+  qrOverLimit: z.boolean().optional(),
 }).strict().refine((bill) => {
   if (bill.orderType === 'DINE_IN') return bill.tableId !== null && bill.takeawayNumber === null;
   return bill.tableId === null && bill.takeawayNumber !== null;
@@ -286,7 +351,8 @@ export const InvoiceFilterQuerySchema = z.object({
   fromDate: z.iso.date().optional(),
   toDate: z.iso.date().optional(),
   keyword: z.string().trim().min(1).optional(),
-  searchField: z.enum(['order_code', 'table', 'note']).optional(),
+  searchField: z.enum(['order_code', 'table', 'note', 'discount_code']).optional(),
+  discountCode: z.string().trim().min(1).max(32).optional(),
   status: OrderStatusSchema.optional(),
   paymentMethod: PaymentMethodSchema.optional(),
   orderType: OrderTypeSchema.optional(),
@@ -300,4 +366,85 @@ export const VoidInvoiceRequestSchema = z.object({
   voidReason: z.string().trim().min(10, 'Lý do huỷ hoá đơn phải có ít nhất 10 ký tự').max(500),
 }).strict();
 export type VoidInvoiceRequest = z.infer<typeof VoidInvoiceRequestSchema>;
+
+export const PendingPaymentEditSchema = z.object({
+  paymentMethod: PaymentMethodSchema,
+  cashAmount: MoneyAmountSchema,
+  transferAmount: MoneyAmountSchema,
+  reason: z.string().trim().min(3).max(500),
+  requestedBy: IdSchema,
+  requestedByName: z.string().trim().min(1),
+  requestedByUsername: z.string().trim().min(1),
+  requestedAt: IsoDateTimeSchema,
+}).strict();
+export type PendingPaymentEdit = z.infer<typeof PendingPaymentEditSchema>;
+
+export const UpdateInvoicePaymentMethodSchema = z.object({
+  paymentMethod: PaymentMethodSchema,
+  cashAmount: MoneyAmountSchema.default(0),
+  transferAmount: MoneyAmountSchema.default(0),
+  reason: z.string().trim().min(3, 'Lý do điều chỉnh phải có ít nhất 3 ký tự').max(500),
+}).strict();
+export type UpdateInvoicePaymentMethodInput = z.infer<typeof UpdateInvoicePaymentMethodSchema>;
+
+export const ReviewInvoicePaymentEditSchema = z.object({
+  decision: z.enum(['APPROVE', 'REJECT']),
+  reviewNote: z.string().trim().max(500).optional(),
+}).strict();
+export type ReviewInvoicePaymentEditInput = z.infer<typeof ReviewInvoicePaymentEditSchema>;
+
+export const CreateDiningTableSchema = z.object({
+  name: z.string().trim().min(1, 'Tên bàn không được để trống').max(32),
+}).strict();
+export type CreateDiningTableInput = z.infer<typeof CreateDiningTableSchema>;
+
+export const UpdateDiningTableSchema = z.object({
+  name: z.string().trim().min(1, 'Tên bàn không được để trống').max(32),
+}).strict();
+export type UpdateDiningTableInput = z.infer<typeof UpdateDiningTableSchema>;
+
+export const SplitCheckoutItemSelectionSchema = z.object({
+  orderItemId: IdSchema,
+  quantity: z.number().int().positive(),
+}).strict();
+export type SplitCheckoutItemSelection = z.infer<typeof SplitCheckoutItemSelectionSchema>;
+
+export const SplitProvisionalBillRequestSchema = z.object({
+  items: z.array(SplitCheckoutItemSelectionSchema).min(1, 'Phải chọn ít nhất một món để in tạm tính tách đơn'),
+}).strict();
+export type SplitProvisionalBillRequest = z.infer<typeof SplitProvisionalBillRequestSchema>;
+
+export const SplitCheckoutOrderRequestSchema = z.object({
+  items: z.array(SplitCheckoutItemSelectionSchema).min(1, 'Phải chọn ít nhất một món để tách thanh toán'),
+  paymentMethod: PaymentMethodSchema,
+  cashAmount: MoneyAmountSchema.default(0),
+  transferAmount: MoneyAmountSchema.default(0),
+  printReceipt: z.boolean().default(true),
+  paymentAccountId: IdSchema.optional(),
+}).strict();
+export type SplitCheckoutOrderRequest = z.infer<typeof SplitCheckoutOrderRequestSchema>;
+
+export const QrSecurityConfigSchema = z.object({
+  wifiProtectionEnabled: z.boolean().default(false),
+  autoSyncPosIp: z.boolean().default(true),
+  allowedWifiIps: z.array(z.string().trim().min(1).max(64)).default([]),
+  wifiSsid: z.string().trim().max(120).default(''),
+  wifiPassword: z.string().trim().max(120).default(''),
+  geoProtectionEnabled: z.boolean().default(false),
+  shopLatitude: z.number().min(-90).max(90).nullable().default(null),
+  shopLongitude: z.number().min(-180).max(180).nullable().default(null),
+  geoRadiusMeters: z.number().int().min(20).max(5000).default(200),
+}).strict();
+export type QrSecurityConfig = z.infer<typeof QrSecurityConfigSchema>;
+
+export const UpdateQrSecurityConfigSchema = QrSecurityConfigSchema;
+export type UpdateQrSecurityConfigInput = z.infer<typeof UpdateQrSecurityConfigSchema>;
+
+export const QrSecurityConfigResponseSchema = QrSecurityConfigSchema.extend({
+  detectedClientIp: z.string().trim().min(1),
+  syncedPosIp: z.string().trim().nullable().default(null),
+  updatedAt: z.string().nullable().optional(),
+}).strict();
+export type QrSecurityConfigResponse = z.infer<typeof QrSecurityConfigResponseSchema>;
+
 

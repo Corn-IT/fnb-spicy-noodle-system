@@ -1,23 +1,22 @@
 import { Calendar, RotateCcw, Search } from 'lucide-react';
 import * as React from 'react';
-import { OrderStatus, type OrderType, PaymentMethod } from '@fnb/shared';
+import { type OrderType, PaymentMethod } from '@fnb/shared';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getTodayVietnamDate } from '@/features/invoices/api/invoices.api';
+import { useCommitSearch } from '@/lib/use-commit-search';
 
-export type InvoiceSearchField = 'order_code' | 'table' | 'note';
+export type InvoiceSearchField = 'order_code' | 'table' | 'note' | 'discount_code';
 
 export interface InvoiceDualFilterBarProps {
   fromDate: string;
   toDate: string;
-  status: OrderStatus | '';
   paymentMethod: PaymentMethod | '';
   orderType?: OrderType | '';
   searchField: InvoiceSearchField;
   keyword: string;
   onDateRangeChange: (fromDate: string, toDate: string) => void;
-  onStatusChange: (status: OrderStatus | '') => void;
   onPaymentMethodChange: (paymentMethod: PaymentMethod | '') => void;
   onOrderTypeChange?: (orderType: OrderType | '') => void;
   onSearchFieldChange: (searchField: InvoiceSearchField) => void;
@@ -27,18 +26,17 @@ export interface InvoiceDualFilterBarProps {
 export function InvoiceDualFilterBar({
   fromDate,
   toDate,
-  status,
   paymentMethod,
   orderType = '',
   searchField,
   keyword,
   onDateRangeChange,
-  onStatusChange,
   onPaymentMethodChange,
   onOrderTypeChange,
   onSearchFieldChange,
   onKeywordChange,
 }: InvoiceDualFilterBarProps) {
+  const keywordSearch = useCommitSearch(keyword, onKeywordChange);
   const today = React.useMemo(() => getTodayVietnamDate(), []);
 
   const setPresetRange = (preset: 'today' | 'yesterday' | 'week') => {
@@ -78,7 +76,7 @@ export function InvoiceDualFilterBar({
       {/* Bên trái: DateRangePicker (Mặc định Hôm nay) */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground shrink-0">
-          <Calendar className="h-4 w-4 text-primary shrink-0" />
+          <Calendar className="h-4 w-4 text-accent-text shrink-0" />
           <span className="whitespace-nowrap">Khoảng thời gian:</span>
         </div>
 
@@ -121,7 +119,11 @@ export function InvoiceDualFilterBar({
             aria-label="Từ ngày"
             data-testid="invoice-from-date-input"
             value={fromDate}
-            onChange={(e) => onDateRangeChange(e.target.value, toDate)}
+            onChange={(e) => {
+              const nextFrom = e.target.value;
+              const nextTo = toDate && nextFrom && toDate < nextFrom ? nextFrom : toDate;
+              onDateRangeChange(nextFrom, nextTo);
+            }}
             className="h-8 flex-1 sm:w-36 text-xs"
           />
           <span className="text-xs text-muted-foreground shrink-0">→</span>
@@ -130,13 +132,30 @@ export function InvoiceDualFilterBar({
             aria-label="Đến ngày"
             data-testid="invoice-to-date-input"
             value={toDate}
-            onChange={(e) => onDateRangeChange(fromDate, e.target.value)}
+            min={fromDate || undefined}
+            onChange={(e) => {
+              const nextTo = e.target.value;
+              const safeTo = fromDate && nextTo && nextTo < fromDate ? fromDate : nextTo;
+              onDateRangeChange(fromDate, safeTo);
+            }}
             className="h-8 flex-1 sm:w-36 text-xs"
           />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            data-testid="invoice-reset-date-btn"
+            onClick={() => onDateRangeChange(today, today)}
+            title="Đặt lại khoảng ngày về Hôm nay"
+            aria-label="Đặt lại khoảng ngày"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
 
-      {/* Bộ lọc trạng thái, thanh toán, loại đơn và tiêu chí tìm kiếm được kết hợp bằng AND. */}
+      {/* Bộ lọc hình thức, thanh toán và tiêu chí tìm kiếm được kết hợp bằng AND (chỉ hiển thị hoá đơn Đã thanh toán). */}
       <div className="flex flex-wrap items-center gap-2">
         <select
           aria-label="Lọc hình thức phục vụ"
@@ -148,20 +167,6 @@ export function InvoiceDualFilterBar({
           <option value="">Tất cả hình thức</option>
           <option value="DINE_IN">Tại bàn</option>
           <option value="TAKEAWAY">Mang về</option>
-        </select>
-
-        <select
-          aria-label="Lọc trạng thái hoá đơn"
-          data-testid="invoice-status-filter"
-          value={status}
-          onChange={(e) => onStatusChange(e.target.value as OrderStatus | '')}
-          className="h-9 flex-1 sm:flex-none rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-        >
-          <option value="">Tất cả trạng thái</option>
-          <option value={OrderStatus.PENDING}>Chờ xử lý</option>
-          <option value={OrderStatus.SERVING}>Đang phục vụ</option>
-          <option value={OrderStatus.PAID}>Đã thanh toán</option>
-          <option value={OrderStatus.VOIDED}>Đã huỷ</option>
         </select>
 
         <select
@@ -187,36 +192,39 @@ export function InvoiceDualFilterBar({
           <option value="order_code">Mã hoá đơn</option>
           <option value="table">Bàn / Mang về</option>
           <option value="note">Ghi chú</option>
+          <option value="discount_code">Mã giảm giá</option>
         </select>
 
-        <div className="relative flex-1 min-w-[200px] sm:w-56">
+        <div ref={keywordSearch.containerRef} className="relative flex-1 min-w-[200px] sm:w-56">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             data-testid="invoice-keyword-input"
-            value={keyword}
-            onChange={(e) => onKeywordChange(e.target.value)}
+            {...keywordSearch.inputProps}
             placeholder={
               searchField === 'order_code'
                 ? 'Nhập mã HĐ (VD: HD-2026...)'
                 : searchField === 'table'
                   ? 'Nhập số bàn (VD: 05) hoặc "Mang về"...'
-                  : 'Nhập nội dung ghi chú...'
+                  : searchField === 'discount_code'
+                    ? 'Nhập mã giảm giá (VD: GIAM10)...'
+                    : 'Nhập nội dung ghi chú...'
             }
-            className="pl-8 w-full h-9 text-xs sm:text-sm"
+            className="pl-8 pr-8 w-full h-9 text-xs sm:text-sm"
           />
+          {keywordSearch.draft ? (
+            <button
+              type="button"
+              data-testid="invoice-reset-keyword-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={keywordSearch.clear}
+              title="Đặt lại từ khoá tìm kiếm"
+              aria-label="Đặt lại từ khoá tìm kiếm"
+              className="absolute right-2 top-2 inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
         </div>
-
-        {keyword ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => onKeywordChange('')}
-            title="Xoá từ khoá"
-          >
-            <RotateCcw className="h-4 w-4" />
-          </Button>
-        ) : null}
       </div>
     </div>
   );

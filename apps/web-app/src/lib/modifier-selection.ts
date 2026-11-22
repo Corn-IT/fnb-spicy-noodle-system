@@ -9,10 +9,17 @@ export function buildInitialSelectedByGroup(product: Product): Record<number, nu
   const initial: Record<number, number[]> = {};
   for (const group of product.modifierGroups) {
     const defaultIds = group.modifiers
-      .filter((m) => Boolean(m.isDefaultChecked || group.isAutoSelect || group.allowSubstitution))
+      .filter(
+        (m) =>
+          m.isAvailable !== false &&
+          Boolean(m.isDefaultChecked || group.isAutoSelect || group.allowSubstitution),
+      )
       .map((m) => m.id);
     if (defaultIds.length > 0) {
-      initial[group.id] = defaultIds;
+      initial[group.id] =
+        group.maxSelect === 1 && !group.isAutoSelect && !group.allowSubstitution
+          ? [defaultIds[0]!]
+          : defaultIds;
     }
   }
   return initial;
@@ -28,7 +35,9 @@ export function resolveSubstituteForUncheckedModifier(
   substituteName: string;
   availableSubstitutes: Modifier[];
 } {
-  const remainingChecked = group.modifiers.filter((m) => chosenIds.includes(m.id));
+  const remainingChecked = group.modifiers.filter(
+    (m) => m.isAvailable !== false && chosenIds.includes(m.id),
+  );
   if (remainingChecked.length === 0) {
     return {
       substituteModifier: null,
@@ -87,15 +96,14 @@ export function isProductModifierSelectionValid(
 ): boolean {
   return product.modifierGroups.every((group) => {
     const chosenIds = selectedByGroup[group.id] ?? [];
-    if (group.allowSubstitution && group.modifiers.length > 0) {
+    const hasAvailableModifiers = group.modifiers.some((m) => m.isAvailable !== false);
+    if (group.allowSubstitution && hasAvailableModifiers) {
       return chosenIds.length >= 1;
     }
-    const hasAutoDefaults = Boolean(
-      group.isAutoSelect ||
-        group.allowSubstitution ||
-        group.modifiers.some((m) => m.isDefaultChecked),
+    const isCheckboxAutoGroup = Boolean(
+      group.isAutoSelect || group.allowSubstitution,
     );
-    if (!hasAutoDefaults && group.isRequired) {
+    if (!isCheckboxAutoGroup && group.isRequired && hasAvailableModifiers) {
       return chosenIds.length > 0;
     }
     return true;
@@ -117,10 +125,8 @@ export function computeOrderModifiersPayload(
 
   for (const group of product.modifierGroups) {
     const chosenIds = selectedByGroup[group.id] ?? [];
-    const hasAutoDefaults = Boolean(
-      group.isAutoSelect ||
-        group.allowSubstitution ||
-        group.modifiers.some((m) => m.isDefaultChecked),
+    const isCheckboxAutoGroup = Boolean(
+      group.isAutoSelect || group.allowSubstitution,
     );
 
     if (group.allowSubstitution) {
@@ -153,7 +159,7 @@ export function computeOrderModifiersPayload(
       continue;
     }
 
-    if (hasAutoDefaults) {
+    if (isCheckboxAutoGroup) {
       for (const mod of group.modifiers) {
         const isChecked = chosenIds.includes(mod.id);
         const isDefault = Boolean(mod.isDefaultChecked || group.isAutoSelect);
@@ -180,7 +186,9 @@ export function computeOrderModifiersPayload(
       if (mod) {
         extraPrice += mod.extraPrice;
         modifiers.push({ groupId: group.id, modifierId: mod.id });
-        modifierLabels.push(mod.name);
+        if (!(mod.isDefaultChecked && mod.extraPrice === 0)) {
+          modifierLabels.push(mod.name);
+        }
       }
     }
   }

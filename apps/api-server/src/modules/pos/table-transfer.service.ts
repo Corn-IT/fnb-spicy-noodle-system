@@ -9,6 +9,7 @@ import {
 import type { ErrorCode, KitchenStation, TableActionRequest, TableActionResponse } from '@fnb/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
+import { recomputeOrderTotals } from './order-totals.helper';
 
 const activeStatuses = ['PENDING', 'SERVING'];
 
@@ -130,22 +131,45 @@ export class TableTransferService {
           throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Đơn đích không còn mở');
         }
         await tx.orderItem.updateMany({ where: { orderId: source.id }, data: { orderId: targetOrder.id } });
-        await tx.order.update({
-          where: { id: targetOrder.id },
-          data: {
-            totalAmount: targetOrder.totalAmount.add(source.totalAmount),
-            tableTransferLogs: this.appendLog(targetOrder.tableTransferLogs, logEntry),
-          },
-        });
-        await tx.order.update({
-          where: { id: source.id },
-          data: {
-            status: 'MERGED',
-            mergedIntoOrderId: targetOrder.id,
-            totalAmount: new Prisma.Decimal(0),
-            tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry),
-          },
-        });
+        const canRecomputeItems = typeof (tx.orderItem as { findMany?: unknown })?.findMany === 'function';
+        if (canRecomputeItems) {
+          await recomputeOrderTotals(
+            tx,
+            targetOrder.id,
+            (targetOrder as { discountSnapshot?: unknown }).discountSnapshot ?? null,
+            { tableTransferLogs: this.appendLog(targetOrder.tableTransferLogs, logEntry) },
+          );
+          await tx.order.update({
+            where: { id: source.id },
+            data: {
+              status: 'MERGED',
+              mergedIntoOrderId: targetOrder.id,
+              subtotalAmount: new Prisma.Decimal(0),
+              discountAmount: new Prisma.Decimal(0),
+              discountId: null,
+              discountSnapshot: Prisma.JsonNull,
+              totalAmount: new Prisma.Decimal(0),
+              tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry),
+            },
+          });
+        } else {
+          await tx.order.update({
+            where: { id: targetOrder.id },
+            data: {
+              totalAmount: targetOrder.totalAmount.add(source.totalAmount),
+              tableTransferLogs: this.appendLog(targetOrder.tableTransferLogs, logEntry),
+            },
+          });
+          await tx.order.update({
+            where: { id: source.id },
+            data: {
+              status: 'MERGED',
+              mergedIntoOrderId: targetOrder.id,
+              totalAmount: new Prisma.Decimal(0),
+              tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry),
+            },
+          });
+        }
         await tx.diningTable.update({
           where: { id: sourceTable.id },
           data: { status: 'AVAILABLE', activeOrderId: null },

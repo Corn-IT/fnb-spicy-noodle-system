@@ -18,6 +18,7 @@ import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Input } from '@/components/ui/input';
 import {
   Sheet,
@@ -27,7 +28,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { toast } from '@/components/ui/toast';
+import { useAppMessages } from '@/hooks/use-app-messages';
+import { DEFAULT_KITCHEN_STATIONS, type KitchenStationOption } from '@/lib/menu-sync';
 
 import {
   useCreateProductMutation,
@@ -36,8 +38,9 @@ import {
 
 interface EditableModifier {
   name: string;
-  extraPrice: number;
+  extraPrice: number | '';
   isDefaultChecked: boolean;
+  isAvailable: boolean;
   defaultSubstituteName: string;
 }
 
@@ -61,15 +64,10 @@ interface ProductFormDrawerProps {
   editingProduct: Product | null;
   allProducts: Product[];
   categories: MdmItem[];
+  stations?: KitchenStationOption[];
   onOpenCategoryManager: () => void;
+  onOpenStationManager?: () => void;
 }
-
-const STATION_OPTIONS: { value: ProductStation; label: string; desc: string }[] = [
-  { value: 'BEP_NAU', label: 'Bếp nấu', desc: 'Mì cay, Bánh mì chảo, Lẩu...' },
-  { value: 'BEP_CHIEN', label: 'Bếp chiên', desc: 'Khoai tây, Phô mai que, Cá viên...' },
-  { value: 'PHA_CHE', label: 'Pha chế', desc: 'Trà đào, Trà sữa, Nước ngọt...' },
-  { value: 'COMBO', label: 'Combo', desc: 'Tự động tách phiếu về 3 bếp' },
-];
 
 export function ProductFormDrawer({
   open,
@@ -77,8 +75,11 @@ export function ProductFormDrawer({
   editingProduct,
   allProducts,
   categories,
+  stations = DEFAULT_KITCHEN_STATIONS,
   onOpenCategoryManager,
+  onOpenStationManager,
 }: ProductFormDrawerProps) {
+  const { notify, resolveErrorMessage } = useAppMessages();
   const [name, setName] = React.useState('');
   const [subtitle, setSubtitle] = React.useState('');
   const [station, setStation] = React.useState<ProductStation>('BEP_NAU');
@@ -118,6 +119,7 @@ export function ProductFormDrawer({
             name: m.name,
             extraPrice: m.extraPrice,
             isDefaultChecked: m.isDefaultChecked ?? false,
+            isAvailable: m.isAvailable ?? true,
             defaultSubstituteName: m.defaultSubstituteName ?? '',
           })),
         })),
@@ -144,16 +146,11 @@ export function ProductFormDrawer({
 
   const handleCategoryChange = (nextCategoryId: number | null) => {
     setCategoryId(nextCategoryId);
-    if (nextCategoryId !== null) {
+    if (nextCategoryId !== null && station !== 'COMBO') {
       const matched = categories.find((c) => c.id === nextCategoryId);
       const defaultStation = matched?.metadata?.defaultStation;
-      if (
-        defaultStation === 'BEP_NAU' ||
-        defaultStation === 'BEP_CHIEN' ||
-        defaultStation === 'PHA_CHE' ||
-        defaultStation === 'COMBO'
-      ) {
-        setStation(defaultStation);
+      if (typeof defaultStation === 'string' && defaultStation.trim()) {
+        setStation(defaultStation as ProductStation);
       }
     }
   };
@@ -168,10 +165,11 @@ export function ProductFormDrawer({
         maxSelect: 1,
         isAutoSelect: false,
         allowSubstitution: false,
-        modifiers: Array.from({ length: 7 }, (_, i) => ({
-          name: `Cấp ${i + 1}`,
+        modifiers: Array.from({ length: 8 }, (_, i) => ({
+          name: `Cấp ${i}`,
           extraPrice: 0,
           isDefaultChecked: false,
+          isAvailable: true,
           defaultSubstituteName: '',
         })),
       },
@@ -192,6 +190,7 @@ export function ProductFormDrawer({
             name: item,
             extraPrice: 0,
             isDefaultChecked: true,
+            isAvailable: true,
             defaultSubstituteName: '',
           }),
         ),
@@ -209,9 +208,9 @@ export function ProductFormDrawer({
         isAutoSelect: true,
         allowSubstitution: true,
         modifiers: [
-          { name: 'Tôm', extraPrice: 0, isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-          { name: 'Ngao', extraPrice: 0, isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-          { name: 'Mực', extraPrice: 0, isDefaultChecked: true, defaultSubstituteName: 'Tôm' },
+          { name: 'Tôm', extraPrice: 0, isDefaultChecked: true, isAvailable: true, defaultSubstituteName: 'Mực' },
+          { name: 'Ngao', extraPrice: 0, isDefaultChecked: true, isAvailable: true, defaultSubstituteName: 'Mực' },
+          { name: 'Mực', extraPrice: 0, isDefaultChecked: true, isAvailable: true, defaultSubstituteName: 'Tôm' },
         ],
       },
     ]);
@@ -227,16 +226,16 @@ export function ProductFormDrawer({
         isAutoSelect: false,
         allowSubstitution: false,
         modifiers: [
-          { name: 'Xúc xích', extraPrice: 5000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Tôm viên', extraPrice: 5000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Đậu hũ', extraPrice: 5000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Bò Mỹ', extraPrice: 10000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Sườn sụn', extraPrice: 10000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Ngao', extraPrice: 5000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Tôm', extraPrice: 10000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Mực', extraPrice: 10000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Kim chi', extraPrice: 5000, isDefaultChecked: false, defaultSubstituteName: '' },
-          { name: 'Nấm kim châm', extraPrice: 5000, isDefaultChecked: false, defaultSubstituteName: '' },
+          { name: 'Xúc xích', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Tôm viên', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Đậu hũ', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Bò Mỹ', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Sườn sụn', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Ngao', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Tôm', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Mực', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Kim chi', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Nấm kim châm', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
         ],
       },
     ]);
@@ -252,7 +251,7 @@ export function ProductFormDrawer({
         isAutoSelect: false,
         allowSubstitution: false,
         modifiers: [
-          { name: '', extraPrice: 0, isDefaultChecked: false, defaultSubstituteName: '' },
+          { name: '', extraPrice: 0, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
         ],
       },
     ]);
@@ -299,6 +298,7 @@ export function ProductFormDrawer({
             name: '',
             extraPrice: 0,
             isDefaultChecked: group.isAutoSelect,
+            isAvailable: true,
             defaultSubstituteName: '',
           },
         ];
@@ -346,33 +346,30 @@ export function ProductFormDrawer({
   const handleSave = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      toast({ variant: 'destructive', title: 'Vui lòng nhập tên sản phẩm' });
+      notify('menu.product.missingName', { variant: 'destructive' });
       return;
     }
 
     const numericPrice = Number(price);
     if (!Number.isFinite(numericPrice) || numericPrice < 0) {
-      toast({ variant: 'destructive', title: 'Đơn giá bán không hợp lệ' });
+      notify('menu.product.invalidPrice', { variant: 'destructive' });
       return;
     }
 
     if (station === 'COMBO' && comboItems.length === 0) {
-      toast({
-        variant: 'destructive',
-        title: 'Món Combo phải có ít nhất 1 món thành phần thuộc bếp thực',
-      });
+      notify('menu.product.comboRequiresItems', { variant: 'destructive' });
       return;
     }
 
     for (const group of modifierGroups) {
       if (!group.name.trim()) {
-        toast({ variant: 'destructive', title: 'Vui lòng nhập tên cho tất cả nhóm tuỳ chọn' });
+        notify('menu.product.modifierGroupMissingName', { variant: 'destructive' });
         return;
       }
       if (group.modifiers.length === 0 || group.modifiers.some((m) => !m.name.trim())) {
-        toast({
+        notify('menu.product.modifierOptionMissingName', {
           variant: 'destructive',
-          title: `Nhóm "${group.name}" có tuỳ chọn chưa nhập tên`,
+          vars: { groupName: group.name },
         });
         return;
       }
@@ -397,6 +394,7 @@ export function ProductFormDrawer({
           name: m.name.trim(),
           extraPrice: Math.max(0, Number(m.extraPrice) || 0),
           isDefaultChecked: m.isDefaultChecked,
+          isAvailable: m.isAvailable,
           defaultSubstituteName: m.defaultSubstituteName.trim()
             ? m.defaultSubstituteName.trim()
             : null,
@@ -407,24 +405,28 @@ export function ProductFormDrawer({
     try {
       if (editingProduct) {
         await updateMutation.mutateAsync({ id: editingProduct.id, body: payload });
-        toast({
+        notify('menu.product.updateSuccess', {
           variant: 'success',
-          title: 'Đã cập nhật sản phẩm',
-          description: `${trimmedName} đã đồng bộ sang Thực đơn gọi món nhanh & QR.`,
+          vars: { productName: trimmedName },
         });
       } else {
         await createMutation.mutateAsync(payload);
-        toast({
+        notify('menu.product.createSuccess', {
           variant: 'success',
-          title: 'Đã thêm món mới vào Thực đơn',
-          description: `${trimmedName} đã sẵn sàng trên màn hình POS & QR.`,
+          vars: { productName: trimmedName },
         });
       }
       onOpenChange(false);
     } catch (error) {
-      const msg =
-        error instanceof Error ? error.message : 'Không thể lưu cấu hình sản phẩm';
-      toast({ variant: 'destructive', title: 'Lưu thất bại', description: msg });
+      const resolvedErr = resolveErrorMessage(
+        'menu.product.saveError',
+        error,
+        'Không thể lưu cấu hình sản phẩm',
+      );
+      notify('menu.product.saveError', {
+        variant: 'destructive',
+        vars: { reason: resolvedErr.description ?? 'Không thể lưu cấu hình sản phẩm' },
+      });
     }
   };
 
@@ -449,7 +451,7 @@ export function ProductFormDrawer({
         <div className="rounded-xl border border-border bg-card p-4 space-y-4 shadow-2xs">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
-              <UtensilsCrossed className="h-4 w-4 text-primary" />
+              <UtensilsCrossed className="h-4 w-4 text-accent-text" />
               <span>1. Phân cấp Menu & Thông tin gốc</span>
             </h3>
             <label className="inline-flex items-center gap-2 cursor-pointer select-none">
@@ -467,23 +469,34 @@ export function ProductFormDrawer({
 
           {/* Tầng 1: Khu vực Bếp */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-muted-foreground">
-              Tầng 1 — Khu vực Bếp (Quyết định trạm in nhiệt 80mm)
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {STATION_OPTIONS.map((opt) => (
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-muted-foreground">
+                Tầng 1 — Khu vực Bếp (Quyết định trạm in nhiệt 80mm)
+              </label>
+              {onOpenStationManager ? (
                 <button
-                  key={opt.value}
                   type="button"
-                  data-testid={`product-station-${opt.value}`}
-                  onClick={() => setStation(opt.value)}
+                  onClick={onOpenStationManager}
+                  className="text-xs font-bold text-accent-text hover:underline"
+                >
+                  Quản lý khu vực bếp
+                </button>
+              ) : null}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {stations.map((opt) => (
+                <button
+                  key={opt.code}
+                  type="button"
+                  data-testid={`product-station-${opt.code}`}
+                  onClick={() => setStation(opt.code)}
                   className={`flex flex-col items-start rounded-xl border p-2.5 text-left transition-all ${
-                    station === opt.value
+                    station === opt.code
                       ? 'border-primary bg-primary/10 text-foreground ring-1 ring-primary'
                       : 'border-border bg-background text-muted-foreground hover:bg-accent/50'
                   }`}
                 >
-                  <span className="text-xs font-bold text-foreground">{opt.label}</span>
+                  <span className="text-xs font-bold text-foreground">{opt.name}</span>
                   <span className="text-[11px] leading-tight mt-0.5 line-clamp-1">
                     {opt.desc}
                   </span>
@@ -502,9 +515,9 @@ export function ProductFormDrawer({
                 <button
                   type="button"
                   onClick={onOpenCategoryManager}
-                  className="text-xs font-bold text-primary hover:underline"
+                  className="text-xs font-bold text-accent-text hover:underline"
                 >
-                  + Quản lý danh mục con
+                  Quản lý danh mục con
                 </button>
               </div>
               <select
@@ -528,14 +541,13 @@ export function ProductFormDrawer({
               <label className="text-xs font-semibold text-muted-foreground">
                 Đơn giá gốc (VNĐ) *
               </label>
-              <Input
-                type="number"
-                min={0}
-                step={1000}
+              <CurrencyInput
                 data-testid="product-price-input"
                 value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="VD: 79000"
+                onValueChange={(rawDigits) => setPrice(rawDigits)}
+                placeholder="VD: 79.000"
+                suffix="đ"
+                className="h-10"
               />
             </div>
 
@@ -673,7 +685,7 @@ export function ProductFormDrawer({
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
-                <Layers className="h-4 w-4 text-primary" />
+                <Layers className="h-4 w-4 text-accent-text" />
                 <span>2. Các Nhóm Tuỳ Chọn Trong Sản Phẩm ({modifierGroups.length})</span>
               </h3>
               <Button
@@ -683,7 +695,6 @@ export function ProductFormDrawer({
                 onClick={addBlankGroup}
                 className="font-bold"
               >
-                <Plus className="h-3.5 w-3.5" />
                 <span>Tự thêm nhóm tuỳ chọn</span>
               </Button>
             </div>
@@ -700,8 +711,8 @@ export function ProductFormDrawer({
                 className="h-7 px-2.5 text-xs font-semibold"
                 onClick={addPresetSpiceGroup}
               >
-                <Flame className="h-3.5 w-3.5 text-orange-500" />
-                <span>+ Cấp độ cay (1–7)</span>
+                <Flame className="h-3.5 w-3.5 text-accent-text" />
+                <span>Cấp độ cay (0–7)</span>
               </Button>
               <Button
                 type="button"
@@ -711,7 +722,7 @@ export function ProductFormDrawer({
                 onClick={addPresetDefaultGarnishGroup}
               >
                 <CheckSquare className="h-3.5 w-3.5 text-emerald-600" />
-                <span>+ Đồ ăn mặc định (0đ - Auto bật)</span>
+                <span>Đồ ăn mặc định (0đ - Auto bật)</span>
               </Button>
               <Button
                 type="button"
@@ -721,7 +732,7 @@ export function ProductFormDrawer({
                 onClick={addPresetMainIngredientSubstitutionGroup}
               >
                 <RefreshCw className="h-3.5 w-3.5 text-blue-600" />
-                <span>+ Đồ ăn chính (Đổi món thông minh)</span>
+                <span>Đồ ăn chính (Đổi món thông minh)</span>
               </Button>
               <Button
                 type="button"
@@ -731,7 +742,7 @@ export function ProductFormDrawer({
                 onClick={addPresetExtraToppingGroup}
               >
                 <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                <span>+ Đồ ăn thêm (+Giá)</span>
+                <span>Đồ ăn thêm (+Giá)</span>
               </Button>
             </div>
           </div>
@@ -842,29 +853,36 @@ export function ProductFormDrawer({
                   {/* Danh sách từng Line Item trong nhóm */}
                   <div className="space-y-2">
                     <div className="hidden sm:grid sm:grid-cols-12 gap-2 px-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                      <div className={group.allowSubstitution ? 'sm:col-span-4' : 'sm:col-span-5'}>
+                      <div className={group.allowSubstitution ? 'sm:col-span-3' : 'sm:col-span-4'}>
                         Tên tuỳ chọn
                       </div>
-                      <div className={group.allowSubstitution ? 'sm:col-span-2' : 'sm:col-span-4'}>
+                      <div className={group.allowSubstitution ? 'sm:col-span-2' : 'sm:col-span-3'}>
                         Đơn giá cộng thêm
                       </div>
                       {group.allowSubstitution ? (
                         <div className="sm:col-span-3">Món thay thế mặc định</div>
                       ) : null}
-                      <div className="sm:col-span-2 text-center">Auto bật</div>
+                      <div className={group.allowSubstitution ? 'sm:col-span-1 text-center' : 'sm:col-span-2 text-center'}>
+                        Auto bật
+                      </div>
+                      <div className="sm:col-span-2 text-center">Tạm hết</div>
                       <div className="sm:col-span-1 text-right">Xoá</div>
                     </div>
 
                     {group.modifiers.map((mod, mIdx) => (
                       <div
                         key={mIdx}
-                        className="rounded-lg border border-border/60 bg-background/70 p-2.5 sm:p-0 sm:border-0 sm:bg-transparent grid grid-cols-12 items-center gap-2"
+                        className={`rounded-lg border p-2.5 sm:p-0 sm:border-0 grid grid-cols-12 items-center gap-2 ${
+                          !mod.isAvailable
+                            ? 'border-rose-500/40 bg-rose-500/5 sm:rounded-md sm:bg-rose-500/5 sm:p-1'
+                            : 'border-border/60 bg-background/70 sm:bg-transparent'
+                        }`}
                       >
                         <div
                           className={
                             group.allowSubstitution
-                              ? 'col-span-12 sm:col-span-4'
-                              : 'col-span-7 sm:col-span-5'
+                              ? 'col-span-12 sm:col-span-3'
+                              : 'col-span-7 sm:col-span-4'
                           }
                         >
                           <span className="block sm:hidden text-[10px] font-semibold text-muted-foreground mb-0.5">
@@ -876,7 +894,7 @@ export function ProductFormDrawer({
                               updateModifier(gIdx, mIdx, { name: e.target.value })
                             }
                             placeholder="Tên món (VD: Tôm, Xúc xích, Cấp 1)..."
-                            className="h-8 text-xs"
+                            className={`h-8 text-xs ${!mod.isAvailable ? 'line-through opacity-75' : ''}`}
                           />
                         </div>
 
@@ -884,23 +902,21 @@ export function ProductFormDrawer({
                           className={
                             group.allowSubstitution
                               ? 'col-span-5 sm:col-span-2'
-                              : 'col-span-5 sm:col-span-4'
+                              : 'col-span-5 sm:col-span-3'
                           }
                         >
                           <span className="block sm:hidden text-[10px] font-semibold text-muted-foreground mb-0.5">
                             Giá thêm (đ)
                           </span>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={1000}
+                          <CurrencyInput
                             value={mod.extraPrice}
-                            onChange={(e) =>
+                            onValueChange={(_, numeric) =>
                               updateModifier(gIdx, mIdx, {
-                                extraPrice: Math.max(0, Number(e.target.value) || 0),
+                                extraPrice: numeric === null ? '' : Math.max(0, numeric),
                               })
                             }
                             placeholder="0"
+                            suffix="đ"
                             className="h-8 text-xs font-mono"
                           />
                         </div>
@@ -923,7 +939,13 @@ export function ProductFormDrawer({
                           </div>
                         ) : null}
 
-                        <div className="col-span-8 sm:col-span-2 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0">
+                        <div
+                          className={
+                            group.allowSubstitution
+                              ? 'col-span-5 sm:col-span-1 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0'
+                              : 'col-span-5 sm:col-span-2 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0'
+                          }
+                        >
                           <input
                             type="checkbox"
                             checked={mod.isDefaultChecked}
@@ -936,11 +958,29 @@ export function ProductFormDrawer({
                             className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
                           />
                           <span className="sm:hidden text-xs font-medium text-muted-foreground">
-                            Tự động tích chọn (Auto bật)
+                            Auto bật
                           </span>
                         </div>
 
-                        <div className="col-span-4 sm:col-span-1 flex justify-end pt-1 sm:pt-0">
+                        <div className="col-span-5 sm:col-span-2 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0">
+                          <input
+                            type="checkbox"
+                            data-testid={`modifier-unavailable-toggle-${gIdx}-${mIdx}`}
+                            checked={!mod.isAvailable}
+                            onChange={(e) =>
+                              updateModifier(gIdx, mIdx, {
+                                isAvailable: !e.target.checked,
+                              })
+                            }
+                            title="Đánh dấu tuỳ chọn tạm hết (vô hiệu hoá và gạch ngang trên POS & QR)"
+                            className="h-4 w-4 rounded border-rose-400 accent-rose-600 cursor-pointer"
+                          />
+                          <span className="sm:hidden text-xs font-medium text-rose-600 dark:text-rose-400">
+                            Tạm hết
+                          </span>
+                        </div>
+
+                        <div className="col-span-2 sm:col-span-1 flex justify-end pt-1 sm:pt-0">
                           <Button
                             type="button"
                             variant="ghost"

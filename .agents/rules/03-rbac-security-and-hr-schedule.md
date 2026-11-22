@@ -32,10 +32,12 @@
 ### Permission Keys & Sub-permissions:
 | Module | Key | Quyền CRUD & Sub-permissions |
 |--------|-----|-----------------------------|
-| Module 0 & 1 (Menu & POS) | `pos` | `view`, `create`, `update`, `delete`, `splitKitchen` (tách bếp), `tableAction` (MOVE/MERGE/SWAP), `checkout` (thanh toán) |
+| Module 0 & 1 (Menu & POS) | `pos` | `view`, `create`, `update`, `delete`, `splitKitchen` (tách bếp), `tableAction` (MOVE/MERGE/SWAP), `checkout` (thanh toán), `manualDiscount` (giảm giá thủ công — strict, KHÔNG fallback) |
+| Module 1B (Mã giảm giá) | `discounts` | `view`, `create`, `update`, `delete` |
 | Module 2 (Hoá đơn) | `invoices` | `view`, `reprint` (in lại bill), `void` (huỷ đơn đã PAID — bắt buộc `voidReason` >= 10 ký tự) |
 | Module 3 (Nhập hàng) | `inventory` | `view`, `create`, `update`, `delete` (Thu ngân chỉ được xoá phiếu trong ca hiện tại; ngày cũ yêu cầu Quản lý/Admin) |
-| Module 4 (Dòng tiền) | `cashflow` | `view`, `create` (kết ca), `config` (sửa ngân sách mặc định đầu ngày) |
+| Module 4 (Dòng tiền) | `cashflow` | `view`, `create` (kết ca), `compensate` (bù chênh lệch), `config` (sửa ngân sách mặc định đầu ngày), `export` |
+| Module 4B (Mã QR thanh toán) | `paymentQr` | `view`, `create` (thêm mã QR), `update` (sửa hạn mức / đổi thứ tự ưu tiên / bật-tắt), `delete` (xoá mã QR chưa phát sinh đơn) |
 | Module 5 (Nhân viên) | `employees` | `view`, `create`, `update`, `delete` |
 | Module 6 (Lịch) | `schedules` | `view`, `update` (xếp ca, lưu lịch tuần, sao chép từ tuần trước) |
 | Module 7 (MDM) | `mdm` | `view`, `write` (thêm/sửa/xoá danh mục gốc) |
@@ -66,12 +68,19 @@
 - `POST /api/v1/pos/orders/:id/split-kitchen` → `@RequirePermission('pos', 'splitKitchen')`
 - `POST /api/v1/pos/orders/:id/table-action` → `@RequirePermission('pos', 'tableAction')`
 - `POST /api/v1/pos/orders/:id/checkout` → `@RequirePermission('pos', 'checkout')`
+- `GET /api/v1/pos/orders/:id/applicable-discounts` & `DELETE /api/v1/pos/orders/:id/discount` → `@RequirePermission('pos', 'checkout')`
+- `POST /api/v1/pos/orders/:id/discount` → `@RequirePermission('pos', 'checkout')` (+ kiểm tra `pos.manualDiscount` trong service nếu áp giảm tay)
+- `GET / POST / PUT / PATCH / DELETE /api/v1/discounts` → `@RequirePermission('discounts', 'view' | 'create' | 'update' | 'delete')`
 - `GET /api/v1/invoices` & `GET /api/v1/invoices/:id` → `@RequirePermission('invoices', 'view')`
 - `POST /api/v1/invoices/:id/void` → `@RequirePermission('invoices', 'void')`
 - `GET / POST / DELETE /api/v1/inventory-imports` → `@RequirePermission('inventory', 'view' | 'create' | 'delete')`
 - `GET /api/v1/cashflow/settlements` → `@RequirePermission('cashflow', 'view')`
 - `POST /api/v1/cashflow/settle` → `@RequirePermission('cashflow', 'create')`
 - `PUT /api/v1/cashflow/default-budget` → `@RequirePermission('cashflow', 'config')`
+- `GET /api/v1/payment-qr` & `GET /api/v1/payment-qr/:id/orders` → `@RequirePermission('paymentQr', 'view')`
+- `POST /api/v1/payment-qr` → `@RequirePermission('paymentQr', 'create')`
+- `PUT /api/v1/payment-qr/:id` & `PUT /api/v1/payment-qr/reorder` → `@RequirePermission('paymentQr', 'update')`
+- `DELETE /api/v1/payment-qr/:id` → `@RequirePermission('paymentQr', 'delete')`
 - `GET / POST / PUT / DELETE /api/v1/employees` → `@RequirePermission('employees', 'view' | 'create' | 'update' | 'delete')`
 - `GET /api/v1/schedules` → `@RequirePermission('schedules', 'view')`
 - `PUT /api/v1/schedules/bulk-save` → `@RequirePermission('schedules', 'update')`

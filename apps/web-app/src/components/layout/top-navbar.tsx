@@ -1,7 +1,9 @@
+import { StoreAssetKind } from '@fnb/shared';
 import { type QueryClient } from '@tanstack/react-query';
 import { ChevronDown, LogOut, Menu, Moon, Search, Sun, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+import { StoreBrandLogo } from '@/components/store-brand-logo';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -11,9 +13,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings';
 import { apiClient } from '@/lib/api-client';
 import { AUTH_STORAGE_KEY, useAuthStore } from '@/stores/auth.store';
+import { resolveEffectiveTheme } from '@/providers/theme-provider';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
+import { resolvePublicAssetUrl } from '@/utils/asset-url';
 
 /**
  * HARD INVARIANT 9 & EC-UI-01:
@@ -24,19 +29,24 @@ import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
  * 4. TUYỆT ĐỐI KHÔNG xoá key 'fnb-ui-preferences' trong localStorage và KHÔNG reset useUiPreferencesStore
  */
 export async function executeCleanLogout(queryClient: QueryClient): Promise<void> {
-  // 1. Xoá toàn bộ cache dữ liệu nghiệp vụ API trong bộ nhớ (chống rò rỉ dữ liệu ca trước)
-  queryClient.clear();
-  // 2. Xoá token và thông tin định danh khỏi authStore
-  useAuthStore.getState().clearAuth();
+  // 1. Gọi API xoá refreshToken cookie TRƯỚC khi xoá auth state để tránh redirect huỷ fetch giữa chừng
   try {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
+    await apiClient.post('/api/v1/auth/logout');
   } catch {
-    // Ignore storage errors
+    // Ignore logout API failures so client auth state always clears
+  } finally {
+    // 2. Xoá toàn bộ cache dữ liệu nghiệp vụ API trong bộ nhớ (chống rò rỉ dữ liệu ca trước)
+    queryClient.clear();
+    // 3. Xoá token và thông tin định danh khỏi authStore
+    useAuthStore.getState().clearAuth();
+    try {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    // 4. HARD INVARIANT 9: TUYỆT ĐỐI KHÔNG xoá key 'fnb-ui-preferences' trong localStorage
+    // và KHÔNG reset useUiPreferencesStore (theme, sidebarWidth, columnWidths phải giữ nguyên!)
   }
-  // 3. Gọi API xoá refreshToken cookie
-  await apiClient.post('/api/v1/auth/logout').catch(() => {});
-  // 4. HARD INVARIANT 9: TUYỆT ĐỐI KHÔNG xoá key 'fnb-ui-preferences' trong localStorage
-  // và KHÔNG reset useUiPreferencesStore (theme, sidebarWidth, columnWidths phải giữ nguyên!)
 }
 
 export interface TopNavbarProps {
@@ -51,13 +61,17 @@ export function TopNavbar({
   onToggleMobileMenu,
 }: TopNavbarProps) {
   const user = useAuthStore((state) => state.user);
-  const theme = useUiPreferencesStore((state) => state.theme);
-  const toggleTheme = useUiPreferencesStore((state) => state.toggleTheme);
+  const { settings } = useStoreSettings();
+  const logoUrl = buildStoreAssetUrl(StoreAssetKind.LOGO, settings.assets.logo);
+  const storedTheme = useUiPreferencesStore((state) => state.theme);
+  const hasExplicitTheme = useUiPreferencesStore((state) => state.hasExplicitTheme);
+  const theme = resolveEffectiveTheme(storedTheme, hasExplicitTheme, settings.defaultTheme);
+  const setTheme = useUiPreferencesStore((state) => state.setTheme);
   const navigate = useNavigate();
 
   const handleToggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
-    toggleTheme();
+    setTheme(nextTheme);
     if (useAuthStore.getState().accessToken) {
       void apiClient
         .patch('/api/v1/profile/ui-prefs', { theme: nextTheme })
@@ -86,7 +100,7 @@ export function TopNavbar({
             type="button"
             variant="ghost"
             size="icon"
-            className="lg:hidden shrink-0 h-9 w-9 -ml-1 text-muted-foreground hover:text-foreground"
+            className="lg:hidden shrink-0 h-11 w-11 -ml-1.5 text-muted-foreground hover:text-foreground"
             onClick={onToggleMobileMenu}
             aria-label="Mở menu điều hướng"
             data-testid="navbar-mobile-menu-trigger"
@@ -94,14 +108,22 @@ export function TopNavbar({
             <Menu className="h-5 w-5" />
           </Button>
         ) : null}
-        <span className="truncate text-xs sm:text-sm font-bold text-foreground sm:hidden">
-          MÌ CAY SƠN BẢO
+        <div className="flex min-w-0 items-center gap-2 sm:hidden">
+          <StoreBrandLogo
+            src={logoUrl}
+            storeName={settings.storeName}
+            className="h-7 w-7 rounded-md shadow-2xs"
+            fallbackClassName="text-[10px]"
+          />
+          <span className="truncate text-xs sm:text-sm font-bold text-foreground">
+            {settings.storeName}
+          </span>
+        </div>
+        <span className="hidden sm:inline-block xl:hidden truncate text-xs sm:text-sm font-semibold text-muted-foreground">
+          {settings.subtitle || 'Quản trị & Bán hàng POS'}
         </span>
-        <span className="hidden sm:inline-block xl:hidden whitespace-nowrap text-xs sm:text-sm font-semibold text-muted-foreground">
-          Quản trị & Bán hàng POS
-        </span>
-        <span className="hidden xl:inline-block whitespace-nowrap text-sm font-medium text-muted-foreground">
-          Hệ thống Quản trị & Bán hàng Thời gian thực
+        <span className="hidden xl:inline-block truncate text-sm font-medium text-muted-foreground">
+          {settings.subtitle || 'Hệ thống Quản trị & Bán hàng Thời gian thực'}
         </span>
       </div>
 
@@ -117,8 +139,10 @@ export function TopNavbar({
           variant="outline"
           size="sm"
           data-navbar-item="search-ctrl-k"
+          aria-label="Tìm nhanh màn hình"
+          title="Tìm nhanh màn hình (Ctrl+K)"
           onClick={onOpenCommandPalette}
-          className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 text-muted-foreground hover:text-foreground whitespace-nowrap"
+          className="flex items-center gap-1.5 sm:gap-2 min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 px-2 sm:px-3 text-muted-foreground hover:text-foreground whitespace-nowrap"
         >
           <Search className="h-4 w-4 shrink-0" />
           <span className="hidden md:inline xl:hidden">Tìm màn hình...</span>
@@ -137,6 +161,7 @@ export function TopNavbar({
           onClick={handleToggleTheme}
           aria-label="Chuyển chế độ Sáng/Tối"
           title={theme === 'dark' ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối'}
+          className="h-11 w-11 lg:h-9 lg:w-9"
         >
           {theme === 'dark' ? (
             <Sun className="h-4 w-4 text-amber-400" />
@@ -151,11 +176,12 @@ export function TopNavbar({
             <button
               type="button"
               data-navbar-item="user-avatar-dropdown"
-              className="flex items-center gap-2.5 rounded-full border bg-background py-1 pl-1.5 pr-3 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
+              aria-label="Tài khoản và cài đặt cá nhân"
+              className="flex min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 items-center justify-center gap-2.5 rounded-full border bg-background py-1 pl-1.5 pr-2.5 sm:pr-3 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
             >
-              {user?.avatarUrl ? (
+              {resolvePublicAssetUrl(user?.avatarUrl) ? (
                 <img
-                  src={user.avatarUrl}
+                  src={resolvePublicAssetUrl(user?.avatarUrl) ?? undefined}
                   alt={displayName}
                   className="h-7 w-7 rounded-full object-cover"
                 />

@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KitchenSplitService } from '../kitchen-split.service';
@@ -33,11 +33,42 @@ function createHarness() {
     order: {
       findUnique: vi.fn(),
       findFirst: vi.fn().mockResolvedValue(null),
-      findMany: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn(),
       aggregate: vi.fn().mockResolvedValue({ _max: { takeawayNumber: null } }),
       create: vi.fn(),
       update: vi.fn(),
+    },
+    paymentAccount: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          id: 1,
+          label: 'TK Chính (VPBank)',
+          bankCode: 'VPB',
+          accountNo: '186877721',
+          accountName: 'THAN THI LOAN',
+          priority: 1,
+          isActive: true,
+          dailyLimit: null,
+          monthlyLimit: null,
+          yearlyLimit: null,
+          createdAt: new Date('2026-11-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-11-01T00:00:00.000Z'),
+        },
+      ]),
+      findUnique: vi.fn().mockImplementation(async (args: { where: { id: number } }) =>
+        args.where.id === 1
+          ? {
+              id: 1,
+              label: 'TK Chính (VPBank)',
+              bankCode: 'VPB',
+              accountNo: '186877721',
+              accountName: 'THAN THI LOAN',
+              priority: 1,
+              isActive: true,
+            }
+          : null,
+      ),
     },
     orderItem: {
       findMany: vi.fn(),
@@ -47,6 +78,7 @@ function createHarness() {
       update: vi.fn(),
       updateMany: vi.fn(),
       delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
     product: { findMany: vi.fn().mockResolvedValue([product]) },
     comboItem: { findMany: vi.fn() },
@@ -184,6 +216,96 @@ describe('PosService', () => {
     expect(result.takeaways[0]).toMatchObject({ orderId: 43, tableId: null, takeawayNumber: 1, tableLabel: 'Mang về #01' });
   });
 
+  it('tracks pendingQrSince and pendingQrKind exclusively for QR orders and QR addons while ignoring manual POS counter items', async () => {
+    const harness = createHarness();
+    const pendingCreated = new Date('2026-11-17T11:00:00.000Z');
+    const qrAddonCreated = new Date('2026-11-17T11:10:00.000Z');
+
+    harness.prisma.diningTable.findMany.mockResolvedValue([
+      {
+        id: 2,
+        name: 'Bàn 02',
+        status: 'PENDING',
+        activeOrderId: 101,
+        activeOrder: {
+          id: 101,
+          orderCode: 'HD-20261117-0101',
+          orderType: 'DINE_IN',
+          orderSource: 'QR_CODE',
+          tableId: 2,
+          takeawayNumber: null,
+          status: 'PENDING',
+          totalAmount: new Prisma.Decimal('80000.00'),
+          createdAt: pendingCreated,
+          items: [
+            { batchNo: 1, kitchenStatus: 'NEW', itemSource: 'QR_CODE', createdAt: pendingCreated },
+          ],
+        },
+      },
+      {
+        id: 3,
+        name: 'Bàn 03',
+        status: 'OCCUPIED',
+        activeOrderId: 102,
+        activeOrder: {
+          id: 102,
+          orderCode: 'HD-20261117-0102',
+          orderType: 'DINE_IN',
+          orderSource: 'QR_CODE',
+          tableId: 3,
+          takeawayNumber: null,
+          status: 'SERVING',
+          totalAmount: new Prisma.Decimal('140000.00'),
+          createdAt: new Date('2026-11-17T10:30:00.000Z'),
+          items: [
+            { batchNo: 1, kitchenStatus: 'PRINTED', itemSource: 'QR_CODE', createdAt: new Date('2026-11-17T10:30:00.000Z') },
+            { batchNo: 2, kitchenStatus: 'NEW', itemSource: 'QR_CODE', createdAt: qrAddonCreated },
+          ],
+        },
+      },
+      {
+        id: 4,
+        name: 'Bàn 04',
+        status: 'OCCUPIED',
+        activeOrderId: 103,
+        activeOrder: {
+          id: 103,
+          orderCode: 'HD-20261117-0103',
+          orderType: 'DINE_IN',
+          orderSource: 'POS_COUNTER',
+          tableId: 4,
+          takeawayNumber: null,
+          status: 'SERVING',
+          totalAmount: new Prisma.Decimal('95000.00'),
+          createdAt: new Date('2026-11-17T10:45:00.000Z'),
+          items: [
+            { batchNo: 1, kitchenStatus: 'PRINTED', itemSource: 'POS_COUNTER', createdAt: new Date('2026-11-17T10:45:00.000Z') },
+            { batchNo: 2, kitchenStatus: 'NEW', itemSource: 'POS_COUNTER', createdAt: new Date('2026-11-17T11:05:00.000Z') },
+          ],
+        },
+      },
+    ]);
+    harness.prisma.order.findMany.mockResolvedValue([]);
+
+    const service = createPosService(harness);
+    const result = await service.getTableGrid();
+
+    expect(result.tables[0]?.activeOrder).toMatchObject({
+      orderId: 101,
+      pendingQrKind: 'NEW',
+      pendingQrSince: pendingCreated.toISOString(),
+    });
+    expect(result.tables[1]?.activeOrder).toMatchObject({
+      orderId: 102,
+      hasUnprintedAddon: true,
+      pendingQrKind: 'ADDON',
+      pendingQrSince: qrAddonCreated.toISOString(),
+    });
+    // Manual POS_COUNTER batch-2 item must not expose pendingQrKind/pendingQrSince
+    expect(result.tables[2]?.activeOrder?.pendingQrKind).toBeUndefined();
+    expect(result.tables[2]?.activeOrder?.pendingQrSince).toBeUndefined();
+  });
+
   it('should map an order detail to its chronological kitchen batches', async () => {
     const harness = createHarness();
     harness.prisma.order.findUnique.mockResolvedValue({
@@ -210,6 +332,7 @@ describe('PosService', () => {
     harness.tx.order.findUnique.mockResolvedValue({
       id: 538, orderCode: 'HD-20261107-0039', orderType: 'DINE_IN', orderSource: 'QR_CODE',
       tableId: 7, takeawayNumber: null, status: 'SERVING', mergedIntoOrderId: null,
+      tableTransferLogs: [{ action: 'MOVE', fromTable: 'Bàn 01', toTable: 'Bàn 07' }],
       table: { id: 7, name: 'Bàn 07' }, totalAmount: new Prisma.Decimal('100.00'),
     });
     harness.tx.orderItem.aggregate.mockResolvedValue({ _max: { batchNo: 1 } });
@@ -288,7 +411,34 @@ describe('PosService', () => {
     expect(harness.lockedTables.every((sql) => sql.includes('FROM orders'))).toBe(true);
   });
 
-  it('should return a VietQR provisional bill without changing the serving order', async () => {
+  it('should reject cross-table IDOR and takeaway order hijacking in createQrOrder', async () => {
+    const harness = createHarness();
+    harness.tx.diningTable.findUnique.mockResolvedValue({ id: 2, name: 'Bàn 02', status: 'AVAILABLE', activeOrderId: null });
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 97, mergedIntoOrderId: null })
+      .mockResolvedValueOnce({
+        id: 97, orderCode: 'HD-20261118-0097', orderType: 'DINE_IN', orderSource: 'QR_CODE',
+        tableId: 1, takeawayNumber: null, status: 'SERVING', mergedIntoOrderId: null,
+        tableTransferLogs: [], table: { id: 1, name: 'Bàn 01' }, totalAmount: new Prisma.Decimal('100.00'),
+      })
+      .mockResolvedValueOnce({ id: 98, mergedIntoOrderId: null })
+      .mockResolvedValueOnce({
+        id: 98, orderCode: 'HD-20261118-0098', orderType: 'TAKEAWAY', orderSource: 'POS_COUNTER',
+        tableId: null, takeawayNumber: 1, status: 'SERVING', mergedIntoOrderId: null,
+        tableTransferLogs: [], table: null, totalAmount: new Prisma.Decimal('100.00'),
+      });
+    const service = createPosService(harness);
+
+    await expect(service.createQrOrder({
+      qrToken: 'b'.repeat(64), activeOrderId: 97, items: [{ productId: 11, quantity: 1 }],
+    })).rejects.toThrow(ForbiddenException);
+    await expect(service.createQrOrder({
+      qrToken: 'b'.repeat(64), activeOrderId: 98, items: [{ productId: 11, quantity: 1 }],
+    })).rejects.toThrow(ForbiddenException);
+    expect(harness.tx.orderItem.createMany).not.toHaveBeenCalled();
+  });
+
+  it('should return a VietQR provisional bill, stamp paymentAccountId, and keep the serving order status unchanged', async () => {
     const harness = createHarness();
     harness.prisma.order.findUnique.mockResolvedValue({
       id: 42, orderCode: 'HD-20261107-0007', orderType: 'DINE_IN', orderSource: 'POS_COUNTER',
@@ -300,11 +450,50 @@ describe('PosService', () => {
 
     const result = await service.getProvisionalBill(42);
 
-    expect(result).toMatchObject({ status: 'SERVING', totalAmount: 129000 });
+    expect(result).toMatchObject({
+      status: 'SERVING',
+      totalAmount: 129000,
+      qrRotated: false,
+      qrOverLimit: false,
+      paymentAccount: {
+        id: 1,
+        bankCode: 'VPB',
+        accountNo: '186877721',
+        accountName: 'THAN THI LOAN',
+      },
+    });
     expect(result.vietQrPayload).toContain('amount=129000');
-    expect(result.vietQrPayload).toContain('addInfo=TT+HD-20261107-0007');
-    expect(harness.prisma.order.update).not.toHaveBeenCalled();
+    expect(result.vietQrPayload).toContain('addInfo=TT+B07+HD-20261107-0007');
+    expect(harness.prisma.order.update).toHaveBeenCalledWith({
+      where: { id: 42 },
+      data: { paymentAccountId: 1 },
+    });
     expect(harness.prisma.diningTable.update).not.toHaveBeenCalled();
+  });
+
+  it('should generate a split provisional bill from DB item prices without overwriting the parent order QR', async () => {
+    const harness = createHarness();
+    harness.prisma.order.findUnique.mockResolvedValue({
+      id: 42, orderCode: 'HD-20261107-0007', orderType: 'DINE_IN', orderSource: 'POS_COUNTER',
+      tableId: 7, takeawayNumber: null, status: 'SERVING', totalAmount: new Prisma.Decimal('200000.00'),
+      table: { id: 7, name: 'Bàn 07', status: 'OCCUPIED' },
+      items: [
+        { id: 1, quantity: 2, kitchenStatus: 'PRINTED', unitPrice: new Prisma.Decimal('100000.00'), itemNote: null, modifiersSnapshot: [], product: { id: 11, name: 'Mì bò' } },
+      ],
+    });
+    const service = createPosService(harness);
+
+    const result = await service.getSplitProvisionalBill(42, {
+      items: [{ orderItemId: 1, quantity: 1 }],
+    });
+
+    expect(result).toMatchObject({
+      status: 'SERVING',
+      totalAmount: 100000,
+      paymentAccount: { id: 1, bankCode: 'VPB' },
+    });
+    expect(result.vietQrPayload).toContain('amount=100000');
+    expect(harness.prisma.order.update).not.toHaveBeenCalled();
   });
 
   it('should check out split payment after locking the order before its dining table', async () => {
@@ -639,6 +828,70 @@ describe('PosService', () => {
             ],
           })],
         },
+      }),
+    }));
+  });
+
+  it('should reject ordering a modifier marked as temporarily out of stock (isAvailable = false)', async () => {
+    const harness = createHarness();
+    harness.tx.product.findMany.mockResolvedValue([{
+      id: 99,
+      name: 'Mì Hải Sản',
+      price: new Prisma.Decimal('69000.00'),
+      station: 'BEP_NAU',
+      isAvailable: true,
+      modifierGroups: [
+        {
+          id: 3,
+          name: 'Đồ ăn chính',
+          isRequired: false,
+          maxSelect: 3,
+          isAutoSelect: true,
+          allowSubstitution: true,
+          modifiers: [
+            { id: 301, name: 'Tôm', extraPrice: new Prisma.Decimal('0.00'), isDefaultChecked: true, isAvailable: false, defaultSubstituteName: 'Mực' },
+            { id: 302, name: 'Mực', extraPrice: new Prisma.Decimal('0.00'), isDefaultChecked: true, isAvailable: true, defaultSubstituteName: 'Tôm' },
+          ],
+        },
+      ],
+    }]);
+    const service = createPosService(harness);
+
+    await expect(service.createOrder({
+      orderType: 'TAKEAWAY',
+      items: [{
+        productId: 99,
+        quantity: 1,
+        modifiers: [{ groupId: 3, modifierId: 301, action: 'SELECTED' }],
+      }],
+    }, 1)).rejects.toThrow(/tạm hết/);
+    expect(harness.tx.order.create).not.toHaveBeenCalled();
+  });
+
+  it('should clear paymentAccountId when cancelling an active order that previously stamped a provisional QR', async () => {
+    const harness = createHarness();
+    const servingOrder = {
+      id: 88,
+      orderCode: 'HD-20261117-0015',
+      orderType: 'DINE_IN',
+      tableId: 30,
+      status: 'SERVING',
+      cashierId: 1,
+      paymentAccountId: 9,
+      table: { id: 30, name: 'Bàn 30', status: 'OCCUPIED' },
+    };
+    harness.tx.order.findUnique.mockResolvedValue(servingOrder);
+    harness.tx.order.update.mockResolvedValue({ ...servingOrder, status: 'VOIDED', paymentAccountId: null });
+    harness.tx.diningTable.update.mockResolvedValue({ id: 30, status: 'AVAILABLE', activeOrderId: null });
+    const service = createPosService(harness);
+
+    await service.cancelOrder(88, { voidReason: 'Khách huỷ bàn trước khi thanh toán' }, 1);
+
+    expect(harness.tx.order.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 88 },
+      data: expect.objectContaining({
+        status: 'VOIDED',
+        paymentAccountId: null,
       }),
     }));
   });

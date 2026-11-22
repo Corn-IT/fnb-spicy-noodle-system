@@ -31,6 +31,7 @@ erDiagram
     USERS ||--o{ INVENTORY_IMPORTS : "created_by"
     USERS ||--o{ CASH_DRAWER_SETTLEMENTS : "closed_by"
     DINING_TABLES ||--o{ ORDERS : "table_id (Nullable for TAKEAWAY)"
+    PAYMENT_ACCOUNTS ||--o{ ORDERS : "payment_account_id (Nullable for VietQR transfer tracking)"
     ORDERS ||--o| DINING_TABLES : "active_order_id (Current open session)"
     ORDERS ||--o{ ORDERS : "merged_into_order_id (Self-ref on MERGE)"
     ORDERS ||--|{ ORDER_ITEMS : "order_id (ON DELETE CASCADE)"
@@ -139,10 +140,27 @@ erDiagram
         int merged_into_order_id FK "NULLABLE FK -> orders(id) (Khi status='MERGED')"
         jsonb table_transfer_logs "NOT NULL DEFAULT '[]': [{ action, fromTable, toTable, timestamp, reason }]"
         int cashier_id FK "NULLABLE FK -> users(id): Thu ngan xu ly"
+        int payment_account_id FK "NULLABLE FK -> payment_accounts(id) ON DELETE RESTRICT"
         text note "NULLABLE: Ghi chu chung cua don hang"
         text void_reason "NULLABLE: Ly do huy don (Bat buoc khi status='VOIDED')"
         timestamptz created_at "NOT NULL DEFAULT NOW()"
         timestamptz paid_at "NULLABLE: Thoi diem chot thanh toan (status='PAID')"
+    }
+
+    PAYMENT_ACCOUNTS {
+        serial id PK "PRIMARY KEY"
+        varchar label "NOT NULL: Ten goi nho (VD: TK Chinh VPBank)"
+        varchar bank_code "NOT NULL: Ma ngan hang VietQR (VPB, VCB...)"
+        varchar bank_name "NOT NULL: Ten ngan hang hien thi"
+        varchar account_no "NOT NULL: So tai khoan ngan hang"
+        varchar account_name "NOT NULL: Ten chu TK in hoa khong dau"
+        int priority "NOT NULL DEFAULT 1: Thu tu uu tien xoay vong (1 = cao nhat)"
+        boolean is_active "NOT NULL DEFAULT TRUE: Trang thai tham gia xoay vong"
+        numeric_12_2 daily_limit "NULLABLE NUMERIC(12,2) > 0: Han muc ngay"
+        numeric_12_2 monthly_limit "NULLABLE NUMERIC(12,2) > 0: Han muc thang"
+        numeric_12_2 yearly_limit "NULLABLE NUMERIC(12,2) > 0: Han muc nam"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+        timestamptz updated_at "NOT NULL DEFAULT NOW()"
     }
 
     ORDER_ITEMS {

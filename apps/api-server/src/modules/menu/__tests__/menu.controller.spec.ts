@@ -19,6 +19,20 @@ describe('MenuController HTTP routes', () => {
     listProducts: vi.fn(async () => []),
     createProduct: vi.fn(async () => ({ id: 1 })),
     updateProduct: vi.fn(async () => ({ id: 1 })),
+    importProductsExcel: vi.fn(async () => ({
+      createdCount: 0,
+      updatedCount: 0,
+      deletedCount: 0,
+      skippedActiveOrderProducts: [],
+    })),
+  };
+  let mockPrincipal = {
+    id: 1,
+    employeeId: 1,
+    username: 'admin',
+    isSuperAdmin: true,
+    isActive: true,
+    permissions: UserPermissionsSchema.parse({}),
   };
   let app: INestApplication;
   let baseUrl: string;
@@ -30,10 +44,7 @@ describe('MenuController HTTP routes', () => {
       providers: [
         { provide: MenuService, useValue: menuService },
         { provide: JwtService, useValue: { verifyAsync: async () => ({ sub: 1, tokenType: 'access' }) } },
-        { provide: PrismaService, useValue: { user: { findUnique: async () => ({
-          id: 1, employeeId: 1, username: 'admin', isSuperAdmin: true, isActive: true,
-          permissions: UserPermissionsSchema.parse({}),
-        }) } } },
+        { provide: PrismaService, useValue: { user: { findUnique: async () => mockPrincipal } } },
         {
           provide: JwtAuthGuard,
           useFactory: (jwt: JwtService, prisma: PrismaService) => new JwtAuthGuard(jwt, prisma),
@@ -66,5 +77,63 @@ describe('MenuController HTTP routes', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual([]);
     expect(menuService.listProducts).toHaveBeenCalledOnce();
+  });
+
+  it('requires menu.import permission for excel import (rejects cashier with only menu.update)', async () => {
+    const prev = mockPrincipal;
+    try {
+      mockPrincipal = {
+        id: 2,
+        employeeId: 2,
+        username: 'thungan',
+        isSuperAdmin: false,
+        isActive: true,
+        permissions: UserPermissionsSchema.parse({
+          menu: {
+            view: true,
+            create: false,
+            update: true,
+            delete: false,
+            manageStations: false,
+            manageCategories: false,
+            import: false,
+            export: false,
+          },
+        }),
+      };
+
+      const denied = await fetch(`${baseUrl}/api/v1/menu/products/import-excel`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ items: [], syncMissingAsDeleted: false }),
+      });
+      expect(denied.status).toBe(403);
+
+      mockPrincipal = {
+        ...mockPrincipal,
+        permissions: UserPermissionsSchema.parse({
+          menu: {
+            view: true,
+            import: true,
+          },
+        }),
+      };
+
+      const allowed = await fetch(`${baseUrl}/api/v1/menu/products/import-excel`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ items: [], syncMissingAsDeleted: false }),
+      });
+      expect(allowed.status).toBe(201);
+      expect(menuService.importProductsExcel).toHaveBeenCalledOnce();
+    } finally {
+      mockPrincipal = prev;
+    }
   });
 });

@@ -192,10 +192,14 @@ Tích hợp toàn bộ thao tác tại quầy trên một màn hình duy nhất 
   9. Nếu `batch_no > 1`: In thêm dòng chữ nổi bật trên đầu phiếu: `"[GỌI THÊM - LƯỢT {batch_no}]"`.
   10. **QUY TẮC CẤM:** Tuyệt đối không bao giờ in lại các món đã ở trạng thái `PRINTED`.
 
-#### 3.2.5. Tách bạch Tạm tính và Thanh toán (Hard Invariant 4)
+#### 3.2.5. Tách bạch Tạm tính và Thanh toán (Hard Invariant 4) & Xoay vòng Mã QR tự động
 - **Nút "In tạm tính (Kèm VietQR động)":**
   - Giữ nguyên `order.status = 'SERVING'`. **CẤM TUYỆT ĐỐI** chuyển sang `PAID`.
-  - Sinh URL ảnh mã VietQR động chuẩn Napas247 nhúng sẵn tài khoản ngân hàng quán, số tiền `amount = total_amount`, và nội dung chuyển khoản `memo = "TT " + order_code` (Ví dụ: `"TT HD202611070039"`).
+  - **Tự động chọn Mã QR theo Hạn mức & Thứ tự ưu tiên (`payment_accounts`):**
+    - Hệ thống duyệt các mã QR đang bật (`is_active = TRUE`) theo thứ tự `priority ASC`, kiểm tra tổng tiền chuyển khoản đã thu trong Ngày / Tháng / Năm lịch Việt Nam (`Asia/Ho_Chi_Minh`, chỉ tính hoá đơn `PAID`: `TRANSFER` lấy `total_amount`, `SPLIT` lấy `transfer_amount`).
+    - Chọn mã QR đầu tiên thoả mãn `used + billAmount <= limit` cho cả 3 ngưỡng `daily_limit`, `monthly_limit`, `yearly_limit` (`NULL` = không giới hạn). Nếu mã ưu tiên cao hơn đã chạm hạn mức thì tự động xoay vòng sang mã kế tiếp (`qrRotated = true`) và ghi nhận `orders.payment_account_id`.
+    - Nếu tất cả các mã QR đang bật đều chạm hạn mức, hệ thống vẫn in mã QR có `priority` cao nhất kèm cờ cảnh báo `qrOverLimit = true` để không làm gián đoạn bán hàng tại quầy.
+  - Sinh URL ảnh mã VietQR động chuẩn Napas247 nhúng sẵn tài khoản ngân hàng của mã QR được chọn, số tiền `amount = total_amount`, và nội dung chuyển khoản `memo = "TT " + tableCode + " " + order_code`.
   - In ra phiếu kiểm món để nhân viên cầm ra bàn cho khách kiểm tra món ăn và quét mã chuyển khoản. Khách vẫn có thể yêu cầu bớt món (nếu bếp chưa làm) hoặc đổi món lúc này.
 - **Nút "Thanh toán (Đóng đơn)":**
   - Mở Dialog xác nhận 2 bước chống bấm nhầm (`Xác nhận / Huỷ bỏ`).

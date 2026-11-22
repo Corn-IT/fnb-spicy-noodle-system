@@ -13,7 +13,7 @@ describe('seedDatabase', () => {
       ),
     } as never;
 
-    await expect(seedDatabase(prisma)).rejects.toThrow('Missing master data for superadmin');
+    await expect(seedDatabase(prisma)).rejects.toThrow('Missing master data for Nguyễn Minh Quân');
   });
 
   it('should seed linked staff accounts, physical tables, combo items, and modifiers idempotently', async () => {
@@ -21,7 +21,9 @@ describe('seedDatabase', () => {
     const masterData = new Map<string, SeedRow>();
     const employees = new Map<string, SeedRow>();
     const users = new Map<string, SeedRow>();
-    const tables = new Map<string, SeedRow>();
+    const diningTables = new Map<string, SeedRow>();
+    const paymentAccounts = new Map<string, SeedRow>();
+    const tables = diningTables;
     const products = new Map<string, SeedRow>();
     const productsById = new Map<number, SeedRow>();
     const comboItems = new Map<string, SeedRow>();
@@ -72,6 +74,20 @@ describe('seedDatabase', () => {
           const row = tables.get(args.where.name) ?? { ...args.create, id: ++nextId };
           tables.set(args.where.name, row);
           return row;
+        }),
+      },
+      paymentAccount: {
+        upsert: vi.fn(async (args: {
+          where: { bankCode_accountNo: { bankCode: string; accountNo: string } };
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          const key = `${args.where.bankCode_accountNo.bankCode}:${args.where.bankCode_accountNo.accountNo}`;
+          const row = paymentAccounts.get(key)
+            ? { ...paymentAccounts.get(key)!, ...args.update }
+            : { ...args.create, id: ++nextId };
+          paymentAccounts.set(key, row as SeedRow);
+          return row as SeedRow;
         }),
       },
       product: {
@@ -144,13 +160,25 @@ describe('seedDatabase', () => {
     expect(transaction).toHaveBeenCalledTimes(2);
     expect(masterData.size).toBeGreaterThan(0);
     expect(new Set([...masterData.values()].map((row) => row.category))).toEqual(
-      new Set(['POSITION', 'SPECIALTY', 'INGREDIENT', 'UNIT', 'SUPPLIER', 'MENU_CATEGORY']),
+      new Set(['KITCHEN_STATION', 'POSITION', 'SPECIALTY', 'INGREDIENT', 'UNIT', 'SUPPLIER', 'MENU_CATEGORY', 'SYSTEM_CONFIG']),
     );
-    expect(employees.size).toBe(2);
-    expect(users.size).toBe(2);
-    expect([...users.keys()]).toEqual(['superadmin', 'cashier01']);
+    expect(masterData.has('SYSTEM_CONFIG:store_settings')).toBe(true);
+    expect(masterData.has('SYSTEM_CONFIG:qr_security_config')).toBe(true);
+    expect(masterData.has('UNIT:__internal_cashflow_default_opening_budget__')).toBe(true);
+    expect(employees.size).toBe(12);
+    expect(users.size).toBe(4);
+    expect([...users.keys()]).toEqual(['superadmin', 'admin', 'adminview', 'thungan']);
     expect(users.get('superadmin')?.isSuperAdmin).toBe(true);
-    expect(users.get('cashier01')?.isSuperAdmin).toBe(false);
+    expect(users.get('admin')?.isSuperAdmin).toBe(false);
+    expect(users.get('thungan')?.isSuperAdmin).toBe(false);
+    expect(users.get('adminview')?.isSuperAdmin).toBe(false);
+    const adminViewPerms = users.get('adminview')?.permissions as Record<string, Record<string, boolean>>;
+    expect(adminViewPerms.pos?.view).toBe(true);
+    expect(adminViewPerms.pos?.create).toBe(false);
+    expect(adminViewPerms.invoices?.export).toBe(true);
+    expect(adminViewPerms.invoices?.approve).toBe(false);
+    expect(adminViewPerms.mdm?.view).toBe(true);
+    expect(adminViewPerms.mdm?.update).toBe(false);
     for (const user of users.values()) {
       expect(await compare('Password@123', String(user.passwordHash))).toBe(true);
       expect(getRounds(String(user.passwordHash))).toBe(10);
@@ -160,6 +188,9 @@ describe('seedDatabase', () => {
     expect(tables.has('Bàn 01')).toBe(true);
     expect(tables.has('Bàn 30')).toBe(true);
     expect(tables.has('Mang về')).toBe(false);
+    expect([...paymentAccounts.keys()]).toEqual(['BIDV:8878564012', 'VCB:0351000647045']);
+    expect(paymentAccounts.get('BIDV:8878564012')?.accountName).toBe('TRAN VAN HUNG');
+    expect(paymentAccounts.get('VCB:0351000647045')?.accountName).toBe('TRAN VAN HUNG');
     const qrTokens = [...tables.values()].map((table) => String(table.qrToken));
     expect(qrTokens.every((token) => /^[0-9a-f]{64}$/.test(token))).toBe(true);
     expect(new Set(qrTokens).size).toBe(30);
@@ -176,17 +207,18 @@ describe('seedDatabase', () => {
     );
 
     expect(products.size).toBe(productSeed.length);
-    expect(comboItems.size).toBe(expectedComboCount);
-    for (const item of comboItems.values()) {
-      expect(productsById.get(Number(item.childProductId))?.station).not.toBe('COMBO');
-    }
+    expect(productSeed).toHaveLength(164);
+    expect(expectedComboCount).toBe(0);
+    expect(comboItems.size).toBe(0);
+    expect(products.get('Combo Gà KFC + Gà Sốt')?.station).toBe('BEP_CHIEN');
+    expect(products.get('Combo 50k (Gà + Kimpap + Khoai Tây)')?.station).toBe('BEP_CHIEN');
     expect(modifierGroups.size).toBe(expectedModifierGroupCount);
     expect(modifiers.size).toBe(expectedModifierCount);
     expect([...modifierGroups.values()].filter((group) => group.name === 'Cấp độ cay' && group.isRequired === true && group.maxSelect === 1)).toHaveLength(7);
-    expect([...modifierGroups.values()].filter((group) => group.name === 'Đồ ăn chính của món' && group.allowSubstitution === true)).toHaveLength(1);
-    expect([...modifierGroups.values()].filter((group) => group.name === 'Topping Mì Cay' && group.isRequired === false && group.maxSelect === 10)).toHaveLength(7);
+    expect([...modifierGroups.values()].filter((group) => group.name === 'Đồ ăn món chính' && group.allowSubstitution === true)).toHaveLength(3);
+    expect([...modifierGroups.values()].filter((group) => group.name === 'Đồ ăn thêm' && group.isRequired === false && group.maxSelect === 10)).toHaveLength(7);
     expect([...modifiers.values()].filter((modifier) => modifier.name === 'Cấp độ 0' && modifier.extraPrice === '0.00')).toHaveLength(7);
-    expect(tx.employee.create).toHaveBeenCalledTimes(2);
+    expect(tx.employee.create).toHaveBeenCalledTimes(12);
     expect(tx.product.create).toHaveBeenCalledTimes(productSeed.length);
     expect(tx.diningTable.upsert).toHaveBeenCalledTimes(60);
     expect(tx.modifierGroup.create).toHaveBeenCalledTimes(expectedModifierGroupCount);

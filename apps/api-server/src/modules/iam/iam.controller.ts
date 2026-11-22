@@ -4,12 +4,14 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  Optional,
   Post,
   Req,
   Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import {
   ErrorCodes,
   LoginRequestSchema,
@@ -20,19 +22,24 @@ import {
 } from '@fnb/shared';
 import type { Request, Response } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
-import { durationToMilliseconds } from '../../common/utils/duration.util';
+import { extractClientMeta } from '../../common/security/client-info.util';
+import { extractTokenSessionId } from '../../common/security/session-validation.util';
 import type { EnvConfig } from '../../config/env.config';
 import { IamService } from './iam.service';
+import {
+  clearRefreshCookie,
+  REFRESH_COOKIE,
+  setRefreshCookie,
+} from './refresh-cookie.util';
 
 type CookieRequest = Request & { cookies?: Record<string, unknown> };
-const REFRESH_COOKIE = 'refreshToken';
-const REFRESH_COOKIE_PATH = '/api/v1/auth';
 
 @Controller('api/v1/auth')
 export class IamController {
   constructor(
     @Inject(IamService) private readonly iamService: IamService,
     @Inject(ConfigService) private readonly config: ConfigService<EnvConfig, true>,
+    @Optional() @Inject(JwtService) private readonly jwtService?: JwtService,
   ) {}
 
   @Post('login')
@@ -40,9 +47,11 @@ export class IamController {
   async login(
     @Body(new ZodValidationPipe(LoginRequestSchema)) body: LoginRequest,
     @Res({ passthrough: true }) response: Response,
+    @Req() request?: Request,
   ): Promise<AuthResponse> {
-    const result = await this.iamService.login(body);
-    this.setRefreshCookie(response, result.refreshToken);
+    const clientMeta = request ? extractClientMeta(request) : undefined;
+    const result = await this.iamService.login(body, clientMeta);
+    setRefreshCookie(response, result.refreshToken, this.config);
     return { accessToken: result.accessToken, user: result.user };
   }
 
@@ -62,34 +71,57 @@ export class IamController {
       });
     }
     const result = await this.iamService.refreshAccessToken(refreshToken);
-    this.setRefreshCookie(response, result.refreshToken);
+    setRefreshCookie(response, result.refreshToken, this.config);
     return { accessToken: result.accessToken, user: result.user };
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  logout(@Res({ passthrough: true }) response: Response): void {
-    response.clearCookie(REFRESH_COOKIE, this.cookieOptions());
+  async logout(
+    @Res({ passthrough: true }) response: Response,
+    @Req() request?: CookieRequest,
+  ): Promise<void> {
+    clearRefreshCookie(response, this.config);
+    const sessionInfo = await this.extractLogoutSessionInfo(request);
+    if (sessionInfo && typeof this.iamService.logout === 'function') {
+      const clientMeta = request ? extractClientMeta(request) : undefined;
+      await this.iamService.logout(sessionInfo, clientMeta);
+    }
   }
 
-  private setRefreshCookie(response: Response, token: string): void {
-    response.cookie(REFRESH_COOKIE, token, {
-      ...this.cookieOptions(),
-      maxAge: durationToMilliseconds(this.config.get('jwtRefreshExpiresIn')),
-    });
-  }
+  private async extractLogoutSessionInfo(
+    request?: CookieRequest,
+  ): Promise<{ userId: number; sessionId?: string | null } | null> {
+    if (!request || !this.jwtService) return null;
 
-  private cookieOptions(): {
-    httpOnly: true;
-    secure: boolean;
-    sameSite: 'strict';
-    path: string;
-  } {
-    return {
-      httpOnly: true,
-      secure: this.config.get('nodeEnv') === 'production',
-      sameSite: 'strict',
-      path: REFRESH_COOKIE_PATH,
-    };
+    const candidates: string[] = [];
+    const authHeader = request.headers?.authorization;
+    if (typeof authHeader === 'string') {
+      const match = /^Bearer\s+(\S+)$/i.exec(authHeader);
+      if (match?.[1]) candidates.push(match[1]);
+    }
+    const cookieToken = request.cookies?.[REFRESH_COOKIE];
+    if (typeof cookieToken === 'string' && cookieToken.trim()) {
+      candidates.push(cookieToken.trim());
+    }
+
+    for (const token of candidates) {
+      try {
+        const claims = await this.jwtService.verifyAsync<{
+          sub?: unknown;
+          sid?: unknown;
+        }>(token, { ignoreExpiration: true });
+        const userId = typeof claims.sub === 'number' ? claims.sub : Number(claims.sub);
+        if (Number.isSafeInteger(userId) && userId >= 1) {
+          return {
+            userId,
+            sessionId: extractTokenSessionId(claims),
+          };
+        }
+      } catch {
+        // Ignore invalid/forged tokens during logout
+      }
+    }
+    return null;
   }
 }

@@ -24,7 +24,7 @@ const toCents = (amount: number): number => Math.round(amount * 100);
 
 export const CreateSettlementRequestSchema = z.object({
   settlementDate: IsoDateSchema,
-  shiftName: z.string().trim().min(1).max(80),
+  shiftName: z.string().trim().min(1).max(80).default('CA_NGAY'),
   actualCountedCash: MoneyAmountSchema,
   denominationsDetail: DenominationsDetailSchema,
   note: z.string().trim().max(1000).optional(),
@@ -39,6 +39,7 @@ export const CashflowSettlementFilterQuerySchema = z.object({
   ...PaginationFields,
   fromDate: IsoDateSchema.optional(),
   toDate: IsoDateSchema.optional(),
+  closerKeyword: z.string().trim().min(1).optional(),
 }).refine((filter) => filter.fromDate === undefined || filter.toDate === undefined || filter.fromDate <= filter.toDate, {
   message: 'Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc',
   path: ['toDate'],
@@ -49,6 +50,24 @@ export const UpdateDefaultBudgetSchema = z.object({
   openingBudget: MoneyAmountSchema,
 }).strict();
 export type UpdateDefaultBudgetInput = z.infer<typeof UpdateDefaultBudgetSchema>;
+
+export const CompensateSettlementRequestSchema = z.object({
+  compensationAmount: MoneyAmountSchema.positive('Số tiền bù phải lớn hơn 0').optional(),
+  note: z.string().trim().min(3, 'Ghi chú bù tiền kết ca phải có ít nhất 3 ký tự').max(500),
+}).strict();
+export type CompensateSettlementRequest = z.infer<typeof CompensateSettlementRequestSchema>;
+
+export const CashflowPreviewResponseSchema = z.object({
+  settlementDate: IsoDateSchema,
+  shiftName: z.string().min(1),
+  blindMode: z.boolean().optional(),
+  openingBudget: MoneyAmountSchema,
+  totalCashSales: MoneyAmountSchema.nullable(),
+  totalTransferSales: MoneyAmountSchema.nullable(),
+  totalCashImports: MoneyAmountSchema.nullable(),
+  expectedCashInDrawer: MoneyAmountSchema.nullable(),
+}).strict();
+export type CashflowPreviewResponse = z.infer<typeof CashflowPreviewResponseSchema>;
 
 export const SettlementResponseSchema = z.object({
   id: IdSchema,
@@ -67,6 +86,8 @@ export const SettlementResponseSchema = z.object({
   denominationsDetail: DenominationsDetailSchema,
   note: z.string().nullable(),
   closedBy: IdSchema,
+  closedByName: z.string().optional(),
+  closedByUsername: z.string().optional(),
   createdAt: IsoDateTimeSchema,
 }).strict()
   .refine((settlement) => toCents(settlement.expectedCashInDrawer) === toCents(settlement.openingBudget)

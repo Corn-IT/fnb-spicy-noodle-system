@@ -6,12 +6,12 @@
 
 ## 1. Kiểu Dữ liệu Bắt buộc
 
-- Mọi cột tiền tệ (`price`, `total_amount`, `total_cost`, `opening_budget`, `cash_amount`, `transfer_amount`, `unit_price`, `extra_price`, `total_cash_sales`, `total_transfer_sales`, `total_cash_imports`, `expected_cash_in_drawer`, `actual_counted_cash`, `discrepancy_amount`) **MUST** dùng `NUMERIC(12, 2)` trong PostgreSQL và `Decimal` (`@db.Decimal(12, 2)`) trong Prisma.
+- Mọi cột tiền tệ (`price`, `total_amount`, `subtotal_amount`, `discount_amount`, `value`, `max_discount_amount`, `min_order_amount`, `total_cost`, `opening_budget`, `cash_amount`, `transfer_amount`, `unit_price`, `extra_price`, `total_cash_sales`, `total_transfer_sales`, `total_cash_imports`, `expected_cash_in_drawer`, `actual_counted_cash`, `discrepancy_amount`) **MUST** dùng `NUMERIC(12, 2)` trong PostgreSQL và `Decimal` (`@db.Decimal(12, 2)`) trong Prisma.
 - **FORBIDDEN**: `FLOAT`, `DOUBLE`, `REAL`, hoặc `Int` cho tiền tệ.
 - Timestamps **MUST** dùng `TIMESTAMP WITH TIME ZONE` (Prisma: `DateTime @db.Timestamptz`).
-- JSONB cho: `modifiers_snapshot`, `permissions`, `ui_preferences`, `table_transfer_logs`, `metadata`, `attachment_urls`, `denominations_detail`, `employee_ids`.
+- JSONB cho: `modifiers_snapshot`, `discount_snapshot`, `active_weekdays`, `permissions`, `ui_preferences`, `table_transfer_logs`, `metadata`, `attachment_urls`, `denominations_detail`, `employee_ids`.
 
-## 2. Schema — 13 Bảng Vật lý Chuẩn (Đồng bộ `01-verified-erd.mmd`)
+## 2. Schema — Các Bảng Vật lý Chuẩn (Đồng bộ `01-verified-erd.mmd` & các Story mở rộng)
 
 ### `master_data`
 | Cột | Kiểu | Ràng buộc |
@@ -118,7 +118,11 @@
 | payment_method | VARCHAR | Nullable: `'CASH'`, `'TRANSFER'`, `'SPLIT'` |
 | cash_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 |
 | transfer_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 |
-| total_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 |
+| subtotal_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 (Tổng tiền món trước giảm giá) |
+| discount_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 (Tiền giảm giá làm tròn xuống bội 1.000đ) |
+| discount_id | INT | Nullable FK → discounts(id) (`NULL` nếu không giảm hoặc giảm tay) |
+| discount_snapshot | JSONB | Nullable: `{ kind, code, name, valueType, value, maxDiscountAmount, scope, targetCategoryIds, targetProductIds, minOrderAmount, appliedAt, appliedBy, reason? }` |
+| total_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 (Tiền phải trả sau giảm = `subtotal_amount - discount_amount`) |
 | merged_into_order_id | INT | Nullable FK → orders(id) (self-ref khi `status = 'MERGED'`) |
 | table_transfer_logs | JSONB | NOT NULL DEFAULT `'[]'`: Array of `{ action, fromTable, toTable, timestamp, reason }` |
 | cashier_id | INT | Nullable FK → users(id) |
@@ -188,6 +192,38 @@
 | created_by | INT | NOT NULL FK → users(id) |
 | updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
 
+### `discounts`
+| Cột | Kiểu | Ràng buộc |
+|-----|------|-----------|
+| id | SERIAL | PK |
+| code | VARCHAR(32) | NOT NULL UNIQUE (`UPPERCASE`, `^[A-Z0-9_-]{3,32}$`) |
+| name | VARCHAR(128) | NOT NULL |
+| value_type | VARCHAR(16) | NOT NULL: `'PERCENT'`, `'FIXED'` |
+| value | NUMERIC(12,2) | NOT NULL > 0 (`<= 100` nếu `'PERCENT'`) |
+| max_discount_amount | NUMERIC(12,2) | Nullable (chỉ khi `value_type = 'PERCENT'`) |
+| scope | VARCHAR(16) | NOT NULL: `'ORDER'`, `'CATEGORY'`, `'PRODUCT'` |
+| min_order_amount | NUMERIC(12,2) | Nullable |
+| starts_at | TIMESTAMPTZ | Nullable |
+| ends_at | TIMESTAMPTZ | Nullable |
+| active_weekdays | JSONB | NOT NULL DEFAULT `'[]'` (`[]` = mọi ngày; `1..7` T2–CN) |
+| time_window_start | VARCHAR(5) | Nullable (`'HH:mm'` giờ VN) |
+| time_window_end | VARCHAR(5) | Nullable (`'HH:mm'` giờ VN) |
+| usage_limit | INT | Nullable |
+| used_count | INT | NOT NULL DEFAULT 0 |
+| is_active | BOOLEAN | NOT NULL DEFAULT TRUE |
+| is_archived | BOOLEAN | NOT NULL DEFAULT FALSE |
+| created_by | INT | NOT NULL FK → users(id) |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+
+### `discount_targets`
+| Cột | Kiểu | Ràng buộc |
+|-----|------|-----------|
+| id | SERIAL | PK |
+| discount_id | INT | NOT NULL FK → discounts(id) ON DELETE CASCADE |
+| category_id | INT | Nullable FK → master_data(id) |
+| product_id | INT | Nullable FK → products(id) |
+
 ## 3. Database Constraints & Indexes (MUST có trong migration)
 
 ```sql
@@ -224,11 +260,27 @@ CREATE INDEX idx_orders_created_status ON orders (created_at DESC, status, payme
 CREATE INDEX idx_order_items_order_kitchen ON order_items (order_id, kitchen_status);
 CREATE INDEX idx_imports_date_mdm ON inventory_imports (import_date DESC, ingredient_mdm_id) WHERE is_deleted = FALSE;
 CREATE INDEX idx_settlements_date ON cash_drawer_settlements (settlement_date DESC);
+
+-- 7. CHECK & Indexes cho Giảm giá (Story 18)
+ALTER TABLE orders ADD CONSTRAINT chk_order_discount_amounts CHECK (
+  discount_amount >= 0 AND discount_amount <= subtotal_amount AND total_amount = subtotal_amount - discount_amount
+);
+ALTER TABLE discounts ADD CONSTRAINT chk_discount_value CHECK (
+  value > 0 AND (value_type <> 'PERCENT' OR value <= 100) AND (max_discount_amount IS NULL OR value_type = 'PERCENT')
+);
+ALTER TABLE discounts ADD CONSTRAINT chk_discount_usage CHECK (
+  usage_limit IS NULL OR used_count <= usage_limit
+);
+ALTER TABLE discount_targets ADD CONSTRAINT chk_discount_target_one CHECK (
+  (category_id IS NOT NULL AND product_id IS NULL) OR (category_id IS NULL AND product_id IS NOT NULL)
+);
+CREATE INDEX idx_orders_discount_id ON orders (discount_id) WHERE discount_id IS NOT NULL;
+CREATE INDEX idx_discounts_active_window ON discounts (is_archived, is_active, starts_at, ends_at);
 ```
 
 ## 4. Concurrency Control (Khoá dòng & Chống AB-BA Deadlock)
 
-- Mọi thao tác thay đổi trạng thái đơn hàng, tách bếp (`split-kitchen`), thanh toán (`checkout`), chuyển/gộp/đổi bàn (`MOVE`/`MERGE`/`SWAP`) **MUST** dùng `prisma.$transaction()` interactive mode.
+- Mọi thao tác thay đổi trạng thái đơn hàng, tách bếp (`split-kitchen`), áp/gỡ giảm giá, thanh toán (`checkout`), huỷ hoá đơn (`void`), chuyển/gộp/đổi bàn (`MOVE`/`MERGE`/`SWAP`) **MUST** dùng `prisma.$transaction()` interactive mode.
 - Bên trong transaction **MUST** dùng raw query `SELECT ... FOR UPDATE`.
 - **Thứ tự khoá bắt buộc chống AB-BA Deadlock:**
   1. **ALWAYS** khoá bảng `orders` trước theo thứ tự `id ASC`:
@@ -238,6 +290,10 @@ CREATE INDEX idx_settlements_date ON cash_drawer_settlements (settlement_date DE
   2. Sau đó mới khoá bảng `dining_tables` theo thứ tự `id ASC`:
      ```typescript
      await tx.$queryRaw`SELECT * FROM dining_tables WHERE id IN (${Prisma.join(tableIds)}) ORDER BY id ASC FOR UPDATE`;
+     ```
+  3. Cuối cùng (nếu liên quan tới cộng/trừ lượt mã giảm giá khi `checkout`/`void`), khoá bảng `discounts` theo thứ tự `id ASC`:
+     ```typescript
+     await tx.$queryRaw`SELECT id, used_count, usage_limit FROM discounts WHERE id IN (${Prisma.join(discountIds)}) ORDER BY id ASC FOR UPDATE`;
      ```
 - Thời gian giữ khoá: dưới 50ms. **NEVER** gọi external API (VietQR, Cloudflare R2) hoặc đọc/ghi file bên trong transaction đã khoá.
 

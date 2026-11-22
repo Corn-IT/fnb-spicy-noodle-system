@@ -53,9 +53,15 @@ interface KitchenTicket {
 
 ## 3. Tách bạch Tạm tính vs Thanh toán (CRITICAL — Hard Invariant 4)
 
-### "In tạm tính (Kèm VietQR động)" (`GET /api/v1/pos/orders/:id/provisional-bill`):
+### "In tạm tính (Kèm VietQR động & Xoay vòng mã QR tự động)" (`POST /api/v1/pos/orders/:id/provisional-bill` & `POST /api/v1/pos/orders/:id/split-provisional-bill`):
 - **MUST** giữ `order.status = 'SERVING'` và bàn `'OCCUPIED'` — **NEVER** chuyển sang `PAID`.
-- Sinh ảnh VietQR động chuẩn Napas247 nhúng: tài khoản ngân hàng, `amount = total_amount`, `addInfo = "TT " + order_code` (VD: `"TT HD-20261107-0039"`).
+- **Thuật toán chọn mã QR xoay vòng theo hạn mức (`PaymentQrService.selectActivePaymentAccountForBill`):**
+  1. Lấy danh sách `payment_accounts` có `is_active = TRUE` sắp xếp theo `priority ASC, id ASC`. Nếu không có mã nào đang bật → trả `409 Conflict` (`PAYMENT_QR_NOT_CONFIGURED`).
+  2. Tính doanh thu chuyển khoản đã thu của từng mã theo Ngày / Tháng / Năm lịch Việt Nam (`Asia/Ho_Chi_Minh`, `+07:00`) từ bảng `orders` (`status = 'PAID'`, `payment_method = 'TRANSFER'` lấy `total_amount`, `payment_method = 'SPLIT'` lấy `transfer_amount`).
+  3. Kiểm tra trước khi in: chọn mã QR đầu tiên thoả mãn `used + billAmount <= limit` cho cả 3 ngưỡng `daily_limit`, `monthly_limit`, `yearly_limit` (`NULL` = không giới hạn). Nếu mã ưu tiên cao hơn đã chạm hạn mức thì tự động xoay vòng sang mã tiếp theo (`qrRotated = true`, ghi `AuditLog`). Khi bước sang ngày/tháng/năm mới, mã ưu tiên cao tự động được ưu tiên trở lại.
+  4. Fallback an toàn: nếu tất cả mã đang bật đều vượt hạn mức với `billAmount` hiện tại, vẫn dùng mã `priority` cao nhất acompañado `qrOverLimit = true` và cảnh báo thu ngân (không chặn bán hàng).
+  5. Ghi nhận `orders.payment_account_id = selected.id` khi in tạm tính toàn đơn (lần in sau ghi đè lần in trước). Với in tạm tính tách đơn (`split-provisional-bill`), trả về `paymentAccount.id` để gắn vào đơn con khi `split-checkout`.
+- Sinh ảnh VietQR động chuẩn Napas247 nhúng tài khoản `paymentAccount` được chọn, `amount = total_amount`, `addInfo = "TT " + tableCode + " " + order_code`.
 - Mục đích: khách kiểm tra món và quét QR trả tiền — KHÔNG phải chốt đơn.
 
 ### "Thanh toán → Xác nhận" (`POST /api/v1/pos/orders/:id/checkout`):
@@ -63,9 +69,9 @@ interface KitchenTicket {
 - Khi xác nhận (bọc trong `$transaction` với `FOR UPDATE` trên `orders` rồi `dining_tables`):
   1. Cập nhật `status` → `'PAID'`, ghi `paid_at = NOW()`.
   2. Ghi `payment_method` và số tiền tuân thủ nghiêm ngặt CHECK constraint `chk_order_payment_amounts`:
-     - `'CASH'`: `cash_amount = total_amount`, `transfer_amount = 0`.
-     - `'TRANSFER'`: `transfer_amount = total_amount`, `cash_amount = 0`.
-     - `'SPLIT'` (`EC-FIN-02`): `cash_amount > 0`, `transfer_amount > 0`, và `cash_amount + transfer_amount === total_amount`.
+     - `'CASH'`: `cash_amount = total_amount`, `transfer_amount = 0`, và đặt `payment_account_id = NULL`.
+     - `'TRANSFER'`: `transfer_amount = total_amount`, `cash_amount = 0`. Nếu `payment_account_id IS NULL` (chưa in tạm tính mà thanh toán thẳng), tự động chọn và gắn mã QR đang active theo hạn mức.
+     - `'SPLIT'` (`EC-FIN-02`): `cash_amount > 0`, `transfer_amount > 0`, và `cash_amount + transfer_amount === total_amount`. Nếu `payment_account_id IS NULL`, tự động chọn và gắn mã QR đang active theo `transfer_amount`.
   3. Giải phóng bàn (nếu `DINE_IN`): `dining_tables.status = 'AVAILABLE'`, `active_order_id = NULL`.
   4. Emit Socket.io: `order:status_updated` (tới `order_session_{orderId}`) và `table:grid_sync` (tới `pos_cashier_room`).
 
@@ -222,3 +228,22 @@ async findOrCreate(category: string, rawInput: string, metadata: Record<string, 
 | `order:session_redirected` | Server → Khách | `order_session_{orderId}` | Thu ngân chuyển/gộp bàn |
 | `order:status_updated` | Server → Khách | `order_session_{orderId}` | Tách đơn (SERVING) hoặc Thanh toán (PAID) |
 | `table:grid_sync` | Server → Thu ngân | `pos_cashier_room` | Đồng bộ sơ đồ bàn (multi-tab) |
+
+## 8. Nghiệp vụ Giảm giá trên Đơn POS (Story 18)
+
+- **Tính lại thống nhất (`recomputeOrderTotals(tx, orderId)`):** Mọi biến động món (`createOrder`, `createQrOrder`, `patchOrderItems`, `appendItems`, `cancelOrder`, `approveQrOrder`, `MERGE`, phần còn lại của `splitCheckout`) **MUST** tính lại `subtotal_amount`, `discount_amount`, và `total_amount = subtotal_amount - discount_amount` thông qua một hàm duy nhất dựa trên `orders.discount_snapshot`.
+- **Làm tròn & Trần:** Cơ sở tính là `order_items.unit_price` (đã gồm modifier/topping) của các món không `CANCELLED`. Tiền giảm làm tròn **xuống bội 1.000đ** (`floor(raw / 1000) * 1000`) và **NEVER** vượt quá `eligibleSubtotal`. `orders.total_amount` luôn là **số thực thu sau giảm** → giữ nguyên toàn bộ công thức kết ca (Invariant 6) và kiểm tra `chk_order_payment_amounts`.
+- **Ma trận 2 × 3 & Ngữ nghĩa:**
+  - `FIXED` + `ORDER`: giảm cố định 1 lần.
+  - `FIXED` + `CATEGORY` / `PRODUCT`: giảm **trên mỗi suất** (`value × eligibleQty`).
+  - `PERCENT`: tính theo `%` trên `eligibleSubtotal`, giới hạn tối đa bởi `maxDiscountAmount` (trần cho tổng tiền giảm cả đơn) nếu có.
+  - `COMBO`: khớp theo `productId` / `categoryId` của chính món combo đó.
+- **Vòng đời & Điều kiện:**
+  - Thời hạn ngày (`startsAt`/`endsAt`), khung giờ & ngày trong tuần (`Asia/Ho_Chi_Minh`) kiểm tra tại **lúc áp mã**.
+  - Khi thêm/huỷ món làm đơn rớt dưới `minOrderAmount` hoặc 0 món hợp lệ: giữ nguyên `discount_snapshot`, gán `discount_amount = 0` và trả cảnh báo (`MIN_ORDER_NOT_MET` / `NOT_APPLICABLE`). Checkout với `discount_amount = 0` **KHÔNG** trừ `used_count`.
+  - Lúc `checkout` (`PAID`): khoá `orders -> dining_tables -> discounts` (`FOR UPDATE`), cộng `used_count` bằng câu lệnh atomic `WHERE used_count < usage_limit` (0 dòng → `409 DISCOUNT_USAGE_EXHAUSTED`).
+  - Lúc `VOID`: khoá `orders -> discounts`, hoàn trả `used_count = GREATEST(used_count - 1, 0)` nếu đơn từng được giảm (`discount_amount > 0` và `discount_id IS NOT NULL`).
+- **Tương tác Split / Merge / Move / Swap:**
+  - **Split:** Đơn đang có giảm giá (`discount_snapshot IS NOT NULL`) **MUST** bị chặn khi gọi `split-checkout` và `split-provisional-bill` với `409 POS_DISCOUNT_BLOCKS_SPLIT`.
+  - **MERGE:** Gỡ bỏ giảm giá của đơn nguồn (`discount_id = NULL, discount_snapshot = NULL, discount_amount = 0`), giữ nguyên giảm giá của đơn đích và tính lại tổng sau khi gộp món.
+  - **MOVE / SWAP:** Giảm giá đi theo đơn hàng.

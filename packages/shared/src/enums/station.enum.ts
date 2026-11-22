@@ -6,24 +6,41 @@ export const KitchenStation = {
   PHA_CHE: 'PHA_CHE',
 } as const;
 
-export type KitchenStation = (typeof KitchenStation)[keyof typeof KitchenStation];
+export type KitchenStation = (typeof KitchenStation)[keyof typeof KitchenStation] | (string & {});
 
-export const KitchenStationSchema = z.enum([
-  KitchenStation.BEP_NAU,
-  KitchenStation.BEP_CHIEN,
-  KitchenStation.PHA_CHE,
-]);
+export const KitchenStationSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(16)
+  .refine(
+    (val) =>
+      val !== 'COMBO' &&
+      (val === 'BEP_NAU' ||
+        val === 'BEP_CHIEN' ||
+        val === 'PHA_CHE' ||
+        /^BEP_[A-Z0-9_]{1,12}$/.test(val)),
+    { message: 'Trạm bếp vật lý không hợp lệ' },
+  );
 
 export const ProductStation = {
   ...KitchenStation,
   COMBO: 'COMBO',
 } as const;
 
-export type ProductStation = (typeof ProductStation)[keyof typeof ProductStation];
+export type ProductStation = (typeof ProductStation)[keyof typeof ProductStation] | (string & {});
 
-export const ProductStationSchema = z.enum([
-  ProductStation.BEP_NAU,
-  ProductStation.BEP_CHIEN,
-  ProductStation.PHA_CHE,
-  ProductStation.COMBO,
-]);
+export const ProductStationSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(16)
+  .refine(
+    (val) =>
+      val === 'BEP_NAU' ||
+      val === 'BEP_CHIEN' ||
+      val === 'PHA_CHE' ||
+      val === 'COMBO' ||
+      /^BEP_[A-Z0-9_]{1,12}$/.test(val),
+    { message: 'Trạm sản phẩm không hợp lệ' },
+  );

@@ -35,7 +35,7 @@ describe('POS and invoice HTTP routes', () => {
   };
   const cashierRecord = {
     id: 2, employeeId: 12, username: 'cashier01', isSuperAdmin: false, isActive: true,
-    permissions: UserPermissionsSchema.parse({ invoices: { view: true, reprint: true, void: true } }),
+    permissions: UserPermissionsSchema.parse({ invoices: { view: true, reprint: true, void: false } }),
   };
   let app: INestApplication;
   let baseUrl: string;
@@ -125,7 +125,7 @@ describe('POS and invoice HTTP routes', () => {
     expect(invoicesService.voidInvoice).toHaveBeenCalledWith(43, { voidReason: 'Khách báo nhân viên tính sai' }, 1);
   });
 
-  it('should reject invoice voiding for an authenticated cashier even when invoices.void is true', async () => {
+  it('should reject invoice voiding for an authenticated cashier without invoices.void permission', async () => {
     invoicesService.voidInvoice.mockClear();
     const response = await fetch(`${baseUrl}/api/v1/invoices/43/void`, {
       method: 'POST',

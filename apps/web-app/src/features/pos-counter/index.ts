@@ -4,6 +4,7 @@ export { PosMenuPanel } from './components/pos-menu-panel';
 export { LiveInvoicePanel } from './components/live-invoice-panel';
 export { TableActionDialog } from './components/table-action-dialog';
 export { CheckoutConfirmDialog } from './components/checkout-confirm-dialog';
+export { PosDiscountDialog } from './components/pos-discount-dialog';
 export { usePosCashierSocket } from './hooks/use-pos-cashier-socket';
 export {
   posQueryKeys,

@@ -100,7 +100,11 @@ export const UserPermissionsSchema = z.object({
     splitKitchen: z.boolean().default(false),
     tableAction: z.boolean().default(false),
     checkout: z.boolean().default(false),
+    qrSecurity: z.boolean().default(false),
+    manualDiscount: z.boolean().default(false), // Giảm giá thủ công trên đơn POS (strict, không fallback)
   }),
+  // Module 1B: Quản lý Mã giảm giá
+  discounts: ModulePermissionsSchema,
   // Module 2: Quản lý Hoá đơn
   invoices: z.object({
     view: z.boolean().default(false),
@@ -166,6 +170,12 @@ Hệ thống được thiết kế sẵn 4 vai trò vận hành tiêu chuẩn t�
 | | Đổi bàn / Gộp bàn / Hoán đổi | `pos:tableAction` | ✅ | ✅ | ✅ | ❌ |
 | | In tạm tính VietQR động | `pos:view` | ✅ | ✅ | ✅ | ❌ |
 | | Chốt thanh toán & Đóng đơn | `pos:checkout` | ✅ | ✅ | ✅ | ❌ |
+| | Áp / gỡ mã giảm giá có sẵn trên POS | `pos:checkout` | ✅ | ✅ | ✅ | ❌ |
+| | **Giảm giá thủ công trên đơn (Giảm tay)** | **`pos:manualDiscount`** | **✅** | **✅** | **❌** | **❌** |
+| **1B. Mã giảm giá** | Xem danh sách & thống kê mã giảm giá | `discounts:view` | ✅ | ✅ | ❌ | ❌ |
+| | Tạo mới mã giảm giá | `discounts:create` | ✅ | ✅ | ❌ | ❌ |
+| | Sửa / bật-tắt mã giảm giá | `discounts:update` | ✅ | ✅ | ❌ | ❌ |
+| | Xoá / lưu trữ mã giảm giá | `discounts:delete` | ✅ | ❌ | ❌ | ❌ |
 | **2. Hoá đơn** | Xem danh sách lịch sử hoá đơn | `invoices:view` | ✅ | ✅ | ✅ | ❌ |
 | | In lại hoá đơn cũ | `invoices:reprint` | ✅ | ✅ | ✅ | ❌ |
 | | **Huỷ hoá đơn đã thu tiền (Void)** | **`invoices:void`** | **✅** | **✅** | **❌** | **❌** |
@@ -176,6 +186,10 @@ Hệ thống được thiết kế sẵn 4 vai trò vận hành tiêu chuẩn t�
 | **4. Dòng tiền** | Xem lịch sử kết ca | `cashflow:view` | ✅ | ✅ | ✅ | ❌ |
 | | Đếm tiền & Bấm "Kết ca" | `cashflow:create` | ✅ | ✅ | ✅ | ❌ |
 | | **Sửa Ngân sách mặc định đầu ngày** | **`cashflow:config`** | **✅** | **❌** | **❌** | **❌** |
+| **4B. Mã QR thanh toán** | Xem danh sách & doanh thu từng mã QR | `paymentQr:view` | ✅ | ✅ | ❌ | ❌ |
+| | Thêm mới mã QR thanh toán | `paymentQr:create` | ✅ | ❌ | ❌ | ❌ |
+| | Sửa hạn mức, đổi ưu tiên, bật/tắt mã QR | `paymentQr:update` | ✅ | ✅ | ❌ | ❌ |
+| | Xoá mã QR chưa phát sinh hoá đơn | `paymentQr:delete` | ✅ | ❌ | ❌ | ❌ |
 | **5. Nhân viên** | Xem danh sách nhân viên | `employees:view` | ✅ | ✅ | ❌ | ❌ |
 | | Thêm mới hồ sơ nhân viên | `employees:create` | ✅ | ✅ | ❌ | ❌ |
 | | Chỉnh sửa hồ sơ nhân viên | `employees:update` | ✅ | ✅ | ❌ | ❌ |
@@ -221,6 +235,16 @@ POST        | /api/v1/pos/orders/:id/split-kitchen   | @RequirePermission('pos',
 POST        | /api/v1/pos/orders/:id/table-action    | @RequirePermission('pos', 'tableAction')
 GET         | /api/v1/pos/orders/:id/provisional-bill| @RequirePermission('pos', 'view')
 POST        | /api/v1/pos/orders/:id/checkout        | @RequirePermission('pos', 'checkout')
+GET         | /api/v1/pos/orders/:id/applicable-discounts | @RequirePermission('pos', 'checkout')
+POST        | /api/v1/pos/orders/:id/discount        | @RequirePermission('pos', 'checkout') (+ pos:manualDiscount nếu manual)
+DELETE      | /api/v1/pos/orders/:id/discount        | @RequirePermission('pos', 'checkout')
+
+-- MODULE 1B: DISCOUNTS
+GET         | /api/v1/discounts                      | @RequirePermission('discounts', 'view')
+POST        | /api/v1/discounts                      | @RequirePermission('discounts', 'create')
+PUT         | /api/v1/discounts/:id                  | @RequirePermission('discounts', 'update')
+PATCH       | /api/v1/discounts/:id/status           | @RequirePermission('discounts', 'update')
+DELETE      | /api/v1/discounts/:id                  | @RequirePermission('discounts', 'delete')
 
 -- MODULE 2: INVOICES
 GET         | /api/v1/invoices                       | @RequirePermission('invoices', 'view')

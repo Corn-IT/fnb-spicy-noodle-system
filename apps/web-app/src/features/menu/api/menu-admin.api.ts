@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type CreateProductInput,
+  type ImportMenuExcelRequest,
+  type ImportMenuExcelResponse,
   type MdmItem,
-  type MdmListResponse,
   type Product,
   type UpdateMdmInput,
   type UpdateProductInput,
@@ -10,6 +11,19 @@ import {
 } from '@fnb/shared';
 
 import { apiClient } from '@/lib/api-client';
+import {
+  broadcastMenuSync,
+  useKitchenStationsLookup,
+  useMenuCategoriesLookup,
+} from '@/lib/menu-sync';
+
+function invalidateAllMenuCaches(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['mdm'] });
+  void queryClient.invalidateQueries({ queryKey: ['menu-products'] });
+  void queryClient.invalidateQueries({ queryKey: ['pos'] });
+  void queryClient.invalidateQueries({ queryKey: ['public-menu'] });
+  broadcastMenuSync();
+}
 
 export function useMenuProductsQuery() {
   return useQuery({
@@ -19,20 +33,11 @@ export function useMenuProductsQuery() {
 }
 
 export function useMenuCategoriesQuery() {
-  return useQuery({
-    queryKey: ['mdm', 'lookup', 'MENU_CATEGORY'],
-    queryFn: async () => {
-      const res = await apiClient.get<MdmItem[] | MdmListResponse>('/api/v1/mdm/lookup', {
-        params: {
-          category: 'MENU_CATEGORY',
-          page: 1,
-          limit: 100,
-          activeOnly: true,
-        },
-      });
-      return Array.isArray(res) ? res : (res.items ?? []);
-    },
-  });
+  return useMenuCategoriesLookup();
+}
+
+export function useMenuStationsQuery() {
+  return useKitchenStationsLookup();
 }
 
 export function useCreateProductMutation() {
@@ -42,9 +47,7 @@ export function useCreateProductMutation() {
     mutationFn: (body: CreateProductInput) =>
       apiClient.post<Product>('/api/v1/menu/products', body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['menu-products'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos'] });
-      void queryClient.invalidateQueries({ queryKey: ['public-menu'] });
+      invalidateAllMenuCaches(queryClient);
     },
   });
 }
@@ -56,9 +59,7 @@ export function useUpdateProductMutation() {
     mutationFn: ({ id, body }: { id: number; body: UpdateProductInput }) =>
       apiClient.put<Product>(`/api/v1/menu/products/${id}`, body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['menu-products'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos'] });
-      void queryClient.invalidateQueries({ queryKey: ['public-menu'] });
+      invalidateAllMenuCaches(queryClient);
     },
   });
 }
@@ -72,9 +73,19 @@ export function useDeleteProductMutation() {
         `/api/v1/menu/products/${id}`,
       ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['menu-products'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos'] });
-      void queryClient.invalidateQueries({ queryKey: ['public-menu'] });
+      invalidateAllMenuCaches(queryClient);
+    },
+  });
+}
+
+export function useImportMenuExcelMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: ImportMenuExcelRequest) =>
+      apiClient.post<ImportMenuExcelResponse>('/api/v1/menu/products/import-excel', body),
+    onSuccess: () => {
+      invalidateAllMenuCaches(queryClient);
     },
   });
 }
@@ -84,10 +95,9 @@ export function useCreateMenuCategoryMutation() {
 
   return useMutation({
     mutationFn: (body: UpsertMdmInput) =>
-      apiClient.post<MdmItem>('/api/v1/mdm', body),
+      apiClient.post<MdmItem>('/api/v1/menu/categories', body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['mdm'] });
-      void queryClient.invalidateQueries({ queryKey: ['menu-products'] });
+      invalidateAllMenuCaches(queryClient);
     },
   });
 }
@@ -97,10 +107,9 @@ export function useUpdateMenuCategoryMutation() {
 
   return useMutation({
     mutationFn: ({ id, body }: { id: number; body: UpdateMdmInput }) =>
-      apiClient.put<MdmItem>(`/api/v1/mdm/${id}`, body),
+      apiClient.put<MdmItem>(`/api/v1/menu/categories/${id}`, body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['mdm'] });
-      void queryClient.invalidateQueries({ queryKey: ['menu-products'] });
+      invalidateAllMenuCaches(queryClient);
     },
   });
 }
@@ -110,10 +119,45 @@ export function useDeleteMenuCategoryMutation() {
 
   return useMutation({
     mutationFn: (id: number) =>
-      apiClient.delete<MdmItem>(`/api/v1/mdm/${id}`),
+      apiClient.delete<MdmItem>(`/api/v1/menu/categories/${id}`),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['mdm'] });
-      void queryClient.invalidateQueries({ queryKey: ['menu-products'] });
+      invalidateAllMenuCaches(queryClient);
+    },
+  });
+}
+
+export function useCreateMenuStationMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: UpsertMdmInput) =>
+      apiClient.post<MdmItem>('/api/v1/menu/stations', body),
+    onSuccess: () => {
+      invalidateAllMenuCaches(queryClient);
+    },
+  });
+}
+
+export function useUpdateMenuStationMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: UpdateMdmInput }) =>
+      apiClient.put<MdmItem>(`/api/v1/menu/stations/${id}`, body),
+    onSuccess: () => {
+      invalidateAllMenuCaches(queryClient);
+    },
+  });
+}
+
+export function useDeleteMenuStationMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiClient.delete<MdmItem>(`/api/v1/menu/stations/${id}`),
+    onSuccess: () => {
+      invalidateAllMenuCaches(queryClient);
     },
   });
 }

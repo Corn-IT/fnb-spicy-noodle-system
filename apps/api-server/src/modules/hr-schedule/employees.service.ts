@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -19,15 +20,20 @@ import {
   type EmployeeFilterQuery,
   type UpdateEmployeeInput,
 } from '@fnb/shared';
+import { AuditLogService } from '../../common/audit/audit-log.service';
+import { maskSensitiveIdentifier } from '../../common/security/redact.util';
+import { compareEmployeesForDisplay } from '../../common/utils/display-order.util';
+import { normalizeVietnameseString } from '../../common/utils/normalized-string.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { dateOnly } from '../../common/utils/business-date.util';
 import { MdmService } from '../mdm/mdm.service';
+import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 import { generateShortName } from './short-name.util';
 
 const employeeRelations = {
   position: true,
   specialty: true,
-  user: { select: { id: true, username: true, isActive: true } },
+  user: { select: { id: true, username: true, isActive: true, isSuperAdmin: true } },
 } satisfies Prisma.EmployeeInclude;
 
 type EmployeeRecord = Prisma.EmployeeGetPayload<{ include: typeof employeeRelations }>;
@@ -37,6 +43,8 @@ export class EmployeesService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(MdmService) private readonly mdmService: MdmService,
+    @Optional() @Inject(AuditLogService) private readonly auditLogService?: AuditLogService,
+    @Optional() @Inject(PosSocketGateway) private readonly posSocketGateway?: PosSocketGateway,
   ) {}
 
   async listEmployees(input: EmployeeFilterQuery) {
@@ -45,25 +53,36 @@ export class EmployeesService {
       ...(inactiveOnly ? { isDeleted: true } : includeDeleted ? {} : { isDeleted: false }),
       ...(positionId ? { positionId } : {}),
       ...(specialtyId ? { specialtyId } : {}),
-      ...(keyword ? {
-        OR: [
-          { fullName: { contains: keyword, mode: 'insensitive' } },
-          { shortName: { contains: keyword, mode: 'insensitive' } },
-          { phone: { contains: keyword, mode: 'insensitive' } },
-        ],
-      } : {}),
     };
-    const [items, total] = await Promise.all([
-      this.prisma.employee.findMany({
-        where,
-        include: employeeRelations,
-        orderBy: [{ fullName: 'asc' }, { id: 'asc' }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.employee.count({ where }),
-    ]);
-    return { page, limit, total, items };
+    const employees = await this.prisma.employee.findMany({
+      where,
+      include: employeeRelations,
+      orderBy: [{ id: 'asc' }],
+    });
+    const trimmedKeyword = keyword?.trim() ?? '';
+    const rawKeywordLower = trimmedKeyword.toLowerCase();
+    const normalizedKeyword = normalizeVietnameseString(trimmedKeyword);
+    const filtered = trimmedKeyword
+      ? employees.filter((employee) => {
+          if (normalizedKeyword) {
+            if (
+              normalizeVietnameseString(employee.fullName).includes(normalizedKeyword) ||
+              normalizeVietnameseString(employee.shortName).includes(normalizedKeyword)
+            ) {
+              return true;
+            }
+          }
+          return (
+            employee.fullName.toLowerCase().includes(rawKeywordLower) ||
+            employee.shortName.toLowerCase().includes(rawKeywordLower) ||
+            (employee.phone ?? '').toLowerCase().includes(rawKeywordLower) ||
+            (employee.user?.username ?? '').toLowerCase().includes(rawKeywordLower)
+          );
+        })
+      : employees;
+    const sorted = [...filtered].sort(compareEmployeesForDisplay);
+    const paged = sorted.slice((page - 1) * limit, page * limit);
+    return { page, limit, total: sorted.length, items: paged };
   }
 
   async getEmployee(id: number): Promise<EmployeeRecord> {
@@ -72,7 +91,10 @@ export class EmployeesService {
     return employee;
   }
 
-  async createEmployee(input: CreateEmployeeInput, actor: Pick<AuthPrincipal, 'isSuperAdmin'>): Promise<EmployeeRecord> {
+  async createEmployee(
+    input: CreateEmployeeInput,
+    actor: Pick<AuthPrincipal, 'isSuperAdmin'> & { id?: number },
+  ): Promise<EmployeeRecord> {
     const parsed = CreateEmployeeSchema.safeParse(input);
     if (!parsed.success) throw this.invalidEmployeeData(parsed.error.flatten().fieldErrors);
     const employeeInput = parsed.data;
@@ -137,19 +159,36 @@ export class EmployeesService {
     }
 
     if (!employeeId) throw new Error('Không thể tạo hồ sơ nhân viên');
-    return this.getEmployee(employeeId);
+    const createdEmployee = await this.getEmployee(employeeId);
+    if (actor.id) {
+      await this.auditLogService?.record({
+        module: 'EMPLOYEES',
+        action: 'Thêm nhân sự',
+        detail: `${createdEmployee.fullName} (${createdEmployee.shortName})`,
+        message: `thêm hồ sơ nhân sự ${createdEmployee.fullName} (${createdEmployee.shortName})`,
+        actor: actor.id,
+        metadata: { employeeId: createdEmployee.id, employeeName: createdEmployee.fullName },
+      });
+    }
+    this.posSocketGateway?.emitScheduleUpdated();
+    return createdEmployee;
   }
 
-  async updateEmployee(id: number, input: UpdateEmployeeInput): Promise<EmployeeRecord> {
+  async updateEmployee(id: number, input: UpdateEmployeeInput, actor?: AuthPrincipal): Promise<EmployeeRecord> {
     const parsed = UpdateEmployeeSchema.safeParse(input);
     if (!parsed.success) throw this.invalidEmployeeData(parsed.error.flatten().fieldErrors);
     const employeeInput = parsed.data;
 
+    let previousEmployee: Record<string, unknown> | null = null;
     try {
       await this.prisma.$transaction(async (tx) => {
-        const existing = await tx.employee.findUnique({ where: { id }, select: { id: true, isDeleted: true } });
+        const existing = await tx.employee.findUnique({
+          where: { id },
+          include: { position: true, specialty: true },
+        });
         if (!existing) throw new NotFoundException('Không tìm thấy hồ sơ nhân viên');
         if (existing.isDeleted) throw this.employeeDeleted();
+        previousEmployee = existing as unknown as Record<string, unknown>;
 
         const data: Prisma.EmployeeUncheckedUpdateInput = {};
         if (employeeInput.fullName !== undefined) data.fullName = employeeInput.fullName;
@@ -184,32 +223,256 @@ export class EmployeesService {
       this.rethrowEmployeeConstraint(error);
     }
 
-    return this.getEmployee(id);
+    const updatedEmployee = await this.getEmployee(id);
+    if (actor) {
+      const toDateLabel = (v: unknown) => {
+        if (!v) return 'Trống';
+        if (v instanceof Date) {
+          return `${String(v.getUTCDate()).padStart(2, '0')}/${String(v.getUTCMonth() + 1).padStart(2, '0')}/${v.getUTCFullYear()}`;
+        }
+        if (typeof v === 'string' && v.length >= 10) {
+          const [y, m, d] = v.slice(0, 10).split('-');
+          return d && m && y ? `${d}/${m}/${y}` : v;
+        }
+        return String(v);
+      };
+      const toText = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : 'Trống');
+      const changes: Array<{ field: string; from: string; to: string }> = [];
+      const prev = previousEmployee as Record<string, unknown> | null;
+      if (prev) {
+        if (prev.fullName !== undefined && toText(prev.fullName) !== toText(updatedEmployee.fullName)) {
+          changes.push({ field: 'Họ và tên', from: toText(prev.fullName), to: toText(updatedEmployee.fullName) });
+        }
+        if ('dob' in prev && toDateLabel(prev.dob) !== toDateLabel(updatedEmployee.dob)) {
+          changes.push({ field: 'Ngày sinh', from: toDateLabel(prev.dob), to: toDateLabel(updatedEmployee.dob) });
+        }
+        if ('phone' in prev && toText(prev.phone) !== toText(updatedEmployee.phone)) {
+          changes.push({ field: 'Số điện thoại', from: toText(prev.phone), to: toText(updatedEmployee.phone) });
+        }
+        if ('address' in prev && toText(prev.address) !== toText(updatedEmployee.address)) {
+          changes.push({ field: 'Địa chỉ', from: toText(prev.address), to: toText(updatedEmployee.address) });
+        }
+        if ('citizenId' in prev && toText(prev.citizenId) !== toText(updatedEmployee.citizenId)) {
+          changes.push({
+            field: 'Số CCCD',
+            from: maskSensitiveIdentifier(prev.citizenId),
+            to: maskSensitiveIdentifier(updatedEmployee.citizenId),
+          });
+        }
+        if (
+          'citizenIdIssuedPlace' in prev &&
+          toText(prev.citizenIdIssuedPlace) !== toText(updatedEmployee.citizenIdIssuedPlace)
+        ) {
+          changes.push({
+            field: 'Nơi cấp CCCD',
+            from: toText(prev.citizenIdIssuedPlace),
+            to: toText(updatedEmployee.citizenIdIssuedPlace),
+          });
+        }
+        if ('startDate' in prev && toDateLabel(prev.startDate) !== toDateLabel(updatedEmployee.startDate)) {
+          changes.push({
+            field: 'Ngày vào làm',
+            from: toDateLabel(prev.startDate),
+            to: toDateLabel(updatedEmployee.startDate),
+          });
+        }
+        const prevPosName = (prev.position as { name?: string } | null | undefined)?.name;
+        if (prevPosName !== undefined && toText(prevPosName) !== toText(updatedEmployee.position?.name)) {
+          changes.push({ field: 'Chức vụ', from: toText(prevPosName), to: toText(updatedEmployee.position?.name) });
+        }
+        const prevSpecName = (prev.specialty as { name?: string } | null | undefined)?.name;
+        if (prevSpecName !== undefined && toText(prevSpecName) !== toText(updatedEmployee.specialty?.name)) {
+          changes.push({ field: 'Chuyên môn', from: toText(prevSpecName), to: toText(updatedEmployee.specialty?.name) });
+        }
+        if ('bankName' in prev && toText(prev.bankName) !== toText(updatedEmployee.bankName)) {
+          changes.push({ field: 'Ngân hàng', from: toText(prev.bankName), to: toText(updatedEmployee.bankName) });
+        }
+        if ('bankAccountNo' in prev && toText(prev.bankAccountNo) !== toText(updatedEmployee.bankAccountNo)) {
+          changes.push({
+            field: 'STK',
+            from: maskSensitiveIdentifier(prev.bankAccountNo),
+            to: maskSensitiveIdentifier(updatedEmployee.bankAccountNo),
+          });
+        }
+        if ('bankAccountName' in prev && toText(prev.bankAccountName) !== toText(updatedEmployee.bankAccountName)) {
+          changes.push({
+            field: 'Chủ TK',
+            from: toText(prev.bankAccountName),
+            to: toText(updatedEmployee.bankAccountName),
+          });
+        }
+        if ('note' in prev && toText(prev.note) !== toText(updatedEmployee.note)) {
+          changes.push({ field: 'Ghi chú', from: toText(prev.note), to: toText(updatedEmployee.note) });
+        }
+      }
+      await this.auditLogService?.record({
+        module: 'EMPLOYEES',
+        action: 'Cập nhật hồ sơ',
+        detail: `${updatedEmployee.fullName} (${updatedEmployee.shortName})`,
+        message: 'cập nhật hồ sơ nhân sự',
+        actor: actor.id,
+        metadata: {
+          employeeId: id,
+          employeeName: updatedEmployee.fullName,
+          ...(changes.length > 0 ? { changes } : {}),
+        },
+      });
+    }
+    this.posSocketGateway?.emitScheduleUpdated();
+    return updatedEmployee;
   }
 
-  async softDeleteEmployee(id: number): Promise<{ id: number; isDeleted: true }> {
-    return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.employee.findUnique({ where: { id }, select: { id: true, isDeleted: true } });
+  async softDeleteEmployee(id: number, actor?: AuthPrincipal): Promise<{ id: number; isDeleted: true }> {
+    const res = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.employee.findUnique({
+        where: { id },
+        select: { id: true, fullName: true, shortName: true, isDeleted: true, user: { select: { isSuperAdmin: true } } },
+      });
       if (!existing) throw new NotFoundException('Không tìm thấy hồ sơ nhân viên');
+      if (existing.user?.isSuperAdmin) {
+        throw new ForbiddenException({
+          code: ErrorCodes.RBAC_SUPER_ADMIN_REQUIRED,
+          message: 'Tài khoản Super Admin mặc định luôn hoạt động và không thể tạm ngưng',
+        });
+      }
       if (existing.isDeleted) throw this.employeeDeleted();
-      await tx.employee.update({ where: { id }, data: { isDeleted: true } });
+      await tx.employee.update({ where: { id }, data: { isDeleted: true, deletedAt: new Date() } });
       await tx.user.updateMany({ where: { employeeId: id }, data: { isActive: false } });
-      return { id, isDeleted: true };
+      return { id, isDeleted: true as const, fullName: existing.fullName, shortName: existing.shortName };
     });
+    if (actor) {
+      await this.auditLogService?.record({
+        module: 'EMPLOYEES',
+        action: 'Xoá hồ sơ nhân sự',
+        detail: `${res.fullName} (${res.shortName})`,
+        message: 'tạm ngưng hồ sơ nhân sự',
+        actor: actor.id,
+        metadata: {
+          employeeId: id,
+          employeeName: res.fullName,
+          changes: [{ field: 'Trạng thái', from: 'Đang làm việc', to: 'Tạm ngưng' }],
+        },
+      });
+    }
+    this.posSocketGateway?.emitScheduleUpdated();
+    return { id: res.id, isDeleted: res.isDeleted };
   }
 
-  async setEmployeeActiveStatus(id: number, isActive: boolean): Promise<{ id: number; isDeleted: boolean; isActive: boolean }> {
-    return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.employee.findUnique({ where: { id }, select: { id: true, isDeleted: true } });
+  async permanentDeleteEmployee(id: number, actor?: AuthPrincipal): Promise<{ id: number; deleted: true }> {
+    const res = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.employee.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          fullName: true,
+          shortName: true,
+          isDeleted: true,
+          deletedAt: true,
+          createdAt: true,
+          user: { select: { isSuperAdmin: true } },
+        },
+      });
       if (!existing) throw new NotFoundException('Không tìm thấy hồ sơ nhân viên');
+      if (existing.user?.isSuperAdmin) {
+        throw new ForbiddenException({
+          code: ErrorCodes.RBAC_SUPER_ADMIN_REQUIRED,
+          message: 'Không thể xoá vĩnh viễn tài khoản Super Admin',
+        });
+      }
+      if (!existing.isDeleted) {
+        throw new ConflictException('Chỉ được phép xoá vĩnh viễn nhân sự đang ở trạng thái Tạm ngưng');
+      }
+      const suspendedAt = existing.deletedAt ?? existing.createdAt;
+      const elapsedDays = Math.floor((Date.now() - suspendedAt.getTime()) / (24 * 60 * 60 * 1000));
+      if (elapsedDays < 30) {
+        const remaining = 30 - elapsedDays;
+        throw new ConflictException(`Nhân sự mới tạm ngưng ${elapsedDays} ngày, cần đủ 30 ngày mới được phép xoá vĩnh viễn (còn ${remaining} ngày)`);
+      }
+
+      try {
+        await tx.user.deleteMany({ where: { employeeId: id } });
+        await tx.employee.delete({ where: { id } });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+          throw new ConflictException('Không thể xoá vĩnh viễn nhân sự vì tài khoản này đã có dữ liệu lịch sử nhập kho, kết ca hoặc phân ca.');
+        }
+        throw error;
+      }
+      return { id, fullName: existing.fullName, shortName: existing.shortName };
+    });
+
+    if (actor) {
+      await this.auditLogService?.record({
+        module: 'EMPLOYEES',
+        action: 'Xoá vĩnh viễn nhân sự',
+        detail: `${res.fullName} (${res.shortName})`,
+        message: 'xoá vĩnh viễn hồ sơ nhân sự',
+        actor: actor.id,
+        metadata: { employeeId: id, employeeName: res.fullName },
+      });
+    }
+    this.posSocketGateway?.emitScheduleUpdated();
+    return { id: res.id, deleted: true };
+  }
+
+  async setEmployeeActiveStatus(id: number, isActive: boolean, actor?: AuthPrincipal): Promise<{ id: number; isDeleted: boolean; isActive: boolean }> {
+    const res = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.employee.findUnique({
+        where: { id },
+        select: { id: true, fullName: true, shortName: true, isDeleted: true, user: { select: { isSuperAdmin: true } } },
+      });
+      if (!existing) throw new NotFoundException('Không tìm thấy hồ sơ nhân viên');
+      if (existing.user?.isSuperAdmin && !isActive) {
+        throw new ForbiddenException({
+          code: ErrorCodes.RBAC_SUPER_ADMIN_REQUIRED,
+          message: 'Tài khoản Super Admin mặc định luôn hoạt động và không thể tạm ngưng',
+        });
+      }
 
       const isDeleted = !isActive;
       if (existing.isDeleted !== isDeleted) {
-        await tx.employee.update({ where: { id }, data: { isDeleted } });
+        await tx.employee.update({
+          where: { id },
+          data: { isDeleted, deletedAt: isDeleted ? new Date() : null },
+        });
       }
       await tx.user.updateMany({ where: { employeeId: id }, data: { isActive } });
-      return { id, isDeleted, isActive };
+      return {
+        id,
+        isDeleted,
+        isActive,
+        wasActive: !existing.isDeleted,
+        fullName: existing.fullName,
+        shortName: existing.shortName,
+      };
     });
+    if (actor) {
+      await this.auditLogService?.record({
+        module: 'EMPLOYEES',
+        action: isActive ? 'Khôi phục nhân sự' : 'Ngưng hoạt động',
+        detail: `${res.fullName} (${res.shortName})`,
+        message: isActive ? 'khôi phục hoạt động nhân sự' : 'tạm ngưng hoạt động nhân sự',
+        actor: actor.id,
+        metadata: {
+          employeeId: id,
+          employeeName: res.fullName,
+          isActive,
+          ...(res.wasActive !== isActive
+            ? {
+                changes: [
+                  {
+                    field: 'Trạng thái',
+                    from: res.wasActive ? 'Đang làm việc' : 'Tạm ngưng',
+                    to: isActive ? 'Đang làm việc' : 'Tạm ngưng',
+                  },
+                ],
+              }
+            : {}),
+        },
+      });
+    }
+    this.posSocketGateway?.emitScheduleUpdated();
+    return { id: res.id, isDeleted: res.isDeleted, isActive: res.isActive };
   }
 
   private parseEmployeeFilter(input: EmployeeFilterQuery) {
