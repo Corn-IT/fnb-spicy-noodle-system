@@ -6,7 +6,7 @@ import {
   type CanActivate,
   type ExecutionContext,
 } from '@nestjs/common';
-import type { AuthPrincipal } from '@fnb/shared';
+import { normalizeQrToken, type AuthPrincipal } from '@fnb/shared';
 import type { Request, Response } from 'express';
 import { extractClientIp } from './client-info.util';
 import { isCachedTakeawayQrToken } from './takeaway-qr.util';
@@ -173,7 +173,7 @@ export class RateLimitGuard implements CanActivate {
     // Public QR Order submission: per-table (qrToken) spam lock, or per-(qrToken, clientIp) for shared takeaway QR
     if (method === 'POST' && path === '/api/v1/public/orders/qr') {
       const qrToken = typeof request.body?.qrToken === 'string'
-        ? request.body.qrToken.trim().slice(0, 64)
+        ? normalizeQrToken(request.body.qrToken.slice(0, 64))
         : 'unknown';
       if (isCachedTakeawayQrToken(qrToken)) {
         return [

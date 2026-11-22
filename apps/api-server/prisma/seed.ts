@@ -1,10 +1,10 @@
-import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import { MdmCategory, ProductStation, type UserPermissions } from '@fnb/shared';
 import { normalizeVietnameseString } from '../src/common/utils/normalized-string.util';
+import { generateShortQrToken } from '../src/common/utils/qr-token.util';
 import { seedSampleDiscounts } from './seed-discounts';
 import {
   adminPermissions,
@@ -172,7 +172,7 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
       await tx.diningTable.upsert({
         where: { name },
         update: {},
-        create: { name, qrToken: randomBytes(32).toString('hex') },
+        create: { name, qrToken: generateShortQrToken(name) },
       });
     }
 

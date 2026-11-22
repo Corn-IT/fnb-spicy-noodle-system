@@ -789,13 +789,16 @@ describe('5-Suite Comprehensive Security, RBAC, Concurrency & Performance Audit'
       expect(rotated.id).toBe(8);
       expect(rotated.status).toBe('OCCUPIED');
       expect(rotated.activeOrderId).toBe(888);
-      expect(rotated.qrToken).toHaveLength(64);
+      expect(rotated.qrToken).toMatch(/^ban08-[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
       expect(rotated.qrToken).not.toBe(VALID_TOKEN_1);
       expect(gateway.emitTableGridSync).toHaveBeenCalledWith({ tableId: 8 });
       expect(auditLogService.record).toHaveBeenCalledWith(
         expect.objectContaining({
           module: 'POS',
           action: 'Đổi mã QR bàn',
+          metadata: expect.objectContaining({
+            changes: [{ field: 'Mã QR bàn', from: '111111...', to: 'ban08-****' }],
+          }),
         }),
       );
 

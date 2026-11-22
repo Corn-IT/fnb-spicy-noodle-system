@@ -8,6 +8,7 @@ import {
   SocketEvents,
   SocketNamespace,
   SocketRooms,
+  normalizeQrToken,
   type UserPermissions,
   UserPermissionsSchema,
   type RevokedSessionNotice,
@@ -251,11 +252,12 @@ export class PosSocketGateway
       return;
     }
 
-    if (!QrTokenSchema.safeParse(auth.qrToken).success) {
+    const parsedQrToken = QrTokenSchema.safeParse(auth.qrToken);
+    if (!parsedQrToken.success) {
       throw new Error('Invalid QR guest credentials');
     }
 
-    const qrToken = auth.qrToken as string;
+    const qrToken = normalizeQrToken(parsedQrToken.data);
     const table = await this.prisma.diningTable.findUnique({
       where: { qrToken },
       select: { id: true },

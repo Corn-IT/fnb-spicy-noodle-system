@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -31,12 +30,16 @@ import {
   QrTokenSchema,
   RotateTableQrResponseSchema,
   RotateTakeawayQrResponseSchema,
+  ShortenLegacyQrTokensResponseSchema,
   SplitCheckoutOrderRequestSchema,
   SplitProvisionalBillRequestSchema,
   UpdateDiningTableSchema,
   VoidInvoiceRequestSchema,
   calculateOrderDiscount,
   getVietQrBankShortName,
+  isLegacyLongQrToken,
+  maskQrTokenForAudit,
+  normalizeQrToken,
   type ApplyPosDiscountRequest,
   type ApproveQrOrderInput,
   type AuthPrincipal,
@@ -59,6 +62,7 @@ import type { ZodType } from 'zod';
 import type { EnvConfig } from '../../config/env.config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService, formatPaymentMethodVi } from '../../common/audit/audit-log.service';
+import { generateUniqueTableQrToken } from '../../common/utils/qr-token.util';
 import {
   formatTakeawayCustomerNote,
   getOrCreateTakeawayQrToken,
@@ -250,16 +254,17 @@ export class PosService {
 
   async createQrOrder(input: CreateQrOrderInput): Promise<QrOrderResponse> {
     const parsed = this.parseRequest(CreateQrOrderSchema, input);
+    const normalizedQrToken = normalizeQrToken(parsed.qrToken);
     let result: { kind: 'new' | 'addon'; response: ReturnType<typeof QrOrderResponseSchema.parse>; payload: unknown };
     try {
       result = await this.prisma.$transaction(async (tx) => {
-        const qrTable = await tx.diningTable.findUnique({ where: { qrToken: parsed.qrToken } });
+        const qrTable = await tx.diningTable.findUnique({ where: { qrToken: normalizedQrToken } });
         if (!qrTable) {
-          const isTakeaway = await isTakeawayQrToken(tx, parsed.qrToken);
+          const isTakeaway = await isTakeawayQrToken(tx, normalizedQrToken);
           if (!isTakeaway) {
             throw new NotFoundException({ message: 'Mã QR bàn không hợp lệ' });
           }
-          return this.createTakeawayQrOrderTx(tx, parsed);
+          return this.createTakeawayQrOrderTx(tx, { ...parsed, qrToken: normalizedQrToken });
         }
 
         const existingOrderId = parsed.activeOrderId ?? qrTable.activeOrderId;
@@ -426,10 +431,8 @@ export class PosService {
     const result = await rotateTakeawayQrToken(this.prisma);
     this.gateway.emitTableGridSync({ takeawayQrRotated: true });
     if (userId) {
-      const oldShort = typeof result.previousQrToken === 'string' && result.previousQrToken.length >= 8
-        ? `${result.previousQrToken.slice(0, 6)}...`
-        : '***';
-      const newShort = `${result.qrToken.slice(0, 6)}...`;
+      const oldShort = maskQrTokenForAudit(result.previousQrToken);
+      const newShort = maskQrTokenForAudit(result.qrToken);
       await this.auditLogService?.record({
         module: 'POS',
         action: 'Đổi mã QR Mang về',
@@ -442,6 +445,62 @@ export class PosService {
       });
     }
     return RotateTakeawayQrResponseSchema.parse({ qrToken: result.qrToken });
+  }
+
+  async shortenLegacyQrTokens(userId?: number) {
+    const { updatedTables, updatedTakeaway } = await this.prisma.$transaction(async (tx) => {
+      const activeTables = await tx.diningTable.findMany({
+        where: { status: { not: 'DELETED' } },
+        orderBy: { id: 'asc' },
+        select: { id: true, name: true, qrToken: true },
+      });
+      const legacyTables = activeTables.filter((t) => isLegacyLongQrToken(t.qrToken));
+      if (legacyTables.length > 0) {
+        await this.lockTables(
+          tx,
+          legacyTables.map((t) => t.id),
+        );
+      }
+
+      let tableCount = 0;
+      for (const table of legacyTables) {
+        const nextToken = await generateUniqueTableQrToken(tx, table.name, table.qrToken);
+        await tx.diningTable.update({
+          where: { id: table.id },
+          data: { qrToken: nextToken },
+        });
+        tableCount += 1;
+      }
+
+      const currentTakeaway = await getOrCreateTakeawayQrToken(tx);
+      let takeawayRotated = false;
+      if (isLegacyLongQrToken(currentTakeaway)) {
+        await rotateTakeawayQrToken(tx);
+        takeawayRotated = true;
+      }
+
+      return { updatedTables: tableCount, updatedTakeaway: takeawayRotated };
+    });
+
+    if (updatedTables > 0 || updatedTakeaway) {
+      this.gateway.emitTableGridSync({ shortenedLegacyQrTokens: true });
+      if (userId) {
+        const total = updatedTables + (updatedTakeaway ? 1 : 0);
+        await this.auditLogService?.record({
+          module: 'POS',
+          action: 'Thu gọn mã QR',
+          detail: `${total} mã QR`,
+          message: `thu gọn ${total} mã QR sang định dạng ngắn dễ nhập`,
+          actor: userId,
+          metadata: { updatedTables, updatedTakeaway },
+        });
+      }
+    }
+
+    return ShortenLegacyQrTokensResponseSchema.parse({
+      updatedTables,
+      updatedTakeaway,
+    });
   }
 
   async createTable(input: CreateDiningTableInput, userId?: number) {
@@ -466,7 +525,7 @@ export class PosService {
       }
     }
 
-    const qrToken = randomBytes(32).toString('hex');
+    const qrToken = await generateUniqueTableQrToken(this.prisma, trimmedName);
     const created = await this.prisma.diningTable.create({
       data: {
         name: trimmedName,
@@ -625,7 +684,7 @@ export class PosService {
         throw new NotFoundException({ message: 'Không tìm thấy bàn vật lý' });
       }
 
-      const nextQrToken = randomBytes(32).toString('hex');
+      const nextQrToken = await generateUniqueTableQrToken(tx, existing.name, existing.qrToken);
       const updated = await tx.diningTable.update({
         where: { id },
         data: { qrToken: nextQrToken },
@@ -645,10 +704,8 @@ export class PosService {
 
     this.gateway.emitTableGridSync({ tableId: id });
     if (userId) {
-      const oldShort = typeof result.previousQrToken === 'string' && result.previousQrToken.length >= 8
-        ? `${result.previousQrToken.slice(0, 6)}...`
-        : '***';
-      const newShort = `${result.table.qrToken.slice(0, 6)}...`;
+      const oldShort = maskQrTokenForAudit(result.previousQrToken);
+      const newShort = maskQrTokenForAudit(result.table.qrToken);
       await this.auditLogService?.record({
         module: 'POS',
         action: 'Đổi mã QR bàn',
