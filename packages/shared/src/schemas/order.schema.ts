@@ -180,6 +180,12 @@ export const RotateTakeawayQrResponseSchema = z.object({
 }).strict();
 export type RotateTakeawayQrResponse = z.infer<typeof RotateTakeawayQrResponseSchema>;
 
+export const ShortenLegacyQrTokensResponseSchema = z.object({
+  updatedTables: z.number().int().min(0),
+  updatedTakeaway: z.boolean(),
+}).strict();
+export type ShortenLegacyQrTokensResponse = z.infer<typeof ShortenLegacyQrTokensResponseSchema>;
+
 export const RotateTableQrResponseSchema = z.object({
   id: IdSchema,
   name: z.string().min(1),

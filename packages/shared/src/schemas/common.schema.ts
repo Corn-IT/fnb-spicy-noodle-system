@@ -2,10 +2,49 @@ import { z } from 'zod';
 
 export const IdSchema = z.number().int().positive();
 
-export const QrTokenSchema = z.union([
-  z.string().length(64),
-  z.string().regex(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i),
-]);
+export const SHORT_QR_TOKEN_SUFFIX_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
+export const SHORT_QR_TOKEN_REGEX = /^[a-z0-9]{1,24}-[23456789abcdefghjkmnpqrstuvwxyz]{4,8}$/i;
+
+export const QrTokenSchema = z.string().trim().pipe(
+  z.union([
+    z.string().regex(SHORT_QR_TOKEN_REGEX),
+    z.string().length(64),
+    z.string().regex(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i),
+  ]),
+);
+
+export function buildTableQrSlugPrefix(label: string, fallback = 'ban'): string {
+  const normalized = label
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 16);
+  return normalized || fallback;
+}
+
+export function normalizeQrToken(rawToken: string): string {
+  const trimmed = rawToken.trim();
+  if (/^[a-z0-9-]+$/i.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  return trimmed;
+}
+
+export function isLegacyLongQrToken(token: string | undefined | null): boolean {
+  return Boolean(token && token.trim().length >= 24);
+}
+
+export function maskQrTokenForAudit(token: string | undefined | null): string {
+  if (!token) return '***';
+  const normalized = normalizeQrToken(token);
+  if (SHORT_QR_TOKEN_REGEX.test(normalized)) {
+    const dashIdx = normalized.indexOf('-');
+    return `${normalized.slice(0, dashIdx)}-****`;
+  }
+  return normalized.length >= 8 ? `${normalized.slice(0, 6)}...` : '***';
+}
 
 export const IsoDateSchema = z.iso.date();
 
