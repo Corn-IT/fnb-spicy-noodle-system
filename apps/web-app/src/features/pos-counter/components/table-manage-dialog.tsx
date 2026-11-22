@@ -1,5 +1,16 @@
 import { type PosTableGridResponse } from '@fnb/shared';
-import { Copy, Pencil, Printer, QrCode, RefreshCw, Trash2, Utensils } from 'lucide-react';
+import {
+  Archive,
+  Copy,
+  Download,
+  Pencil,
+  Printer,
+  QrCode,
+  RefreshCw,
+  ShoppingBag,
+  Trash2,
+  Utensils,
+} from 'lucide-react';
 import * as React from 'react';
 
 import { useThermalPrinter } from '@/components/print-slips';
@@ -16,11 +27,18 @@ import { Input } from '@/components/ui/input';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { useStoreSettings } from '@/hooks/use-store-settings';
 import { cn } from '@/utils/cn';
+import {
+  createStoredZipBlob,
+  downloadBlobFile,
+  renderQrCardPngBlob,
+  sanitizeQrFilename,
+} from '@/utils/qr-export';
 import { generateOfflineQrDataUrl } from '@/utils/qr-svg';
 import {
   useCreateDiningTableMutation,
   useDeleteDiningTableMutation,
   useRotateDiningTableQrMutation,
+  useRotateTakeawayQrMutation,
   useUpdateDiningTableMutation,
 } from '../api/pos.api';
 
@@ -28,13 +46,23 @@ interface TableManageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tables: PosTableGridResponse['tables'];
+  takeawayQrToken?: string;
   canManageTables: boolean;
+}
+
+interface QrPreviewTarget {
+  id: number | 'TAKEAWAY';
+  name: string;
+  headline: string;
+  subtitle: string;
+  qrToken: string;
 }
 
 export function TableManageDialog({
   open,
   onOpenChange,
   tables,
+  takeawayQrToken,
   canManageTables,
 }: TableManageDialogProps) {
   const { notify, resolveMessage, resolveErrorMessage } = useAppMessages();
@@ -47,20 +75,22 @@ export function TableManageDialog({
   const [confirmDeleteTable, setConfirmDeleteTable] = React.useState<
     PosTableGridResponse['tables'][number] | null
   >(null);
-  const [confirmRotateQrTable, setConfirmRotateQrTable] = React.useState<
-    PosTableGridResponse['tables'][number] | null
-  >(null);
-  const [printQrTable, setPrintQrTable] = React.useState<{
-    id: number;
+  const [confirmRotateQrTarget, setConfirmRotateQrTarget] = React.useState<{
+    id: number | 'TAKEAWAY';
     name: string;
-    qrToken: string;
   } | null>(null);
+  const [printQrTarget, setPrintQrTarget] = React.useState<QrPreviewTarget | null>(null);
   const [qrImageDataUrl, setQrImageDataUrl] = React.useState<string>('');
+  const [downloadingQrKey, setDownloadingQrKey] = React.useState<string | null>(null);
+  const [isExportingZip, setIsExportingZip] = React.useState(false);
 
   const createMutation = useCreateDiningTableMutation();
   const updateMutation = useUpdateDiningTableMutation();
   const deleteMutation = useDeleteDiningTableMutation();
   const rotateQrMutation = useRotateDiningTableQrMutation();
+  const rotateTakeawayQrMutation = useRotateTakeawayQrMutation();
+
+  const effectiveStoreName = settings.qr.storeName || settings.storeName || 'Quán Mì Cay';
 
   const buildTableQrUrl = React.useCallback((qrToken: string) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
@@ -68,12 +98,12 @@ export function TableManageDialog({
   }, []);
 
   React.useEffect(() => {
-    if (!printQrTable) {
+    if (!printQrTarget) {
       setQrImageDataUrl('');
       return;
     }
     let active = true;
-    const url = buildTableQrUrl(printQrTable.qrToken);
+    const url = buildTableQrUrl(printQrTarget.qrToken);
     void generateOfflineQrDataUrl(url)
       .then((dataUrl) => {
         if (active) setQrImageDataUrl(dataUrl);
@@ -84,49 +114,169 @@ export function TableManageDialog({
     return () => {
       active = false;
     };
-  }, [printQrTable, buildTableQrUrl]);
+  }, [printQrTarget, buildTableQrUrl]);
 
-  const handleCopyQrLink = async (table: PosTableGridResponse['tables'][number]) => {
-    if (!table.qrToken) return;
-    const url = buildTableQrUrl(table.qrToken);
+  const handleCopyQrLink = async (label: string, qrToken?: string) => {
+    if (!qrToken) return;
+    const url = buildTableQrUrl(qrToken);
     try {
       await navigator.clipboard?.writeText(url);
-      notify('pos.table.renameSuccess', {
+      notify('pos.table.qrCopied', {
         variant: 'success',
-        vars: { tableName: `${table.name} (Đã sao chép link QR)` },
+        vars: { tableName: label },
       });
     } catch {
-      notify('pos.table.renameSuccess', {
+      notify('pos.table.qrCopyFallback', {
         variant: 'default',
-        vars: { tableName: `${table.name}: ${url}` },
+        vars: { tableName: label, url },
       });
     }
   };
 
-  const handleRotateQr = async (table: PosTableGridResponse['tables'][number]) => {
+  const handleDownloadQrPng = async (params: {
+    key: string;
+    name: string;
+    subtitle: string;
+    qrToken?: string;
+  }) => {
+    if (!params.qrToken) return;
+    setDownloadingQrKey(params.key);
     try {
-      const rotated = await rotateQrMutation.mutateAsync(table.id);
-      notify('pos.table.renameSuccess', {
-        variant: 'success',
-        vars: { tableName: `${rotated.name} (Đã đổi mã QR mới)` },
+      const blob = await renderQrCardPngBlob({
+        qrUrl: buildTableQrUrl(params.qrToken),
+        title: params.name,
+        storeName: effectiveStoreName,
+        subtitle: params.subtitle,
       });
-      setConfirmRotateQrTable(null);
-      setPrintQrTable({
+      const filename = `qr-${sanitizeQrFilename(params.name)}.png`;
+      downloadBlobFile(blob, filename);
+      notify('pos.table.qrDownloaded', {
+        variant: 'success',
+        vars: { tableName: params.name },
+      });
+    } catch (error) {
+      notify('pos.table.qrExportError', {
+        variant: 'destructive',
+        vars: {
+          reason:
+            error instanceof Error ? error.message : 'Không thể xuất ảnh PNG mã QR',
+        },
+      });
+    } finally {
+      setDownloadingQrKey(null);
+    }
+  };
+
+  const handleDownloadAllQrZip = async () => {
+    const targets: Array<{ name: string; subtitle: string; qrToken: string; filename: string }> = [
+      ...tables
+        .filter((t): t is typeof t & { qrToken: string } => Boolean(t.qrToken))
+        .map((t) => ({
+          name: t.name,
+          subtitle: 'Quét mã QR để gọi món tại bàn',
+          qrToken: t.qrToken,
+          filename: `qr-${sanitizeQrFilename(t.name)}.png`,
+        })),
+      ...(takeawayQrToken
+        ? [
+            {
+              name: 'Đơn Mang Về',
+              subtitle: 'Quét mã QR để tự đặt món Mang về',
+              qrToken: takeawayQrToken,
+              filename: 'qr-mang-ve.png',
+            },
+          ]
+        : []),
+    ];
+
+    if (targets.length === 0) {
+      notify('pos.table.qrExportError', {
+        variant: 'destructive',
+        vars: { reason: 'Chưa có mã QR nào sẵn sàng để xuất' },
+      });
+      return;
+    }
+
+    setIsExportingZip(true);
+    try {
+      const entries = await Promise.all(
+        targets.map(async (item) => {
+          const pngBlob = await renderQrCardPngBlob({
+            qrUrl: buildTableQrUrl(item.qrToken),
+            title: item.name,
+            storeName: effectiveStoreName,
+            subtitle: item.subtitle,
+          });
+          const buf = await pngBlob.arrayBuffer();
+          return {
+            name: item.filename,
+            data: new Uint8Array(buf),
+          };
+        }),
+      );
+      const zipBlob = createStoredZipBlob(entries);
+      const storeSlug = sanitizeQrFilename(effectiveStoreName);
+      downloadBlobFile(zipBlob, `qr-${storeSlug}-all.zip`);
+      notify('pos.table.qrZipExported', {
+        variant: 'success',
+        vars: { count: entries.length },
+      });
+    } catch (error) {
+      notify('pos.table.qrExportError', {
+        variant: 'destructive',
+        vars: {
+          reason:
+            error instanceof Error ? error.message : 'Không thể nén bộ ảnh mã QR (.zip)',
+        },
+      });
+    } finally {
+      setIsExportingZip(false);
+    }
+  };
+
+  const handleRotateQr = async (target: { id: number | 'TAKEAWAY'; name: string }) => {
+    try {
+      if (target.id === 'TAKEAWAY') {
+        const rotated = await rotateTakeawayQrMutation.mutateAsync();
+        notify('pos.table.qrRotateSuccess', {
+          variant: 'success',
+          vars: { tableName: 'Mã QR Mang về' },
+        });
+        setConfirmRotateQrTarget(null);
+        setPrintQrTarget({
+          id: 'TAKEAWAY',
+          name: 'Đặt món Mang về',
+          headline: 'QUÉT MÃ QR ĐẶT MÓN MANG VỀ',
+          subtitle: 'Quét mã QR để tự đặt món Mang về',
+          qrToken: rotated.qrToken,
+        });
+        return;
+      }
+
+      const rotated = await rotateQrMutation.mutateAsync(target.id);
+      notify('pos.table.qrRotateSuccess', {
+        variant: 'success',
+        vars: { tableName: rotated.name },
+      });
+      setConfirmRotateQrTarget(null);
+      setPrintQrTarget({
         id: rotated.id,
         name: rotated.name,
+        headline: 'QUÉT MÃ QR ĐẶT MÓN TẠI BÀN',
+        subtitle: 'Quét mã QR để gọi món tại bàn',
         qrToken: rotated.qrToken,
       });
     } catch (error) {
       const resolvedErr = resolveErrorMessage(
         'pos.table.saveError',
         error,
-        'Không thể đổi mã QR bàn',
+        'Không thể đổi mã QR',
       );
       notify('pos.table.saveError', {
         variant: 'destructive',
-        vars: { reason: resolvedErr.description ?? 'Không thể đổi mã QR bàn' },
+        vars: { reason: resolvedErr.description ?? 'Không thể đổi mã QR' },
       });
-      setConfirmRotateQrTable(null);
+      setConfirmRotateQrTarget(null);
     }
   };
 
@@ -252,14 +402,118 @@ export function TableManageDialog({
           data-testid="table-manage-dialog"
         >
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Utensils className="h-5 w-5 text-accent-text" />
-              <span>Quản lý Sơ đồ Bàn Vật lý ({tables.length} bàn)</span>
-            </DialogTitle>
-            <DialogDescription>
-              Thêm bàn mới, đổi tên bàn hoặc xoá bàn trống chưa phát sinh hoá đơn trong vòng 30 ngày qua.
-            </DialogDescription>
+            <div className="flex flex-wrap items-start justify-between gap-2 pr-6">
+              <div>
+                <DialogTitle className="flex items-center gap-2">
+                  <Utensils className="h-5 w-5 text-accent-text" />
+                  <span>Quản lý Sơ đồ Bàn Vật lý ({tables.length} bàn)</span>
+                </DialogTitle>
+                <DialogDescription className="mt-1">
+                  Thêm bàn mới, đổi tên bàn hoặc xuất ảnh mã QR cho từng bàn và kênh Mang về.
+                </DialogDescription>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="download-all-qr-zip-btn"
+                disabled={isExportingZip || (tables.every((t) => !t.qrToken) && !takeawayQrToken)}
+                onClick={() => void handleDownloadAllQrZip()}
+                className="gap-1.5 font-semibold shrink-0"
+              >
+                <Archive className="h-4 w-4 text-accent-text" />
+                <span>{isExportingZip ? 'Đang nén...' : 'Tải tất cả (.zip)'}</span>
+              </Button>
+            </div>
           </DialogHeader>
+
+          {takeawayQrToken ? (
+            <div
+              data-testid="takeaway-qr-manage-card"
+              className="rounded-xl border border-indigo-500/40 bg-indigo-500/5 p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5"
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
+                  <ShoppingBag className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-foreground">
+                    Mã QR Đặt món Mang về (Takeaway)
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    Dán tại quầy hoặc mặt tiền — mỗi lượt quét tạo 1 đơn Mang về độc lập.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="copy-takeaway-qr-btn"
+                  onClick={() => void handleCopyQrLink('Đặt món Mang về', takeawayQrToken)}
+                  className="h-8 px-2.5 text-xs gap-1"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  <span>Link QR</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="download-takeaway-qr-btn"
+                  disabled={downloadingQrKey === 'takeaway'}
+                  onClick={() =>
+                    void handleDownloadQrPng({
+                      key: 'takeaway',
+                      name: 'Đơn Mang Về',
+                      subtitle: 'Quét mã QR để tự đặt món Mang về',
+                      qrToken: takeawayQrToken,
+                    })
+                  }
+                  className="h-8 px-2.5 text-xs gap-1"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>{downloadingQrKey === 'takeaway' ? 'Đang tải...' : 'Tải ảnh'}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="print-takeaway-qr-btn"
+                  onClick={() =>
+                    setPrintQrTarget({
+                      id: 'TAKEAWAY',
+                      name: 'Đặt món Mang về',
+                      headline: 'QUÉT MÃ QR ĐẶT MÓN MANG VỀ',
+                      subtitle: 'Quét mã QR để tự đặt món Mang về',
+                      qrToken: takeawayQrToken,
+                    })
+                  }
+                  className="h-8 px-2.5 text-xs gap-1"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  <span>In QR 80mm</span>
+                </Button>
+                {canManageTables ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="rotate-takeaway-qr-btn"
+                    disabled={rotateTakeawayQrMutation.isPending}
+                    onClick={() =>
+                      setConfirmRotateQrTarget({ id: 'TAKEAWAY', name: 'Mã QR Mang về' })
+                    }
+                    className="h-8 px-2.5 text-xs gap-1 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Đổi mã</span>
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           {canManageTables ? (
             <div className="rounded-xl border border-border bg-muted/30 p-3.5 space-y-2.5">
@@ -280,6 +534,9 @@ export function TableManageDialog({
 
               <div className="flex items-center gap-2">
                 <Input
+                  id="pos-table-name-input"
+                  name="tableName"
+                  aria-label={editingTable ? 'Sửa tên bàn vật lý' : 'Tên bàn vật lý mới'}
                   data-testid="pos-table-name-input"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -364,7 +621,9 @@ export function TableManageDialog({
                             className="h-7 px-2 text-xs gap-1 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
                             data-testid={`rotate-pos-table-qr-btn-${t.id}`}
                             disabled={rotateQrMutation.isPending}
-                            onClick={() => setConfirmRotateQrTable(t)}
+                            onClick={() =>
+                              setConfirmRotateQrTarget({ id: t.id, name: t.name })
+                            }
                             title="Đổi mã QR mới cho bàn (vô hiệu hoá mã QR cũ bị lộ)"
                           >
                             <RefreshCw className="h-3 w-3" />
@@ -389,14 +648,14 @@ export function TableManageDialog({
                           </Button>
                         </div>
                         {t.qrToken ? (
-                          <div className="flex items-center justify-between gap-1 border-t border-dashed border-border/50 pt-1">
+                          <div className="flex flex-wrap items-center justify-between gap-1 border-t border-dashed border-border/50 pt-1">
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               className="h-6 px-1.5 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
                               data-testid={`copy-pos-table-qr-btn-${t.id}`}
-                              onClick={() => void handleCopyQrLink(t)}
+                              onClick={() => void handleCopyQrLink(t.name, t.qrToken)}
                               title="Sao chép đường dẫn đặt món QR của bàn"
                             >
                               <Copy className="h-3 w-3" />
@@ -407,14 +666,40 @@ export function TableManageDialog({
                               variant="ghost"
                               size="sm"
                               className="h-6 px-1.5 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                              data-testid={`download-pos-table-qr-btn-${t.id}`}
+                              disabled={downloadingQrKey === `table-${t.id}`}
+                              onClick={() =>
+                                void handleDownloadQrPng({
+                                  key: `table-${t.id}`,
+                                  name: t.name,
+                                  subtitle: 'Quét mã QR để gọi món tại bàn',
+                                  qrToken: t.qrToken,
+                                })
+                              }
+                              title="Tải ảnh thẻ mã QR (PNG) để in hoặc gửi"
+                            >
+                              <Download className="h-3 w-3" />
+                              <span>Tải ảnh</span>
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-1.5 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
                               data-testid={`print-pos-table-qr-btn-${t.id}`}
                               onClick={() =>
-                                setPrintQrTable({ id: t.id, name: t.name, qrToken: t.qrToken! })
+                                setPrintQrTarget({
+                                  id: t.id,
+                                  name: t.name,
+                                  headline: 'QUÉT MÃ QR ĐẶT MÓN TẠI BÀN',
+                                  subtitle: 'Quét mã QR để gọi món tại bàn',
+                                  qrToken: t.qrToken!,
+                                })
                               }
                               title="In phiếu mã QR dán bàn khổ 80mm"
                             >
                               <Printer className="h-3 w-3" />
-                              <span>In QR 80mm</span>
+                              <span>In QR</span>
                             </Button>
                           </div>
                         ) : null}
@@ -441,20 +726,22 @@ export function TableManageDialog({
                   <Trash2 className="h-5 w-5" />
                   <span>{deleteConfirmCopy.title}</span>
                 </DialogTitle>
-                <DialogDescription className="space-y-2 pt-2 text-left">
-                  <p>
-                    {deleteConfirmCopy.isOverridden && deleteConfirmCopy.description ? (
-                      deleteConfirmCopy.description
-                    ) : (
-                      <>
-                        Bạn có chắc chắn muốn xoá bàn{' '}
-                        <strong className="text-foreground">{confirmDeleteTable?.name}</strong> khỏi sơ đồ bàn vật lý?
-                      </>
-                    )}
-                  </p>
-                  <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20">
-                    Lưu ý: Bàn chỉ có thể xoá khi đang trống và không phát sinh bất kỳ hoá đơn nào trong vòng 30 ngày gần đây.
-                  </p>
+                <DialogDescription asChild>
+                  <div className="space-y-2 pt-2 text-left text-sm text-muted-foreground">
+                    <p>
+                      {deleteConfirmCopy.isOverridden && deleteConfirmCopy.description ? (
+                        deleteConfirmCopy.description
+                      ) : (
+                        <>
+                          Bạn có chắc chắn muốn xoá bàn{' '}
+                          <strong className="text-foreground">{confirmDeleteTable?.name}</strong> khỏi sơ đồ bàn vật lý?
+                        </>
+                      )}
+                    </p>
+                    <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20">
+                      Lưu ý: Bàn chỉ có thể xoá khi đang trống và không phát sinh bất kỳ hoá đơn nào trong vòng 30 ngày gần đây.
+                    </p>
+                  </div>
                 </DialogDescription>
               </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
@@ -484,33 +771,37 @@ export function TableManageDialog({
 
       {/* Rotate QR Confirmation Dialog */}
       <Dialog
-        open={Boolean(confirmRotateQrTable)}
+        open={Boolean(confirmRotateQrTarget)}
         onOpenChange={(next) => {
-          if (!next && !rotateQrMutation.isPending) setConfirmRotateQrTable(null);
+          if (!next && !rotateQrMutation.isPending && !rotateTakeawayQrMutation.isPending) {
+            setConfirmRotateQrTarget(null);
+          }
         }}
       >
         <DialogContent className="max-w-md" data-testid="table-rotate-qr-confirm-dialog">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
               <RefreshCw className="h-5 w-5" />
-              <span>Đổi mã QR cho {confirmRotateQrTable?.name}</span>
+              <span>Đổi mã QR cho {confirmRotateQrTarget?.name}</span>
             </DialogTitle>
-            <DialogDescription className="space-y-2 pt-2 text-left">
-              <p>
-                Bạn có chắc chắn muốn tạo mã QR mới cho{' '}
-                <strong className="text-foreground">{confirmRotateQrTable?.name}</strong>?
-              </p>
-              <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20">
-                Mã QR cũ dán trên bàn sẽ bị vô hiệu hoá ngay lập tức để chặn kẻ xấu quét từ xa. Đơn hàng đang phục vụ tại bàn (nếu có) vẫn được giữ nguyên.
-              </p>
-            </DialogDescription>
+                <DialogDescription asChild>
+                  <div className="space-y-2 pt-2 text-left text-sm text-muted-foreground">
+                    <p>
+                      Bạn có chắc chắn muốn tạo mã QR mới cho{' '}
+                      <strong className="text-foreground">{confirmRotateQrTarget?.name}</strong>?
+                    </p>
+                    <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20">
+                      Mã QR cũ sẽ bị vô hiệu hoá ngay lập tức để tránh quét nhầm/lạm dụng. Các đơn hàng đang mở vẫn được giữ nguyên.
+                    </p>
+                  </div>
+                </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setConfirmRotateQrTable(null)}
-              disabled={rotateQrMutation.isPending}
+              onClick={() => setConfirmRotateQrTarget(null)}
+              disabled={rotateQrMutation.isPending || rotateTakeawayQrMutation.isPending}
             >
               Huỷ bỏ
             </Button>
@@ -518,45 +809,49 @@ export function TableManageDialog({
               type="button"
               data-testid="confirm-rotate-table-qr-btn"
               onClick={() => {
-                if (confirmRotateQrTable) void handleRotateQr(confirmRotateQrTable);
+                if (confirmRotateQrTarget) void handleRotateQr(confirmRotateQrTarget);
               }}
-              disabled={rotateQrMutation.isPending}
+              disabled={rotateQrMutation.isPending || rotateTakeawayQrMutation.isPending}
               className="font-bold"
             >
-              {rotateQrMutation.isPending ? 'Đang tạo mã mới...' : 'Xác nhận đổi mã QR'}
+              {rotateQrMutation.isPending || rotateTakeawayQrMutation.isPending
+                ? 'Đang tạo mã mới...'
+                : 'Xác nhận đổi mã QR'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* 80mm Thermal QR Slip Print Dialog */}
+      {/* 80mm Thermal QR Slip & Image Export Dialog */}
       <Dialog
-        open={Boolean(printQrTable)}
+        open={Boolean(printQrTarget)}
         onOpenChange={(next) => {
-          if (!next) setPrintQrTable(null);
+          if (!next) setPrintQrTarget(null);
         }}
       >
-        <DialogContent className="max-w-sm" data-testid="table-print-qr-dialog">
+        <DialogContent className="sm:max-w-md" data-testid="table-print-qr-dialog">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <QrCode className="h-5 w-5 text-accent-text" />
-              <span>Phiếu Mã QR Đặt Món 80mm — {printQrTable?.name}</span>
+              <span>Phiếu Mã QR — {printQrTarget?.name}</span>
             </DialogTitle>
             <DialogDescription>
-              In phiếu nhiệt 80mm để dán lên mặt bàn cho khách quét gọi món.
+              In phiếu nhiệt 80mm hoặc tải ảnh thẻ PNG để in màu / gửi khách hàng.
             </DialogDescription>
           </DialogHeader>
-          {printQrTable ? (
+          {printQrTarget ? (
             <div
               data-testid="thermal-table-qr-slip"
               className="mx-auto flex w-[280px] flex-col items-center rounded-xl border border-dashed border-border bg-white p-4 text-center text-black shadow-xs"
             >
-              <p className="text-xs font-bold uppercase tracking-wider">QUÉT MÃ QR ĐẶT MÓN TẠI BÀN</p>
-              <p className="mt-1 text-xl font-extrabold">{printQrTable.name}</p>
+              <p className="text-xs font-bold uppercase tracking-wider">
+                {printQrTarget.headline}
+              </p>
+              <p className="mt-1 text-xl font-extrabold">{printQrTarget.name}</p>
               {qrImageDataUrl ? (
                 <img
                   src={qrImageDataUrl}
-                  alt={`QR ${printQrTable.name}`}
+                  alt={`QR ${printQrTarget.name}`}
                   className="my-3 h-44 w-44 rounded border border-neutral-200 p-1"
                 />
               ) : (
@@ -564,33 +859,54 @@ export function TableManageDialog({
                   Đang tạo mã QR...
                 </div>
               )}
-              <p className="break-all font-mono text-[10px] text-neutral-600">
-                {buildTableQrUrl(printQrTable.qrToken)}
+              <p className="break-all font-mono text-[9.5px] leading-snug text-neutral-600">
+                {buildTableQrUrl(printQrTarget.qrToken)}
               </p>
             </div>
           ) : null}
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setPrintQrTable(null)}>
+          <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <Button type="button" variant="outline" onClick={() => setPrintQrTarget(null)}>
               Đóng
             </Button>
-            <Button
-              type="button"
-              data-testid="trigger-print-table-qr-btn"
-              disabled={!printQrTable || !qrImageDataUrl}
-              onClick={() => {
-                if (!printQrTable || !qrImageDataUrl) return;
-                thermalPrinter.printTableQr({
-                  tableName: printQrTable.name,
-                  qrUrl: buildTableQrUrl(printQrTable.qrToken),
-                  qrImageDataUrl,
-                  storeName: settings.storeName,
-                });
-              }}
-              className="gap-1.5 font-bold"
-            >
-              <Printer className="h-4 w-4" />
-              <span>In mã QR 80mm</span>
-            </Button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="download-print-table-qr-btn"
+                disabled={!printQrTarget || downloadingQrKey === 'preview'}
+                onClick={() => {
+                  if (!printQrTarget) return;
+                  void handleDownloadQrPng({
+                    key: 'preview',
+                    name: printQrTarget.name,
+                    subtitle: printQrTarget.subtitle,
+                    qrToken: printQrTarget.qrToken,
+                  });
+                }}
+                className="gap-1.5 font-semibold"
+              >
+                <Download className="h-4 w-4" />
+                <span>{downloadingQrKey === 'preview' ? 'Đang tải...' : 'Tải ảnh PNG'}</span>
+              </Button>
+              <Button
+                type="button"
+                data-testid="trigger-print-table-qr-btn"
+                disabled={!printQrTarget || !qrImageDataUrl}
+                onClick={() => {
+                  if (!printQrTarget || !qrImageDataUrl) return;
+                  thermalPrinter.printTableQr({
+                    tableName: printQrTarget.name,
+                    qrUrl: buildTableQrUrl(printQrTarget.qrToken),
+                    qrImageDataUrl,
+                    storeName: effectiveStoreName,
+                  });
+                }}
+                className="gap-1.5 font-bold"
+              >
+                <Printer className="h-4 w-4" />
+                <span>In mã QR 80mm</span>
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

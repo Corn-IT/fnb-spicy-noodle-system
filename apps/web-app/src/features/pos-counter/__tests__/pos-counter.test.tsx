@@ -8,7 +8,9 @@ import { ThermalPrintProvider } from '@/components/print-slips';
 import { useToastStore } from '@/components/ui/toast';
 import { PosUnifiedPage } from '@/features/pos-counter';
 import { LiveInvoicePanel } from '../components/live-invoice-panel';
+import { QrSecurityConfigDialog } from '../components/qr-security-config-dialog';
 import { TableManageDialog } from '../components/table-manage-dialog';
+import * as qrExportUtils from '@/utils/qr-export';
 import { QrOrderPage } from '@/features/qr-order';
 import { apiClient } from '@/lib/api-client';
 import * as qrVoiceAnnouncer from '@/lib/qr-voice-announcer';
@@ -1545,6 +1547,179 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
       expect(screen.getByTestId('btn-provisional-bill')).toBeDisabled();
       expect(screen.getByTestId('btn-checkout')).toBeDisabled();
       expect(screen.queryByTestId('cancel-printed-item-1')).not.toBeInTheDocument();
+    });
+
+    it('renders Takeaway QR management card, exports single PNG & batch ZIP, toggles Takeaway QR security, and displays Quét QR mang về + note on LiveInvoicePanel', async () => {
+      const tableToken = 'a'.repeat(64);
+      const takeawayToken = 'e'.repeat(64);
+      const rotatedToken = 'b'.repeat(64);
+
+      const pngSpy = vi
+        .spyOn(qrExportUtils, 'renderQrCardPngBlob')
+        .mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }));
+      const zipSpy = vi
+        .spyOn(qrExportUtils, 'createStoredZipBlob')
+        .mockReturnValue(new Blob([new Uint8Array([4, 5])], { type: 'application/zip' }));
+      const downloadSpy = vi
+        .spyOn(qrExportUtils, 'downloadBlobFile')
+        .mockImplementation(() => undefined);
+
+      const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({ qrToken: rotatedToken });
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryProvider client={queryClient}>
+          <ThermalPrintProvider>
+            <TableManageDialog
+              open
+              onOpenChange={vi.fn()}
+              tables={[
+                {
+                  id: 1,
+                  name: 'Bàn 01',
+                  qrToken: tableToken,
+                  status: 'AVAILABLE',
+                  activeOrderId: null,
+                  activeOrder: null,
+                },
+              ]}
+              takeawayQrToken={takeawayToken}
+              canManageTables
+            />
+          </ThermalPrintProvider>
+        </QueryProvider>,
+      );
+
+      expect(screen.getByTestId('takeaway-qr-manage-card')).toBeInTheDocument();
+
+      // Single PNG download for Bàn 01 and Takeaway QR
+      fireEvent.click(screen.getByTestId('download-pos-table-qr-btn-1'));
+      await waitFor(() => expect(pngSpy).toHaveBeenCalledTimes(1));
+      expect(downloadSpy).toHaveBeenCalledWith(expect.any(Blob), 'qr-ban-01.png');
+
+      fireEvent.click(screen.getByTestId('download-takeaway-qr-btn'));
+      await waitFor(() => expect(pngSpy).toHaveBeenCalledTimes(2));
+      expect(downloadSpy).toHaveBeenCalledWith(expect.any(Blob), 'qr-don-mang-ve.png');
+
+      // Preview dialog PNG download button
+      fireEvent.click(screen.getByTestId('print-takeaway-qr-btn'));
+      expect(await screen.findByTestId('download-print-table-qr-btn')).toBeInTheDocument();
+
+      // Batch ZIP download
+      fireEvent.click(screen.getByTestId('download-all-qr-zip-btn'));
+      await waitFor(() => expect(zipSpy).toHaveBeenCalledTimes(1));
+      expect(downloadSpy).toHaveBeenCalledWith(
+        expect.any(Blob),
+        expect.stringMatching(/^qr-.*\.zip$/),
+      );
+
+      // Rotate Takeaway QR confirmation
+      fireEvent.click(screen.getByTestId('rotate-takeaway-qr-btn'));
+      fireEvent.click(await screen.findByTestId('confirm-rotate-table-qr-btn'));
+      await waitFor(() =>
+        expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/takeaway-qr/rotate', {}),
+      );
+
+      // QrSecurityConfigDialog applySecurityToTakeaway toggle
+      vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+        wifiProtectionEnabled: false,
+        autoSyncPosIp: true,
+        allowedWifiIps: [],
+        wifiSsid: '',
+        wifiPassword: '',
+        geoProtectionEnabled: false,
+        shopLatitude: null,
+        shopLongitude: null,
+        geoRadiusMeters: 200,
+        applySecurityToTakeaway: false,
+        detectedClientIp: '127.0.0.1',
+        syncedPosIp: '127.0.0.1',
+        updatedAt: '2026-11-22T00:00:00.000Z',
+      });
+      const putSecuritySpy = vi.spyOn(apiClient, 'put').mockResolvedValueOnce({
+        wifiProtectionEnabled: false,
+        autoSyncPosIp: true,
+        allowedWifiIps: [],
+        wifiSsid: '',
+        wifiPassword: '',
+        geoProtectionEnabled: false,
+        shopLatitude: null,
+        shopLongitude: null,
+        geoRadiusMeters: 200,
+        applySecurityToTakeaway: true,
+        detectedClientIp: '127.0.0.1',
+        syncedPosIp: '127.0.0.1',
+        updatedAt: '2026-11-22T00:00:00.000Z',
+      });
+
+      render(
+        <QueryProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <QrSecurityConfigDialog open onOpenChange={vi.fn()} />
+        </QueryProvider>,
+      );
+
+      const takeawayToggle = await screen.findByTestId('toggle-takeaway-qr-security-btn');
+      expect(takeawayToggle).toHaveTextContent('Đang TẮT');
+      fireEvent.click(takeawayToggle);
+      expect(takeawayToggle).toHaveTextContent('Đang BẬT');
+      fireEvent.click(screen.getByTestId('save-qr-security-config-btn'));
+      await waitFor(() =>
+        expect(putSecuritySpy).toHaveBeenCalledWith(
+          '/api/v1/pos/qr-security-config',
+          expect.objectContaining({ applySecurityToTakeaway: true }),
+        ),
+      );
+
+      // LiveInvoicePanel shows "Quét QR mang về" and order.note
+      const qrTakeawayOrder: OrderDetailResponse = {
+        orderId: 300,
+        orderCode: 'HD-20261122-0001',
+        orderType: 'TAKEAWAY',
+        orderSource: 'QR_CODE',
+        tableId: null,
+        tableLabel: null,
+        takeawayNumber: 1,
+        status: 'PENDING',
+        paymentMethod: null,
+        cashAmount: 0,
+        transferAmount: 0,
+        subtotalAmount: 45000,
+        discountAmount: 0,
+        discountId: null,
+        discountSnapshot: null,
+        discountWarning: null,
+        totalAmount: 45000,
+        note: 'Khách: Anh Minh - 0901234567 | Ít cay',
+        createdAt: new Date().toISOString(),
+        paidAt: null,
+        tableTransferLogs: [],
+        items: [],
+      };
+      render(
+        <LiveInvoicePanel
+          order={qrTakeawayOrder}
+          draftTarget={null}
+          draftItems={[]}
+          isSplitPending={false}
+          isProvisionalPending={false}
+          isApprovingQr={false}
+          isSubmittingDraft={false}
+          onUpdateDraftQty={vi.fn()}
+          onRemoveDraftItem={vi.fn()}
+          onSubmitDraftOrder={vi.fn()}
+          onApproveQrOrder={vi.fn()}
+          onUpdateOrderItemQuantity={vi.fn()}
+          onRemoveOrCancelOrderItem={vi.fn()}
+          onOpenTableAction={vi.fn()}
+          onSplitKitchen={vi.fn()}
+          onPrintProvisionalBill={vi.fn()}
+          onOpenCheckout={vi.fn()}
+        />,
+      );
+      expect(screen.getByText('Quét QR mang về')).toBeInTheDocument();
+      expect(screen.getByTestId('invoice-order-note')).toHaveTextContent(
+        'Khách: Anh Minh - 0901234567 | Ít cay',
+      );
     });
   });
 });

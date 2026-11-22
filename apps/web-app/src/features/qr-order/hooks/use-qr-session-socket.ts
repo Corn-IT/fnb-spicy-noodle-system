@@ -24,6 +24,7 @@ export interface QrOrderStatusUpdatedPayload {
 
 export interface QrSessionState {
   activeOrderId: number | null;
+  guestSessionToken: string | null;
   currentTableLabel: string;
   orderStatus: OrderStatus | null;
   statusMessage: string | null;
@@ -53,6 +54,7 @@ function writeStoredSession(qrToken: string, state: Partial<QrSessionState>): vo
 export interface ServerQrTableSnapshot {
   tableName?: string;
   activeOrderId?: number | null;
+  orderMode?: 'DINE_IN' | 'TAKEAWAY';
 }
 
 export function useQrSessionSocket(
@@ -68,6 +70,7 @@ export function useQrSessionSocket(
 
   const [sessionState, setSessionState] = React.useState<QrSessionState>(() => ({
     activeOrderId: initialStored.activeOrderId ?? null,
+    guestSessionToken: initialStored.guestSessionToken ?? null,
     currentTableLabel: initialStored.currentTableLabel ?? initialTableName ?? '',
     orderStatus: initialStored.orderStatus ?? null,
     statusMessage: initialStored.statusMessage ?? null,
@@ -78,49 +81,62 @@ export function useQrSessionSocket(
     staleCandidateOrderIdRef.current = readStoredSession(qrToken).activeOrderId ?? null;
   }, [qrToken]);
 
-  React.useEffect(() => {
-    if (initialTableName && !sessionState.currentTableLabel) {
+  const syncTableSnapshot = React.useCallback(
+    (tableName?: string, snapshot?: ServerQrTableSnapshot) => {
+      if (tableName) {
+        setSessionState((prev) => {
+          const shouldSetTakeawayLabel =
+            snapshot?.orderMode === 'TAKEAWAY' && tableName !== prev.currentTableLabel;
+          if (!prev.currentTableLabel || shouldSetTakeawayLabel) {
+            const next: QrSessionState = { ...prev, currentTableLabel: tableName };
+            writeStoredSession(qrToken, next);
+            return next;
+          }
+          return prev;
+        });
+      }
+
+      const staleOrderId = staleCandidateOrderIdRef.current;
+      if (!snapshot?.tableName || staleOrderId === null) {
+        return;
+      }
+
+      const isStaleTakeaway =
+        snapshot.orderMode === 'TAKEAWAY' &&
+        snapshot.activeOrderId !== staleOrderId &&
+        staleOrderId === sessionState.activeOrderId;
+      const sameTableAndStale =
+        snapshot.tableName === sessionState.currentTableLabel &&
+        snapshot.activeOrderId !== staleOrderId &&
+        staleOrderId === sessionState.activeOrderId;
+
+      if (!sameTableAndStale && !isStaleTakeaway) return;
+
+      staleCandidateOrderIdRef.current = null;
       setSessionState((prev) => {
-        const next = { ...prev, currentTableLabel: initialTableName };
+        const next: QrSessionState = {
+          ...prev,
+          activeOrderId: snapshot.activeOrderId ?? null,
+          guestSessionToken: snapshot.activeOrderId ? prev.guestSessionToken : null,
+          orderStatus: null,
+          statusMessage: null,
+          redirectNotice: null,
+        };
         writeStoredSession(qrToken, next);
         return next;
       });
-    }
-  }, [initialTableName, qrToken, sessionState.currentTableLabel]);
+    },
+    [qrToken, sessionState.activeOrderId, sessionState.currentTableLabel],
+  );
 
   React.useEffect(() => {
-    const staleOrderId = staleCandidateOrderIdRef.current;
-    if (
-      !serverTableSnapshot?.tableName ||
-      staleOrderId === null ||
-      sessionState.activeOrderId !== staleOrderId
-    ) {
-      return;
-    }
-
-    const sameTableAndStale =
-      serverTableSnapshot.tableName === sessionState.currentTableLabel &&
-      serverTableSnapshot.activeOrderId !== staleOrderId;
-    if (!sameTableAndStale) return;
-
-    staleCandidateOrderIdRef.current = null;
-    setSessionState((prev) => {
-      const next: QrSessionState = {
-        ...prev,
-        activeOrderId: serverTableSnapshot.activeOrderId ?? null,
-        orderStatus: null,
-        statusMessage: null,
-        redirectNotice: null,
-      };
-      writeStoredSession(qrToken, next);
-      return next;
-    });
+    syncTableSnapshot(initialTableName, serverTableSnapshot);
   }, [
-    qrToken,
+    syncTableSnapshot,
+    initialTableName,
     serverTableSnapshot?.tableName,
     serverTableSnapshot?.activeOrderId,
-    sessionState.activeOrderId,
-    sessionState.currentTableLabel,
+    serverTableSnapshot?.orderMode,
   ]);
 
   const registerSubmittedOrder = React.useCallback(
@@ -128,6 +144,7 @@ export function useQrSessionSocket(
       activeOrderId: number;
       currentTableLabel: string;
       status: OrderStatus;
+      guestSessionToken?: string | null;
     }) => {
       staleCandidateOrderIdRef.current = null;
       const defaultMsg = resolveCachedAppMessage(
@@ -137,6 +154,7 @@ export function useQrSessionSocket(
         const next: QrSessionState = {
           ...prev,
           activeOrderId: payload.activeOrderId,
+          guestSessionToken: payload.guestSessionToken ?? prev.guestSessionToken,
           currentTableLabel: payload.currentTableLabel,
           orderStatus: payload.status,
           statusMessage: defaultMsg,
@@ -148,6 +166,27 @@ export function useQrSessionSocket(
     [qrToken],
   );
 
+  const startNewTakeawaySession = React.useCallback(() => {
+    staleCandidateOrderIdRef.current = null;
+    setSessionState({
+      activeOrderId: null,
+      guestSessionToken: null,
+      currentTableLabel: 'Mang về',
+      orderStatus: null,
+      statusMessage: null,
+      redirectNotice: null,
+    });
+    writeStoredSession(qrToken, {
+      activeOrderId: null,
+      guestSessionToken: null,
+      currentTableLabel: 'Mang về',
+      orderStatus: null,
+      statusMessage: null,
+      redirectNotice: null,
+    });
+    void queryClient.invalidateQueries({ queryKey: ['public-menu', qrToken] });
+  }, [qrToken, queryClient]);
+
   React.useEffect(() => {
     if (!qrToken) return;
 
@@ -155,6 +194,9 @@ export function useQrSessionSocket(
       mode: 'qr_guest',
       qrToken,
       orderId: sessionState.activeOrderId,
+      ...(sessionState.guestSessionToken
+        ? { guestSessionToken: sessionState.guestSessionToken }
+        : {}),
     });
 
     const invalidatePublicMenu = () => {
@@ -211,6 +253,7 @@ export function useQrSessionSocket(
         const next: QrSessionState = {
           ...prev,
           activeOrderId: isTerminal ? null : prev.activeOrderId,
+          guestSessionToken: isTerminal ? null : prev.guestSessionToken,
           orderStatus: payload.status,
           statusMessage,
         };
@@ -243,6 +286,7 @@ export function useQrSessionSocket(
           const next: QrSessionState = {
             ...prev,
             activeOrderId: null,
+            guestSessionToken: null,
             orderStatus: 'VOIDED',
             statusMessage,
           };
@@ -269,6 +313,7 @@ export function useQrSessionSocket(
         const next: QrSessionState = {
           ...prev,
           activeOrderId: null,
+          guestSessionToken: null,
           orderStatus: null,
           statusMessage: null,
           redirectNotice: null,
@@ -297,10 +342,12 @@ export function useQrSessionSocket(
       socket.off(SocketEvents.STORE_SETTINGS_UPDATED, handleStoreSettingsUpdated);
       disconnectPosSocket();
     };
-  }, [qrToken, sessionState.activeOrderId, queryClient]);
+  }, [qrToken, sessionState.activeOrderId, sessionState.guestSessionToken, queryClient]);
 
   return {
     ...sessionState,
     registerSubmittedOrder,
+    startNewTakeawaySession,
+    syncTableSnapshot,
   };
 }

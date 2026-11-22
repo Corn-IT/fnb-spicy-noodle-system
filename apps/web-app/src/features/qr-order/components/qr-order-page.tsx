@@ -51,7 +51,6 @@ import { cn } from '@/utils/cn';
 import { matchesVietnameseQuery } from '@/utils/search';
 import { syncDocumentThemeMode } from '@/utils/store-theme';
 import {
-  qrOrderQueryKeys,
   usePublicMenuQuery,
   useSubmitQrOrderMutation,
   type GuestQrCoordinates,
@@ -113,11 +112,45 @@ export function QrOrderPage() {
   const [gpsErrorMsg, setGpsErrorMsg] = React.useState<string | null>(null);
   const autoTriedGpsRef = React.useRef(false);
 
+  const {
+    activeOrderId,
+    guestSessionToken,
+    currentTableLabel,
+    orderStatus,
+    statusMessage,
+    redirectNotice,
+    registerSubmittedOrder,
+    startNewTakeawaySession,
+    syncTableSnapshot,
+  } = useQrSessionSocket(token);
+
+  const sessionFilter = React.useMemo(
+    () =>
+      activeOrderId && guestSessionToken
+        ? { activeOrderId, guestSessionToken }
+        : undefined,
+    [activeOrderId, guestSessionToken],
+  );
+
   const { data: menuData, isPending, isError, error, refetch } = usePublicMenuQuery(
     token,
     guestCoords,
+    sessionFilter,
   );
   const submitMutation = useSubmitQrOrderMutation();
+
+  React.useEffect(() => {
+    if (!menuData?.table) return;
+    syncTableSnapshot(menuData.table.tableName, {
+      tableName: menuData.table.tableName,
+      activeOrderId: menuData.table.activeOrderId,
+      orderMode: menuData.orderMode,
+    });
+  }, [
+    syncTableSnapshot,
+    menuData?.table,
+    menuData?.orderMode,
+  ]);
   const { settings } = useStoreSettings();
   const { resolveMessage, resolveErrorMessage, notify } = useAppMessages();
   const qrLogoUrl =
@@ -176,16 +209,10 @@ export function QrOrderPage() {
     settings.defaultTheme,
   ]);
 
-  const {
-    activeOrderId,
-    currentTableLabel,
-    orderStatus,
-    statusMessage,
-    redirectNotice,
-    registerSubmittedOrder,
-  } = useQrSessionSocket(token, menuData?.table.tableName, menuData?.table);
-
   const [cart, setCart] = React.useState<CartLineItem[]>([]);
+  const [customerName, setCustomerName] = React.useState('');
+  const [customerPhone, setCustomerPhone] = React.useState('');
+  const [takeawayNote, setTakeawayNote] = React.useState('');
   const [cartSheetOpen, setCartSheetOpen] = React.useState(false);
   const [placedOrdersSheetOpen, setPlacedOrdersSheetOpen] = React.useState(false);
   const [selectingProduct, setSelectingProduct] = React.useState<Product | null>(null);
@@ -194,6 +221,7 @@ export function QrOrderPage() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const menuSearch = useCommitSearch(searchQuery, setSearchQuery);
 
+  const isTakeaway = menuData?.orderMode === 'TAKEAWAY';
   const resolvedTableName = currentTableLabel || menuData?.table.tableName || 'Bàn QR';
   const resolvedActiveOrderId = activeOrderId ?? menuData?.table.activeOrderId ?? undefined;
 
@@ -460,6 +488,16 @@ export function QrOrderPage() {
       const response = await submitMutation.mutateAsync({
         qrToken: token,
         ...(resolvedActiveOrderId ? { activeOrderId: resolvedActiveOrderId } : {}),
+        ...(resolvedActiveOrderId && guestSessionToken ? { guestSessionToken } : {}),
+        ...(isTakeaway && !resolvedActiveOrderId && customerName.trim()
+          ? { customerName: customerName.trim() }
+          : {}),
+        ...(isTakeaway && !resolvedActiveOrderId && customerPhone.trim()
+          ? { customerPhone: customerPhone.trim() }
+          : {}),
+        ...(isTakeaway && !resolvedActiveOrderId && takeawayNote.trim()
+          ? { note: takeawayNote.trim() }
+          : {}),
         ...(guestCoords ? { latitude: guestCoords.lat, longitude: guestCoords.lng } : {}),
         items: cart.map((item) => ({
           productId: item.productId,
@@ -473,9 +511,13 @@ export function QrOrderPage() {
         activeOrderId: response.activeOrderId,
         currentTableLabel: response.currentTableLabel,
         status: response.status,
+        guestSessionToken: response.guestSessionToken ?? null,
       });
       setCart([]);
-      void queryClient.invalidateQueries({ queryKey: qrOrderQueryKeys.publicMenu(token, guestCoords) });
+      setCustomerName('');
+      setCustomerPhone('');
+      setTakeawayNote('');
+      void queryClient.invalidateQueries({ queryKey: ['public-menu', token] });
       notify('qr.order.submitSuccess', {
         variant: 'success',
         vars: { batchNo: response.batchNo, tableLabel: response.currentTableLabel },
@@ -682,17 +724,29 @@ export function QrOrderPage() {
           </p>
         ) : null}
 
-        <div
-          data-testid="qr-table-transfer-warning"
-          className="mt-2.5 flex items-center gap-2 rounded-lg border-2 border-amber-500 bg-amber-500/15 px-3 py-2 text-xs font-bold text-amber-950 dark:border-amber-400 dark:bg-amber-950/70 dark:text-amber-100 shadow-xs animate-pulse"
-        >
-          <span className="relative flex h-2.5 w-2.5 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
-          </span>
-          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <span>{resolveMessage('qr.banner.tableMoveNotice').title}</span>
-        </div>
+        {!isTakeaway ? (
+          <div
+            data-testid="qr-table-transfer-warning"
+            className="mt-2.5 flex items-center gap-2 rounded-lg border-2 border-amber-500 bg-amber-500/15 px-3 py-2 text-xs font-bold text-amber-950 dark:border-amber-400 dark:bg-amber-950/70 dark:text-amber-100 shadow-xs animate-pulse"
+          >
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+            </span>
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>{resolveMessage('qr.banner.tableMoveNotice').title}</span>
+          </div>
+        ) : (
+          <div
+            data-testid="qr-takeaway-mode-banner"
+            className="mt-2.5 flex items-center justify-between gap-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs font-semibold text-sky-900 dark:border-sky-400/40 dark:bg-sky-950/60 dark:text-sky-100"
+          >
+            <span className="flex items-center gap-1.5">
+              <ShoppingBag className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
+              Đặt món Mang về — Quầy sẽ gọi theo số thứ tự khi đơn sẵn sàng
+            </span>
+          </div>
+        )}
 
         {redirectNotice ? (
           <div
@@ -708,33 +762,48 @@ export function QrOrderPage() {
           <div
             data-testid="qr-status-banner"
             className={cn(
-              'mt-2.5 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold',
+              'mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs font-semibold',
               orderStatus === 'VOIDED'
                 ? 'border-red-500/60 bg-red-50 text-red-950 dark:border-red-500/40 dark:bg-red-950/70 dark:text-red-100'
                 : 'border-emerald-500/50 bg-emerald-50 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-950/70 dark:text-emerald-100',
             )}
           >
-            <CheckCircle2
-              className={cn(
-                'h-4 w-4 shrink-0',
-                orderStatus === 'VOIDED'
-                  ? 'text-red-600 dark:text-red-400'
-                  : 'text-emerald-600 dark:text-emerald-400',
-              )}
-            />
-            <span>
-              {statusMessage} (
-              {orderStatus === 'SERVING'
-                ? 'Đang phục vụ'
-                : orderStatus === 'PENDING'
-                  ? 'Mới gọi món'
-                  : orderStatus === 'PAID'
-                    ? 'Đã thanh toán'
-                    : orderStatus === 'VOIDED'
-                      ? 'Đã huỷ'
-                      : orderStatus}
-              )
-            </span>
+            <div className="flex items-center gap-2 min-w-0">
+              <CheckCircle2
+                className={cn(
+                  'h-4 w-4 shrink-0',
+                  orderStatus === 'VOIDED'
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-emerald-600 dark:text-emerald-400',
+                )}
+              />
+              <span>
+                {statusMessage} (
+                {orderStatus === 'SERVING'
+                  ? 'Đang phục vụ'
+                  : orderStatus === 'PENDING'
+                    ? 'Mới gọi món'
+                    : orderStatus === 'PAID'
+                      ? 'Đã thanh toán'
+                      : orderStatus === 'VOIDED'
+                        ? 'Đã huỷ'
+                        : orderStatus}
+                )
+              </span>
+            </div>
+            {isTakeaway && (orderStatus === 'PAID' || orderStatus === 'VOIDED') ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="qr-takeaway-new-order-banner-btn"
+                onClick={startNewTakeawaySession}
+                className="h-7 gap-1 px-2 text-[11px] font-bold"
+              >
+                <Plus className="h-3 w-3" />
+                Tạo đơn mang về mới
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </header>
@@ -751,9 +820,12 @@ export function QrOrderPage() {
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               {...menuSearch.inputProps}
+              id="qr-menu-search-input"
+              name="qrMenuSearch"
+              aria-label="Tìm tên món ăn"
               placeholder="Tìm tên món ăn (VD: mì cay, tokbokki, trà đào...)"
               data-testid="qr-menu-search-input"
-              className="h-9 pl-9 pr-8 text-xs sm:text-sm rounded-xl"
+              className="h-9 pl-9 pr-8 text-base sm:text-sm rounded-xl"
             />
             {menuSearch.draft ? (
               <button
@@ -890,29 +962,44 @@ export function QrOrderPage() {
       {(activeOrder || cart.length > 0) ? (
         <div className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md space-y-2 p-3 pb-safe">
           {activeOrder ? (
-            <button
-              type="button"
-              data-testid="qr-placed-orders-bar"
-              onClick={() => setPlacedOrdersSheetOpen(true)}
-              className="flex w-full items-center justify-between gap-2 rounded-2xl border border-emerald-500/40 bg-card/95 px-3.5 py-2.5 text-left shadow-lg backdrop-blur-md transition hover:border-emerald-500 active:scale-[0.99]"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600/15 text-emerald-600 dark:text-emerald-400">
-                  <ClipboardList className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-foreground">
-                    Món đã gọi ({placedTotalQty} món)
+            <div className="flex items-stretch gap-2">
+              <button
+                type="button"
+                data-testid="qr-placed-orders-bar"
+                onClick={() => setPlacedOrdersSheetOpen(true)}
+                className="flex flex-1 items-center justify-between gap-2 rounded-2xl border border-emerald-500/40 bg-card/95 px-3.5 py-2.5 text-left shadow-lg backdrop-blur-md transition hover:border-emerald-500 active:scale-[0.99] min-w-0"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600/15 text-emerald-600 dark:text-emerald-400">
+                    <ClipboardList className="h-4 w-4" />
                   </div>
-                  <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
-                    Tạm tính: {activeOrder.totalAmount.toLocaleString('vi-VN')} đ • Bấm xem chi tiết
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-foreground">
+                      Món đã gọi ({placedTotalQty} món)
+                    </div>
+                    <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
+                      Tạm tính: {activeOrder.totalAmount.toLocaleString('vi-VN')} đ
+                      <span className="hidden sm:inline"> • Bấm xem chi tiết</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <Badge variant="outline" className="shrink-0 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 text-[11px]">
-                Xem lại
-              </Badge>
-            </button>
+                <Badge variant="outline" className="shrink-0 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 text-[11px]">
+                  Xem lại
+                </Badge>
+              </button>
+              {isTakeaway ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-testid="qr-takeaway-new-order-btn"
+                  onClick={startNewTakeawaySession}
+                  className="h-auto shrink-0 rounded-2xl border-primary/40 bg-card/95 px-3 py-2 text-xs font-bold text-accent-text shadow-lg backdrop-blur-md gap-1"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Đơn mới</span>
+                </Button>
+              ) : null}
+            </div>
           ) : null}
 
           {cart.length > 0 ? (
@@ -959,7 +1046,7 @@ export function QrOrderPage() {
         <SheetContent
           side="bottom"
           data-testid="qr-placed-orders-sheet"
-          className="max-h-[85vh] rounded-t-3xl border-t bg-background p-4 sm:p-6 shadow-2xl flex flex-col"
+          className="max-h-[85vh] supports-[height:85dvh]:max-h-[85dvh] rounded-t-3xl border-t bg-background p-4 sm:p-6 shadow-2xl flex flex-col"
         >
           <SheetHeader className="pb-3 border-b text-left pr-10">
             <SheetTitle className="text-base font-bold flex items-center gap-2">
@@ -973,6 +1060,14 @@ export function QrOrderPage() {
                   }`
                 : ''}
             </SheetDescription>
+            {activeOrder?.note ? (
+              <p
+                data-testid="qr-placed-order-note"
+                className="mt-1.5 rounded-lg border bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground"
+              >
+                {activeOrder.note}
+              </p>
+            ) : null}
           </SheetHeader>
 
           <div className="flex-1 overflow-y-auto space-y-4 py-3 pr-1 max-h-[55vh]">
@@ -1049,7 +1144,7 @@ export function QrOrderPage() {
       <Sheet open={cartSheetOpen} onOpenChange={setCartSheetOpen}>
         <SheetContent
           side="bottom"
-          className="max-h-[85vh] rounded-t-3xl border-t bg-background p-4 sm:p-6 shadow-2xl flex flex-col"
+          className="max-h-[85vh] supports-[height:85dvh]:max-h-[85dvh] rounded-t-3xl border-t bg-background p-4 sm:p-6 shadow-2xl flex flex-col"
         >
           <SheetHeader className="pb-3 border-b text-left pr-10">
             <SheetTitle className="text-base font-bold flex items-center gap-2">
@@ -1061,7 +1156,7 @@ export function QrOrderPage() {
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto space-y-2.5 py-3 pr-1 max-h-[50vh]">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 py-3 pr-1">
             <div className="flex items-center justify-between pb-1 px-0.5">
               <span className="text-xs font-semibold text-muted-foreground">
                 Món đã chọn ({cartCount})
@@ -1137,9 +1232,55 @@ export function QrOrderPage() {
                 </div>
               </div>
             ))}
+
+            {isTakeaway && !resolvedActiveOrderId ? (
+              <div
+                data-testid="qr-takeaway-customer-fields"
+                className="space-y-2 rounded-xl border bg-muted/30 p-3"
+              >
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Thông tin nhận đơn Mang về (tuỳ chọn)
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Input
+                    id="qr-takeaway-customer-name"
+                    name="customerName"
+                    aria-label="Tên khách hàng"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="Tên khách (VD: Anh Minh)"
+                    maxLength={80}
+                    data-testid="qr-takeaway-customer-name"
+                    className="h-10 sm:h-9 text-base sm:text-xs"
+                  />
+                  <Input
+                    id="qr-takeaway-customer-phone"
+                    name="customerPhone"
+                    aria-label="Số điện thoại khách hàng"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    placeholder="Số điện thoại"
+                    maxLength={25}
+                    data-testid="qr-takeaway-customer-phone"
+                    className="h-10 sm:h-9 text-base sm:text-xs"
+                  />
+                </div>
+                <Input
+                  id="qr-takeaway-note"
+                  name="takeawayNote"
+                  aria-label="Ghi chú đơn mang về"
+                  value={takeawayNote}
+                  onChange={(e) => setTakeawayNote(e.target.value)}
+                  placeholder="Ghi chú đơn (VD: Để riêng nước dùng, không hành...)"
+                  maxLength={300}
+                  data-testid="qr-takeaway-note"
+                  className="h-10 sm:h-9 text-base sm:text-xs"
+                />
+              </div>
+            ) : null}
           </div>
 
-          <div className="border-t pt-3 space-y-3">
+          <div className="shrink-0 border-t pt-3 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-muted-foreground">Tổng cộng</span>
               <span className="text-lg font-extrabold text-price">

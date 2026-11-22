@@ -1,6 +1,6 @@
 import { UserPermissionsSchema, type PosTableGridResponse } from '@fnb/shared';
 import { QueryClient } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,6 +41,7 @@ describe('AppShell global QR overdue warning banner & reminder monitor', () => {
   });
 
   afterEach(() => {
+    cleanup();
     useAuthStore.getState().clearAuth();
     vi.restoreAllMocks();
     localStorage.clear();

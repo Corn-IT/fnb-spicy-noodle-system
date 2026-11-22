@@ -12,6 +12,7 @@ export type SocketAuthMode =
       mode: 'qr_guest';
       qrToken: string;
       orderId?: number | string | null;
+      guestSessionToken?: string | null;
     };
 
 let activeSocket: Socket | null = null;
@@ -34,6 +35,9 @@ export function connectPosSocket(authConfig: SocketAuthMode): Socket {
           qrToken: authConfig.qrToken,
           ...(authConfig.orderId !== undefined && authConfig.orderId !== null
             ? { orderId: authConfig.orderId }
+            : {}),
+          ...(authConfig.guestSessionToken
+            ? { guestSessionToken: authConfig.guestSessionToken }
             : {}),
         };
 

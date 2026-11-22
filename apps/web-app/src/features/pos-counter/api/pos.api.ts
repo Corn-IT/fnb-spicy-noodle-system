@@ -17,6 +17,7 @@ import {
   QrSecurityConfigResponseSchema,
   ReprintKitchenRequestSchema,
   RotateTableQrResponseSchema,
+  RotateTakeawayQrResponseSchema,
   SplitCheckoutOrderRequestSchema,
   SplitKitchenResponseSchema,
   SplitProvisionalBillRequestSchema,
@@ -38,6 +39,7 @@ import {
   type QrSecurityConfigResponse,
   type ReprintKitchenRequest,
   type RotateTableQrResponse,
+  type RotateTakeawayQrResponse,
   type SplitCheckoutOrderRequest,
   type SplitKitchenResponse,
   type SplitProvisionalBillRequest,
@@ -205,6 +207,11 @@ export async function deletePosDiningTable(id: number): Promise<{ deleted: boole
 export async function rotatePosDiningTableQr(id: number): Promise<RotateTableQrResponse> {
   const raw = await apiClient.post<unknown>(`/api/v1/pos/tables/${id}/rotate-qr`, {});
   return RotateTableQrResponseSchema.parse(raw);
+}
+
+export async function rotatePosTakeawayQr(): Promise<RotateTakeawayQrResponse> {
+  const raw = await apiClient.post<unknown>('/api/v1/pos/takeaway-qr/rotate', {});
+  return RotateTakeawayQrResponseSchema.parse(raw);
 }
 
 export async function cancelPosOrder(params: {
@@ -406,6 +413,16 @@ export function useRotateDiningTableQrMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: rotatePosDiningTableQr,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
+    },
+  });
+}
+
+export function useRotateTakeawayQrMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: rotatePosTakeawayQr,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
     },

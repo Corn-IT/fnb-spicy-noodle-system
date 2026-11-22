@@ -43,35 +43,50 @@ export function buildPendingQrKey(orderId: number, kind: QrVoiceAlertKind, since
 export function collectPendingQrItems(
   tableGrid: PosTableGridResponse | undefined | null,
 ): PendingQrItem[] {
-  if (!tableGrid?.tables) return [];
+  if (!tableGrid) return [];
   const items: PendingQrItem[] = [];
 
-  for (const table of tableGrid.tables) {
-    const order = table.activeOrder;
-    if (!order) continue;
+  const pushIfPending = (
+    order: PosOrderSummary | null | undefined,
+    fallbackLabel: string,
+    isPendingTarget: boolean,
+  ) => {
+    if (!order) return;
 
     let kind: QrVoiceAlertKind | null = null;
     if (order.pendingQrKind === 'NEW' || order.pendingQrKind === 'ADDON') {
       kind = order.pendingQrKind;
-    } else if (order.pendingQrKind === undefined && table.status === 'PENDING' && order.status === 'PENDING') {
+    } else if (order.pendingQrKind === undefined && isPendingTarget && order.status === 'PENDING') {
       kind = 'NEW';
     }
 
-    if (!kind) continue;
+    if (!kind) return;
     const sinceIso = order.pendingQrSince ?? (kind === 'NEW' ? order.createdAt : null);
-    if (!sinceIso) continue;
+    if (!sinceIso) return;
     const sinceMs = Date.parse(sinceIso);
-    if (!Number.isFinite(sinceMs)) continue;
+    if (!Number.isFinite(sinceMs)) return;
 
     items.push({
       key: buildPendingQrKey(order.orderId, kind, sinceIso),
       orderId: order.orderId,
       orderCode: order.orderCode,
-      tableLabel: order.tableLabel ?? table.name,
+      tableLabel: order.tableLabel ?? fallbackLabel,
       kind,
       sinceIso,
       sinceMs,
     });
+  };
+
+  for (const table of tableGrid.tables ?? []) {
+    pushIfPending(table.activeOrder, table.name, table.status === 'PENDING');
+  }
+
+  for (const takeaway of tableGrid.takeaways ?? []) {
+    const fallbackLabel =
+      takeaway.takeawayNumber != null
+        ? `Mang về #${String(takeaway.takeawayNumber).padStart(2, '0')}`
+        : 'Mang về';
+    pushIfPending(takeaway, fallbackLabel, takeaway.status === 'PENDING');
   }
 
   return items.sort((a, b) => a.sinceMs - b.sinceMs || a.orderId - b.orderId);
