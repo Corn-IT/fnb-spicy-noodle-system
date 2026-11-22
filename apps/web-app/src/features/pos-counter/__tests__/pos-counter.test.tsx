@@ -1,5 +1,13 @@
 import { QueryClient } from '@tanstack/react-query';
-import { type PublicMenuResponse, type PosTableGridResponse, type OrderDetailResponse, UserPermissionsSchema } from '@fnb/shared';
+import {
+  DEFAULT_STORE_SETTINGS,
+  QR_CARD_DEFAULTS,
+  type OrderDetailResponse,
+  type PosTableGridResponse,
+  type PublicMenuResponse,
+  type PublicStoreSettingsResponse,
+  UserPermissionsSchema,
+} from '@fnb/shared';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1760,6 +1768,145 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
       await waitFor(() => {
         expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/tables/shorten-qr', {});
       });
+    });
+
+    it('lets authorized admins customize QR card template inside TableManageDialog, blocks non-settings roles from saving, and syncs 80mm Takeaway slip copy', async () => {
+      const serverUpdatedAt = '2026-11-22T08:00:00.000Z';
+      let currentSettings: PublicStoreSettingsResponse = {
+        ...DEFAULT_STORE_SETTINGS,
+        updatedAt: serverUpdatedAt,
+        assets: { logo: 'v-logo', favicon: null, qrLogo: null },
+        qrCard: { ...QR_CARD_DEFAULTS },
+      };
+
+      const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/settings' || url === '/api/v1/public/store-settings') {
+          return currentSettings;
+        }
+        throw new Error(`Unexpected GET ${url}`);
+      });
+
+      const putSpy = vi.spyOn(apiClient, 'put').mockImplementation(async (_url, body) => {
+        const savedFields = { ...(body as Record<string, unknown>) };
+        delete savedFields.expectedUpdatedAt;
+        currentSettings = {
+          ...currentSettings,
+          ...(savedFields as Partial<PublicStoreSettingsResponse>),
+          updatedAt: '2026-11-22T08:05:00.000Z',
+        };
+        return currentSettings;
+      });
+      const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: {
+          id: 1,
+          employeeId: 1,
+          username: 'superadmin',
+          fullName: 'Chủ Quán',
+          isSuperAdmin: true,
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, update: true },
+            settings: { view: true, update: true },
+          }),
+        },
+      });
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryProvider client={queryClient}>
+          <ThermalPrintProvider>
+            <TableManageDialog
+              open={true}
+              onOpenChange={vi.fn()}
+              tables={[
+                {
+                  id: 1,
+                  name: 'Bàn 01',
+                  qrToken: 'ban01-zry8',
+                  status: 'AVAILABLE',
+                  activeOrderId: null,
+                  activeOrder: null,
+                },
+              ]}
+              takeawayQrToken="mangve-qpy2"
+              canManageTables={true}
+            />
+          </ThermalPrintProvider>
+        </QueryProvider>,
+      );
+
+      fireEvent.click(screen.getByTestId('open-qr-template-customizer-btn'));
+      expect(await screen.findByTestId('qr-card-quick-dialog')).toBeInTheDocument();
+      await waitFor(() => expect(getSpy).toHaveBeenCalledWith('/api/v1/settings'));
+
+      fireEvent.change(screen.getByTestId('input-qr-card-takeaway-headline'), {
+        target: { value: 'QUÉT MÃ MANG VỀ TẠI QUẦY' },
+      });
+      fireEvent.change(screen.getByTestId('input-qr-card-footer-text'), {
+        target: { value: 'Quét mã để order ngay!' },
+      });
+      fireEvent.click(screen.getByTestId('checkbox-qr-card-show-link'));
+      fireEvent.click(screen.getByTestId('qr-card-quick-save-btn'));
+
+      await waitFor(() => {
+        expect(putSpy).toHaveBeenCalledWith(
+          '/api/v1/settings',
+          expect.objectContaining({
+            expectedUpdatedAt: serverUpdatedAt,
+            qrCard: expect.objectContaining({
+              takeawayHeadline: 'QUÉT MÃ MANG VỀ TẠI QUẦY',
+              footerText: 'Quét mã để order ngay!',
+              showLinkText: false,
+            }),
+          }),
+        );
+      });
+
+      // Wait for quick dialog close, then open Takeaway 80mm preview & verify synced copy (and hidden link)
+      await waitFor(() => {
+        expect(screen.queryByTestId('qr-card-quick-dialog')).not.toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId('print-takeaway-qr-btn'));
+      const slipPreview = await screen.findByTestId('thermal-table-qr-slip');
+      expect(slipPreview).toHaveTextContent('QUÉT MÃ MANG VỀ TẠI QUẦY');
+      expect(slipPreview).toHaveTextContent('Quét mã để order ngay!');
+      expect(screen.queryByTestId('preview-table-qr-link-text')).not.toBeInTheDocument();
+
+      const triggerPrintBtn = screen.getByTestId('trigger-print-table-qr-btn');
+      await waitFor(() => expect(triggerPrintBtn).not.toBeDisabled());
+      fireEvent.click(triggerPrintBtn);
+
+      await waitFor(() => expect(printSpy).toHaveBeenCalledTimes(1));
+      const printDom = document.getElementById('thermal-print-container');
+      expect(printDom?.textContent).toContain('QUÉT MÃ MANG VỀ TẠI QUẦY');
+      expect(printDom?.textContent).toContain('Quét mã để order ngay!');
+      expect(printDom?.textContent).not.toContain('/q/mangve-qpy2');
+
+      // Switch to cashier without settings:update permission -> quick dialog becomes strictly read-only
+      useAuthStore.getState().setAuth({
+        accessToken: 'cashier-token',
+        user: {
+          id: 3,
+          employeeId: 3,
+          username: 'thungan01',
+          fullName: 'Thu Ngân',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, update: true },
+            settings: { view: false, update: false },
+          }),
+        },
+      });
+      fireEvent.click(screen.getByTestId('open-qr-template-customizer-btn'));
+      expect(await screen.findByTestId('qr-card-quick-dialog')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByTestId('qr-card-quick-save-btn')).not.toBeInTheDocument();
+        expect(screen.getByTestId('input-qr-card-takeaway-headline')).toBeDisabled();
+      });
+      await screen.findByAltText('Xem trước mã QR');
     });
   });
 });

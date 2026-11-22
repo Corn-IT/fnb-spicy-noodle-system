@@ -114,7 +114,10 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
 
   React.useEffect(() => {
     if (!activePrintJob) return;
-    if (activePrintJob.type === 'PROVISIONAL_VIETQR') {
+    if (
+      activePrintJob.type === 'PROVISIONAL_VIETQR' ||
+      (activePrintJob.type === 'TABLE_QR' && Boolean(activePrintJob.payload.logoUrl))
+    ) {
       return;
     }
 
@@ -222,7 +225,15 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
         ) : null}
 
         {currentRenderJob?.type === 'TABLE_QR' ? (
-          <TableQrSlip key={currentRenderJob.id} {...currentRenderJob.payload} />
+          <TableQrSlip
+            key={currentRenderJob.id}
+            {...currentRenderJob.payload}
+            onReadyToPrint={
+              currentRenderJob.payload.logoUrl
+                ? () => executeBrowserPrintAndDequeue(currentRenderJob.id)
+                : undefined
+            }
+          />
         ) : null}
       </div>
     </ThermalPrinterContext.Provider>

@@ -2,19 +2,20 @@ import {
   ALLOWED_STORE_NAV_PATHS,
   DEFAULT_STORE_SETTINGS,
   ErrorCodes,
+  normalizeQrCardSettings,
   sanitizeNavGroupLabels,
   sanitizeNavGroupOrder,
   sanitizeNavLabels,
   sanitizeNavOrder,
   sanitizePageHeaders,
   sanitizeStoreMessages,
+  StoreAssetKind,
   StoreSettingsSchema,
   validateStoreMessagesMap,
   type ColorOverride,
   type PrintTemplateKey,
   type PrintTemplates,
   type PublicStoreSettingsResponse,
-  type StoreAssetKind,
   type StoreMessagesMap,
   type StoreSettings,
   type UploadStoreAssetInput,
@@ -39,10 +40,12 @@ import { AuditHistoryButton } from '@/components/audit-history-drawer/audit-hist
 import { SystemErrorView } from '@/components/error-display';
 import { APP_NAVIGATION_ROUTES } from '@/components/layout/command-palette';
 import { PageHeader } from '@/components/layout/page-header';
+import { QrCardCustomizer } from '@/components/qr-card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAppMessages, useStoreMessagesQuery } from '@/hooks/use-app-messages';
+import { buildStoreAssetUrl } from '@/hooks/use-store-settings';
 import { ApiClientError } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/auth.store';
 import { computeHslContrastRatio } from '@/utils/store-theme';
@@ -183,6 +186,7 @@ function extractFormSettings(source: StoreSettings): StoreSettings {
     priceColor: { ...source.priceColor },
     defaultTheme: source.defaultTheme,
     qr: { ...source.qr },
+    qrCard: { ...source.qrCard },
     receipt: { ...source.receipt },
     navLabels: { ...source.navLabels },
     navGroupLabels: { ...source.navGroupLabels },
@@ -211,6 +215,7 @@ function normalizeDraftBeforeSubmit(draft: StoreSettings): StoreSettings {
       subtitle: draft.qr.subtitle.trim(),
       welcomeMessage: draft.qr.welcomeMessage.trim(),
     },
+    qrCard: normalizeQrCardSettings(draft.qrCard),
     receipt: {
       ...draft.receipt,
       printName: draft.receipt.printName.trim(),
@@ -845,6 +850,34 @@ export function StoreSettingsPage() {
                 ))}
               </div>
             </div>
+          </div>
+
+          <div className="space-y-4 rounded-xl border bg-card p-5 shadow-xs">
+            <div>
+              <h3 className="text-base font-bold text-foreground">
+                Mẫu Thẻ Ảnh & Phiếu In Mã QR Dán Bàn (Khổ 80mm / PNG)
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Tuỳ chỉnh tiêu đề, dòng hướng dẫn, màu viền nhấn và hiển thị Logo/Link cho ảnh QR tải về (.png/.zip) cũng như phiếu in nhiệt QR 80mm.
+              </p>
+            </div>
+            <QrCardCustomizer
+              value={draft.qrCard}
+              onChange={(nextQrCard) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  qrCard: nextQrCard,
+                }))
+              }
+              storeName={draft.storeName}
+              qrStoreName={draft.qr.storeName}
+              brandColor={draft.brandColor}
+              logoUrl={
+                buildStoreAssetUrl(StoreAssetKind.QR_LOGO, activeAssets.qrLogo) ??
+                buildStoreAssetUrl(StoreAssetKind.LOGO, activeAssets.logo)
+              }
+              disabled={!canUpdate}
+            />
           </div>
 
           <MessageCatalogEditor

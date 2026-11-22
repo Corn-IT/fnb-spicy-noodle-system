@@ -5,11 +5,87 @@ export interface QrCardPngParams {
   title: string;
   storeName: string;
   subtitle?: string;
+  footerText?: string;
+  accentColor?: string;
+  showLinkText?: boolean;
+  logoUrl?: string | null;
+  preloadedLogoImage?: CanvasImageSource | null;
 }
 
 export interface ZipEntryInput {
   name: string;
   data: Uint8Array;
+}
+
+/**
+ * Kiểm tra nhanh xem URL hiện tại có phải localhost / mạng nội bộ LAN hay không.
+ */
+export function isLocalhostOrPrivateHost(originOrUrl: string): boolean {
+  try {
+    const parsed = new URL(originOrUrl);
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '::1' ||
+      host.endsWith('.local')
+    ) {
+      return true;
+    }
+    if (/^10\./.test(host) || /^192\.168\./.test(host)) {
+      return true;
+    }
+    const octets = host.match(/^172\.(\d{1,3})\./);
+    if (octets) {
+      const second = Number(octets[1]);
+      return second >= 16 && second <= 31;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Tải trước ảnh Logo 1 lần để dùng chung khi xuất PNG đơn hoặc hàng loạt .zip (không làm văng lỗi nếu mạng lỗi).
+ */
+export function preloadQrCardLogo(
+  logoUrl: string | null | undefined,
+): Promise<CanvasImageSource | null> {
+  if (!logoUrl || typeof Image === 'undefined') {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    let settled = false;
+    const timer =
+      typeof window !== 'undefined'
+        ? window.setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              resolve(null);
+            }
+          }, 2500)
+        : null;
+
+    const finish = (result: CanvasImageSource | null) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null && typeof window !== 'undefined') {
+        window.clearTimeout(timer);
+      }
+      resolve(result);
+    };
+
+    img.onload = () => {
+      const hasPixels = (img.naturalWidth ?? img.width ?? 0) > 0;
+      finish(hasPixels ? img : null);
+    };
+    img.onerror = () => finish(null);
+    img.src = logoUrl;
+  });
 }
 
 const CRC32_TABLE = (() => {
@@ -59,6 +135,130 @@ export function sanitizeQrFilename(label: string): string {
   return ascii || 'qr-code';
 }
 
+function resolveCanvasImageDimensions(
+  image: CanvasImageSource,
+): { width: number; height: number } {
+  const candidate = image as {
+    naturalWidth?: number;
+    naturalHeight?: number;
+    width?: number;
+    height?: number;
+  };
+  const width = Number(candidate.naturalWidth ?? candidate.width ?? 0);
+  const height = Number(candidate.naturalHeight ?? candidate.height ?? 0);
+  return { width, height };
+}
+
+function drawQrCardToCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  params: QrCardPngParams,
+  qrCanvas: HTMLCanvasElement,
+  qrSize: number,
+  logoImage: CanvasImageSource | null,
+): void {
+  const accentColor =
+    params.accentColor && /^#[0-9a-fA-F]{6}$/.test(params.accentColor.trim())
+      ? params.accentColor.trim().toUpperCase()
+      : '#EA580C';
+  const logoDims = logoImage ? resolveCanvasImageDimensions(logoImage) : { width: 0, height: 0 };
+  const hasLogo = Boolean(logoImage && logoDims.width > 0 && logoDims.height > 0);
+  const showLinkText = params.showLinkText !== false;
+
+  // White card backdrop + subtle border
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(20, 20, width - 40, height - 40);
+
+  // Top accent strip
+  ctx.fillStyle = accentColor;
+  ctx.fillRect(20, 20, width - 40, 14);
+
+  if (hasLogo && logoImage) {
+    const maxBox = 56;
+    const scale = Math.min(maxBox / logoDims.width, maxBox / logoDims.height);
+    const drawW = Math.max(1, Math.round(logoDims.width * scale));
+    const drawH = Math.max(1, Math.round(logoDims.height * scale));
+    const drawX = Math.round((width - drawW) / 2);
+    const drawY = Math.round(52 + (maxBox - drawH) / 2);
+    ctx.drawImage(logoImage, drawX, drawY, drawW, drawH);
+  }
+
+  // Store name
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#64748B';
+  ctx.font = '700 26px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText(
+    (params.storeName || 'Quán Mì Cay').trim().toUpperCase(),
+    width / 2,
+    hasLogo ? 128 : 86,
+    width - 96,
+  );
+
+  // Table / Takeaway main title
+  ctx.fillStyle = '#0F172A';
+  ctx.font = '800 54px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText(params.title.trim(), width / 2, hasLogo ? 176 : 152, width - 96);
+
+  // Subtitle instruction
+  ctx.fillStyle = accentColor;
+  ctx.font = '600 24px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText(
+    params.subtitle?.trim() || 'Quét mã QR để xem thực đơn & đặt món',
+    width / 2,
+    hasLogo ? 220 : 208,
+    width - 96,
+  );
+
+  const qrX = (width - qrSize) / 2;
+  const qrY = hasLogo ? 252 : 248;
+  ctx.strokeStyle = '#CBD5E1';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20);
+  ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+
+  // Footer instructions
+  const footerLabel = params.footerText?.trim() || 'Mở Camera hoặc truy cập nhanh:';
+  ctx.fillStyle = '#334155';
+  ctx.font = '600 22px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  const footerY = showLinkText ? (hasLogo ? 768 : 780) : 796;
+  ctx.fillText(footerLabel, width / 2, footerY, width - 96);
+
+  if (showLinkText) {
+    ctx.fillStyle = '#475569';
+    ctx.font = '600 18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    const cleanDisplayUrl = params.qrUrl.replace(/^https?:\/\//i, '');
+    const shortUrl =
+      cleanDisplayUrl.length > 56 ? `${cleanDisplayUrl.slice(0, 53)}...` : cleanDisplayUrl;
+    ctx.fillText(shortUrl, width / 2, hasLogo ? 816 : 826, width - 96);
+  }
+}
+
+function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    try {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+            return;
+          }
+          reject(new Error('Không thể xuất file ảnh PNG từ trình duyệt'));
+        },
+        'image/png',
+        1,
+      );
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 /**
  * Tạo ảnh thẻ QR dạng PNG độ phân giải cao (tên quán + tên bàn + hướng dẫn + mã QR sắc nét).
  */
@@ -78,42 +278,12 @@ export async function renderQrCardPngBlob(params: QrCardPngParams): Promise<Blob
     throw new Error('Cannot acquire 2D canvas context for QR export');
   }
 
-  // White card backdrop + subtle border
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, width, height);
+  let logoImage = params.preloadedLogoImage ?? null;
+  if (!logoImage && params.logoUrl) {
+    logoImage = await preloadQrCardLogo(params.logoUrl);
+  }
 
-  ctx.strokeStyle = '#E2E8F0';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(20, 20, width - 40, height - 40);
-
-  // Top accent strip
-  ctx.fillStyle = '#EA580C';
-  ctx.fillRect(20, 20, width - 40, 14);
-
-  // Store name
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#64748B';
-  ctx.font = '700 26px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText((params.storeName || 'Quán Mì Cay').trim().toUpperCase(), width / 2, 86, width - 96);
-
-  // Table / Takeaway main title
-  ctx.fillStyle = '#0F172A';
-  ctx.font = '800 54px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText(params.title.trim(), width / 2, 152, width - 96);
-
-  // Subtitle instruction
-  ctx.fillStyle = '#EA580C';
-  ctx.font = '600 24px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText(
-    params.subtitle?.trim() || 'Quét mã QR để xem thực đơn & đặt món',
-    width / 2,
-    208,
-    width - 96,
-  );
-
-  // Render crisp QR code onto temporary canvas then compose onto card
-  const qrSize = 480;
+  const qrSize = logoImage ? 456 : 480;
   const qrCanvas = document.createElement('canvas');
   await QRCode.toCanvas(qrCanvas, params.qrUrl, {
     width: qrSize,
@@ -125,37 +295,17 @@ export async function renderQrCardPngBlob(params: QrCardPngParams): Promise<Blob
     },
   });
 
-  const qrX = (width - qrSize) / 2;
-  const qrY = 248;
-  ctx.strokeStyle = '#CBD5E1';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20);
-  ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
-
-  // Footer instructions
-  ctx.fillStyle = '#334155';
-  ctx.font = '600 22px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText('Mở Camera hoặc truy cập nhanh:', width / 2, 780, width - 96);
-
-  ctx.fillStyle = '#475569';
-  ctx.font = '600 18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-  const cleanDisplayUrl = params.qrUrl.replace(/^https?:\/\//i, '');
-  const shortUrl = cleanDisplayUrl.length > 56 ? `${cleanDisplayUrl.slice(0, 53)}...` : cleanDisplayUrl;
-  ctx.fillText(shortUrl, width / 2, 826, width - 96);
-
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          resolve(blob);
-          return;
-        }
-        reject(new Error('Không thể xuất file ảnh PNG từ trình duyệt'));
-      },
-      'image/png',
-      1,
-    );
-  });
+  drawQrCardToCanvas(ctx, width, height, params, qrCanvas, qrSize, logoImage);
+  try {
+    return await canvasToPngBlob(canvas);
+  } catch {
+    if (logoImage) {
+      // Fallback cleanly without logo if cross-origin logo tainted canvas export
+      drawQrCardToCanvas(ctx, width, height, params, qrCanvas, qrSize, null);
+      return canvasToPngBlob(canvas);
+    }
+    throw new Error('Không thể xuất file ảnh PNG từ trình duyệt');
+  }
 }
 
 /**
