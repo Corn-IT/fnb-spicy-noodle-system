@@ -320,4 +320,59 @@ describe('@fnb/shared store-settings contracts', () => {
     });
     expect(contracts.StoreSettingsSchema.safeParse(corruptBlocks).success).toBe(false);
   });
+
+  it('validates QrCardSettingsSchema, migrates missing qrCard defaults, and resolves non-empty display labels', () => {
+    expect(contracts).toHaveProperty('QrCardSettingsSchema');
+    expect(contracts).toHaveProperty('QR_CARD_DEFAULTS');
+    expect(contracts).toHaveProperty('resolveQrCardDisplay');
+
+    const legacyWithoutQrCard = {
+      ...contracts.DEFAULT_STORE_SETTINGS,
+      qrCard: undefined,
+    };
+    const merged = contracts.mergeStoreSettingsWithDefaults(legacyWithoutQrCard);
+    const parsed = contracts.StoreSettingsSchema.safeParse(merged);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.qrCard).toEqual(contracts.QR_CARD_DEFAULTS);
+    }
+
+    const partialMerged = contracts.mergeStoreSettingsWithDefaults({
+      ...contracts.DEFAULT_STORE_SETTINGS,
+      qrCard: {
+        tableSubtitle: '  Quét nhanh gọi món  ',
+        showLogo: true,
+        showLinkText: false,
+      },
+    });
+    const parsedPartial = contracts.StoreSettingsSchema.safeParse(partialMerged);
+    expect(parsedPartial.success).toBe(true);
+    if (parsedPartial.success) {
+      expect(parsedPartial.data.qrCard.tableSubtitle).toBe('Quét nhanh gọi món');
+      expect(parsedPartial.data.qrCard.showLogo).toBe(true);
+      expect(parsedPartial.data.qrCard.showLinkText).toBe(false);
+      expect(parsedPartial.data.qrCard.takeawayTitle).toBe(contracts.QR_CARD_DEFAULTS.takeawayTitle);
+    }
+
+    const badColor = contracts.StoreSettingsSchema.safeParse({
+      ...contracts.DEFAULT_STORE_SETTINGS,
+      qrCard: { ...contracts.QR_CARD_DEFAULTS, accentColor: 'red' },
+    });
+    expect(badColor.success).toBe(false);
+
+    const resolved = contracts.resolveQrCardDisplay({
+      storeName: 'Ăn Vặt Tran',
+      qr: { storeName: '  Tran QR  ', subtitle: '', welcomeMessage: '', theme: 'system' },
+      qrCard: {
+        ...contracts.QR_CARD_DEFAULTS,
+        tableHeadline: '   ',
+        takeawayTitle: 'Mang Về Nhanh',
+        accentColor: '#2563eb',
+      },
+    });
+    expect(resolved.storeName).toBe('Tran QR');
+    expect(resolved.tableHeadline).toBe(contracts.QR_CARD_DEFAULTS.tableHeadline);
+    expect(resolved.takeawayTitle).toBe('Mang Về Nhanh');
+    expect(resolved.accentColor).toBe('#2563EB');
+  });
 });

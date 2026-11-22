@@ -269,6 +269,65 @@ export const ALLOWED_STORE_NAV_GROUP_KEYS = [
 export type AllowedStoreNavGroupKey = (typeof ALLOWED_STORE_NAV_GROUP_KEYS)[number];
 const ALLOWED_STORE_NAV_GROUP_KEY_SET = new Set<string>(ALLOWED_STORE_NAV_GROUP_KEYS);
 
+export const QrCardSettingsSchema = z
+  .object({
+    tableHeadline: PlainText(60),
+    tableSubtitle: PlainText(120),
+    takeawayTitle: PlainText(60),
+    takeawayHeadline: PlainText(60),
+    takeawaySubtitle: PlainText(120),
+    footerText: PlainText(120),
+    accentColor: HexColorSchema,
+    showLogo: z.boolean(),
+    showLinkText: z.boolean(),
+  })
+  .strict();
+
+export type QrCardSettings = z.infer<typeof QrCardSettingsSchema>;
+
+export const QR_CARD_DEFAULTS: QrCardSettings = {
+  tableHeadline: 'QUÉT MÃ QR ĐẶT MÓN TẠI BÀN',
+  tableSubtitle: 'Quét mã QR để gọi món tại bàn',
+  takeawayTitle: 'Đơn Mang Về',
+  takeawayHeadline: 'QUÉT MÃ QR ĐẶT MÓN MANG VỀ',
+  takeawaySubtitle: 'Quét mã QR để tự đặt món Mang về',
+  footerText: 'Mở Camera hoặc truy cập nhanh:',
+  accentColor: '#EA580C',
+  showLogo: false,
+  showLinkText: true,
+};
+
+export function cloneDefaultQrCardSettings(): QrCardSettings {
+  return { ...QR_CARD_DEFAULTS };
+}
+
+export function normalizeQrCardSettings(source: QrCardSettings): QrCardSettings {
+  return {
+    tableHeadline: source.tableHeadline.trim(),
+    tableSubtitle: source.tableSubtitle.trim(),
+    takeawayTitle: source.takeawayTitle.trim(),
+    takeawayHeadline: source.takeawayHeadline.trim(),
+    takeawaySubtitle: source.takeawaySubtitle.trim(),
+    footerText: source.footerText.trim(),
+    accentColor: source.accentColor.trim().toUpperCase(),
+    showLogo: source.showLogo,
+    showLinkText: source.showLinkText,
+  };
+}
+
+export interface ResolvedQrCardDisplay {
+  storeName: string;
+  tableHeadline: string;
+  tableSubtitle: string;
+  takeawayTitle: string;
+  takeawayHeadline: string;
+  takeawaySubtitle: string;
+  footerText: string;
+  accentColor: string;
+  showLogo: boolean;
+  showLinkText: boolean;
+}
+
 export const StoreSettingsSchema = z.object({
   storeName: PlainText(60).min(1, 'Tên cửa hàng không được để trống'),
   subtitle: PlainText(80),
@@ -284,6 +343,7 @@ export const StoreSettingsSchema = z.object({
     welcomeMessage: PlainText(160),
     theme: QrThemeModeSchema,
   }).strict(),
+  qrCard: QrCardSettingsSchema,
   receipt: z.object({
     printName: PlainText(60),
     address: PlainText(160),
@@ -376,6 +436,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
     welcomeMessage: '',
     theme: 'system',
   },
+  qrCard: cloneDefaultQrCardSettings(),
   receipt: {
     printName: 'QUÁN ĂN VẶT TRAN',
     address: 'ĐC: Lạng Giang - Bắc Ninh',
@@ -406,6 +467,7 @@ export const NEUTRAL_STORE_SETTINGS: PublicStoreSettingsResponse = {
     welcomeMessage: '',
     theme: 'system',
   },
+  qrCard: cloneDefaultQrCardSettings(),
   receipt: {
     printName: '',
     address: '',
@@ -641,6 +703,11 @@ export function mergeStoreSettingsWithDefaults(rawCandidate: unknown): unknown {
       'qr' in definedEntries,
       definedEntries.qr,
     ),
+    qrCard: mergeNestedDefaults(
+      DEFAULT_STORE_SETTINGS.qrCard,
+      'qrCard' in definedEntries,
+      definedEntries.qrCard,
+    ),
     receipt: mergeNestedDefaults(
       DEFAULT_STORE_SETTINGS.receipt,
       'receipt' in definedEntries,
@@ -655,5 +722,29 @@ export function mergeStoreSettingsWithDefaults(rawCandidate: unknown): unknown {
       'printTemplates' in definedEntries,
       definedEntries.printTemplates,
     ),
+  };
+}
+
+export function resolveQrCardDisplay(
+  settings: Pick<StoreSettings, 'storeName' | 'qr' | 'qrCard'>,
+): ResolvedQrCardDisplay {
+  const storeName = settings.qr.storeName.trim() || settings.storeName.trim() || 'Quán Mì Cay';
+  const card = settings.qrCard;
+  const rawHex = card.accentColor.trim();
+  const accentColor = /^#[0-9a-fA-F]{6}$/.test(rawHex)
+    ? rawHex.toUpperCase()
+    : QR_CARD_DEFAULTS.accentColor;
+
+  return {
+    storeName,
+    tableHeadline: card.tableHeadline.trim() || QR_CARD_DEFAULTS.tableHeadline,
+    tableSubtitle: card.tableSubtitle.trim() || QR_CARD_DEFAULTS.tableSubtitle,
+    takeawayTitle: card.takeawayTitle.trim() || QR_CARD_DEFAULTS.takeawayTitle,
+    takeawayHeadline: card.takeawayHeadline.trim() || QR_CARD_DEFAULTS.takeawayHeadline,
+    takeawaySubtitle: card.takeawaySubtitle.trim() || QR_CARD_DEFAULTS.takeawaySubtitle,
+    footerText: card.footerText.trim() || QR_CARD_DEFAULTS.footerText,
+    accentColor,
+    showLogo: card.showLogo,
+    showLinkText: card.showLinkText,
   };
 }
