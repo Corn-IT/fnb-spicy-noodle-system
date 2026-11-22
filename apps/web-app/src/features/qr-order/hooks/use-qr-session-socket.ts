@@ -34,18 +34,32 @@ export interface QrSessionState {
 const getSessionKey = (qrToken: string) => `fnb_qr_session_${qrToken}`;
 
 function readStoredSession(qrToken: string): Partial<QrSessionState> {
+  const key = getSessionKey(qrToken);
   try {
-    const raw = sessionStorage.getItem(getSessionKey(qrToken));
+    const raw = localStorage.getItem(key) ?? sessionStorage.getItem(key);
     if (!raw) return {};
-    return JSON.parse(raw) as Partial<QrSessionState>;
+    const parsed = JSON.parse(raw) as Partial<QrSessionState>;
+    if (!parsed.activeOrderId && (parsed.orderStatus === 'PAID' || parsed.orderStatus === 'VOIDED')) {
+      return {
+        activeOrderId: null,
+        guestSessionToken: null,
+        orderStatus: null,
+        statusMessage: null,
+        redirectNotice: null,
+      };
+    }
+    return parsed;
   } catch {
     return {};
   }
 }
 
 function writeStoredSession(qrToken: string, state: Partial<QrSessionState>): void {
+  const key = getSessionKey(qrToken);
   try {
-    sessionStorage.setItem(getSessionKey(qrToken), JSON.stringify(state));
+    const serialized = JSON.stringify(state);
+    localStorage.setItem(key, serialized);
+    sessionStorage.setItem(key, serialized);
   } catch {
     // Ignore storage quota errors
   }
@@ -54,6 +68,8 @@ function writeStoredSession(qrToken: string, state: Partial<QrSessionState>): vo
 export interface ServerQrTableSnapshot {
   tableName?: string;
   activeOrderId?: number | null;
+  activeOrderStatus?: OrderStatus | null;
+  queriedOrderId?: number | null;
   orderMode?: 'DINE_IN' | 'TAKEAWAY';
 }
 
@@ -96,16 +112,50 @@ export function useQrSessionSocket(
         });
       }
 
+      if (
+        snapshot?.activeOrderId &&
+        snapshot.activeOrderId === sessionState.activeOrderId &&
+        snapshot.activeOrderStatus &&
+        snapshot.activeOrderStatus !== sessionState.orderStatus
+      ) {
+        const nextStatus = snapshot.activeOrderStatus;
+        const resolvedMsg =
+          nextStatus === 'SERVING'
+            ? resolveCachedAppMessage('qr.status.orderServing').title
+            : nextStatus === 'PENDING'
+              ? resolveCachedAppMessage('qr.status.orderPending').title
+              : null;
+        setSessionState((prev) => {
+          const next: QrSessionState = {
+            ...prev,
+            currentTableLabel: tableName || prev.currentTableLabel,
+            orderStatus: nextStatus,
+            statusMessage: resolvedMsg ?? prev.statusMessage,
+          };
+          writeStoredSession(qrToken, next);
+          return next;
+        });
+      }
+
+      const isTakeawayEndedOnServer =
+        snapshot?.orderMode === 'TAKEAWAY' &&
+        sessionState.activeOrderId !== null &&
+        snapshot.queriedOrderId === sessionState.activeOrderId &&
+        snapshot.activeOrderId === null;
+
       const staleOrderId = staleCandidateOrderIdRef.current;
-      if (!snapshot?.tableName || staleOrderId === null) {
+      if (!snapshot?.tableName || (staleOrderId === null && !isTakeawayEndedOnServer)) {
         return;
       }
 
       const isStaleTakeaway =
-        snapshot.orderMode === 'TAKEAWAY' &&
-        snapshot.activeOrderId !== staleOrderId &&
-        staleOrderId === sessionState.activeOrderId;
+        isTakeawayEndedOnServer ||
+        (snapshot.orderMode === 'TAKEAWAY' &&
+          staleOrderId !== null &&
+          snapshot.activeOrderId !== staleOrderId &&
+          staleOrderId === sessionState.activeOrderId);
       const sameTableAndStale =
+        staleOrderId !== null &&
         snapshot.tableName === sessionState.currentTableLabel &&
         snapshot.activeOrderId !== staleOrderId &&
         staleOrderId === sessionState.activeOrderId;
@@ -118,6 +168,7 @@ export function useQrSessionSocket(
           ...prev,
           activeOrderId: snapshot.activeOrderId ?? null,
           guestSessionToken: snapshot.activeOrderId ? prev.guestSessionToken : null,
+          currentTableLabel: tableName || prev.currentTableLabel,
           orderStatus: null,
           statusMessage: null,
           redirectNotice: null,
@@ -126,7 +177,7 @@ export function useQrSessionSocket(
         return next;
       });
     },
-    [qrToken, sessionState.activeOrderId, sessionState.currentTableLabel],
+    [qrToken, sessionState.activeOrderId, sessionState.currentTableLabel, sessionState.orderStatus],
   );
 
   React.useEffect(() => {
@@ -250,10 +301,13 @@ export function useQrSessionSocket(
       }
 
       setSessionState((prev) => {
+        const shouldResetTakeawayLabel =
+          isTerminal && prev.currentTableLabel.startsWith('Mang về');
         const next: QrSessionState = {
           ...prev,
           activeOrderId: isTerminal ? null : prev.activeOrderId,
           guestSessionToken: isTerminal ? null : prev.guestSessionToken,
+          ...(shouldResetTakeawayLabel ? { currentTableLabel: 'Mang về' } : {}),
           orderStatus: payload.status,
           statusMessage,
         };
@@ -306,8 +360,19 @@ export function useQrSessionSocket(
       invalidatePublicMenu();
     };
 
-    const handleConnectError = () => {
+    const handleConnectError = (err?: unknown) => {
       if (sessionState.activeOrderId === null) return;
+      const errMessage =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err !== null && 'message' in err
+            ? String((err as { message?: unknown }).message ?? '')
+            : '';
+      const isAuthRejection =
+        !errMessage || /unauthorized|forbidden|invalid|not belong|unknown qr/i.test(errMessage);
+      if (!isAuthRejection) {
+        return;
+      }
       staleCandidateOrderIdRef.current = null;
       setSessionState((prev) => {
         const next: QrSessionState = {

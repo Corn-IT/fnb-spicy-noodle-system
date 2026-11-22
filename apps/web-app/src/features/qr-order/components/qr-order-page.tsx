@@ -103,6 +103,54 @@ const KITCHEN_STATUS_LABELS: Record<string, { label: string; className: string }
   },
 };
 
+interface StoredQrDraftCart {
+  items: CartLineItem[];
+  takeawayNote: string;
+}
+
+const getDraftCartKey = (qrToken: string) => `fnb_qr_draft_cart_${qrToken}`;
+
+function readStoredDraftCart(qrToken: string): StoredQrDraftCart {
+  if (!qrToken) return { items: [], takeawayNote: '' };
+  try {
+    const raw = localStorage.getItem(getDraftCartKey(qrToken));
+    if (!raw) return { items: [], takeawayNote: '' };
+    const parsed = JSON.parse(raw) as Partial<StoredQrDraftCart>;
+    const items = Array.isArray(parsed.items)
+      ? parsed.items.filter(
+          (item): item is CartLineItem =>
+            Boolean(item) &&
+            typeof item.key === 'string' &&
+            typeof item.productId === 'number' &&
+            typeof item.name === 'string' &&
+            typeof item.quantity === 'number' &&
+            item.quantity > 0 &&
+            typeof item.unitPrice === 'number' &&
+            Array.isArray(item.modifiers) &&
+            Array.isArray(item.modifierLabels),
+        )
+      : [];
+    const takeawayNote = typeof parsed.takeawayNote === 'string' ? parsed.takeawayNote : '';
+    return { items, takeawayNote };
+  } catch {
+    return { items: [], takeawayNote: '' };
+  }
+}
+
+function writeStoredDraftCart(qrToken: string, draft: StoredQrDraftCart): void {
+  if (!qrToken) return;
+  const key = getDraftCartKey(qrToken);
+  try {
+    if (draft.items.length === 0 && !draft.takeawayNote.trim()) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, JSON.stringify(draft));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 export function QrOrderPage() {
   useMenuSyncListener();
 
@@ -146,12 +194,16 @@ export function QrOrderPage() {
     syncTableSnapshot(menuData.table.tableName, {
       tableName: menuData.table.tableName,
       activeOrderId: menuData.table.activeOrderId,
+      activeOrderStatus: menuData.activeOrder?.status ?? null,
+      queriedOrderId: sessionFilter?.activeOrderId ?? null,
       orderMode: menuData.orderMode,
     });
   }, [
     syncTableSnapshot,
     menuData?.table,
+    menuData?.activeOrder?.status,
     menuData?.orderMode,
+    sessionFilter?.activeOrderId,
   ]);
   const { settings } = useStoreSettings();
   const { resolveMessage, resolveErrorMessage, notify } = useAppMessages();
@@ -211,10 +263,14 @@ export function QrOrderPage() {
     settings.defaultTheme,
   ]);
 
-  const [cart, setCart] = React.useState<CartLineItem[]>([]);
-  const [customerName, setCustomerName] = React.useState('');
-  const [customerPhone, setCustomerPhone] = React.useState('');
-  const [takeawayNote, setTakeawayNote] = React.useState('');
+  const initialDraft = React.useMemo(() => readStoredDraftCart(token), [token]);
+  const [cart, setCart] = React.useState<CartLineItem[]>(() => initialDraft.items);
+  const [takeawayNote, setTakeawayNote] = React.useState(() => initialDraft.takeawayNote);
+
+  React.useEffect(() => {
+    writeStoredDraftCart(token, { items: cart, takeawayNote });
+  }, [token, cart, takeawayNote]);
+
   const [cartSheetOpen, setCartSheetOpen] = React.useState(false);
   const [placedOrdersSheetOpen, setPlacedOrdersSheetOpen] = React.useState(false);
   const [selectingProduct, setSelectingProduct] = React.useState<Product | null>(null);
@@ -238,6 +294,38 @@ export function QrOrderPage() {
     () => (activeOrder ? activeOrder.items.reduce((sum, item) => sum + item.quantity, 0) : 0),
     [activeOrder],
   );
+
+  const takeawayKitchenProgress = React.useMemo(() => {
+    if (!activeOrder) return null;
+    let receivedQty = 0;
+    let waitingQty = 0;
+    for (const item of activeOrder.items) {
+      if (item.kitchenStatus === 'NEW') {
+        waitingQty += item.quantity;
+      } else {
+        receivedQty += item.quantity;
+      }
+    }
+    if (activeOrder.status === 'PENDING' || receivedQty === 0) {
+      return {
+        label: 'Chờ quầy xác nhận',
+        detail: `Đang chờ thu ngân xác nhận & chuyển xuống bếp (${placedTotalQty} món)`,
+        badgeClassName: 'border-amber-500/50 bg-amber-500/15 text-amber-800 dark:text-amber-200',
+      };
+    }
+    if (waitingQty > 0) {
+      return {
+        label: `Bếp đã nhận ${receivedQty}/${placedTotalQty} món`,
+        detail: `Còn ${waitingQty} món gọi thêm đang chờ quầy xác nhận`,
+        badgeClassName: 'border-sky-500/50 bg-sky-500/15 text-sky-800 dark:text-sky-200',
+      };
+    }
+    return {
+      label: `Bếp đang chế biến (${receivedQty}/${placedTotalQty} món)`,
+      detail: 'Tất cả các món đã được chuyển xuống bếp chế biến',
+      badgeClassName: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200',
+    };
+  }, [activeOrder, placedTotalQty]);
 
   const placedBatches = React.useMemo(() => {
     if (!activeOrder) return [];
@@ -336,6 +424,9 @@ export function QrOrderPage() {
   };
 
   const handleProductClick = (product: Product) => {
+    if (isTakeaway && !activeOrderId && (orderStatus === 'PAID' || orderStatus === 'VOIDED')) {
+      startNewTakeawaySession();
+    }
     if (product.modifierGroups.length > 0) {
       setSelectingProduct(product);
       return;
@@ -491,12 +582,6 @@ export function QrOrderPage() {
         qrToken: token,
         ...(resolvedActiveOrderId ? { activeOrderId: resolvedActiveOrderId } : {}),
         ...(resolvedActiveOrderId && guestSessionToken ? { guestSessionToken } : {}),
-        ...(isTakeaway && !resolvedActiveOrderId && customerName.trim()
-          ? { customerName: customerName.trim() }
-          : {}),
-        ...(isTakeaway && !resolvedActiveOrderId && customerPhone.trim()
-          ? { customerPhone: customerPhone.trim() }
-          : {}),
         ...(isTakeaway && !resolvedActiveOrderId && takeawayNote.trim()
           ? { note: takeawayNote.trim() }
           : {}),
@@ -516,9 +601,8 @@ export function QrOrderPage() {
         guestSessionToken: response.guestSessionToken ?? null,
       });
       setCart([]);
-      setCustomerName('');
-      setCustomerPhone('');
       setTakeawayNote('');
+      writeStoredDraftCart(token, { items: [], takeawayNote: '' });
       void queryClient.invalidateQueries({ queryKey: ['public-menu', token] });
       notify('qr.order.submitSuccess', {
         variant: 'success',
@@ -793,24 +877,82 @@ export function QrOrderPage() {
                 )
               </span>
             </div>
-            {isTakeaway && (orderStatus === 'PAID' || orderStatus === 'VOIDED') ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                data-testid="qr-takeaway-new-order-banner-btn"
-                onClick={startNewTakeawaySession}
-                className="h-7 gap-1 px-2 text-[11px] font-bold"
-              >
-                <Plus className="h-3 w-3" />
-                Tạo đơn mang về mới
-              </Button>
-            ) : null}
           </div>
         ) : null}
       </header>
 
       <main className="space-y-3 p-4">
+        {isTakeaway && activeOrder ? (
+          <div
+            data-testid="qr-takeaway-active-ticket-card"
+            className="rounded-2xl border-2 border-emerald-500/50 bg-emerald-500/5 p-3.5 shadow-sm space-y-2.5"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="space-y-0.5 min-w-0">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                  Phiếu nhận đơn Mang về của bạn
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    data-testid="qr-takeaway-ticket-number"
+                    className="text-lg font-extrabold text-foreground"
+                  >
+                    {resolvedTableName}
+                  </span>
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    • #{activeOrder.orderCode}
+                  </span>
+                </div>
+              </div>
+              {takeawayKitchenProgress ? (
+                <Badge
+                  variant="outline"
+                  data-testid="qr-takeaway-progress-badge"
+                  className={cn('shrink-0 text-[11px] font-bold', takeawayKitchenProgress.badgeClassName)}
+                >
+                  {takeawayKitchenProgress.label}
+                </Badge>
+              ) : null}
+            </div>
+
+            {takeawayKitchenProgress ? (
+              <p className="text-xs font-medium text-muted-foreground">
+                {takeawayKitchenProgress.detail}
+              </p>
+            ) : null}
+
+            {activeOrder.note ? (
+              <div
+                data-testid="qr-takeaway-ticket-note"
+                className="rounded-xl border bg-background/80 px-2.5 py-1.5 text-xs text-muted-foreground"
+              >
+                <span className="font-semibold text-foreground">Ghi chú: </span>
+                {activeOrder.note}
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-emerald-500/20">
+              <div className="text-xs">
+                <span className="text-muted-foreground">Tạm tính ({placedTotalQty} món): </span>
+                <span className="font-extrabold text-emerald-700 dark:text-emerald-300">
+                  {activeOrder.totalAmount.toLocaleString('vi-VN')} đ
+                </span>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="qr-takeaway-view-items-btn"
+                onClick={() => setPlacedOrdersSheetOpen(true)}
+                className="h-8 rounded-xl border-emerald-500/50 bg-background px-3 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                <span>Xem chi tiết món đã gọi</span>
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">
@@ -989,18 +1131,6 @@ export function QrOrderPage() {
                   Xem lại
                 </Badge>
               </button>
-              {isTakeaway ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  data-testid="qr-takeaway-new-order-btn"
-                  onClick={startNewTakeawaySession}
-                  className="h-auto shrink-0 rounded-2xl border-primary/40 bg-card/95 px-3 py-2 text-xs font-bold text-accent-text shadow-lg backdrop-blur-md gap-1"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>Đơn mới</span>
-                </Button>
-              ) : null}
             </div>
           ) : null}
 
@@ -1238,35 +1368,14 @@ export function QrOrderPage() {
             {isTakeaway && !resolvedActiveOrderId ? (
               <div
                 data-testid="qr-takeaway-customer-fields"
-                className="space-y-2 rounded-xl border bg-muted/30 p-3"
+                className="space-y-1.5 rounded-xl border bg-muted/30 p-3"
               >
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Thông tin nhận đơn Mang về (tuỳ chọn)
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Input
-                    id="qr-takeaway-customer-name"
-                    name="customerName"
-                    aria-label="Tên khách hàng"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="Tên khách (VD: Anh Minh)"
-                    maxLength={80}
-                    data-testid="qr-takeaway-customer-name"
-                    className="h-10 sm:h-9 text-base sm:text-xs"
-                  />
-                  <Input
-                    id="qr-takeaway-customer-phone"
-                    name="customerPhone"
-                    aria-label="Số điện thoại khách hàng"
-                    value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
-                    placeholder="Số điện thoại"
-                    maxLength={25}
-                    data-testid="qr-takeaway-customer-phone"
-                    className="h-10 sm:h-9 text-base sm:text-xs"
-                  />
-                </div>
+                <label
+                  htmlFor="qr-takeaway-note"
+                  className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                >
+                  Ghi chú đơn Mang về (tuỳ chọn)
+                </label>
                 <Input
                   id="qr-takeaway-note"
                   name="takeawayNote"
