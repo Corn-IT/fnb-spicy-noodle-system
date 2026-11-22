@@ -119,7 +119,9 @@ describe('qr-voice-announcer (Hybrid Voice Alert & FIFO Queue)', () => {
         interItemDelayMs: 0,
         playChimeFn: vi.fn(async () => undefined),
         playClipFn: vi.fn(async (src: string) => {
-          if (src.includes('99')) throw new Error('Audio load error');
+          if (src.includes('99') || src.includes('/api/v1/public/tts')) {
+            throw new Error('Offline / force MP3 fallback');
+          }
           playedClips.push(src);
         }),
         speakTtsFn: vi.fn(async (text: string, lang: string) => {
@@ -127,7 +129,25 @@ describe('qr-voice-announcer (Hybrid Voice Alert & FIFO Queue)', () => {
         }),
       });
 
-      // 1. Standard table -> plays static MP3 clips
+      // 1a. Standard table with default Cloud TTS enabled -> uses Cloud TTS URL first (including standard tables!)
+      const cloudClips: string[] = [];
+      const cloudAnnouncer = new QrVoiceAnnouncer({
+        dedupWindowMs: 3000,
+        interItemDelayMs: 0,
+        playChimeFn: vi.fn(async () => undefined),
+        playClipFn: vi.fn(async (src: string) => {
+          cloudClips.push(src);
+        }),
+        speakTtsFn: vi.fn(async () => undefined),
+      });
+      await cloudAnnouncer.enqueue({ tableLabel: 'Bàn 05', kind: 'NEW' });
+      await cloudAnnouncer.enqueue({ tableLabel: 'Mang về #01', kind: 'NEW' });
+      expect(cloudClips).toEqual([
+        'http://localhost:3000/api/v1/public/tts?text=B%C3%A0n%205%20c%C3%B3%20%C4%91%C6%A1n%20m%E1%BB%9Bi',
+        'http://localhost:3000/api/v1/public/tts?text=%C4%90%C6%A1n%20mang%20v%E1%BB%81%20s%E1%BB%91%201%20c%C3%B3%20%C4%91%C6%A1n%20m%E1%BB%9Bi',
+      ]);
+
+      // 1b. When Cloud TTS is unavailable -> standard table falls back to static MP3 clips
       await announcer.enqueue({ tableLabel: 'Bàn 05', kind: 'NEW' });
       expect(playedClips).toEqual([
         '/audio/vi/ban.mp3',
@@ -136,7 +156,7 @@ describe('qr-voice-announcer (Hybrid Voice Alert & FIFO Queue)', () => {
       ]);
       expect(spokenTexts).toHaveLength(0);
 
-      // 2. Custom table name -> falls back to Web Speech API (vi-VN)
+      // 2. Custom table name when Cloud TTS is unavailable -> falls back to Web Speech API (vi-VN)
       await announcer.enqueue({ tableLabel: 'Bàn VIP 1', kind: 'ADDON' });
       expect(spokenTexts).toEqual([{ text: 'Bàn VIP 1 có đơn gọi thêm', lang: 'vi-VN' }]);
     });
@@ -353,11 +373,12 @@ describe('qr-voice-announcer (Hybrid Voice Alert & FIFO Queue)', () => {
         }),
       });
 
-      // Multi-table standard tables -> single chime + offline consolidated sequence
+      // Multi-table standard tables with offline-mp3 profile -> single chime + offline consolidated sequence
       await announcer.enqueue({
         tableLabel: 'Bàn 03, Bàn 07',
         kind: 'NEW',
         isReminder: true,
+        configOverride: { voiceProfile: 'offline-mp3' },
         reminderTables: [
           { tableLabel: 'Bàn 03', kind: 'NEW' },
           { tableLabel: 'Bàn 07', kind: 'ADDON' },
@@ -373,17 +394,32 @@ describe('qr-voice-announcer (Hybrid Voice Alert & FIFO Queue)', () => {
         '/audio/vi/dang-cho-xac-nhan.mp3',
       ]);
 
-      // Multi-table containing custom table -> single chime + Web Speech consolidated phrasing
+      // Multi-table standard tables with default female voice -> uses Cloud TTS
+      await announcer.enqueue({
+        tableLabel: 'Bàn 04, Bàn 08',
+        kind: 'NEW',
+        isReminder: true,
+        reminderTables: [
+          { tableLabel: 'Bàn 04', kind: 'NEW' },
+          { tableLabel: 'Bàn 08', kind: 'ADDON' },
+        ],
+      });
+      expect(playedClips[playedClips.length - 1]).toBe(
+        'http://localhost:3000/api/v1/public/tts?text=Nh%E1%BA%AFc%20l%E1%BA%A1i%3A%20B%C3%A0n%204%2C%20B%C3%A0n%208%20%C4%91ang%20ch%E1%BB%9D%20x%C3%A1c%20nh%E1%BA%ADn%20%C4%91%C6%A1n',
+      );
+
+      // Multi-table containing custom table when offline -> single chime + Web Speech consolidated phrasing
       await announcer.enqueue({
         tableLabel: 'Bàn 03, Bàn VIP 1',
         kind: 'NEW',
         isReminder: true,
+        configOverride: { voiceProfile: 'offline-mp3' },
         reminderTables: [
           { tableLabel: 'Bàn 03', kind: 'NEW' },
           { tableLabel: 'Bàn VIP 1', kind: 'ADDON' },
         ],
       });
-      expect(playChimeFn).toHaveBeenCalledTimes(2);
+      expect(playChimeFn).toHaveBeenCalledTimes(3);
       expect(spokenTexts).toEqual(['Nhắc lại: Bàn 3, Bàn VIP 1 đang chờ xác nhận đơn']);
     });
   });

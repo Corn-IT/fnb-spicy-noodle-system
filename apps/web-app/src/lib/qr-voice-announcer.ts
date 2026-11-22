@@ -167,6 +167,16 @@ export function normalizeTableSpokenLabel(rawTableLabel: string | undefined | nu
     .replace(/\s+/g, ' ')
     .replace(/\b0+(\d+)\b/g, '$1');
   if (!trimmed) return 'Bàn mới';
+  if (/^(?:đơn\s+)?mang\s*về(?:\s|$|#)/i.test(trimmed)) {
+    const takeawayMatch = /^(?:đơn\s+)?mang\s*về(?:\s*#?\s*(\d+))?$/i.exec(trimmed);
+    if (takeawayMatch?.[1]) {
+      return `Đơn mang về số ${takeawayMatch[1]}`;
+    }
+    if (takeawayMatch) {
+      return 'Đơn mang về';
+    }
+    return /^đơn\s+/i.test(trimmed) ? trimmed : `Đơn ${trimmed}`;
+  }
   if (/^b[aà]n\b/i.test(trimmed)) {
     const rest = trimmed.replace(/^b[aà]n\b\s*/i, '');
     return rest ? `Bàn ${rest}` : 'Bàn mới';
@@ -643,11 +653,6 @@ export class QrVoiceAnnouncer {
     const config = getActiveQrVoiceEngineConfig(item.configOverride);
     const isMultiReminder = Boolean(item.reminderTables && item.reminderTables.length > 1);
     const isReminder = Boolean(item.isReminder || isMultiReminder);
-    const hasCustomText =
-      Boolean(item.customText?.trim()) ||
-      (isMultiReminder
-        ? isMultiReminderTemplateCustomized()
-        : isVoiceTemplateCustomized(item.kind, isReminder));
     const spokenText =
       item.customText?.trim() ||
       (isMultiReminder
@@ -666,7 +671,7 @@ export class QrVoiceAnnouncer {
       ? getMultiTableReminderClipSequence(item.reminderTables!.map((entry) => entry.tableLabel))
       : getAudioClipSequence(item.tableLabel, item.kind, isReminder);
 
-    // 1. Offline MP3 mode explicitly selected -> always play local MP3 clips first for Bàn 1..30
+    // 1. Offline MP3 mode explicitly selected -> play local MP3 clips first for Bàn 1..30
     if (config.voiceProfile === 'offline-mp3' && clipSequence) {
       try {
         for (const clipSrc of clipSequence) {
@@ -678,15 +683,15 @@ export class QrVoiceAnnouncer {
       }
     }
 
-    // 2. Dynamic Vietnamese Cloud TTS when custom announcement text is configured
-    if (hasCustomText && config.voiceProfile !== 'offline-mp3') {
+    // 2. Vietnamese Cloud TTS for female voice profiles (standard & bright) across all announcements
+    if (config.voiceProfile !== 'offline-mp3') {
       const normalizedSpokenText = spokenText.replace(/\b0+(\d+)\b/g, '$1');
       const cloudTtsUrl = buildPublicTtsUrl(normalizedSpokenText);
       try {
         await this.playClipFn(cloudTtsUrl, config.rate, config.volume, config.voiceProfile);
         return;
       } catch {
-        // Fallback to offline clips or speech synthesis if offline
+        // Fallback to offline clips or speech synthesis if offline/unavailable
       }
     }
 
