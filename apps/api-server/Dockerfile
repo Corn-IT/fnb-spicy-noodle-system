@@ -19,12 +19,15 @@ WORKDIR /app
 ENV NODE_ENV=production
 RUN corepack enable
 
+COPY --from=builder /app/package.json /app/pnpm-workspace.yaml /app/tsconfig.base.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
+COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
-COPY --from=builder /app/apps/api-server/package.json ./apps/api-server/package.json
+COPY --from=builder /app/apps/api-server/package.json /app/apps/api-server/tsconfig.json ./apps/api-server/
 COPY --from=builder /app/apps/api-server/node_modules ./apps/api-server/node_modules
 COPY --from=builder /app/apps/api-server/dist ./apps/api-server/dist
+COPY --from=builder /app/apps/api-server/src ./apps/api-server/src
 COPY --from=builder /app/apps/api-server/prisma ./apps/api-server/prisma
 COPY --from=builder /app/apps/api-server/prisma.config.ts ./apps/api-server/prisma.config.ts
 COPY --from=builder /app/apps/api-server/docker-entrypoint.sh ./apps/api-server/docker-entrypoint.sh
