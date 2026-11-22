@@ -780,4 +780,77 @@ describe('StoreSettingsPage (Story 14)', () => {
     ]);
     expect(screen.getByTestId('nav-group-label-input-sales')).toHaveValue('');
   });
+
+  it('customizes qrCard copy, accent color, showLogo/showLinkText toggles with live PNG/80mm preview and saves to settings API', async () => {
+    const user = userEvent.setup();
+    const putSpy = vi.spyOn(apiClient, 'put').mockImplementation(async (_url, body) => {
+      const savedFields = { ...(body as Record<string, unknown>) };
+      delete savedFields.expectedUpdatedAt;
+      delete savedFields.messages;
+      return {
+        ...makeServerSettings(),
+        ...(savedFields as Partial<PublicStoreSettingsResponse>),
+        updatedAt: '2026-11-22T11:00:00.000Z',
+      };
+    });
+
+    renderStoreSettingsPage(
+      makeServerSettings({
+        brandColor: '#059669',
+        assets: { logo: 'v-logo', favicon: null, qrLogo: 'v-qr-logo' },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('store-settings-save-btn')).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole('tab', { name: /Trang khách QR/i }));
+    expect(screen.getByTestId('qr-card-customizer')).toBeInTheDocument();
+
+    const tableSubtitleInput = screen.getByTestId('input-qr-card-table-subtitle');
+    fireEvent.change(tableSubtitleInput, { target: { value: 'Quét gọi món tại chỗ cực nhanh' } });
+    fireEvent.change(screen.getByTestId('input-qr-card-takeaway-title'), {
+      target: { value: 'Đặt Mang Về Online' },
+    });
+    fireEvent.change(screen.getByTestId('input-qr-card-footer-text'), {
+      target: { value: 'Mở Zalo quét hoặc gõ link:' },
+    });
+
+    await user.click(screen.getByTestId('qr-card-use-brand-color-btn'));
+    expect(screen.getByTestId('input-qr-card-accent-color')).toHaveValue('#059669');
+
+    await user.click(screen.getByTestId('checkbox-qr-card-show-logo'));
+    expect(screen.getByTestId('qr-preview-logo-img')).toBeInTheDocument();
+
+    expect(screen.getByTestId('qr-preview-link-text')).toHaveTextContent('/q/ban01-zry8');
+    await user.click(screen.getByTestId('checkbox-qr-card-show-link'));
+    expect(screen.queryByTestId('qr-preview-link-text')).not.toBeInTheDocument();
+
+    // Verify Takeaway + 80mm slip live preview toggle
+    await user.click(screen.getByTestId('qr-preview-scope-takeaway'));
+    await user.click(screen.getByTestId('qr-preview-format-thermal'));
+    expect(screen.getByTestId('qr-card-live-preview-thermal')).toHaveTextContent('Đặt Mang Về Online');
+    expect(screen.getByTestId('qr-card-live-preview-thermal')).toHaveTextContent(
+      'Mở Zalo quét hoặc gõ link:',
+    );
+    expect(screen.queryByTestId('qr-preview-thermal-link-text')).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId('store-settings-save-btn'));
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith(
+        '/api/v1/settings',
+        expect.objectContaining({
+          qrCard: expect.objectContaining({
+            tableSubtitle: 'Quét gọi món tại chỗ cực nhanh',
+            takeawayTitle: 'Đặt Mang Về Online',
+            footerText: 'Mở Zalo quét hoặc gõ link:',
+            accentColor: '#059669',
+            showLogo: true,
+            showLinkText: false,
+          }),
+        }),
+      );
+    });
+  });
 });

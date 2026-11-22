@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createStoredZipBlob,
   downloadBlobFile,
+  isLocalhostOrPrivateHost,
   renderQrCardPngBlob,
   sanitizeQrFilename,
 } from '../qr-export';
@@ -127,6 +128,70 @@ describe('qr-export (PNG QR Card rendering, filename sanitization & pure-JS ZIP 
         URL.createObjectURL = origCreateUrl;
         URL.revokeObjectURL = origRevokeUrl;
       }
+    } finally {
+      HTMLCanvasElement.prototype.getContext = origGetContext;
+      HTMLCanvasElement.prototype.toBlob = origToBlob;
+    }
+  });
+
+  it('supports custom accentColor, custom footerText, logo header drawing, hiding link text, and local host detection', async () => {
+    expect(isLocalhostOrPrivateHost('http://localhost:5173')).toBe(true);
+    expect(isLocalhostOrPrivateHost('http://192.168.1.50:5173')).toBe(true);
+    expect(isLocalhostOrPrivateHost('https://pos.micay.vn')).toBe(false);
+
+    const fillTextCalls: string[] = [];
+    const fillStylesUsed: string[] = [];
+    const mockCtx = {
+      _fillStyle: '',
+      get fillStyle() {
+        return this._fillStyle;
+      },
+      set fillStyle(val: string) {
+        this._fillStyle = val;
+        fillStylesUsed.push(val);
+      },
+      strokeStyle: '',
+      lineWidth: 0,
+      textAlign: '',
+      textBaseline: '',
+      font: '',
+      fillRect: vi.fn(),
+      strokeRect: vi.fn(),
+      fillText: vi.fn((text: string) => {
+        fillTextCalls.push(text);
+      }),
+      drawImage: vi.fn(),
+    };
+
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    const origToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.getContext = vi.fn(
+      () => mockCtx as unknown as CanvasRenderingContext2D,
+    ) as unknown as typeof origGetContext;
+    HTMLCanvasElement.prototype.toBlob = vi.fn((cb: BlobCallback) => {
+      cb(new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }));
+    }) as unknown as typeof origToBlob;
+    vi.spyOn(QRCode, 'toCanvas').mockResolvedValue(undefined as never);
+
+    try {
+      const mockLogo = { width: 120, height: 60 } as unknown as CanvasImageSource;
+      const pngBlob = await renderQrCardPngBlob({
+        qrUrl: 'https://pos.micay.vn/q/ban05-k7m9',
+        title: 'Bàn 05',
+        storeName: 'Mì Cay Sasin',
+        subtitle: 'Quét gọi món không cần chờ',
+        footerText: 'Quét bằng Camera hoặc Zalo',
+        accentColor: '#2563eb',
+        showLinkText: false,
+        preloadedLogoImage: mockLogo,
+      });
+
+      expect(pngBlob.type).toBe('image/png');
+      expect(fillStylesUsed).toContain('#2563EB');
+      expect(mockCtx.drawImage).toHaveBeenCalledWith(mockLogo, expect.any(Number), expect.any(Number), 56, 28);
+      expect(fillTextCalls).toContain('Quét gọi món không cần chờ');
+      expect(fillTextCalls).toContain('Quét bằng Camera hoặc Zalo');
+      expect(fillTextCalls).not.toContain('pos.micay.vn/q/ban05-k7m9');
     } finally {
       HTMLCanvasElement.prototype.getContext = origGetContext;
       HTMLCanvasElement.prototype.toBlob = origToBlob;

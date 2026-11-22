@@ -19,6 +19,7 @@ function makeSettings(overrides: Partial<StoreSettings> = {}): StoreSettings {
     ...DEFAULT_STORE_SETTINGS,
     ...overrides,
     qr: { ...DEFAULT_STORE_SETTINGS.qr, ...(overrides.qr ?? {}) },
+    qrCard: { ...DEFAULT_STORE_SETTINGS.qrCard, ...(overrides.qrCard ?? {}) },
     receipt: { ...DEFAULT_STORE_SETTINGS.receipt, ...(overrides.receipt ?? {}) },
   };
 }
@@ -556,5 +557,48 @@ describe('StoreSettingsService', () => {
     expect(partialUpdate.qrMessages).toEqual(saved.qrMessages);
     expect((await service.getMessages()).messages).toEqual(allMessages.messages);
     expect(posSocketGateway.emitStoreSettingsUpdated).toHaveBeenCalledTimes(2);
+  });
+
+  it('hydrates legacy metadata missing qrCard and normalizes saved qrCard settings', async () => {
+    const updatedAt = '2026-11-22T09:00:00.000Z';
+    const { service, posSocketGateway } = createMockDeps([
+      {
+        category: 'SYSTEM_CONFIG',
+        normalizedName: 'store_settings',
+        metadata: {
+          ...makeSettings({ storeName: 'Mì Cay Sasin' }),
+          qrCard: undefined,
+          updatedAt,
+        },
+      },
+    ]);
+
+    const loaded = await service.getPublicSettings();
+    expect(loaded.qrCard).toEqual(DEFAULT_STORE_SETTINGS.qrCard);
+
+    const saved = await service.updateSettings(
+      {
+        ...makeSettings({
+          storeName: 'Mì Cay Sasin',
+          qrCard: {
+            ...DEFAULT_STORE_SETTINGS.qrCard,
+            tableSubtitle: '  Quét mã đặt món ngay tại bàn  ',
+            takeawayTitle: 'Mang Về Nhanh',
+            accentColor: '#059669',
+            showLogo: true,
+            showLinkText: false,
+          },
+        }),
+        expectedUpdatedAt: loaded.updatedAt,
+      },
+      1,
+    );
+
+    expect(saved.qrCard.tableSubtitle).toBe('Quét mã đặt món ngay tại bàn');
+    expect(saved.qrCard.takeawayTitle).toBe('Mang Về Nhanh');
+    expect(saved.qrCard.accentColor).toBe('#059669');
+    expect(saved.qrCard.showLogo).toBe(true);
+    expect(saved.qrCard.showLinkText).toBe(false);
+    expect(posSocketGateway.emitStoreSettingsUpdated).toHaveBeenCalledTimes(1);
   });
 });

@@ -12,6 +12,7 @@ import {
   ErrorCodes,
   extractQrMessages,
   mergeStoreSettingsWithDefaults,
+  normalizeQrCardSettings,
   PublicStoreSettingsResponseSchema,
   sanitizeNavGroupLabels,
   sanitizeNavGroupOrder,
@@ -452,6 +453,7 @@ export class StoreSettingsService {
   private sanitizeNavigationFields(settings: StoreSettings): StoreSettings {
     return {
       ...settings,
+      qrCard: normalizeQrCardSettings(settings.qrCard),
       navLabels: sanitizeNavLabels(settings.navLabels),
       navGroupLabels: sanitizeNavGroupLabels(settings.navGroupLabels),
       navGroupOrder: sanitizeNavGroupOrder(settings.navGroupOrder),

@@ -18,6 +18,7 @@ import {
   OfficialReceiptSlip,
   ProvisionalVietQrSlip,
   StationLogo,
+  TableQrSlip,
   TableTransferNoticeSlip,
   ThermalPrintProvider,
   useThermalPrinter,
@@ -1147,6 +1148,47 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       expect(screen.getByTestId('official-receipt-payment-method').parentElement).toHaveClass(
         'flex-wrap',
         'gap-x-2',
+      );
+    });
+
+    it('renders customized TableQrSlip copy for Takeaway, toggles link text, handles logo load failure, and signals ready-to-print', () => {
+      const onReadyToPrint = vi.fn();
+      const { rerender } = render(
+        <TableQrSlip
+          tableName="Đơn Mang Về"
+          storeName="Ăn Vặt Tran"
+          headline="QUÉT MÃ QR ĐẶT MÓN MANG VỀ"
+          subtitle="Đặt mang về nhanh không cần xếp hàng"
+          footerText="Mở Zalo quét mã"
+          qrUrl="https://pos.micay.vn/q/mangve-qpy2"
+          qrImageDataUrl="data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E"
+          showLinkText={false}
+          logoUrl="/api/v1/public/store-assets/qr-logo?v=1"
+          onReadyToPrint={onReadyToPrint}
+        />,
+      );
+
+      const slip = screen.getByTestId('thermal-table-qr-print-slip');
+      expect(slip).toHaveTextContent('QUÉT MÃ QR ĐẶT MÓN MANG VỀ');
+      expect(slip).toHaveTextContent('Đặt mang về nhanh không cần xếp hàng');
+      expect(slip).toHaveTextContent('Mở Zalo quét mã');
+      expect(slip).not.toHaveTextContent('mangve-qpy2');
+
+      const logoImg = screen.getByTestId('thermal-table-qr-logo');
+      fireEvent.error(logoImg);
+      expect(screen.queryByTestId('thermal-table-qr-logo')).not.toBeInTheDocument();
+      expect(onReadyToPrint).toHaveBeenCalledTimes(1);
+
+      rerender(
+        <TableQrSlip
+          tableName="Bàn 01"
+          qrUrl="https://pos.micay.vn/q/ban01-zry8"
+          qrImageDataUrl="data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E"
+          showLinkText={true}
+        />,
+      );
+      expect(screen.getByTestId('thermal-table-qr-print-slip')).toHaveTextContent(
+        'https://pos.micay.vn/q/ban01-zry8',
       );
     });
   });
