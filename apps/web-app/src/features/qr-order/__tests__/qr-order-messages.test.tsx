@@ -455,23 +455,38 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
     }
   });
 
-  it('supports QR Takeaway self-ordering with customer info/note, hides table transfer banner, and creates independent takeaway sessions', async () => {
+  it('supports QR Takeaway self-ordering with note-only field, draft cart persistence, active ticket card, localStorage session recovery across tab close, and auto-reset when PAID', async () => {
     const takeawayToken = 'e'.repeat(64);
     const guestSessionToken = 'f'.repeat(64);
+    let orderPaidOnServer = false;
     const localQc = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
 
+    const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
     const connectSpy = vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue({
-      on: vi.fn(),
-      off: vi.fn(),
+      on: vi.fn((event: string, fn: (...args: unknown[]) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(fn);
+        listeners.set(event, list);
+      }),
+      off: vi.fn((event: string, fn: (...args: unknown[]) => void) => {
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter((entry) => entry !== fn),
+        );
+      }),
       disconnect: vi.fn(),
     } as never);
     vi.spyOn(socketClient, 'disconnectPosSocket').mockImplementation(() => undefined);
 
     const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, opts) => {
       const params = (opts as { params?: { activeOrderId?: number; guestSessionToken?: string } })?.params;
-      if (params?.activeOrderId === 801 && params?.guestSessionToken === guestSessionToken) {
+      if (
+        !orderPaidOnServer &&
+        params?.activeOrderId === 801 &&
+        params?.guestSessionToken === guestSessionToken
+      ) {
         return {
           orderMode: 'TAKEAWAY',
           table: {
@@ -486,7 +501,7 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
             orderId: 801,
             orderCode: 'HD-20261122-0001',
             status: 'PENDING',
-            note: 'Khách: Anh Minh - 0901234567 | Ít cay',
+            note: 'Ít cay, để riêng nước dùng',
             totalAmount: 45000,
             createdAt: '2026-11-22T05:00:00.000Z',
             items: [
@@ -569,7 +584,7 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       totalAmount: 45000,
     });
 
-    render(
+    const { unmount } = render(
       <QueryClientProvider client={localQc}>
         <StoreSettingsContext.Provider
           value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
@@ -593,14 +608,18 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Chọn' }));
     fireEvent.click(screen.getByRole('button', { name: 'Xem chi tiết giỏ hàng' }));
 
-    fireEvent.change(await screen.findByTestId('qr-takeaway-customer-name'), {
-      target: { value: 'Anh Minh' },
+    // Customer name & phone fields are removed; only note field is present
+    expect(screen.queryByTestId('qr-takeaway-customer-name')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('qr-takeaway-customer-phone')).not.toBeInTheDocument();
+    fireEvent.change(await screen.findByTestId('qr-takeaway-note'), {
+      target: { value: 'Ít cay, để riêng nước dùng' },
     });
-    fireEvent.change(screen.getByTestId('qr-takeaway-customer-phone'), {
-      target: { value: '0901234567' },
-    });
-    fireEvent.change(screen.getByTestId('qr-takeaway-note'), {
-      target: { value: 'Ít cay' },
+
+    // Draft cart is persisted in localStorage before submit
+    await waitFor(() => {
+      const draftRaw = localStorage.getItem(`fnb_qr_draft_cart_${takeawayToken}`);
+      expect(draftRaw).toBeTruthy();
+      expect(draftRaw).toContain('Ít cay, để riêng nước dùng');
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Xác nhận gửi đơn đặt món/i }));
@@ -610,9 +629,7 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
         '/api/v1/public/orders/qr',
         expect.objectContaining({
           qrToken: takeawayToken,
-          customerName: 'Anh Minh',
-          customerPhone: '0901234567',
-          note: 'Ít cay',
+          note: 'Ít cay, để riêng nước dùng',
         }),
         { skipAuthRefresh: true },
       );
@@ -620,8 +637,15 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Mang về #01');
-      expect(screen.getByTestId('qr-takeaway-new-order-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('qr-takeaway-active-ticket-card')).toBeInTheDocument();
+      expect(screen.getByTestId('qr-takeaway-ticket-number')).toHaveTextContent('Mang về #01');
+      expect(screen.getByTestId('qr-takeaway-progress-badge')).toHaveTextContent('Chờ quầy xác nhận');
+      expect(screen.getByTestId('qr-takeaway-ticket-note')).toHaveTextContent('Ít cay, để riêng nước dùng');
+      expect(screen.queryByTestId('qr-takeaway-new-order-btn')).not.toBeInTheDocument();
     });
+
+    // Draft cart is cleared after successful submission
+    expect(localStorage.getItem(`fnb_qr_draft_cart_${takeawayToken}`)).toBeNull();
 
     expect(connectSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -632,12 +656,66 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
       }),
     );
 
-    // Click "+ Đơn mới" to start a separate takeaway order
-    fireEvent.click(screen.getByTestId('qr-takeaway-new-order-btn'));
+    // Transient network connect_error (e.g. mobile 4G/Wi-Fi blip) must NOT wipe activeOrderId
+    await act(async () => {
+      for (const handler of listeners.get('connect_error') ?? []) {
+        handler(new Error('websocket error'));
+      }
+    });
+    expect(
+      (JSON.parse(localStorage.getItem(`fnb_qr_session_${takeawayToken}`) ?? '{}') as {
+        activeOrderId: number | null;
+      }).activeOrderId,
+    ).toBe(801);
+
+    // Simulate closing the browser tab completely (wiping sessionStorage) and scanning QR again in a new tab
+    unmount();
+    sessionStorage.clear();
+
+    const reopenedQc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={reopenedQc}>
+        <StoreSettingsContext.Provider
+          value={{ settings: makePublicSettings(), messages: undefined, query: {} as never }}
+        >
+          <MemoryRouter
+            initialEntries={[`/qr/${takeawayToken}`]}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <Routes>
+              <Route path="/qr/:token" element={<QrOrderPage />} />
+            </Routes>
+          </MemoryRouter>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    // Restores Mang về #01 and active ticket card from localStorage!
+    await waitFor(() => {
+      expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Mang về #01');
+      expect(screen.getByTestId('qr-takeaway-active-ticket-card')).toBeInTheDocument();
+    });
+
+    // Now simulate cashier completing payment (PAID) -> screen resets to clean state
+    orderPaidOnServer = true;
+    await act(async () => {
+      for (const handler of listeners.get('order:status_updated') ?? []) {
+        handler({ orderId: 801, status: 'PAID' });
+      }
+    });
+
     await waitFor(() => {
       expect(screen.getByTestId('qr-table-header')).toHaveTextContent('Mang về');
+      expect(screen.queryByTestId('qr-takeaway-active-ticket-card')).not.toBeInTheDocument();
       expect(screen.queryByTestId('qr-placed-orders-bar')).not.toBeInTheDocument();
     });
+    expect(
+      (JSON.parse(localStorage.getItem(`fnb_qr_session_${takeawayToken}`) ?? '{}') as {
+        activeOrderId: number | null;
+      }).activeOrderId,
+    ).toBeNull();
     expect(getSpy).toHaveBeenCalled();
   });
 });

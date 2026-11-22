@@ -151,8 +151,6 @@ export class KitchenSplitService {
         .map((ticket) => `${ticket.station}=${ticket.items.length}items`)
         .join(', ');
       this.logger.log(`Split kitchen: orderId=${orderId}, batchNo=${result.response.batchNo}, ${stationCounts}, userId=${_userId ?? 'unknown'}`);
-    }
-    if (result.statusUpdated) {
       this.gateway.emitOrderStatusUpdated(orderId, { status: 'SERVING', message: 'Bếp đang chế biến' });
       this.gateway.emitTableGridSync({ orderId, tableId: result.tableId, status: 'SERVING' });
     }
