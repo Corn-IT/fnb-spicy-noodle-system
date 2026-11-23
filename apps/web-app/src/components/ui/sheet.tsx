@@ -49,7 +49,7 @@ export const SheetContent = React.forwardRef<
     >
       {children}
       <DialogPrimitive.Close
-        className="absolute right-4 top-4 inline-flex h-7 w-7 items-center justify-center rounded-md opacity-70 transition-opacity hover:bg-accent hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring"
+        className="absolute right-4 top-4 inline-flex h-7 w-7 items-center justify-center rounded-md opacity-70 transition-opacity hover:bg-accent hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring touch-ui:right-2 touch-ui:top-2 touch-ui:h-11 touch-ui:w-11"
         aria-label="Đóng ngăn kéo"
       >
         <X className="h-4 w-4" />

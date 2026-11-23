@@ -56,6 +56,10 @@ export const loadPosUnifiedPage = createMemoizedLoader(
   () => import('@/features/pos-counter'),
   (m) => m.PosUnifiedPage,
 );
+export const loadPosTouchPage = createMemoizedLoader(
+  () => import('@/features/pos-counter'),
+  (m) => m.PosTouchPage,
+);
 export const loadInvoicesPage = createMemoizedLoader(
   () => import('@/features/invoices'),
   (m) => m.InvoicesPage,

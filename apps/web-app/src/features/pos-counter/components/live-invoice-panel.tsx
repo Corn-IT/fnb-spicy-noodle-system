@@ -32,7 +32,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { type OrderPendingAlertState } from '@/lib/qr-pending-reminder';
 import { cn } from '@/utils/cn';
 import { CancelOrderConfirmDialog } from './cancel-order-confirm-dialog';
-import { type PosMenuSelectedItem } from './pos-menu-panel';
+import type { PosMenuSelectedItem } from './pos-menu-types';
 
 export type LiveInvoiceDraftTarget =
   | {

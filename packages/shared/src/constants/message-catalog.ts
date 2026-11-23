@@ -773,6 +773,15 @@ export const MESSAGE_CATALOG: readonly MessageCatalogItem[] = [
     variables: ['tableLabel', 'batchNo'],
   }),
   defineMessage({
+    key: 'pos.order.closedElsewhere',
+    module: 'POS',
+    kind: 'toast',
+    label: 'Đơn đang mở đã được đóng ở máy khác (thanh toán / huỷ / gộp)',
+    defaultTitle: '{tableLabel} đã {action} ở máy khác',
+    defaultDescription: 'Màn hình đã quay về sơ đồ bàn.',
+    variables: ['tableLabel', 'action'],
+  }),
+  defineMessage({
     key: 'pos.socket.qrAutoCancelled',
     module: 'POS',
     kind: 'toast',

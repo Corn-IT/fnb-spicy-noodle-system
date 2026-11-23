@@ -9,6 +9,7 @@ import {
 import { AppShell } from '@/components/layout/app-shell';
 import { RbacRouteGuard } from '@/components/layout/rbac-route-guard';
 import { DelayedPageFallback } from '@/components/loading';
+import { resolvePosHomePath } from '@/lib/pos-device-mode';
 import {
   loadCashflowPage,
   loadDashboardPage,
@@ -21,6 +22,7 @@ import {
   loadMenuManagementPage,
   loadPaymentQrPage,
   loadPayrollPage,
+  loadPosTouchPage,
   loadPosUnifiedPage,
   loadProfilePage,
   loadQrOrderPage,
@@ -34,6 +36,11 @@ const LazyProfilePage = React.lazy(loadProfilePage);
 const LazyQrOrderPage = React.lazy(loadQrOrderPage);
 const LazyDashboardPage = React.lazy(loadDashboardPage);
 const LazyPosUnifiedPage = React.lazy(loadPosUnifiedPage);
+const LazyPosTouchPage = React.lazy(loadPosTouchPage);
+
+function PosHomeRedirect() {
+  return <Navigate to={resolvePosHomePath()} replace />;
+}
 const LazyInvoicesPage = React.lazy(loadInvoicesPage);
 const LazyInventoryPage = React.lazy(loadInventoryPage);
 const LazyCashflowPage = React.lazy(loadCashflowPage);
@@ -121,7 +128,7 @@ export const appRoutes: RouteObject[] = [
         children: [
           {
             index: true,
-            element: <Navigate to="/pos" replace />,
+            element: <PosHomeRedirect />,
           },
           {
             path: 'dashboard',
@@ -148,6 +155,20 @@ export const appRoutes: RouteObject[] = [
                   fallback={<DelayedPageFallback variant="pos" label="Đang tải màn hình POS..." />}
                 >
                   <LazyPosUnifiedPage />
+                </React.Suspense>
+              </RbacRouteGuard>
+            ),
+          },
+          {
+            path: 'pos/touch',
+            element: (
+              <RbacRouteGuard module="pos">
+                <React.Suspense
+                  fallback={
+                    <DelayedPageFallback variant="pos" label="Đang tải POS cảm ứng..." />
+                  }
+                >
+                  <LazyPosTouchPage />
                 </React.Suspense>
               </RbacRouteGuard>
             ),

@@ -1,0 +1,28 @@
+{
+  "name": "POS Bán hàng",
+  "short_name": "POS",
+  "description": "Quầy bán hàng cảm ứng toàn màn hình",
+  "lang": "vi",
+  "id": "/pos/touch",
+  "start_url": "/pos/touch",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0f172a",
+  "theme_color": "#D97706",
+  "icons": [
+    {
+      "src": "/images/logo-icon-square.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/images/logo-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

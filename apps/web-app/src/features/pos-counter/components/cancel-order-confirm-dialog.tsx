@@ -131,7 +131,7 @@ export function CancelOrderConfirmDialog({
                   data-testid={`cancel-reason-chip-${reason}`}
                   onClick={() => setSelectedChip(reason)}
                   className={cn(
-                    'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                    'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors touch-ui:min-h-11 touch-ui:px-4 touch-ui:text-sm',
                     selectedChip === reason
                       ? 'border-rose-600 bg-rose-600 text-white'
                       : 'border-border bg-background text-foreground hover:bg-muted',
@@ -145,7 +145,7 @@ export function CancelOrderConfirmDialog({
                 data-testid="cancel-reason-chip-custom"
                 onClick={() => setSelectedChip(CUSTOM_REASON_KEY)}
                 className={cn(
-                  'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                  'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors touch-ui:min-h-11 touch-ui:px-4 touch-ui:text-sm',
                   isCustom
                     ? 'border-rose-600 bg-rose-600 text-white'
                     : 'border-border bg-background text-foreground hover:bg-muted',

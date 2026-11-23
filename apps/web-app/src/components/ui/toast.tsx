@@ -113,7 +113,7 @@ export function Toaster() {
     <div
       aria-live="polite"
       data-testid="toast-viewport-top-right"
-      className="pointer-events-none fixed left-3 right-3 top-14 z-[100] flex flex-col gap-2 sm:left-auto sm:right-4 sm:top-16 sm:w-full sm:max-w-sm"
+      className="pointer-events-none fixed left-3 right-3 top-14 z-[100] flex flex-col gap-2 sm:left-auto sm:right-4 sm:top-16 sm:w-full sm:max-w-sm touch-ui:bottom-3 touch-ui:left-3 touch-ui:right-auto touch-ui:top-auto touch-ui:max-w-sm touch-ui:flex-col-reverse"
     >
       {toasts.map((item) => (
         <div

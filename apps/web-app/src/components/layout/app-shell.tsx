@@ -18,6 +18,7 @@ import { useDisplayScale } from '@/hooks/use-display-scale';
 import { resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
 import { useSyncAccountPreferencesOnFocus } from '@/hooks/use-sync-account-preferences-on-focus';
 import { apiClient } from '@/lib/api-client';
+import { POS_TOUCH_PATH } from '@/lib/pos-device-mode';
 import { POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
 import { useQrPendingReminderMonitor } from '@/lib/qr-pending-reminder';
 import { enqueueQrVoiceAlert, unlockQrVoiceAudio } from '@/lib/qr-voice-announcer';
@@ -54,6 +55,9 @@ export function AppShell() {
   const [isSocketDisconnected, setIsSocketDisconnected] = React.useState<boolean>(false);
 
   const isPosRoute = location.pathname.startsWith('/pos');
+  // Màn POS cảm ứng chạy kiểu "trình chiếu": ẩn sidebar, navbar, banner, command palette.
+  const isPosTouchRoute =
+    location.pathname === POS_TOUCH_PATH || location.pathname.startsWith(`${POS_TOUCH_PATH}/`);
   useDisplayScale(location.pathname);
 
   const globalTableGridQuery = useQuery<PosTableGridResponse | null>({
@@ -229,13 +233,16 @@ export function AppShell() {
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
       <TopProgressBar />
-      <ResizableSidebar />
+      {isPosTouchRoute ? null : <ResizableSidebar />}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {!isBrowserOnline || isSocketDisconnected ? (
           <div
             role="status"
             data-testid="network-offline-banner"
-            className="flex items-center justify-center gap-2 bg-amber-500/95 px-3 py-1.5 text-center text-xs font-bold text-amber-950 shadow-xs"
+            className={cn(
+              'flex items-center justify-center gap-2 bg-amber-500/95 px-3 py-1.5 text-center text-xs font-bold text-amber-950 shadow-xs',
+              isPosTouchRoute && 'py-2 text-sm',
+            )}
           >
             <WifiOff className="h-3.5 w-3.5 shrink-0" />
             <span>
@@ -245,11 +252,13 @@ export function AppShell() {
             </span>
           </div>
         ) : null}
-        <TopNavbar
-          queryClient={queryClient}
-          onOpenCommandPalette={() => setCommandOpen(true)}
-          onToggleMobileMenu={() => setMobileMenuOpen(true)}
-        />
+        {isPosTouchRoute ? null : (
+          <TopNavbar
+            queryClient={queryClient}
+            onOpenCommandPalette={() => setCommandOpen(true)}
+            onToggleMobileMenu={() => setMobileMenuOpen(true)}
+          />
+        )}
         {!isPosRoute && overdueQrItems.length > 0 ? (
           <button
             type="button"
@@ -266,20 +275,25 @@ export function AppShell() {
         <main
           data-app-content="true"
           className={cn(
-            'flex-1 min-h-0 flex flex-col p-2.5 sm:p-4 md:p-5',
+            'flex-1 min-h-0 flex flex-col',
+            isPosTouchRoute ? 'p-0' : 'p-2.5 sm:p-4 md:p-5',
             isPosRoute ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden',
           )}
         >
           <Outlet />
         </main>
       </div>
-      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
+      {isPosTouchRoute ? null : (
+        <>
+          <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
 
-      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-        <SheetContent side="left" className="w-72 p-0 flex flex-col">
-          <MobileSidebarNav onClose={() => setMobileMenuOpen(false)} />
-        </SheetContent>
-      </Sheet>
+          <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+            <SheetContent side="left" className="w-72 p-0 flex flex-col">
+              <MobileSidebarNav onClose={() => setMobileMenuOpen(false)} />
+            </SheetContent>
+          </Sheet>
+        </>
+      )}
     </div>
   );
 }

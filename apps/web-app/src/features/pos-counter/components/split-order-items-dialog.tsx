@@ -218,7 +218,7 @@ export function SplitOrderItemsDialog({
                 >
                   <span
                     className={cn(
-                      'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+                      'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors touch-ui:mt-0 touch-ui:h-6 touch-ui:w-6',
                       isChecked
                         ? 'border-primary bg-primary text-primary-foreground'
                         : 'border-muted-foreground/50 bg-background',
@@ -310,7 +310,7 @@ export function SplitOrderItemsDialog({
                   data-testid={`split-payment-method-${opt.method}`}
                   onClick={() => setPaymentMethod(opt.method)}
                   className={cn(
-                    'flex items-center justify-center text-center rounded-lg border px-3 py-2 text-xs font-bold transition select-none',
+                    'flex items-center justify-center text-center rounded-lg border px-3 py-2 text-xs font-bold transition select-none touch-ui:min-h-12 touch-ui:text-sm',
                     paymentMethod === opt.method
                       ? 'border-emerald-600 bg-emerald-600 text-white shadow-xs'
                       : 'border-border bg-card hover:bg-muted',

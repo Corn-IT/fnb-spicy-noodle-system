@@ -149,7 +149,7 @@ export function CheckoutConfirmDialog({
                 data-testid={`payment-method-${opt.method}`}
                 onClick={() => setPaymentMethod(opt.method)}
                 className={cn(
-                  'flex items-center justify-center text-center rounded-lg border px-3 py-2.5 text-xs font-bold transition select-none active:scale-[0.98]',
+                  'flex items-center justify-center text-center rounded-lg border px-3 py-2.5 text-xs font-bold transition select-none active:scale-[0.98] touch-ui:min-h-12 touch-ui:text-sm',
                   paymentMethod === opt.method
                     ? 'border-emerald-600 bg-emerald-600 text-white shadow-xs'
                     : 'border-border bg-card hover:bg-muted',

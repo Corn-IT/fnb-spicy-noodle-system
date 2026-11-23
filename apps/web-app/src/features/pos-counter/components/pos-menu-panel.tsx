@@ -1,51 +1,21 @@
-import {
-  type ModifierGroup,
-  type OrderItemModifierSelection,
-  type Product,
-  type ProductStation as ProductStationType,
-} from '@fnb/shared';
-import { Check, Flame, Minus, Plus, RefreshCw, Search, Settings2, X } from 'lucide-react';
+import { type Product } from '@fnb/shared';
+import { Search, Settings2, X } from 'lucide-react';
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { useAppMessages } from '@/hooks/use-app-messages';
 import { useCommitSearch } from '@/lib/use-commit-search';
 import { useAuthStore } from '@/stores/auth.store';
-import { normalizeVietnameseText } from '@/utils/search';
-import {
-  parseStationOptions,
-  useKitchenStationsLookup,
-  useMenuCategoriesLookup,
-  useMenuSyncListener,
-} from '@/lib/menu-sync';
-import {
-  buildInitialSelectedByGroup,
-  computeOrderModifiersPayload,
-  isProductModifierSelectionValid,
-  resolveSubstituteForUncheckedModifier,
-} from '@/lib/modifier-selection';
 import { cn } from '@/utils/cn';
+import {
+  usePosMenuCatalog,
+  type PosCategoryFilter,
+  type PosStationFilter,
+} from '../hooks/use-pos-menu-catalog';
+import type { PosMenuSelectedItem } from './pos-menu-types';
+import { ProductOptionsDialog } from './product-options-dialog';
 
-export interface PosMenuSelectedItem {
-  productId: number;
-  name: string;
-  quantity: number;
-  unitPrice: number;
-  modifiers: OrderItemModifierSelection[];
-  modifierLabels: string[];
-  itemNote?: string;
-}
+export type { PosMenuSelectedItem } from './pos-menu-types';
 
 export interface PosMenuPanelProps {
   products: Product[];
@@ -53,9 +23,6 @@ export interface PosMenuPanelProps {
 }
 
 export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
-  useMenuSyncListener();
-
-  const { notify } = useAppMessages();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const canAddItems = user
@@ -64,137 +31,29 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
   const canManageMenu = user
     ? Boolean(user.isSuperAdmin || user.permissions?.menu?.create || user.permissions?.menu?.update)
     : true;
-  const { data: rawStations } = useKitchenStationsLookup();
-  const { data: rawCategories } = useMenuCategoriesLookup();
+  const { stationFilters, getCategoriesForStation, filterProducts } = usePosMenuCatalog(products);
 
-  const allStations = React.useMemo(() => parseStationOptions(rawStations), [rawStations]);
-  const visibleStations = React.useMemo(
-    () => allStations.filter((st) => !st.isHidden),
-    [allStations],
-  );
-  const hiddenStationCodes = React.useMemo(
-    () => new Set(allStations.filter((st) => st.isHidden).map((st) => st.code)),
-    [allStations],
-  );
-
-  const hiddenCategoryIds = React.useMemo(() => {
-    const ids = new Set<number>();
-    for (const cat of rawCategories ?? []) {
-      if (cat.metadata?.isHidden) {
-        ids.add(cat.id);
-      }
-    }
-    return ids;
-  }, [rawCategories]);
-
-  const activeCategoryNameById = React.useMemo(() => {
-    const map = new Map<number, string>();
-    for (const cat of rawCategories ?? []) {
-      if (!cat.metadata?.isHidden) {
-        map.set(cat.id, cat.name);
-      }
-    }
-    return map;
-  }, [rawCategories]);
-
-  const availableProducts = React.useMemo(
-    () =>
-      products.filter((p) => {
-        if (!p.isAvailable) return false;
-        if (hiddenStationCodes.has(p.station)) return false;
-        if (p.categoryId && hiddenCategoryIds.has(p.categoryId)) return false;
-        return true;
-      }),
-    [products, hiddenStationCodes, hiddenCategoryIds],
-  );
-
-  const stationFilters = React.useMemo<Array<{ label: string; value: 'ALL' | ProductStationType }>>(
-    () => [
-      { label: 'Tất cả', value: 'ALL' },
-      ...visibleStations
-        .filter((st) => st.code !== 'COMBO' || availableProducts.some((p) => p.station === 'COMBO'))
-        .map((st) => ({ label: st.name, value: st.code })),
-    ],
-    [visibleStations, availableProducts],
-  );
-
-  const [stationFilter, setStationFilter] = React.useState<'ALL' | ProductStationType>('ALL');
-  const [categoryFilter, setCategoryFilter] = React.useState<'ALL' | number>('ALL');
+  const [stationFilter, setStationFilter] = React.useState<PosStationFilter>('ALL');
+  const [categoryFilter, setCategoryFilter] = React.useState<PosCategoryFilter>('ALL');
   const [searchQuery, setSearchQuery] = React.useState('');
   const menuSearch = useCommitSearch(searchQuery, setSearchQuery);
   const [modalProduct, setModalProduct] = React.useState<Product | null>(null);
-  const [quantity, setQuantity] = React.useState(1);
-  const [selectedByGroup, setSelectedByGroup] = React.useState<Record<number, number[]>>({});
-  const [manualSubstituteByModifierId, setManualSubstituteByModifierId] = React.useState<
-    Record<number, number>
-  >({});
-  const [itemNote, setItemNote] = React.useState('');
-
-  const categoryOrderById = React.useMemo(() => {
-    const map = new Map<number, number>();
-    for (const cat of rawCategories ?? []) {
-      const sort = typeof cat.metadata?.sortOrder === 'number' ? cat.metadata.sortOrder : Number.MAX_SAFE_INTEGER;
-      map.set(cat.id, sort);
-    }
-    return map;
-  }, [rawCategories]);
 
   // Tầng 2 động: Danh sách danh mục con có trong khu vực bếp đang chọn (sắp xếp theo MDM sortOrder)
-  const dynamicSubcategories = React.useMemo(() => {
-    const base =
-      stationFilter === 'ALL'
-        ? availableProducts
-        : availableProducts.filter((p) => p.station === stationFilter);
-    const map = new Map<number, string>();
-    for (const p of base) {
-      if (p.categoryId && !hiddenCategoryIds.has(p.categoryId)) {
-        const liveCatName = activeCategoryNameById.get(p.categoryId) ?? p.categoryName;
-        if (liveCatName) {
-          map.set(p.categoryId, liveCatName);
-        }
-      }
-    }
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort(
-        (a, b) =>
-          (categoryOrderById.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
-            (categoryOrderById.get(b.id) ?? Number.MAX_SAFE_INTEGER) ||
-          a.name.localeCompare(b.name, 'vi'),
-      );
-  }, [availableProducts, stationFilter, hiddenCategoryIds, activeCategoryNameById, categoryOrderById]);
+  const dynamicSubcategories = React.useMemo(
+    () => getCategoriesForStation(stationFilter),
+    [getCategoriesForStation, stationFilter],
+  );
 
-  const normalizedSearchIndexById = React.useMemo(() => {
-    const map = new Map<number, string>();
-    for (const p of availableProducts) {
-      map.set(
-        p.id,
-        normalizeVietnameseText(`${p.name} ${p.subtitle ?? ''} ${p.categoryName ?? ''}`),
-      );
-    }
-    return map;
-  }, [availableProducts]);
-
-  const filteredProducts = React.useMemo(() => {
-    const normalizedQuery = normalizeVietnameseText(searchQuery);
-    return availableProducts.filter((p) => {
-      if (stationFilter !== 'ALL' && p.station !== stationFilter) return false;
-      if (categoryFilter !== 'ALL' && p.categoryId !== categoryFilter) return false;
-      if (normalizedQuery && !(normalizedSearchIndexById.get(p.id) ?? '').includes(normalizedQuery)) {
-        return false;
-      }
-      return true;
-    });
-  }, [availableProducts, stationFilter, categoryFilter, searchQuery, normalizedSearchIndexById]);
+  const filteredProducts = React.useMemo(
+    () => filterProducts({ station: stationFilter, category: categoryFilter, query: searchQuery }),
+    [filterProducts, stationFilter, categoryFilter, searchQuery],
+  );
 
   const handleProductClick = (product: Product) => {
     if (!canAddItems) return;
     if (product.modifierGroups.length > 0) {
       setModalProduct(product);
-      setQuantity(1);
-      setSelectedByGroup(buildInitialSelectedByGroup(product));
-      setManualSubstituteByModifierId({});
-      setItemNote('');
       return;
     }
 
@@ -206,61 +65,6 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
       modifiers: [],
       modifierLabels: [],
     });
-  };
-
-  const handleToggleModifier = (group: ModifierGroup, modifierId: number) => {
-    const targetMod = group.modifiers.find((m) => m.id === modifierId);
-    if (targetMod && targetMod.isAvailable === false) {
-      return;
-    }
-    setSelectedByGroup((prev) => {
-      const current = prev[group.id] ?? [];
-      if (group.maxSelect === 1 && !group.isAutoSelect && !group.allowSubstitution) {
-        return { ...prev, [group.id]: [modifierId] };
-      }
-      if (current.includes(modifierId)) {
-        if (group.allowSubstitution && current.length <= 1) {
-          notify('qr.modifier.minSubstituteRequired', {
-            variant: 'warning',
-            vars: { groupName: group.name },
-          });
-          return prev;
-        }
-        return { ...prev, [group.id]: current.filter((id) => id !== modifierId) };
-      }
-      if (current.length >= group.maxSelect) return prev;
-      return { ...prev, [group.id]: [...current, modifierId] };
-    });
-  };
-
-  const isModalValid = modalProduct
-    ? isProductModifierSelectionValid(modalProduct, selectedByGroup)
-    : false;
-
-  const computedModalPayload = React.useMemo(() => {
-    if (!modalProduct) {
-      return { extraPrice: 0, modifiers: [], modifierLabels: [] };
-    }
-    return computeOrderModifiersPayload(
-      modalProduct,
-      selectedByGroup,
-      manualSubstituteByModifierId,
-    );
-  }, [modalProduct, selectedByGroup, manualSubstituteByModifierId]);
-
-  const handleConfirmModal = () => {
-    if (!modalProduct || !isModalValid) return;
-
-    onAddItem({
-      productId: modalProduct.id,
-      name: modalProduct.name,
-      quantity,
-      unitPrice: modalProduct.price + computedModalPayload.extraPrice,
-      modifiers: computedModalPayload.modifiers,
-      modifierLabels: computedModalPayload.modifierLabels,
-      itemNote: itemNote.trim() ? itemNote.trim() : undefined,
-    });
-    setModalProduct(null);
   };
 
   return (
@@ -433,300 +237,11 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
       </div>
       )}
 
-      {/* Modal chọn phân cấp tuỳ chọn trong Sản phẩm */}
-      <Dialog
-        open={Boolean(modalProduct)}
-        onOpenChange={(open) => {
-          if (!open) setModalProduct(null);
-        }}
-      >
-        <DialogContent
-          data-testid="pos-modifier-modal"
-          className="flex max-h-[90dvh] sm:max-h-[86vh] w-[calc(100vw-1.5rem)] sm:max-w-2xl lg:max-w-3xl flex-col p-0 gap-0 overflow-hidden rounded-2xl border bg-card shadow-2xl"
-        >
-          <DialogHeader className="px-4 py-3 sm:px-5 sm:py-3.5 border-b shrink-0 text-left bg-card">
-            <DialogTitle className="flex flex-wrap items-baseline gap-2 text-base sm:text-lg font-bold">
-              <Flame className="h-5 w-5 text-accent-text shrink-0 self-center" />
-              <span>{modalProduct?.name}</span>
-              {modalProduct?.subtitle ? (
-                <span
-                  data-testid="pos-modal-product-subtitle"
-                  className="text-sm font-semibold text-muted-foreground"
-                >
-                  ({modalProduct.subtitle})
-                </span>
-              ) : null}
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground mt-0.5 flex items-center justify-between">
-              <span>
-                Đơn giá gốc: <strong>{modalProduct?.price.toLocaleString('vi-VN')} đ</strong>
-              </span>
-              {computedModalPayload.extraPrice > 0 ? (
-                <span className="font-bold text-price">
-                  + Tuỳ chọn thêm: +{computedModalPayload.extraPrice.toLocaleString('vi-VN')} đ
-                </span>
-              ) : null}
-            </DialogDescription>
-          </DialogHeader>
-
-          {modalProduct ? (
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y px-4 py-3 sm:px-5 sm:py-3.5 space-y-3.5">
-              {modalProduct.modifierGroups.map((group) => {
-                const chosenIds = selectedByGroup[group.id] ?? [];
-                const isAutoGroup = Boolean(
-                  group.isAutoSelect || group.allowSubstitution,
-                );
-
-                return (
-                  <div
-                    key={group.id}
-                    className="space-y-2 rounded-xl border border-border/70 bg-muted/15 p-3"
-                    data-testid={`pos-mod-group-${group.id}`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-1">
-                      <span className="text-xs sm:text-sm font-bold text-foreground">
-                        {group.name}
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        {group.allowSubstitution ? (
-                          <Badge
-                            variant="outline"
-                            className="text-[10px] font-semibold border-blue-500/40 text-blue-700 dark:text-blue-300"
-                          >
-                            Bỏ tích tự động đổi sang món còn lại
-                          </Badge>
-                        ) : isAutoGroup ? (
-                          <Badge
-                            variant="outline"
-                            className="text-[10px] font-semibold border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
-                          >
-                            Mặc định tích sẵn (Bỏ tích nếu khách không ăn)
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="text-[10px] font-semibold">
-                            {group.isRequired
-                              ? 'Bắt buộc chọn 1'
-                              : `Tối đa ${group.maxSelect}`}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {group.modifiers.map((mod) => {
-                        const isOutOfStock = mod.isAvailable === false;
-                        const isSelected = !isOutOfStock && chosenIds.includes(mod.id);
-                        const subInfo =
-                          group.allowSubstitution && !isSelected
-                            ? resolveSubstituteForUncheckedModifier(
-                                group,
-                                mod,
-                                chosenIds,
-                                manualSubstituteByModifierId,
-                              )
-                            : null;
-
-                        return (
-                          <div
-                            key={mod.id}
-                            className={cn(
-                              'flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all',
-                              isOutOfStock
-                                ? group.allowSubstitution
-                                  ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
-                                  : 'border-dashed border-border/80 bg-muted/50 text-muted-foreground opacity-85'
-                                : isSelected
-                                  ? 'border-primary bg-primary/10 text-accent-text shadow-2xs'
-                                  : group.allowSubstitution
-                                    ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
-                                    : isAutoGroup
-                                      ? 'border-dashed border-border bg-muted/40 text-muted-foreground'
-                                      : 'border-border bg-card hover:bg-muted/50',
-                            )}
-                          >
-                            <button
-                              type="button"
-                              data-testid={`pos-mod-option-${mod.id}`}
-                              disabled={isOutOfStock}
-                              aria-disabled={isOutOfStock}
-                              onClick={() => handleToggleModifier(group, mod.id)}
-                              className={cn(
-                                'flex w-full items-start justify-between gap-2 text-left',
-                                isOutOfStock && 'cursor-not-allowed',
-                              )}
-                            >
-                              <div className="flex items-start gap-2 min-w-0">
-                                <span
-                                  className={cn(
-                                    'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
-                                    isOutOfStock
-                                      ? 'border-muted-foreground/30 bg-muted'
-                                      : isSelected
-                                        ? 'border-primary bg-primary text-primary-foreground'
-                                        : 'border-muted-foreground/50 bg-background',
-                                  )}
-                                >
-                                  {isSelected ? <Check className="h-3 w-3 stroke-[3]" /> : null}
-                                </span>
-                                <div className="min-w-0">
-                                  <span
-                                    className={cn(
-                                      'block text-xs font-bold leading-snug',
-                                      isOutOfStock || (!isSelected && isAutoGroup && !group.allowSubstitution)
-                                        ? 'line-through opacity-70'
-                                        : '',
-                                    )}
-                                  >
-                                    {mod.name}
-                                  </span>
-                                  {isOutOfStock ? (
-                                    <span
-                                      data-testid={`pos-mod-out-of-stock-${mod.id}`}
-                                      className="mt-0.5 block text-[10px] font-semibold text-rose-600 dark:text-rose-400"
-                                    >
-                                      Tạm hết
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </div>
-
-                              {mod.extraPrice > 0 ? (
-                                <span
-                                  className={cn(
-                                    'shrink-0 text-[11px] font-extrabold text-price',
-                                    isOutOfStock && 'line-through opacity-60',
-                                  )}
-                                >
-                                  +{mod.extraPrice >= 1000 ? `${mod.extraPrice / 1000}k` : `${mod.extraPrice}đ`}
-                                </span>
-                              ) : null}
-                            </button>
-
-                            {/* Subtitle động cho Đồ ăn chính khi bỏ tích chọn */}
-                            {group.allowSubstitution && !isSelected && subInfo ? (
-                              <div
-                                data-testid={`pos-mod-substitute-${mod.id}`}
-                                className="mt-1.5 border-t border-amber-500/30 pt-1.5 space-y-1"
-                              >
-                                <div className="flex items-center gap-1 text-[11px] font-bold text-amber-800 dark:text-amber-300">
-                                  <RefreshCw className="h-3 w-3 shrink-0" />
-                                  <span>Thay thế bằng {subInfo.substituteName}</span>
-                                </div>
-                                {subInfo.availableSubstitutes.length > 1 ? (
-                                  <div className="flex flex-wrap gap-1">
-                                    {subInfo.availableSubstitutes.map((candidate) => (
-                                      <button
-                                        key={candidate.id}
-                                        type="button"
-                                        onClick={() =>
-                                          setManualSubstituteByModifierId((prev) => ({
-                                            ...prev,
-                                            [mod.id]: candidate.id,
-                                          }))
-                                        }
-                                        className={cn(
-                                          'rounded px-1.5 py-0.5 text-[10px] font-semibold border transition-colors',
-                                          subInfo.substituteModifier?.id === candidate.id
-                                            ? 'border-amber-600 bg-amber-600 text-white'
-                                            : 'border-border bg-background text-muted-foreground hover:text-foreground',
-                                        )}
-                                      >
-                                        Đổi sang {candidate.name}
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
-                            ) : null}
-
-                            {/* Subtitle gợi ý mặc định khi đang tích chọn Đồ ăn chính */}
-                            {!isOutOfStock && group.allowSubstitution && isSelected && mod.defaultSubstituteName ? (
-                              <span className="mt-1 pl-6 text-[10px] font-medium text-muted-foreground">
-                                (Bỏ tích → Thay bằng {mod.defaultSubstituteName})
-                              </span>
-                            ) : null}
-
-                            {/* Subtitle khi bỏ tích Đồ ăn mặc định 0đ */}
-                            {!isOutOfStock && !group.allowSubstitution && isAutoGroup && !isSelected ? (
-                              <span className="mt-1 pl-6 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                                Không {mod.name}
-                              </span>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-
-              <div className="space-y-1.5">
-                <label htmlFor="pos-item-note" className="text-xs font-bold text-foreground">
-                  Ghi chú
-                </label>
-                <textarea
-                  id="pos-item-note"
-                  rows={2}
-                  placeholder="Nhập ghi chú riêng cho bếp (VD: Ít cay, nấu chín kỹ, để riêng nước...)"
-                  value={itemNote}
-                  onChange={(e) => setItemNote(e.target.value)}
-                  className="flex w-full rounded-xl border border-input bg-background px-3 py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-
-              <div className="flex items-center justify-between border-t border-border/40 pt-3">
-                <span className="text-sm font-bold">Số lượng món</span>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="outline"
-                    onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  >
-                    <Minus className="h-4 w-4" />
-                  </Button>
-                  <span className="w-8 text-center font-bold">{quantity}</span>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="outline"
-                    onClick={() => setQuantity((q) => q + 1)}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <DialogFooter className="px-4 py-2.5 sm:px-5 sm:py-3 border-t bg-muted/20 shrink-0 flex flex-col-reverse sm:flex-row gap-2 sm:gap-2 sm:justify-between sm:items-center">
-            <div className="text-xs text-muted-foreground">
-              Tổng cộng:{' '}
-              <strong className="text-sm text-price">
-                {(
-                  ((modalProduct?.price ?? 0) + computedModalPayload.extraPrice) *
-                  quantity
-                ).toLocaleString('vi-VN')}{' '}
-                đ
-              </strong>
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setModalProduct(null)}>
-                Huỷ
-              </Button>
-              <Button
-                type="button"
-                data-testid="pos-confirm-modifier-btn"
-                disabled={!isModalValid}
-                onClick={handleConfirmModal}
-                className="bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.98]"
-              >
-                Xác nhận thêm món
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ProductOptionsDialog
+        product={modalProduct}
+        onClose={() => setModalProduct(null)}
+        onConfirm={onAddItem}
+      />
     </div>
   );
 }

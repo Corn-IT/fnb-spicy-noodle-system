@@ -1,3 +1,5 @@
+import plugin from 'tailwindcss/plugin';
+
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: ['class'],
@@ -57,5 +59,11 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // `touch-ui:` chỉ áp dụng khi màn POS cảm ứng đang mở (gắn `data-pos-touch` lên <html>),
+    // nên cả dialog/popover portal ra <body> cũng được phóng to vùng chạm.
+    plugin(({ addVariant }) => {
+      addVariant('touch-ui', ':is([data-pos-touch] &)');
+    }),
+  ],
 };
