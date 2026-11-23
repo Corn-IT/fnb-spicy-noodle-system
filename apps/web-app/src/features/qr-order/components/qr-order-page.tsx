@@ -462,18 +462,50 @@ export function QrOrderPage() {
     return new Set(menuData.stations.map((s) => s.code));
   }, [menuData?.stations]);
 
+  const effectiveStationFilter = React.useMemo(() => {
+    if (stationFilter === 'ALL') return 'ALL' as const;
+    return stationTabs.some((tab) => tab.value === stationFilter) ? stationFilter : ('ALL' as const);
+  }, [stationFilter, stationTabs]);
+
   const visibleCategories = React.useMemo(() => {
     if (!menuData) return [];
+    const visibleProductCategoryIds = new Set<number>();
+    const stationProductCategoryIds = new Set<number>();
+    for (const p of menuData.products) {
+      if (visibleStationCodes && !visibleStationCodes.has(p.station)) continue;
+      if (p.categoryId !== null && p.categoryId !== undefined) {
+        visibleProductCategoryIds.add(p.categoryId);
+        if (effectiveStationFilter === 'ALL' || p.station === effectiveStationFilter) {
+          stationProductCategoryIds.add(p.categoryId);
+        }
+      }
+    }
     if (menuData.categories && menuData.categories.length > 0) {
       return menuData.categories
-        .filter((cat) => stationFilter === 'ALL' || cat.stationCode === stationFilter)
-        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .filter((cat) => {
+          if (effectiveStationFilter === 'ALL') {
+            if (
+              visibleStationCodes &&
+              cat.stationCode &&
+              !visibleStationCodes.has(cat.stationCode) &&
+              !visibleProductCategoryIds.has(cat.id)
+            ) {
+              return false;
+            }
+            return true;
+          }
+          return (
+            cat.stationCode === effectiveStationFilter ||
+            stationProductCategoryIds.has(cat.id)
+          );
+        })
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
         .map((cat) => ({ id: cat.id, name: cat.name }));
     }
     const base =
-      stationFilter === 'ALL'
+      effectiveStationFilter === 'ALL'
         ? menuData.products
-        : menuData.products.filter((p) => p.station === stationFilter);
+        : menuData.products.filter((p) => p.station === effectiveStationFilter);
     const catMap = new Map<number, string>();
     for (const p of base) {
       if (p.categoryId && p.categoryName) {
@@ -481,7 +513,14 @@ export function QrOrderPage() {
       }
     }
     return Array.from(catMap.entries()).map(([id, name]) => ({ id, name }));
-  }, [menuData, stationFilter]);
+  }, [menuData, visibleStationCodes, effectiveStationFilter]);
+
+  const effectiveCategoryFilter = React.useMemo(() => {
+    if (categoryFilter === 'ALL') return 'ALL' as const;
+    return visibleCategories.some((cat) => cat.id === categoryFilter)
+      ? categoryFilter
+      : ('ALL' as const);
+  }, [categoryFilter, visibleCategories]);
 
   const visibleCategoryIds = React.useMemo(() => {
     if (!menuData?.categories || menuData.categories.length === 0) return null;
@@ -495,12 +534,19 @@ export function QrOrderPage() {
       if (p.categoryId !== null && p.categoryId !== undefined && visibleCategoryIds && !visibleCategoryIds.has(p.categoryId)) {
         return false;
       }
-      if (stationFilter !== 'ALL' && p.station !== stationFilter) return false;
-      if (categoryFilter !== 'ALL' && p.categoryId !== categoryFilter) return false;
+      if (effectiveStationFilter !== 'ALL' && p.station !== effectiveStationFilter) return false;
+      if (effectiveCategoryFilter !== 'ALL' && p.categoryId !== effectiveCategoryFilter) return false;
       if (!matchesVietnameseQuery(searchQuery, p.name, p.subtitle, p.categoryName)) return false;
       return true;
     });
-  }, [menuData, visibleStationCodes, visibleCategoryIds, stationFilter, categoryFilter, searchQuery]);
+  }, [
+    menuData,
+    visibleStationCodes,
+    visibleCategoryIds,
+    effectiveStationFilter,
+    effectiveCategoryFilter,
+    searchQuery,
+  ]);
 
   const handleUpdateCartQuantity = (key: string, delta: number) => {
     setCart((prev) =>
@@ -1185,36 +1231,47 @@ export function QrOrderPage() {
           </div>
 
           {/* Tầng 1: Khu vực Bếp đồng bộ từ cấu hình hệ thống */}
-          <div className="flex flex-nowrap overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0 items-center gap-1.5 py-0.5">
-            {stationTabs.map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                data-testid={`qr-station-tab-${tab.value}`}
-                onClick={() => {
-                  setStationFilter(tab.value);
-                  setCategoryFilter('ALL');
-                }}
-                className={`inline-flex h-9 shrink-0 items-center justify-center rounded-full px-3.5 text-xs font-semibold transition-all select-none whitespace-nowrap touch-manipulation ${
-                  stationFilter === tab.value
-                    ? 'bg-primary text-primary-foreground shadow-xs'
-                    : 'bg-muted/70 text-muted-foreground border border-border/50'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div
+            data-testid="qr-station-bar"
+            className="flex flex-wrap items-center gap-1.5 py-0.5"
+          >
+            {stationTabs.map((tab) => {
+              const isStationSelected = effectiveStationFilter === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  type="button"
+                  data-testid={`qr-station-tab-${tab.value}`}
+                  aria-pressed={isStationSelected}
+                  onClick={() => {
+                    setStationFilter(tab.value);
+                    setCategoryFilter('ALL');
+                  }}
+                  className={`inline-flex min-h-9 max-w-full shrink-0 items-center justify-center rounded-full px-3.5 py-1.5 text-center text-xs font-semibold leading-snug break-words transition-all select-none touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ${
+                    isStationSelected
+                      ? 'bg-primary text-primary-foreground shadow-xs'
+                      : 'bg-muted/70 text-muted-foreground border border-border/50'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Tầng 2: Danh mục con (cuộn ngang trên mobile để thấy món ngay, xuống dòng trên màn hình lớn) */}
+          {/* Tầng 2: Danh mục con (hiển thị đầy đủ dạng wrap ở mọi kích thước màn hình) */}
           {visibleCategories.length > 0 ? (
-            <div className="flex flex-nowrap overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0 items-center gap-1.5 py-0.5">
+            <div
+              data-testid="qr-category-bar"
+              className="flex flex-wrap items-center gap-1.5 py-0.5"
+            >
               <button
                 type="button"
                 data-testid="qr-category-tab-ALL"
+                aria-pressed={effectiveCategoryFilter === 'ALL'}
                 onClick={() => setCategoryFilter('ALL')}
-                className={`inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-[11px] font-semibold transition-colors whitespace-nowrap touch-manipulation ${
-                  categoryFilter === 'ALL'
+                className={`inline-flex min-h-8 max-w-full shrink-0 items-center rounded-md px-2.5 py-1 text-left text-[11px] font-semibold leading-snug break-words transition-colors touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ${
+                  effectiveCategoryFilter === 'ALL'
                     ? 'bg-primary/15 text-accent-text border border-primary/40'
                     : 'bg-background text-muted-foreground border border-border hover:text-foreground'
                 }`}
@@ -1222,14 +1279,15 @@ export function QrOrderPage() {
                 Tất cả danh mục ({visibleCategories.length})
               </button>
               {visibleCategories.map((cat) => {
-                const isSelected = categoryFilter === cat.id;
+                const isSelected = effectiveCategoryFilter === cat.id;
                 return (
                   <button
                     key={cat.id}
                     type="button"
                     data-testid={`qr-category-tab-${cat.id}`}
+                    aria-pressed={isSelected}
                     onClick={() => setCategoryFilter(isSelected ? 'ALL' : cat.id)}
-                    className={`inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-[11px] font-semibold transition-colors whitespace-nowrap touch-manipulation ${
+                    className={`inline-flex min-h-8 max-w-full shrink-0 items-center rounded-md px-2.5 py-1 text-left text-[11px] font-semibold leading-snug break-words transition-colors touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ${
                       isSelected
                         ? 'bg-primary/15 text-accent-text border border-primary/40'
                         : 'bg-background text-muted-foreground border border-border hover:text-foreground'
@@ -1247,15 +1305,26 @@ export function QrOrderPage() {
           {filteredProducts.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center text-muted-foreground">
               <p className="text-sm font-semibold">Không tìm thấy món phù hợp</p>
-              {searchQuery ? (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="mt-2 text-xs font-semibold text-accent-text hover:underline"
-                >
-                  Xoá từ khoá tìm kiếm
-                </button>
-              ) : null}
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={menuSearch.clear}
+                    className="text-xs font-semibold text-accent-text hover:underline"
+                  >
+                    Xoá từ khoá tìm kiếm
+                  </button>
+                ) : null}
+                {effectiveCategoryFilter !== 'ALL' ? (
+                  <button
+                    type="button"
+                    onClick={() => setCategoryFilter('ALL')}
+                    className="text-xs font-semibold text-accent-text hover:underline"
+                  >
+                    Xem tất cả danh mục
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : filteredProducts.map((product) => (
               <div
@@ -1264,7 +1333,7 @@ export function QrOrderPage() {
                 onClick={() => handleProductClick(product)}
                 className="flex cursor-pointer items-center justify-between rounded-xl border bg-card p-3.5 shadow-xs transition hover:border-primary/60 active:scale-[0.99]"
               >
-                <div className="space-y-1 pr-2">
+                <div className="min-w-0 flex-1 space-y-1 pr-2">
                   {product.categoryName ? (
                     <span className="inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
                       {product.categoryName}
@@ -1376,7 +1445,7 @@ export function QrOrderPage() {
                   data-testid="qr-submit-order-btn"
                   disabled={submitMutation.isPending || hasUnavailableCartItem || isPaidLocked}
                   onClick={handleSubmitOrder}
-                  className="h-11 rounded-xl bg-primary px-4 text-xs sm:text-sm font-bold text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-[0.98] shrink-0"
+                  className="h-11 rounded-xl bg-primary px-3 sm:px-4 text-xs sm:text-sm font-bold text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-[0.98] shrink-0"
                 >
                   {isPaidLocked
                     ? "Bấm 'Gọi đơn mới'"
