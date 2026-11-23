@@ -26,7 +26,7 @@ const makeProfile = (overrides: Partial<JoinedUserProfile> = {}): JoinedUserProf
     pos: { view: true, checkout: true },
     invoices: { view: true },
   }),
-  uiPreferences: { theme: 'light', sidebarWidth: 260, columnWidths: {} },
+  uiPreferences: { theme: 'light', sidebarWidth: 260, columnWidths: {}, displayScale: { perPath: {} }, navOrder: [], navGroupOrder: [], sidebarCollapsed: false },
   employee: {
     id: 12,
     fullName: 'Nguyễn Văn Anh',
@@ -112,7 +112,7 @@ describe('Profile Enhancements: Password Eye Toggle, Avatar Crop/Upload, Session
             isSuperAdmin: false,
             isActive: true,
             permissions: UserPermissionsSchema.parse({}),
-            uiPreferences: { theme: 'light', sidebarWidth: 260, columnWidths: {} },
+            uiPreferences: { theme: 'light', sidebarWidth: 260, columnWidths: {}, displayScale: { perPath: {} }, navOrder: [], navGroupOrder: [], sidebarCollapsed: false },
             employee: {
               id: 12,
               fullName: 'Nguyễn Văn Anh',

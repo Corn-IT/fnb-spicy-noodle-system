@@ -1,4 +1,4 @@
-import { ErrorCodes, SocketEvents, UserPermissionsSchema } from '@fnb/shared';
+import { ErrorCodes, SocketEvents, UiPreferencesSchema, UserPermissionsSchema } from '@fnb/shared';
 import { QueryClient } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -13,7 +13,7 @@ import { AppProvider } from '@/providers/app-provider';
 import { QueryProvider } from '@/providers/query-provider';
 import { SocketProvider } from '@/providers/socket-provider';
 import { AUTH_STORAGE_KEY, useAuthStore } from '@/stores/auth.store';
-import { UI_PREFERENCES_STORAGE_KEY } from '@/stores/ui-preferences.store';
+import { UI_PREFERENCES_STORAGE_KEY, useUiPreferencesStore } from '@/stores/ui-preferences.store';
 
 const { socketHandlers, mockSocketInstance, loginMutateAsyncMock } = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => void>();
@@ -665,6 +665,44 @@ describe('Single Active Session & IP/Device Audit UI (Frontend)', () => {
     expect(
       useToastStore.getState().toasts.some((t) => t.title === 'Quyền truy cập vừa được cập nhật'),
     ).toBe(true);
+  });
+
+  it('applies account preference changes pushed from another device via SocketEvents.ACCOUNT_PREFERENCES_UPDATED', async () => {
+    useAuthStore.getState().setAuth({ accessToken: 'live-staff-token', user: { ...superAdminUser, id: 4 } });
+    useUiPreferencesStore.setState({ sidebarCollapsed: false, userNavGroupOrder: [], accountSyncPending: false });
+
+    render(
+      <QueryProvider client={new QueryClient()}>
+        <SocketProvider>
+          <div>Staff Screen</div>
+        </SocketProvider>
+      </QueryProvider>,
+    );
+    await waitFor(() => expect(socketHandlers.has(SocketEvents.ACCOUNT_PREFERENCES_UPDATED)).toBe(true));
+    const handler = () => socketHandlers.get(SocketEvents.ACCOUNT_PREFERENCES_UPDATED);
+    const payload = (userId: number, sidebarCollapsed: boolean) => ({
+      userId,
+      uiPreferences: UiPreferencesSchema.parse({ sidebarCollapsed, navGroupOrder: ['finance', 'sales'] }),
+      updatedAt: '2026-11-23T12:00:00.000Z',
+    });
+
+    // Another account's event is ignored.
+    act(() => handler()?.(payload(9, true)));
+    expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(false);
+
+    // Malformed payloads are ignored.
+    act(() => handler()?.({ userId: 4, uiPreferences: { sidebarCollapsed: 'yes' } }));
+    expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(false);
+
+    // This account's event is applied.
+    act(() => handler()?.(payload(4, true)));
+    expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(true);
+    expect(useUiPreferencesStore.getState().userNavGroupOrder).toEqual(['finance', 'sales']);
+
+    // But it never wipes a change that is still waiting to be saved from this device.
+    useUiPreferencesStore.setState({ sidebarCollapsed: false, accountSyncPending: true });
+    act(() => handler()?.(payload(4, true)));
+    expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(false);
   });
 
   it('handles 422 wrong currentPassword on PATCH /api/v1/profile/password without triggering refresh/retry', async () => {

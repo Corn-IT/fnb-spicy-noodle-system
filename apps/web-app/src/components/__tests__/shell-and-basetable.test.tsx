@@ -598,7 +598,7 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
         username: 'cashier01',
         isSuperAdmin: false,
         permissions: UserPermissionsSchema.parse({}),
-        uiPreferences: { theme: 'system', sidebarWidth: 260, columnWidths: {} },
+        uiPreferences: { theme: 'system', sidebarWidth: 260, columnWidths: {}, displayScale: { perPath: {} }, navOrder: [], navGroupOrder: [], sidebarCollapsed: false },
         employee: {
           id: 12,
           fullName: 'Nguyễn Văn Anh',
@@ -690,7 +690,7 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
         username: 'cashier01',
         isSuperAdmin: false,
         permissions: UserPermissionsSchema.parse({}),
-        uiPreferences: { theme: 'light', sidebarWidth: 260, columnWidths: {} },
+        uiPreferences: { theme: 'light', sidebarWidth: 260, columnWidths: {}, displayScale: { perPath: {} }, navOrder: [], navGroupOrder: [], sidebarCollapsed: false },
         employee: {
           id: 12,
           fullName: 'Nguyễn Văn Anh',

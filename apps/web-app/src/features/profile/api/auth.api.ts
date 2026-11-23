@@ -33,7 +33,8 @@ export async function loginWithCredentials(input: LoginRequest): Promise<LoginAp
     },
   });
 
-  useUiPreferencesStore.getState().hydrateFromServer(response.user.uiPreferences);
+  // Login always takes the server's values, even if an earlier session left unsent local changes.
+  useUiPreferencesStore.getState().hydrateFromServer(response.user.uiPreferences, { force: true });
 
   return response;
 }

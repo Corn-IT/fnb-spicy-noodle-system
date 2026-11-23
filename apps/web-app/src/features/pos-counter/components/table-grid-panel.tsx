@@ -13,6 +13,7 @@ import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { persistAccountPreferences } from '@/lib/persist-account-preferences';
 import { evaluateOrderPendingAlert } from '@/lib/qr-pending-reminder';
 import {
   getActiveQrReminderConfig,
@@ -22,6 +23,7 @@ import {
   unlockQrVoiceAudio,
 } from '@/lib/qr-voice-announcer';
 import { useAuthStore } from '@/stores/auth.store';
+import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { cn } from '@/utils/cn';
 import { QrSecurityConfigDialog } from './qr-security-config-dialog';
 import { TableManageDialog } from './table-manage-dialog';
@@ -133,6 +135,8 @@ export function TableGridPanel({
     const next = !voiceEnabled;
     setVoiceEnabled(next);
     setQrVoiceAlertEnabled(next);
+    useUiPreferencesStore.getState().setUserVoiceAlertEnabled(next);
+    void persistAccountPreferences({ voiceAlertEnabled: next });
     if (next) {
       void unlockQrVoiceAudio();
     }

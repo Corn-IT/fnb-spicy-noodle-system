@@ -43,12 +43,12 @@ export default defineConfig({
     },
     {
       name: 'webkit-mobile',
-      testMatch: /.*(qr|responsive|display-scale).*\.spec\.ts/,
+      testMatch: /.*(qr|responsive|display-scale|account-preferences).*\.spec\.ts/,
       use: { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } },
     },
     {
       name: 'webkit-tablet',
-      testMatch: /.*(display-scale|responsive).*\.spec\.ts/,
+      testMatch: /.*(display-scale|responsive|account-preferences).*\.spec\.ts/,
       use: { ...devices['Desktop Safari'], viewport: { width: 1180, height: 820 } },
     },
   ],

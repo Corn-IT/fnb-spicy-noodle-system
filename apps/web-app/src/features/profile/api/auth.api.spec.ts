@@ -56,6 +56,36 @@ describe('loginWithCredentials', () => {
     expect(useUiPreferencesStore.getState().columnWidths).toEqual({ orders: { name: 240 } });
   });
 
+  it('should apply the account voice choice on login and default to enabled when none is stored', async () => {
+    const buildResponse = (uiPreferences: Record<string, unknown>) => ({
+      accessToken: 'access-token',
+      user: {
+        id: 4,
+        employeeId: 2,
+        username: 'cashier01',
+        isSuperAdmin: false,
+        permissions: UserPermissionsSchema.parse({}),
+        employee: {
+          fullName: 'Cashier One',
+          shortName: 'C.One',
+          avatarUrl: null,
+          position: { id: 1, name: 'Thu Ngân' },
+          specialty: null,
+        },
+        uiPreferences,
+      },
+    });
+    const post = vi.spyOn(apiClient, 'post');
+
+    post.mockResolvedValueOnce(buildResponse({ theme: 'light', voiceAlertEnabled: false }) as never);
+    await loginWithCredentials({ username: 'cashier01', password: 'Password@123' });
+    expect(localStorage.getItem('fnb-pos-voice-alert')).toBe('false');
+
+    post.mockResolvedValueOnce(buildResponse({ theme: 'light' }) as never);
+    await loginWithCredentials({ username: 'cashier02', password: 'Password@123' });
+    expect(localStorage.getItem('fnb-pos-voice-alert')).toBe('true');
+  });
+
   it('should persist auth state across page reloads and clear it upon clearAuth', () => {
     useAuthStore.getState().setAuth({
       accessToken: 'sample-jwt',

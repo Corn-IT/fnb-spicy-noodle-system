@@ -18,7 +18,9 @@ import {
   sortNavRoutes,
   useStoreSettings,
 } from '@/hooks/use-store-settings';
+import { useEffectiveNavOrder } from '@/hooks/use-effective-nav-order';
 import { apiClient } from '@/lib/api-client';
+import { persistAccountPreferences } from '@/lib/persist-account-preferences';
 import {
   cancelRoutePrefetch,
   prefetchRouteChunk,
@@ -152,6 +154,7 @@ function SidebarRouteGroups({
 }
 
 export function ResizableSidebar() {
+  const effectiveNavOrder = useEffectiveNavOrder();
   const user = useAuthStore((state) => state.user);
   const { settings } = useStoreSettings();
   const logoUrl = buildStoreAssetUrl(StoreAssetKind.LOGO, settings.assets.logo);
@@ -185,6 +188,14 @@ export function ResizableSidebar() {
         (route) => route.module && canUserAccessRoute(user, route),
       ),
     [user],
+  );
+
+  const handleSetCollapsed = React.useCallback(
+    (collapsed: boolean) => {
+      setSidebarCollapsed(collapsed);
+      void persistAccountPreferences({ sidebarCollapsed: collapsed });
+    },
+    [setSidebarCollapsed],
   );
 
   const scheduleServerSync = React.useCallback((nextWidth: number) => {
@@ -285,7 +296,7 @@ export function ResizableSidebar() {
             size="icon"
             data-testid="sidebar-collapse-btn"
             className="shrink-0"
-            onClick={() => setSidebarCollapsed(true)}
+            onClick={() => handleSetCollapsed(true)}
             title="Thu gọn thanh bên"
             aria-label="Thu gọn thanh bên"
           >
@@ -301,7 +312,7 @@ export function ResizableSidebar() {
             size="icon"
             data-testid="sidebar-expand-btn"
             className="h-8 w-full rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            onClick={() => setSidebarCollapsed(false)}
+            onClick={() => handleSetCollapsed(false)}
             title="Mở rộng thanh bên"
             aria-label="Mở rộng thanh bên"
           >
@@ -315,8 +326,8 @@ export function ResizableSidebar() {
           routes={visibleMenuRoutes}
           navLabels={settings.navLabels}
           navGroupLabels={settings.navGroupLabels}
-          navGroupOrder={settings.navGroupOrder}
-          navOrder={settings.navOrder}
+          navGroupOrder={effectiveNavOrder.navGroupOrder}
+          navOrder={effectiveNavOrder.navOrder}
           collapsed={sidebarCollapsed}
         />
       </nav>
@@ -334,6 +345,7 @@ export function ResizableSidebar() {
 }
 
 export function MobileSidebarNav({ onClose }: { onClose: () => void }) {
+  const effectiveNavOrder = useEffectiveNavOrder();
   const user = useAuthStore((state) => state.user);
   const { settings } = useStoreSettings();
   const logoUrl = buildStoreAssetUrl(StoreAssetKind.LOGO, settings.assets.logo);
@@ -368,8 +380,8 @@ export function MobileSidebarNav({ onClose }: { onClose: () => void }) {
           routes={visibleMenuRoutes}
           navLabels={settings.navLabels}
           navGroupLabels={settings.navGroupLabels}
-          navGroupOrder={settings.navGroupOrder}
-          navOrder={settings.navOrder}
+          navGroupOrder={effectiveNavOrder.navGroupOrder}
+          navOrder={effectiveNavOrder.navOrder}
           onNavigate={onClose}
           linkClassName="px-3.5 py-3"
         />

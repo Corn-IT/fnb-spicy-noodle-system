@@ -13,7 +13,8 @@
     "e2e": "playwright test",
     "e2e:mock": "playwright test --grep-invert @real",
     "e2e:real": "playwright test --grep @real",
-    "e2e:update": "playwright test --update-snapshots"
+    "e2e:update": "playwright test --update-snapshots",
+    "e2e:local-chrome": "playwright test -c playwright.local-chrome.config.ts"
   },
   "dependencies": {
     "@fnb/shared": "workspace:*",
