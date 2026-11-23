@@ -36,6 +36,7 @@ import {
   useUploadAvatarMutation,
 } from '@/features/profile/api/profile.api';
 import { AvatarCropDialog } from '@/features/profile/components/avatar-crop-dialog';
+import { PersonalPreferencesCard } from '@/features/profile/components/personal-preferences-card';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { resolvePublicAssetUrl } from '@/utils/asset-url';
 import { cn } from '@/utils/cn';
@@ -630,6 +631,8 @@ export function ProfilePage() {
           </p>
         )}
       </section>
+
+      <PersonalPreferencesCard />
 
       {/* Thẻ 4: Đổi mật khẩu giữ nguyên phiên hiện tại */}
       <form

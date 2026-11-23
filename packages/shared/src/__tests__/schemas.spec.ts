@@ -593,6 +593,21 @@ describe('@fnb/shared contracts', () => {
     }).success).toBe(true);
   });
 
+  it('validates the account preferences socket payload and the matching event name', () => {
+    const prefs = contracts.UiPreferencesSchema.parse({ sidebarCollapsed: true, navGroupOrder: ['finance', 'sales'] });
+    expect(contracts.AccountPreferencesUpdatedSocketPayloadSchema.safeParse({
+      userId: 4,
+      uiPreferences: prefs,
+      updatedAt: '2026-11-23T12:00:00.000Z',
+    }).success).toBe(true);
+    expect(contracts.AccountPreferencesUpdatedSocketPayloadSchema.safeParse({
+      userId: 4,
+      uiPreferences: { sidebarCollapsed: 'yes' },
+      updatedAt: '2026-11-23T12:00:00.000Z',
+    }).success).toBe(false);
+    expect(contracts.SocketEvents.ACCOUNT_PREFERENCES_UPDATED).toBe('account:preferences_updated');
+  });
+
   it('validates takeaway QR menu, order, and security config contracts', () => {
     expect(contracts.PublicMenuResponseSchema.safeParse({
       orderMode: 'TAKEAWAY',

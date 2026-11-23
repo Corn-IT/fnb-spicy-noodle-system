@@ -42,6 +42,14 @@ const knownUniqueError = (target: string[]) => new Prisma.PrismaClientKnownReque
 const makeService = (prisma: Record<string, unknown>, jwt: Record<string, unknown> = {}, lifetime = '7d') =>
   new IamService(prisma as never, jwt as never, { get: vi.fn().mockReturnValue(lifetime) } as never);
 
+/** Gives a hand-written Prisma mock the transaction surface the service now relies on. */
+const withTransaction = <T extends object>(prisma: T) => {
+  const client = prisma as T & { $queryRaw: unknown; $transaction: unknown };
+  client.$queryRaw = vi.fn().mockResolvedValue([]);
+  client.$transaction = vi.fn(async (callback: (tx: T) => unknown) => callback(prisma));
+  return prisma;
+};
+
 describe('IamService additional failure and success paths', () => {
   it('should reject a valid account with a password that does not match its hash', async () => {
     const compare = vi.spyOn(bcrypt, 'compare').mockResolvedValueOnce(false);
@@ -283,22 +291,22 @@ describe('IamService additional failure and success paths', () => {
   });
 
   it('should return 404 when no account exists for UI preference changes', async () => {
-    const service = makeService({ user: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } });
+    const service = makeService(withTransaction({ user: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } }));
 
     await expect(service.updateUiPreferences(99, { theme: 'dark' })).rejects.toMatchObject({ status: 404 });
   });
 
   it('should safely recover from a non-object preferences value before persisting the patch', async () => {
     const update = vi.fn().mockResolvedValue({ uiPreferences: { theme: 'light', sidebar_width: 260, column_widths: {} } });
-    const service = makeService({ user: {
+    const service = makeService(withTransaction({ user: {
       findUnique: vi.fn().mockResolvedValue({ uiPreferences: [] }),
       update,
-    } });
+    } }));
 
     await service.updateUiPreferences(4, { theme: 'light' });
 
     expect(update).toHaveBeenCalledWith(expect.objectContaining({
-      data: { uiPreferences: { theme: 'light', sidebar_width: 260, column_widths: {} } },
+      data: { uiPreferences: { theme: 'light', sidebar_width: 260, column_widths: {}, display_scale: { perPath: {} }, nav_order: [], nav_group_order: [], sidebar_collapsed: false } },
     }));
   });
 });

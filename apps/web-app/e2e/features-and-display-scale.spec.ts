@@ -14,6 +14,9 @@ test.describe('Core feature E2E (Display Scale, Print Customizer, i/y Search, Qu
       },
     });
 
+    // Phones (< 640px) never zoom the staff app in, so drawers and menus stay on screen.
+    const isPhone = (page.viewportSize()?.width ?? 1280) < 640;
+
     // /pos should use its per-path override 130% (zoom = 1.3)
     await page.goto('/pos', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('main[data-app-content="true"]');
@@ -21,7 +24,7 @@ test.describe('Core feature E2E (Display Scale, Print Customizer, i/y Search, Qu
       .poll(() =>
         page.evaluate(() => document.documentElement.style.getPropertyValue('--page-zoom')),
       )
-      .toBe('1.3');
+      .toBe(isPhone ? '1' : '1.3');
 
     // /invoices should fall back to globalPercent 115% (zoom = 1.15)
     await page.goto('/invoices', { waitUntil: 'domcontentloaded' });
@@ -30,7 +33,7 @@ test.describe('Core feature E2E (Display Scale, Print Customizer, i/y Search, Qu
       .poll(() =>
         page.evaluate(() => document.documentElement.style.getPropertyValue('--page-zoom')),
       )
-      .toBe('1.15');
+      .toBe(isPhone ? '1' : '1.15');
 
     // Guest QR route should use qrOrderPercent 95% (never globalPercent)
     await page.goto(`/q/${MOCK_QR_TOKEN}`, { waitUntil: 'domcontentloaded' });

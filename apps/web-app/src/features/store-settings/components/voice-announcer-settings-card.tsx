@@ -28,6 +28,8 @@ import {
   type QrVoiceEngineConfig,
   type QrVoiceProfileType,
 } from '@/lib/qr-voice-announcer';
+import { persistAccountPreferences } from '@/lib/persist-account-preferences';
+import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { cn } from '@/utils/cn';
 
 export interface VoiceAnnouncerSettingsCardProps {
@@ -296,6 +298,8 @@ export function VoiceAnnouncerSettingsCard({
             onClick={() => {
               const next = !deviceVoiceEnabled;
               setQrVoiceAlertEnabled(next);
+              useUiPreferencesStore.getState().setUserVoiceAlertEnabled(next);
+              void persistAccountPreferences({ voiceAlertEnabled: next });
               setDeviceVoiceEnabled(next);
             }}
             className="h-8 gap-1.5 text-xs font-semibold"

@@ -15,6 +15,7 @@ export const SocketEvents = {
   STORE_SETTINGS_UPDATED: 'store-settings:updated',
   SESSION_REVOKED: 'session:revoked',
   PERMISSIONS_UPDATED: 'account:permissions_updated',
+  ACCOUNT_PREFERENCES_UPDATED: 'account:preferences_updated',
 } as const;
 
 export const SocketRooms = {

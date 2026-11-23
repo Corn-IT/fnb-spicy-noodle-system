@@ -544,7 +544,7 @@ export function CashflowPage() {
             </div>
 
             {/* Bộ lọc ngày Từ - Đến + Nút Đặt lại ngay cạnh */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <label htmlFor="cashflow-from-date" className="text-xs font-medium text-muted-foreground">
                 Từ
               </label>

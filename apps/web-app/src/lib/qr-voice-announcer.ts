@@ -14,6 +14,12 @@ import {
   type QrVoiceProfileType,
 } from '@fnb/shared';
 import { env } from '@/config/env';
+import {
+  isQrVoiceAlertEnabled,
+  QR_VOICE_ALERT_STORAGE_KEY,
+  setQrVoiceAlertEnabled,
+  subscribeQrVoiceAlertState,
+} from '@/lib/voice-alert-preference';
 import { resolveCachedAppMessage } from '@/utils/store-messages-cache';
 
 export {
@@ -32,8 +38,12 @@ export {
   type QrVoiceProfileType,
 };
 
-export const QR_VOICE_ALERT_STORAGE_KEY = 'fnb-pos-voice-alert' as const;
-const VOICE_STATE_CHANGE_EVENT = 'fnb:qr-voice-alert-changed';
+export {
+  isQrVoiceAlertEnabled,
+  QR_VOICE_ALERT_STORAGE_KEY,
+  setQrVoiceAlertEnabled,
+  subscribeQrVoiceAlertState,
+};
 
 export interface QrVoiceAlertItem {
   tableLabel: string;
@@ -127,38 +137,6 @@ export async function unlockQrVoiceAudio(): Promise<void> {
       // Ignore autoplay restriction errors
     }
   }
-}
-
-export function isQrVoiceAlertEnabled(): boolean {
-  if (typeof window === 'undefined') return true;
-  try {
-    const raw = window.localStorage.getItem(QR_VOICE_ALERT_STORAGE_KEY);
-    if (raw === 'false') return false;
-    return true;
-  } catch {
-    return true;
-  }
-}
-
-export function setQrVoiceAlertEnabled(enabled: boolean): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(QR_VOICE_ALERT_STORAGE_KEY, enabled ? 'true' : 'false');
-    window.dispatchEvent(new CustomEvent(VOICE_STATE_CHANGE_EVENT, { detail: { enabled } }));
-  } catch {
-    // Ignore storage write errors
-  }
-}
-
-export function subscribeQrVoiceAlertState(listener: (enabled: boolean) => void): () => void {
-  if (typeof window === 'undefined') return () => {};
-  const handler = () => listener(isQrVoiceAlertEnabled());
-  window.addEventListener(VOICE_STATE_CHANGE_EVENT, handler);
-  window.addEventListener('storage', handler);
-  return () => {
-    window.removeEventListener(VOICE_STATE_CHANGE_EVENT, handler);
-    window.removeEventListener('storage', handler);
-  };
 }
 
 export function normalizeTableSpokenLabel(rawTableLabel: string | undefined | null): string {

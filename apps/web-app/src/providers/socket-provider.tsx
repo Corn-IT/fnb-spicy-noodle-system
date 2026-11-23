@@ -1,4 +1,5 @@
 import {
+  AccountPreferencesUpdatedSocketPayloadSchema,
   PermissionsUpdatedSocketPayloadSchema,
   SessionRevokedSocketPayloadSchema,
   SocketEvents,
@@ -10,6 +11,7 @@ import { type Socket } from 'socket.io-client';
 import { toast } from '@/components/ui/toast';
 import { connectPosSocket, disconnectPosSocket, type SocketAuthMode } from '@/lib/socket-client';
 import { type AuthNoticeReason, useAuthStore } from '@/stores/auth.store';
+import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 
 interface SocketContextValue {
   socket: Socket | null;
@@ -135,12 +137,24 @@ export function SocketProvider({ children }: SocketProviderProps) {
       });
     };
 
+    const handleAccountPreferencesUpdated = (raw: unknown) => {
+      const parsed = AccountPreferencesUpdatedSocketPayloadSchema.safeParse(raw);
+      if (!parsed.success) return;
+
+      const currentUser = useAuthStore.getState().user;
+      if (!currentUser || currentUser.id !== parsed.data.userId) return;
+
+      // This device's own save echoes back too; hydrate skips it while a local change is still unsent.
+      useUiPreferencesStore.getState().hydrateFromServer(parsed.data.uiPreferences);
+    };
+
     socket.on(SocketEvents.MENU_UPDATED, handleMenuUpdated);
     socket.on(SocketEvents.SCHEDULE_UPDATED, handleScheduleUpdated);
     socket.on(SocketEvents.PAYROLL_UPDATED, handlePayrollUpdated);
     socket.on(SocketEvents.STORE_SETTINGS_UPDATED, handleStoreSettingsUpdated);
     socket.on(SocketEvents.SESSION_REVOKED, handleSessionRevoked);
     socket.on(SocketEvents.PERMISSIONS_UPDATED, handlePermissionsUpdated);
+    socket.on(SocketEvents.ACCOUNT_PREFERENCES_UPDATED, handleAccountPreferencesUpdated);
     return () => {
       socket.off(SocketEvents.MENU_UPDATED, handleMenuUpdated);
       socket.off(SocketEvents.SCHEDULE_UPDATED, handleScheduleUpdated);
@@ -148,6 +162,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
       socket.off(SocketEvents.STORE_SETTINGS_UPDATED, handleStoreSettingsUpdated);
       socket.off(SocketEvents.SESSION_REVOKED, handleSessionRevoked);
       socket.off(SocketEvents.PERMISSIONS_UPDATED, handlePermissionsUpdated);
+      socket.off(SocketEvents.ACCOUNT_PREFERENCES_UPDATED, handleAccountPreferencesUpdated);
     };
   }, [socket, queryClient]);
 

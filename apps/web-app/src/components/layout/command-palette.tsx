@@ -39,6 +39,7 @@ import {
   sortNavRoutes,
   useStoreSettings,
 } from '@/hooks/use-store-settings';
+import { useEffectiveNavOrder } from '@/hooks/use-effective-nav-order';
 import {
   cancelRoutePrefetch,
   prefetchRouteChunk,
@@ -288,7 +289,12 @@ export interface CommandPaletteProps {
 
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const user = useAuthStore((state) => state.user);
-  const { settings } = useStoreSettings();
+  const { settings: storeSettings } = useStoreSettings();
+  const effectiveNavOrder = useEffectiveNavOrder();
+  const settings = React.useMemo(
+    () => ({ ...storeSettings, ...effectiveNavOrder }),
+    [storeSettings, effectiveNavOrder],
+  );
   const location = useLocation();
   const navigate = useNavigate();
 

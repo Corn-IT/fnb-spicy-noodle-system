@@ -11,6 +11,7 @@ import {
 import { toast } from '@/components/ui/toast';
 import { env } from '@/config/env';
 import { type AuthNoticeMeta, type AuthNoticeReason, useAuthStore } from '@/stores/auth.store';
+import { type ServerUiPreferences, useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import {
   resolveCachedAppMessage,
   resolveErrorFromStoreCache,
@@ -112,6 +113,7 @@ async function attemptTokenRefresh(): Promise<string | null> {
           isSuperAdmin: boolean;
           permissions: UserPermissions;
           employee?: { fullName?: string; avatarUrl?: string | null };
+          uiPreferences?: ServerUiPreferences;
         };
       };
       if (data?.accessToken) {
@@ -126,6 +128,11 @@ async function attemptTokenRefresh(): Promise<string | null> {
             isSuperAdmin: data.user.isSuperAdmin,
             permissions: data.user.permissions,
           });
+          // Restoring a session (page reload, token refresh on another device) re-syncs the
+          // account preferences; unsent local changes are protected inside hydrateFromServer.
+          if (data.user.uiPreferences) {
+            useUiPreferencesStore.getState().hydrateFromServer(data.user.uiPreferences);
+          }
         }
         return data.accessToken;
       }

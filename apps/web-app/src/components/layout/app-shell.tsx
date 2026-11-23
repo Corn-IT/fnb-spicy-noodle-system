@@ -16,6 +16,7 @@ import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { useDisplayScale } from '@/hooks/use-display-scale';
 import { resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
+import { useSyncAccountPreferencesOnFocus } from '@/hooks/use-sync-account-preferences-on-focus';
 import { apiClient } from '@/lib/api-client';
 import { POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
 import { useQrPendingReminderMonitor } from '@/lib/qr-pending-reminder';
@@ -32,6 +33,7 @@ interface QrSocketAlertPayload {
 }
 
 export function AppShell() {
+  useSyncAccountPreferencesOnFocus();
   const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();

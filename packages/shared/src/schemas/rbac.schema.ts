@@ -332,6 +332,14 @@ export const PermissionsUpdatedSocketPayloadSchema = z.object({
 });
 export type PermissionsUpdatedSocketPayload = z.infer<typeof PermissionsUpdatedSocketPayloadSchema>;
 
+/** Sent to every device of one account after its personal UI preferences were saved. */
+export const AccountPreferencesUpdatedSocketPayloadSchema = z.object({
+  userId: IdSchema,
+  uiPreferences: UiPreferencesSchema,
+  updatedAt: IsoDateTimeSchema,
+});
+export type AccountPreferencesUpdatedSocketPayload = z.infer<typeof AccountPreferencesUpdatedSocketPayloadSchema>;
+
 export const UserSessionStatusSchema = z.object({
   isActiveSession: z.boolean(),
   isSocketOnline: z.boolean().default(false),
