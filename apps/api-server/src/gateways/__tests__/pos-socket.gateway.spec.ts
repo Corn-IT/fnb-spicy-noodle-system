@@ -1,5 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
-import { UserPermissionsSchema, SocketEvents, SocketRooms } from '@fnb/shared';
+import { UiPreferencesSchema, UserPermissionsSchema, SocketEvents, SocketRooms } from '@fnb/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { PosSocketGateway } from '../pos-socket.gateway';
@@ -205,6 +205,8 @@ describe('PosSocketGateway', () => {
     gateway.emitStoreSettingsUpdated({ version: 'v1' });
     const perms = UserPermissionsSchema.parse({ pos: { view: true } });
     gateway.emitPermissionsUpdated(7, perms);
+    const prefs = UiPreferencesSchema.parse({ sidebarCollapsed: true });
+    gateway.emitAccountPreferencesUpdated(7, prefs);
     const qrNotice = {
       orderId: 42,
       tableId: 7,
@@ -239,6 +241,11 @@ describe('PosSocketGateway', () => {
         room: SocketRooms.userAccount(7),
         event: SocketEvents.PERMISSIONS_UPDATED,
         payload: { userId: 7, permissions: perms, updatedAt: expect.any(String) },
+      },
+      {
+        room: SocketRooms.userAccount(7),
+        event: SocketEvents.ACCOUNT_PREFERENCES_UPDATED,
+        payload: { userId: 7, uiPreferences: prefs, updatedAt: expect.any(String) },
       },
       { room: SocketRooms.orderSession(42), event: SocketEvents.QR_ORDER_NOTICE, payload: qrNotice },
       {

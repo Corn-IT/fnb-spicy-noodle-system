@@ -1,16 +1,71 @@
 import { z } from 'zod';
 import { IdSchema, IsoDateTimeSchema } from './common.schema';
+import {
+  ALLOWED_STORE_NAV_GROUP_KEYS,
+  ALLOWED_STORE_NAV_PATHS,
+  DisplayScalePercentSchema,
+} from './store-settings.schema';
+
+const NAV_PATH_SET: ReadonlySet<string> = new Set(ALLOWED_STORE_NAV_PATHS);
+const NAV_GROUP_KEY_SET: ReadonlySet<string> = new Set(ALLOWED_STORE_NAV_GROUP_KEYS);
+
+/** Only screens and groups that exist in the app menu are accepted; anything else is rejected. */
+const UserNavPathSchema = z
+  .string()
+  .refine((path) => NAV_PATH_SET.has(path), { message: 'Đường dẫn không nằm trong danh sách màn hình hỗ trợ' });
+const UserNavGroupKeySchema = z
+  .string()
+  .refine((key) => NAV_GROUP_KEY_SET.has(key), { message: 'Mã nhóm menu không hợp lệ' });
+
+const hasNoDuplicates = (values: readonly string[]): boolean => new Set(values).size === values.length;
+
+/**
+ * Per-account display scale override. Absent `globalPercent` / empty `perPath`
+ * mean "no override" so the store-level display scale applies.
+ */
+export const UserDisplayScaleSchema = z.object({
+  globalPercent: DisplayScalePercentSchema.optional(),
+  perPath: z
+    .record(z.string(), DisplayScalePercentSchema)
+    .superRefine((map, ctx) => {
+      for (const path of Object.keys(map)) {
+        if (!NAV_PATH_SET.has(path)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [path],
+            message: `Đường dẫn ${path} không nằm trong danh sách màn hình hỗ trợ`,
+          });
+        }
+      }
+    })
+    .default({}),
+}).strict();
+export type UserDisplayScale = z.infer<typeof UserDisplayScaleSchema>;
 
 const UiPreferenceFields = {
   theme: z.enum(['light', 'dark', 'system']),
   sidebarWidth: z.number().int().min(180).max(480),
   columnWidths: z.record(z.string().min(1), z.number().finite().positive().max(2000)),
+  displayScale: UserDisplayScaleSchema,
+  navOrder: z.array(UserNavPathSchema).max(64).refine(hasNoDuplicates, { message: 'Thứ tự menu bị trùng mục' }),
+  navGroupOrder: z
+    .array(UserNavGroupKeySchema)
+    .max(16)
+    .refine(hasNoDuplicates, { message: 'Thứ tự nhóm menu bị trùng mục' }),
+  sidebarCollapsed: z.boolean(),
+  voiceAlertEnabled: z.boolean(),
 };
 
 export const UiPreferencesSchema = z.object({
   theme: UiPreferenceFields.theme.default('system'),
   sidebarWidth: UiPreferenceFields.sidebarWidth.default(260),
   columnWidths: UiPreferenceFields.columnWidths.default({}),
+  displayScale: UiPreferenceFields.displayScale.default({ perPath: {} }),
+  navOrder: UiPreferenceFields.navOrder.default([]),
+  navGroupOrder: UiPreferenceFields.navGroupOrder.default([]),
+  sidebarCollapsed: UiPreferenceFields.sidebarCollapsed.default(false),
+  // Undefined means the account never chose, so the default (enabled) applies.
+  voiceAlertEnabled: UiPreferenceFields.voiceAlertEnabled.optional(),
 }).strict();
 export type UiPreferences = z.infer<typeof UiPreferencesSchema>;
 
@@ -18,6 +73,11 @@ export const UpdateUiPreferencesSchema = z.object({
   theme: UiPreferenceFields.theme.optional(),
   sidebarWidth: UiPreferenceFields.sidebarWidth.optional(),
   columnWidths: UiPreferenceFields.columnWidths.optional(),
+  displayScale: UiPreferenceFields.displayScale.optional(),
+  navOrder: UiPreferenceFields.navOrder.optional(),
+  navGroupOrder: UiPreferenceFields.navGroupOrder.optional(),
+  sidebarCollapsed: UiPreferenceFields.sidebarCollapsed.optional(),
+  voiceAlertEnabled: UiPreferenceFields.voiceAlertEnabled.optional(),
 }).strict().refine(
   (preferences) => Object.keys(preferences).length > 0,
   { message: 'Phải cung cấp ít nhất một thiết lập giao diện' },

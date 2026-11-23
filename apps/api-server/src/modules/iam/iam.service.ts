@@ -14,6 +14,10 @@ import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { Prisma, type MasterData, type User } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import {
+  ALLOWED_STORE_NAV_PATHS,
+  DisplayScalePercentSchema,
+  sanitizeNavGroupOrder,
+  sanitizeNavOrder,
   AuthUserSchema,
   ChangePasswordSchema,
   ErrorCodes,
@@ -1005,27 +1009,44 @@ export class IamService {
   }
 
   async updateUiPreferences(userId: number, input: UpdateUiPreferencesInput): Promise<UiPreferences> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { uiPreferences: true } });
-    if (!user) throw new NotFoundException('Không tìm thấy tài khoản');
-    const current = this.toUiPreferences(user.uiPreferences);
-    const merged = {
-      ...current,
-      ...input,
-      ...(input.columnWidths
-        ? { columnWidths: { ...current.columnWidths, ...input.columnWidths } }
-        : {}),
-    };
-    const persisted = {
-      theme: merged.theme,
-      sidebar_width: merged.sidebarWidth,
-      column_widths: merged.columnWidths,
-    };
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: { uiPreferences: persisted as Prisma.InputJsonObject },
-      select: { uiPreferences: true },
+    // The read-merge-write below must be atomic per account: two quick saves (two devices, or a theme
+    // toggle racing a menu change) would otherwise each merge into the same stale snapshot and the
+    // later write would silently erase the earlier one.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+      const user = await tx.user.findUnique({ where: { id: userId }, select: { uiPreferences: true } });
+      if (!user) throw new NotFoundException('Không tìm thấy tài khoản');
+      const current = this.toUiPreferences(user.uiPreferences);
+      const merged = {
+        ...current,
+        ...input,
+        ...(input.columnWidths
+          ? { columnWidths: { ...current.columnWidths, ...input.columnWidths } }
+          : {}),
+      };
+      const persisted = {
+        theme: merged.theme,
+        sidebar_width: merged.sidebarWidth,
+        column_widths: merged.columnWidths,
+        display_scale: merged.displayScale,
+        nav_order: merged.navOrder,
+        nav_group_order: merged.navGroupOrder,
+        sidebar_collapsed: merged.sidebarCollapsed,
+        ...(merged.voiceAlertEnabled === undefined
+          ? {}
+          : { voice_alert_enabled: merged.voiceAlertEnabled }),
+      };
+      return tx.user.update({
+        where: { id: userId },
+        data: { uiPreferences: persisted as Prisma.InputJsonObject },
+        select: { uiPreferences: true },
+      });
     });
-    return this.toUiPreferences(updated.uiPreferences);
+    const saved = this.toUiPreferences(updated.uiPreferences);
+    // Announced only after the transaction has committed and released its lock, so other devices of
+    // this account refresh straight away without anything external running under the row lock.
+    this.posSocketGateway?.emitAccountPreferencesUpdated(userId, saved);
+    return saved;
   }
 
   private async findUserWithEmployee(id: number): Promise<UserWithEmployee | null> {
@@ -1190,12 +1211,39 @@ export class IamService {
       : {};
   }
 
+  /**
+   * Reads stored preferences defensively: values saved before a screen was renamed or removed are
+   * dropped instead of failing, so a stale row can never block login.
+   */
   private toUiPreferences(value: Prisma.JsonValue): UiPreferences {
     const stored = this.asObject(value);
+    const rawDisplayScale = this.asObject((stored.display_scale ?? stored.displayScale ?? {}) as Prisma.JsonValue);
+    const rawPerPath = this.asObject((rawDisplayScale.perPath ?? {}) as Prisma.JsonValue);
+    const allowedPaths = new Set<string>(ALLOWED_STORE_NAV_PATHS);
+    const perPath = Object.fromEntries(
+      Object.entries(rawPerPath).filter(
+        ([path, percent]) =>
+          allowedPaths.has(path) && DisplayScalePercentSchema.safeParse(percent).success,
+      ),
+    );
+    const globalPercent = DisplayScalePercentSchema.safeParse(rawDisplayScale.globalPercent);
+    const asStringList = (input: unknown): string[] =>
+      Array.isArray(input) ? input.filter((item): item is string => typeof item === 'string') : [];
+    const asBoolean = (input: unknown): boolean | undefined =>
+      typeof input === 'boolean' ? input : undefined;
+
     return UiPreferencesSchema.parse({
       theme: stored.theme,
       sidebarWidth: stored.sidebar_width ?? stored.sidebarWidth,
       columnWidths: stored.column_widths ?? stored.columnWidths,
+      displayScale: {
+        ...(globalPercent.success ? { globalPercent: globalPercent.data } : {}),
+        perPath,
+      },
+      navOrder: sanitizeNavOrder(asStringList(stored.nav_order ?? stored.navOrder)),
+      navGroupOrder: sanitizeNavGroupOrder(asStringList(stored.nav_group_order ?? stored.navGroupOrder)),
+      sidebarCollapsed: asBoolean(stored.sidebar_collapsed ?? stored.sidebarCollapsed),
+      voiceAlertEnabled: asBoolean(stored.voice_alert_enabled ?? stored.voiceAlertEnabled),
     });
   }
 

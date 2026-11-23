@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import {
+  type AccountPreferencesUpdatedSocketPayload,
   AuthPrincipalSchema,
   type PermissionsUpdatedSocketPayload,
   type QrAutoCancelledPayload,
@@ -12,6 +13,7 @@ import {
   SocketNamespace,
   SocketRooms,
   normalizeQrToken,
+  type UiPreferences,
   type UserPermissions,
   UserPermissionsSchema,
   type RevokedSessionNotice,
@@ -153,6 +155,17 @@ export class PosSocketGateway
       updatedAt: new Date().toISOString(),
     };
     this.server?.to(SocketRooms.userAccount(userId)).emit(SocketEvents.PERMISSIONS_UPDATED, payload);
+  }
+
+  emitAccountPreferencesUpdated(userId: number, uiPreferences: UiPreferences): void {
+    const payload: AccountPreferencesUpdatedSocketPayload = {
+      userId,
+      uiPreferences,
+      updatedAt: new Date().toISOString(),
+    };
+    this.server
+      ?.to(SocketRooms.userAccount(userId))
+      .emit(SocketEvents.ACCOUNT_PREFERENCES_UPDATED, payload);
   }
 
   emitQrNewOrder(payload: unknown): void {

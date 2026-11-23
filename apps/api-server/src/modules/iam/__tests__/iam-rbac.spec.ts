@@ -33,6 +33,14 @@ const guardContext = (user?: Record<string, unknown>) => {
   };
 };
 
+/** Gives a hand-written Prisma mock the transaction surface the service now relies on. */
+const withTransaction = <T extends object>(prisma: T) => {
+  const client = prisma as T & { $queryRaw: unknown; $transaction: unknown };
+  client.$queryRaw = vi.fn().mockResolvedValue([]);
+  client.$transaction = vi.fn(async (callback: (tx: T) => unknown) => callback(prisma));
+  return prisma;
+};
+
 describe('RbacGuard', () => {
   it('should return 401 when no authenticated principal reaches the permission guard', () => {
     const reflector = { getAllAndOverride: vi.fn().mockReturnValue({ module: 'mdm', action: 'write' }) };
@@ -228,13 +236,13 @@ describe('IamService', () => {
         update: vi.fn().mockResolvedValue({ id: 4, uiPreferences: { theme: 'dark', sidebar_width: 300, column_widths: { name: 220 } } }),
       },
     };
-    const service = new IamService(prisma as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never);
+    const service = new IamService(withTransaction(prisma) as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never);
 
     await service.updateUiPreferences(4, { sidebarWidth: 300 });
 
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: 4 },
-      data: { uiPreferences: { theme: 'dark', sidebar_width: 300, column_widths: { name: 220 } } },
+      data: { uiPreferences: { theme: 'dark', sidebar_width: 300, column_widths: { name: 220 }, display_scale: { perPath: {} }, nav_order: [], nav_group_order: [], sidebar_collapsed: false } },
       select: { uiPreferences: true },
     });
   });
@@ -246,15 +254,281 @@ describe('IamService', () => {
         update: vi.fn().mockResolvedValue({ uiPreferences: { theme: 'dark', sidebar_width: 260, column_widths: { name: 220, price: 180 } } }),
       },
     };
-    const service = new IamService(prisma as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never);
+    const service = new IamService(withTransaction(prisma) as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never);
 
     await service.updateUiPreferences(4, { columnWidths: { price: 180 } });
 
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: 4 },
-      data: { uiPreferences: { theme: 'dark', sidebar_width: 260, column_widths: { name: 220, price: 180 } } },
+      data: { uiPreferences: { theme: 'dark', sidebar_width: 260, column_widths: { name: 220, price: 180 }, display_scale: { perPath: {} }, nav_order: [], nav_group_order: [], sidebar_collapsed: false } },
       select: { uiPreferences: true },
     });
+  });
+
+  it('should persist per-account display scale and menu order, and reset them with empty values', async () => {
+    const stored = {
+      theme: 'dark',
+      sidebar_width: 260,
+      column_widths: {},
+      display_scale: { globalPercent: 120, perPath: { '/pos': 110 } },
+      nav_order: ['/pos', '/dashboard'],
+      nav_group_order: ['sales'],
+          sidebar_collapsed: false,
+    };
+    const prisma = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ id: 4, uiPreferences: stored }),
+        update: vi.fn().mockResolvedValue({ uiPreferences: { ...stored, display_scale: { perPath: {} }, nav_order: [] } }),
+      },
+    };
+    const service = new IamService(withTransaction(prisma) as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never);
+
+    const result = await service.updateUiPreferences(4, { displayScale: { perPath: {} }, navOrder: [] });
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 4 },
+      data: {
+        uiPreferences: {
+          theme: 'dark',
+          sidebar_width: 260,
+          column_widths: {},
+          display_scale: { perPath: {} },
+          nav_order: [],
+          nav_group_order: ['sales'],
+          sidebar_collapsed: false,
+        },
+      },
+      select: { uiPreferences: true },
+    });
+    expect(result.displayScale).toEqual({ perPath: {} });
+    expect(result.navOrder).toEqual([]);
+  });
+
+  it('should persist sidebar collapsed and the voice choice, omitting voice when never chosen', async () => {
+    const buildService = (updateResult: unknown) => {
+      const prisma = {
+        user: {
+          findUnique: vi.fn().mockResolvedValue({ id: 4, uiPreferences: { theme: 'dark' } }),
+          update: vi.fn().mockResolvedValue({ uiPreferences: updateResult }),
+        },
+      };
+      return { prisma, service: new IamService(withTransaction(prisma) as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never) };
+    };
+
+    const first = buildService({ theme: 'dark', sidebar_collapsed: true, voice_alert_enabled: false });
+    const result = await first.service.updateUiPreferences(4, { sidebarCollapsed: true, voiceAlertEnabled: false });
+    expect(first.prisma.user.update.mock.calls[0]?.[0].data.uiPreferences).toMatchObject({
+      sidebar_collapsed: true,
+      voice_alert_enabled: false,
+    });
+    expect(result.sidebarCollapsed).toBe(true);
+    expect(result.voiceAlertEnabled).toBe(false);
+
+    const second = buildService({ theme: 'dark' });
+    const untouched = await second.service.updateUiPreferences(4, { theme: 'dark' });
+    expect(second.prisma.user.update.mock.calls[0]?.[0].data.uiPreferences).not.toHaveProperty('voice_alert_enabled');
+    expect(second.prisma.user.update.mock.calls[0]?.[0].data.uiPreferences.sidebar_collapsed).toBe(false);
+    expect(untouched.voiceAlertEnabled).toBeUndefined();
+    expect(untouched.sidebarCollapsed).toBe(false);
+  });
+
+  it('should reject unknown preference keys and wrongly typed per-account values', async () => {
+    const { UpdateUiPreferencesSchema } = await import('@fnb/shared');
+    expect(UpdateUiPreferencesSchema.safeParse({ unknownKey: 1 }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ sidebarCollapsed: 'yes' }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ voiceAlertEnabled: 1 }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ navOrder: ['no-slash'] }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ navOrder: Array.from({ length: 65 }, (_, i) => `/p${i}`) }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('should reject menu paths and group keys that do not exist in the app menu', async () => {
+    const { UpdateUiPreferencesSchema } = await import('@fnb/shared');
+    expect(UpdateUiPreferencesSchema.safeParse({ navOrder: ['/pos', '/menu'] }).success).toBe(true);
+    expect(UpdateUiPreferencesSchema.safeParse({ navOrder: ['/not-a-screen'] }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ navOrder: ['/pos', '/pos'] }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ navGroupOrder: ['sales', 'hr'] }).success).toBe(true);
+    expect(UpdateUiPreferencesSchema.safeParse({ navGroupOrder: ['bogus'] }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ navGroupOrder: ['sales', 'sales'] }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ displayScale: { perPath: { '/pos': 110 } } }).success).toBe(true);
+    expect(UpdateUiPreferencesSchema.safeParse({ displayScale: { perPath: { '/ghost': 110 } } }).success).toBe(false);
+  });
+
+  it('should drop stale stored values instead of failing when reading preferences at login', async () => {
+    const prisma = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 4,
+          uiPreferences: {
+            theme: 'dark',
+            nav_order: ['/pos', '/removed-screen', '/pos', 42],
+            nav_group_order: ['sales', 'old-group'],
+            display_scale: { globalPercent: 123, perPath: { '/pos': 110, '/removed-screen': 120, '/menu': 77 } },
+            sidebar_collapsed: 'yes',
+            voice_alert_enabled: 'no',
+          },
+        }),
+        update: vi.fn().mockImplementation(async ({ data }: { data: { uiPreferences: unknown } }) => ({
+          uiPreferences: data.uiPreferences,
+        })),
+      },
+    };
+    const service = new IamService(withTransaction(prisma) as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never);
+
+    const result = await service.updateUiPreferences(4, { theme: 'light' });
+
+    expect(result.navOrder).toEqual(['/pos']);
+    expect(result.navGroupOrder).toEqual(['sales']);
+    expect(result.displayScale).toEqual({ perPath: { '/pos': 110 } });
+    expect(result.sidebarCollapsed).toBe(false);
+    expect(result.voiceAlertEnabled).toBeUndefined();
+  });
+
+  it('should lock the account row before reading and write inside the same transaction', async () => {
+    const calls: string[] = [];
+    const tx = {
+      $queryRaw: vi.fn(async () => {
+        calls.push('lock');
+        return [];
+      }),
+      user: {
+        findUnique: vi.fn(async () => {
+          calls.push('read');
+          return { uiPreferences: { theme: 'dark' } };
+        }),
+        update: vi.fn(async () => {
+          calls.push('write');
+          return { uiPreferences: { theme: 'dark', sidebar_collapsed: true } };
+        }),
+      },
+    };
+    const prisma = {
+      user: {
+        findUnique: vi.fn(() => {
+          throw new Error('must read through the transaction client');
+        }),
+        update: vi.fn(() => {
+          throw new Error('must write through the transaction client');
+        }),
+      },
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => {
+        calls.push('begin');
+        const result = await callback(tx);
+        calls.push('commit');
+        return result;
+      }),
+    };
+    const service = new IamService(prisma as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never);
+
+    await service.updateUiPreferences(4, { sidebarCollapsed: true });
+
+    expect(calls).toEqual(['begin', 'lock', 'read', 'write', 'commit']);
+  });
+
+  it('should serialize two concurrent saves so neither erases the other', async () => {
+    // A tiny in-memory row guarded by a mutex stands in for Postgres row locking.
+    let row: Record<string, unknown> = { theme: 'dark' };
+    let locked = Promise.resolve();
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: unknown) => unknown) => {
+        const previous = locked;
+        let release: () => void = () => undefined;
+        locked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await previous;
+        try {
+          const tx = {
+            $queryRaw: vi.fn().mockResolvedValue([]),
+            user: {
+              findUnique: vi.fn(async () => {
+                const snapshot = { ...row };
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return { uiPreferences: snapshot };
+              }),
+              update: vi.fn(async ({ data }: { data: { uiPreferences: Record<string, unknown> } }) => {
+                row = data.uiPreferences;
+                return { uiPreferences: row };
+              }),
+            },
+          };
+          return await callback(tx);
+        } finally {
+          release();
+        }
+      }),
+    };
+    const service = new IamService(prisma as never, { signAsync: vi.fn() } as never, { get: vi.fn() } as never);
+
+    await Promise.all([
+      service.updateUiPreferences(4, { sidebarCollapsed: true }),
+      service.updateUiPreferences(4, { voiceAlertEnabled: false }),
+      service.updateUiPreferences(4, { navGroupOrder: ['finance', 'sales'] }),
+    ]);
+
+    expect(row).toMatchObject({
+      sidebar_collapsed: true,
+      voice_alert_enabled: false,
+      nav_group_order: ['finance', 'sales'],
+    });
+  });
+
+  it('should announce saved preferences to the account devices only after the transaction commits', async () => {
+    const calls: string[] = [];
+    const gateway = { emitAccountPreferencesUpdated: vi.fn(() => calls.push('emit')) };
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ uiPreferences: { theme: 'dark' } }),
+        update: vi.fn().mockResolvedValue({ uiPreferences: { theme: 'dark', sidebar_collapsed: true } }),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => {
+        const result = await callback(tx);
+        calls.push('commit');
+        return result;
+      }),
+    };
+    const service = new IamService(
+      prisma as never,
+      { signAsync: vi.fn() } as never,
+      { get: vi.fn() } as never,
+      undefined,
+      gateway as never,
+    );
+
+    const result = await service.updateUiPreferences(4, { sidebarCollapsed: true });
+
+    expect(calls).toEqual(['commit', 'emit']);
+    expect(gateway.emitAccountPreferencesUpdated).toHaveBeenCalledWith(4, result);
+    expect(result.sidebarCollapsed).toBe(true);
+  });
+
+  it('should not announce anything when the save fails', async () => {
+    const gateway = { emitAccountPreferencesUpdated: vi.fn() };
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      user: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() },
+    };
+    const prisma = { $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)) };
+    const service = new IamService(
+      prisma as never,
+      { signAsync: vi.fn() } as never,
+      { get: vi.fn() } as never,
+      undefined,
+      gateway as never,
+    );
+
+    await expect(service.updateUiPreferences(99, { sidebarCollapsed: true })).rejects.toMatchObject({ status: 404 });
+    expect(gateway.emitAccountPreferencesUpdated).not.toHaveBeenCalled();
+  });
+
+  it('should reject out-of-range display scale values', async () => {
+    const { UpdateUiPreferencesSchema } = await import('@fnb/shared');
+    expect(UpdateUiPreferencesSchema.safeParse({ displayScale: { globalPercent: 500, perPath: {} } }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ displayScale: { globalPercent: 123, perPath: {} } }).success).toBe(false);
+    expect(UpdateUiPreferencesSchema.safeParse({ displayScale: { globalPercent: 120, perPath: {} } }).success).toBe(true);
   });
 
   it('should bcrypt-hash a new account password with cost 10 and link the existing employee', async () => {
