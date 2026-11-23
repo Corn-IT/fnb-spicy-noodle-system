@@ -124,7 +124,7 @@ export function InvoiceDualFilterBar({
               const nextTo = toDate && nextFrom && toDate < nextFrom ? nextFrom : toDate;
               onDateRangeChange(nextFrom, nextTo);
             }}
-            className="h-8 flex-1 sm:w-36 text-xs"
+            className="h-8 min-w-0 flex-1 sm:w-36 text-xs"
           />
           <span className="text-xs text-muted-foreground shrink-0">→</span>
           <Input
@@ -138,7 +138,7 @@ export function InvoiceDualFilterBar({
               const safeTo = fromDate && nextTo && nextTo < fromDate ? fromDate : nextTo;
               onDateRangeChange(fromDate, safeTo);
             }}
-            className="h-8 flex-1 sm:w-36 text-xs"
+            className="h-8 min-w-0 flex-1 sm:w-36 text-xs"
           />
           <Button
             type="button"
