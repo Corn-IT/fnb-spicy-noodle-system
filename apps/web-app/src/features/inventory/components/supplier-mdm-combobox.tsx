@@ -5,6 +5,7 @@ import * as React from 'react';
 import { Input } from '@/components/ui/input';
 import { useMdmLookupQuery } from '@/features/inventory/api/inventory.api';
 import { cn } from '@/utils/cn';
+import { matchesVietnameseQuery } from '@/utils/search';
 
 export interface SelectedSupplierValue {
   supplierMdmId?: number;
@@ -47,12 +48,9 @@ export function SupplierMdmCombobox({
     [records],
   );
   const filteredItems = React.useMemo(() => {
-    const trimmed = queryText.trim().toLocaleLowerCase('vi-VN');
-    if (!trimmed) return suppliers;
-    return suppliers.filter(
-      (item) =>
-        item.name.toLocaleLowerCase('vi-VN').includes(trimmed) ||
-        item.normalizedName.toLowerCase().includes(trimmed),
+    if (!queryText.trim()) return suppliers;
+    return suppliers.filter((item) =>
+      matchesVietnameseQuery(queryText, item.name, item.normalizedName),
     );
   }, [suppliers, queryText]);
   const exactMatchExists = React.useMemo(() => {

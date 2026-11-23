@@ -6,8 +6,7 @@ import {
 import * as React from 'react';
 
 import { useStoreSettings } from '@/hooks/use-store-settings';
-import { cn } from '@/utils/cn';
-import { THERMAL_FONT_CLASSES } from './print-template.util';
+import { getThermalSlipRootStyle, resolveThermalFontSizePt } from './print-template.util';
 import { STATION_META, StationLogo, type StationLogoType } from './station-logos';
 
 export interface KitchenSplitSlipProps {
@@ -59,7 +58,11 @@ export function KitchenSplitSlip({
   const { settings: contextSettings } = useStoreSettings();
   const activeSettings = storeSettings ?? contextSettings;
   const tpl = activeSettings.printTemplates.kitchen;
-  const fs = THERMAL_FONT_CLASSES[tpl.fontSize];
+  const fontSizePt = resolveThermalFontSizePt(tpl.fontSizePt);
+  const priceCategorySet = React.useMemo(
+    () => new Set<number>(tpl.priceCategoryIds ?? []),
+    [tpl.priceCategoryIds],
+  );
   const customTitle = tpl.title.trim();
   const customFooterNote = tpl.footerNote.trim();
 
@@ -109,40 +112,65 @@ export function KitchenSplitSlip({
           <div
             key={`${ticket.station}-${ticket.batchNo}`}
             data-testid={`kitchen-ticket-page-${ticket.station}`}
-            data-font-size={tpl.fontSize}
-            className={cn(
-              'ticket-page break-words border-b border-dashed border-black bg-white px-4 font-mono text-black',
-              fs.body,
-            )}
-            style={{ breakAfter: 'page', pageBreakAfter: 'always' }}
+            data-font-size-pt={fontSizePt}
+            className="ticket-page break-words bg-white px-0 py-0 font-mono text-black"
+            style={getThermalSlipRootStyle(fontSizePt)}
           >
-            {/* Header: Station Logo & Large Bold Station Title */}
-            <div className="flex flex-col items-center border-b-2 border-black pb-2 text-center">
+            {/* Header */}
+            <div className="flex flex-col items-center border-b-2 border-black pb-1 text-center">
               {tpl.blocks.stationLogo ? (
-                <StationLogo logoType={logoType} className="mb-1 h-12 w-12" />
+                <StationLogo logoType={logoType} className="mb-0.5 h-10 w-10" />
               ) : null}
-              <div className={cn('font-extrabold uppercase tracking-wide', fs.heading)}>
+              <div
+                data-print-kind="heading"
+                data-print-scale="1.4"
+                className="font-extrabold uppercase tracking-wide"
+                style={{ fontSize: '1.4em' }}
+              >
                 {stationTitle}
               </div>
               {customTitle ? (
                 <div
                   data-testid={`kitchen-custom-title-${ticket.station}`}
-                  className={cn('mt-0.5 font-bold uppercase', fs.sub)}
+                  data-print-kind="text"
+                  data-print-scale="0.85"
+                  data-print-align="center"
+                  data-print-bold
+                  className="font-bold uppercase"
+                  style={{ fontSize: '0.85em' }}
                 >
                   {customTitle}
                 </div>
               ) : null}
             </div>
 
+            <div data-print-kind="divider" className="hidden" />
+
             {/* Table / Takeaway & Order Metadata */}
-            <div className="mt-1.5 space-y-1 border-b border-dashed border-black pb-1.5">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className={cn('font-extrabold', fs.heading)}>{resolvedTableDisplay}</span>
+            <div className="mt-1 space-y-0.5 border-b border-dashed border-black pb-1">
+              <div
+                data-print-kind="pair"
+                data-print-scale="1.15"
+                data-print-bold
+                className="flex items-baseline justify-between gap-2"
+              >
+                <span className="font-extrabold" style={{ fontSize: '1.25em' }}>
+                  {resolvedTableDisplay}
+                </span>
                 {tpl.blocks.orderCode ? (
-                  <span className={cn('font-semibold', fs.sub)}>Mã Đơn: {orderCode}</span>
-                ) : null}
+                  <span className="font-semibold" style={{ fontSize: '0.85em' }}>
+                    Mã Đơn: {orderCode}
+                  </span>
+                ) : (
+                  <span />
+                )}
               </div>
-              <div className={cn('flex items-center justify-between gap-2', fs.sub)}>
+              <div
+                data-print-kind="pair"
+                data-print-scale="0.85"
+                className="flex items-center justify-between gap-2"
+                style={{ fontSize: '0.85em' }}
+              >
                 {tpl.blocks.time ? <span>Thời gian: {formattedTime}</span> : <span />}
                 <span className="font-bold">{`Lượt ${ticket.batchNo}`}</span>
               </div>
@@ -150,10 +178,8 @@ export function KitchenSplitSlip({
               {isAddonBatch ? (
                 <div
                   data-testid={`kitchen-addon-batch-banner-${ticket.station}`}
-                  className={cn(
-                    'mt-1 border-2 border-black bg-white px-2 py-1 text-center font-extrabold uppercase tracking-wider text-black',
-                    fs.item,
-                  )}
+                  data-print-kind="banner"
+                  className="mt-0.5 border-2 border-black bg-white px-1 py-0.5 text-center font-extrabold uppercase tracking-wider text-black"
                 >
                   {batchBannerText}
                 </div>
@@ -162,10 +188,8 @@ export function KitchenSplitSlip({
               {transferNoticeText ? (
                 <div
                   data-testid={`kitchen-transfer-notice-${ticket.station}`}
-                  className={cn(
-                    'mt-1 border-2 border-black bg-white px-1.5 py-1 text-center font-extrabold uppercase text-black',
-                    fs.body,
-                  )}
+                  data-print-kind="banner"
+                  className="mt-0.5 border-2 border-black bg-white px-1 py-0.5 text-center font-extrabold uppercase text-black"
                 >
                   {transferNoticeText}
                 </div>
@@ -174,57 +198,76 @@ export function KitchenSplitSlip({
               {(ticket.reprintLabel || isReprint) ? (
                 <div
                   data-testid={`kitchen-reprint-banner-${ticket.station}`}
-                  className={cn(
-                    'mt-1 border-2 border-black bg-white px-1.5 py-1 text-center font-black uppercase tracking-wider text-black',
-                    fs.body,
-                  )}
+                  data-print-kind="banner"
+                  className="mt-0.5 border-2 border-black bg-white px-1 py-0.5 text-center font-black uppercase tracking-wider text-black"
                 >
                   {normalizedReprintLabel}
                 </div>
               ) : null}
             </div>
 
-            {/* Items Table */}
-            <div className="mt-1.5">
+            <div data-print-kind="divider" className="hidden" />
+
+            {/* Items */}
+            <div className="mt-1">
               <div
-                className={cn(
-                  'flex justify-between border-b border-black pb-1 font-bold uppercase',
-                  fs.sub,
-                )}
+                data-print-kind="pair"
+                data-print-scale="0.85"
+                data-print-bold
+                className="flex justify-between border-b border-black pb-0.5 font-bold uppercase"
+                style={{ fontSize: '0.85em' }}
               >
                 <span>TÊN MÓN</span>
-                <span>SL / CẤP ĐỘ CAY</span>
+                <span>SL</span>
               </div>
+              <div data-print-kind="divider" className="hidden" />
 
               <div className="divide-y divide-dashed divide-black">
                 {ticket.items.map((item, idx) => {
                   const { spicyLevels, toppings } = classifyModifiers(item.modifiers);
                   const trimmedNote = item.note ? item.note.trim() : '';
+                  const showUnitPrice =
+                    item.categoryId != null &&
+                    priceCategorySet.has(item.categoryId) &&
+                    typeof item.unitPrice === 'number';
+                  const itemDisplayName = showUnitPrice
+                    ? `${item.name} — ${item.unitPrice!.toLocaleString('vi-VN')}`
+                    : item.name;
 
                   return (
-                    <div key={`${item.name}-${idx}`} className="py-1.5">
-                      <div className={cn('flex items-start justify-between gap-2 font-extrabold', fs.item)}>
-                        <span>{item.name}</span>
+                    <div key={`${item.name}-${idx}`} className="py-1">
+                      <div
+                        data-print-kind="pair"
+                        data-print-scale="1.05"
+                        data-print-bold
+                        className="flex items-start justify-between gap-2 font-extrabold"
+                        style={{ fontSize: '1.05em' }}
+                      >
+                        <span>{itemDisplayName}</span>
                         <span className="shrink-0">
                           {String(item.qty).padStart(2, '0')}
                         </span>
                       </div>
 
                       {spicyLevels.length > 0 ? (
-                        <div className={cn('mt-0.5 font-bold', fs.body)}>
+                        <div
+                          data-print-kind="text"
+                          data-print-bold
+                          className="mt-0.5 font-bold"
+                        >
                           {spicyLevels.join(' - ')}
                         </div>
                       ) : null}
 
                       {toppings.length > 0 ? (
-                        <div className={cn('mt-0.5 space-y-0.5 pl-2 font-semibold', fs.body)}>
+                        <div className="mt-0.5 space-y-0.5 pl-2 font-semibold">
                           {toppings.map((topping, tIdx) => (
                             <div
                               key={`${topping}-${tIdx}`}
-                              className="flex items-center justify-between"
+                              data-print-kind="text"
+                              data-print-scale="0.95"
                             >
-                              <span>{topping}</span>
-                              <span>{String(item.qty).padStart(2, '0')}</span>
+                              {topping}
                             </div>
                           ))}
                         </div>
@@ -233,11 +276,14 @@ export function KitchenSplitSlip({
                       {tpl.blocks.itemNotes && trimmedNote ? (
                         <div
                           data-testid={`kitchen-item-note-${idx}`}
-                          className={cn('mt-0.5 pl-2 font-bold italic', fs.body)}
+                          data-print-kind="text"
+                          data-print-bold
+                          className="mt-0.5 pl-2 font-bold italic"
                         >
                           Ghi chú: {trimmedNote}
                         </div>
                       ) : null}
+                      <div data-print-kind="divider" className="hidden" />
                     </div>
                   );
                 })}
@@ -245,7 +291,11 @@ export function KitchenSplitSlip({
             </div>
 
             {tpl.blocks.itemNotes && orderNote && orderNote.trim() ? (
-              <div className={cn('mt-1.5 border-t border-black pt-1 font-bold', fs.body)}>
+              <div
+                data-print-kind="text"
+                data-print-bold
+                className="mt-1 border-t border-black pt-1 font-bold"
+              >
                 Ghi chú đơn: {orderNote.trim()}
               </div>
             ) : null}
@@ -253,10 +303,11 @@ export function KitchenSplitSlip({
             {customFooterNote ? (
               <div
                 data-testid={`kitchen-custom-footer-${ticket.station}`}
-                className={cn(
-                  'mt-1.5 border-t border-dashed border-black pt-1 text-center font-semibold',
-                  fs.sub,
-                )}
+                data-print-kind="text"
+                data-print-scale="0.85"
+                data-print-align="center"
+                className="mt-1 border-t border-dashed border-black pt-1 text-center font-semibold"
+                style={{ fontSize: '0.85em' }}
               >
                 {customFooterNote}
               </div>

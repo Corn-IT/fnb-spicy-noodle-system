@@ -105,6 +105,7 @@ export function InvoiceDetailModal({
           unitPrice: item.unitPrice,
           lineTotal: item.lineTotal,
           modifiers: item.modifiers,
+          pricedModifiers: item.pricedModifiers,
           note: item.itemNote,
         }));
 

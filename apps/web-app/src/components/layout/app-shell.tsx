@@ -14,6 +14,7 @@ import { TopNavbar } from '@/components/layout/top-navbar';
 import { clearPendingNavigation, TopProgressBar } from '@/components/loading';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useAppMessages } from '@/hooks/use-app-messages';
+import { useDisplayScale } from '@/hooks/use-display-scale';
 import { resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
 import { apiClient } from '@/lib/api-client';
 import { POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
@@ -51,6 +52,7 @@ export function AppShell() {
   const [isSocketDisconnected, setIsSocketDisconnected] = React.useState<boolean>(false);
 
   const isPosRoute = location.pathname.startsWith('/pos');
+  useDisplayScale(location.pathname);
 
   const globalTableGridQuery = useQuery<PosTableGridResponse | null>({
     queryKey: POS_TABLE_GRID_QUERY_KEY,
@@ -260,6 +262,7 @@ export function AppShell() {
           </button>
         ) : null}
         <main
+          data-app-content="true"
           className={cn(
             'flex-1 min-h-0 flex flex-col p-2.5 sm:p-4 md:p-5',
             isPosRoute ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden',

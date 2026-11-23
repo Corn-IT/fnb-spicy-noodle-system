@@ -22,6 +22,7 @@ import {
 } from '@fnb/shared';
 import { AuditLogService } from '../../common/audit/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { buildIyFallbackKeywords, queryMatchingIdsBySearchNorm } from '../../common/utils/search-normalize.util';
 import { businessDateString, dateOnly, nextDateOnly } from '../../common/utils/business-date.util';
 import { MdmService } from '../mdm/mdm.service';
 
@@ -128,11 +129,28 @@ export class InventoryService {
     }
 
     const { page, limit, fromDate, toDate, keyword, paymentSource, ingredientMdmId } = parsed.data;
+    let keywordWhere: Prisma.InventoryImportWhereInput = {};
+    if (keyword) {
+      const matchedIds = await queryMatchingIdsBySearchNorm(
+        this.prisma,
+        'inventory_imports',
+        ['item_name_snapshot'],
+        keyword,
+      );
+      keywordWhere =
+        matchedIds !== null
+          ? { id: { in: matchedIds } }
+          : {
+              OR: buildIyFallbackKeywords(keyword).map((v) => ({
+                itemNameSnapshot: { contains: v, mode: 'insensitive' as const },
+              })),
+            };
+    }
     const where: Prisma.InventoryImportWhereInput = {
       isDeleted: false,
       ...(paymentSource ? { paymentSource } : {}),
       ...(ingredientMdmId ? { ingredientMdmId } : {}),
-      ...(keyword ? { itemNameSnapshot: { contains: keyword, mode: 'insensitive' } } : {}),
+      ...keywordWhere,
       ...(fromDate || toDate ? {
         importDate: {
           ...(fromDate ? { gte: dateOnly(fromDate) } : {}),

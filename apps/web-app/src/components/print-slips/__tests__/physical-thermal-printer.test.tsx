@@ -144,6 +144,56 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
 
       // Emits exactly 3 paper cutter commands (GS V 66 0) — one for each kitchen station
       expect(countSubsequenceOccurrences(escPosBytes, ESC_POS_COMMANDS.AUTO_CUT_PARTIAL)).toBe(3);
+
+      // Emits GS L 0 0 hardware left margin reset and NO ESC d 4 when feedLinesBeforeCut is 0
+      expect(countSubsequenceOccurrences(escPosBytes, ESC_POS_COMMANDS.RESET_LEFT_MARGIN)).toBe(1);
+      expect(countSubsequenceOccurrences(escPosBytes, ESC_POS_COMMANDS.FEED_BEFORE_CUT)).toBe(0);
+
+      // Emits GS L with calibrated dots (3mm = 24 dots) and ESC d 2 when configured
+      const calibrated = await encodeThermalContainerToEscPos(printContainer, {
+        paperWidthDots: 576,
+        leftMarginMm: 3,
+        feedLinesBeforeCut: 2,
+      });
+      expect(
+        countSubsequenceOccurrences(calibrated, new Uint8Array([0x1d, 0x4c, 24, 0])),
+      ).toBe(1);
+      expect(
+        countSubsequenceOccurrences(calibrated, new Uint8Array([0x1b, 0x64, 2])),
+      ).toBe(3);
+    });
+
+    it('throws a clear error when canvas getImageData fails instead of printing synthetic garbage raster', async () => {
+      const mockCtx = {
+        fillStyle: '#FFFFFF',
+        strokeStyle: '#000000',
+        lineWidth: 1,
+        font: '18px monospace',
+        textAlign: 'left',
+        textBaseline: 'top',
+        fillRect: vi.fn(),
+        strokeRect: vi.fn(),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        stroke: vi.fn(),
+        setLineDash: vi.fn(),
+        drawImage: vi.fn(),
+        measureText: (txt: string) => ({ width: txt.length * 10 }),
+        fillText: vi.fn(),
+        getImageData: vi.fn(() => {
+          throw new DOMException('Tainted canvases may not be exported.', 'SecurityError');
+        }),
+      } as unknown as CanvasRenderingContext2D;
+
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockCtx);
+      const el = document.createElement('div');
+      el.className = 'ticket-page';
+      el.textContent = 'Test slip';
+
+      await expect(renderTicketPageToMonochrome(el, 576)).rejects.toThrow(
+        /Không thể dựng ảnh phiếu in nhiệt/,
+      );
     });
 
     it('renders ticket visual elements through 2D Canvas context when getContext("2d") is available', async () => {
@@ -184,6 +234,9 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
         <div class="flex justify-between border-b"><span>Mì Cay Bò Mỹ</span><span>55.000 đ</span></div>
         <img data-testid="provisional-vietqr-image" alt="VietQR" width="176" height="176" />
       `;
+      const img = ticketDiv.querySelector('img')!;
+      Object.defineProperty(img, 'complete', { value: true });
+      Object.defineProperty(img, 'naturalWidth', { value: 176 });
 
       const result = await renderTicketPageToMonochrome(ticketDiv, 576);
       expect(result.widthDots).toBe(576);

@@ -23,6 +23,7 @@ import {
 } from '@fnb/shared';
 import { AuditLogService } from '../../common/audit/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { buildIyFallbackKeywords, queryMatchingIdsBySearchNorm } from '../../common/utils/search-normalize.util';
 import { businessDateString, businessDayRange, dateOnly } from '../../common/utils/business-date.util';
 import { getShiftRange, queryShiftSalesTotals } from '../../common/utils/cashflow-settlement.util';
 
@@ -119,6 +120,33 @@ export class CashflowService {
     }
 
     const { page, limit, fromDate, toDate, closerKeyword } = parsed.data;
+    let closerFilter: Prisma.CashDrawerSettlementWhereInput = {};
+    if (closerKeyword) {
+      const [matchedUserIds, matchedEmpIds] = await Promise.all([
+        queryMatchingIdsBySearchNorm(this.prisma, 'users', ['username'], closerKeyword),
+        queryMatchingIdsBySearchNorm(this.prisma, 'employees', ['full_name'], closerKeyword),
+      ]);
+      if (matchedUserIds !== null || matchedEmpIds !== null) {
+        closerFilter = {
+          closer: {
+            OR: [
+              ...(matchedUserIds ? [{ id: { in: matchedUserIds } }] : []),
+              ...(matchedEmpIds ? [{ employeeId: { in: matchedEmpIds } }] : []),
+            ],
+          },
+        };
+      } else {
+        const variants = buildIyFallbackKeywords(closerKeyword);
+        closerFilter = {
+          closer: {
+            OR: variants.flatMap((v) => [
+              { username: { contains: v, mode: 'insensitive' as const } },
+              { employee: { is: { fullName: { contains: v, mode: 'insensitive' as const } } } },
+            ]),
+          },
+        };
+      }
+    }
     const where: Prisma.CashDrawerSettlementWhereInput = {
       ...(fromDate || toDate ? {
         settlementDate: {
@@ -126,14 +154,7 @@ export class CashflowService {
           ...(toDate ? { lte: dateOnly(toDate) } : {}),
         },
       } : {}),
-      ...(closerKeyword ? {
-        closer: {
-          OR: [
-            { username: { contains: closerKeyword, mode: 'insensitive' } },
-            { employee: { is: { fullName: { contains: closerKeyword, mode: 'insensitive' } } } },
-          ],
-        },
-      } : {}),
+      ...closerFilter,
     };
     const [total, settlements] = await Promise.all([
       this.prisma.cashDrawerSettlement.count({ where }),

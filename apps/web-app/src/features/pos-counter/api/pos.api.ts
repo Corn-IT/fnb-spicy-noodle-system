@@ -28,6 +28,8 @@ import {
   UpdateQrSecurityConfigSchema,
   VoidInvoiceRequestSchema,
   type ApproveQrOrderInput,
+  CancelOrderResponseSchema,
+  type CancelOrderResponse,
   type CheckoutOrderRequest,
   type CreateDiningTableInput,
   type CreatePosOrderInput,
@@ -224,12 +226,13 @@ export async function shortenPosLegacyQrTokens(): Promise<ShortenLegacyQrTokensR
 export async function cancelPosOrder(params: {
   orderId: number;
   input: VoidInvoiceRequest;
-}): Promise<{ orderId: number; status: 'VOIDED'; tableId: number | null }> {
+}): Promise<CancelOrderResponse> {
   const parsed = VoidInvoiceRequestSchema.parse(params.input);
-  return apiClient.post<{ orderId: number; status: 'VOIDED'; tableId: number | null }>(
+  const raw = await apiClient.post<unknown>(
     `/api/v1/pos/orders/${params.orderId}/cancel`,
     parsed,
   );
+  return CancelOrderResponseSchema.parse(raw);
 }
 
 export async function executePosTableAction(params: {

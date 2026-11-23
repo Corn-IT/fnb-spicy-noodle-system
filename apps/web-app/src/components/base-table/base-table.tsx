@@ -266,7 +266,7 @@ export function BaseTable<TData>({
             <div className="animate-top-progress h-full w-1/2 rounded-r-full bg-primary" />
           </div>
         ) : null}
-        <div className="w-full overflow-x-auto touch-pan-x">
+        <div data-scroll-intended="true" className="w-full overflow-x-auto touch-pan-x">
           <table
             ref={tableRef}
             style={{

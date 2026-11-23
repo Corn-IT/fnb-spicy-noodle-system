@@ -46,3 +46,8 @@ Thumbs.db
 tmp_*.txt
 .codegraph/
 cloudflared.exe
+
+# Playwright test artifacts
+playwright-report/
+test-results/
+apps/web-app/e2e/baseline-audit-output.json

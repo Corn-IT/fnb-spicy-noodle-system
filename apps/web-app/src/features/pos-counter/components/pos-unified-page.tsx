@@ -516,6 +516,7 @@ export function PosUnifiedPage() {
               unitPrice: item.unitPrice,
               lineTotal: item.lineTotal,
               modifiers: item.modifiers,
+              pricedModifiers: item.pricedModifiers,
               note: item.itemNote,
             })),
         });
@@ -716,12 +717,22 @@ export function PosUnifiedPage() {
           ? reason.trim()
           : defaultReason;
 
-      await cancelOrderMutation.mutateAsync({
+      const orderSnapshot = currentOrder;
+      const response = await cancelOrderMutation.mutateAsync({
         orderId: selectedOrderId,
         input: {
           voidReason: resolvedReason,
         },
       });
+      if (
+        response.requireCancellationSlip &&
+        response.kitchenCancellationSlips.length > 0
+      ) {
+        thermalPrinter.printKitchenCancelItem({
+          orderCode: orderSnapshot?.orderCode,
+          slips: response.kitchenCancellationSlips,
+        });
+      }
       setSelectedOrderId(null);
       notify(isTakeaway ? 'pos.order.voidTakeawaySuccess' : 'pos.order.voidTableSuccess', {
         variant: 'success',
@@ -775,8 +786,8 @@ export function PosUnifiedPage() {
           onValueChange={(v) => setPosTab(v as 'tables' | 'menu' | 'invoice')}
           className="flex flex-1 min-h-0 h-full flex-col"
         >
-          <div className="flex items-center justify-between gap-2 border-b px-2.5 sm:px-4 py-2 sm:py-2.5 shrink-0">
-            <TabsList className="grid w-full min-w-0 grid-cols-3 lg:grid-cols-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b px-2.5 sm:px-4 py-2 sm:py-2.5 shrink-0">
+            <TabsList className="grid flex-1 min-w-[180px] grid-cols-3 lg:grid-cols-2">
               <TabsTrigger value="tables" data-testid="pos-tab-tables">
                 <span className="hidden xl:inline truncate">Sơ đồ Bàn & Mang về</span>
                 <span className="xl:hidden truncate">Sơ đồ Bàn</span>

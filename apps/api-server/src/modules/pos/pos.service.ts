@@ -25,6 +25,7 @@ import {
   PatchOrderItemsSchema,
   PosOrderCreationResponseSchema,
   PosTableGridResponseSchema,
+  CancelOrderResponseSchema,
   ProvisionalBillResponseSchema,
   QrOrderResponseSchema,
   QrTokenSchema,
@@ -823,10 +824,36 @@ export class PosService {
       if (!snapshot) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
       await this.lockOrders(tx, [id]);
       if (snapshot.tableId !== null) await this.lockTables(tx, [snapshot.tableId]);
-      const current = await tx.order.findUnique({ where: { id }, include: { table: { select: { name: true } } } }) as OrderRow | null;
+      const current = await tx.order.findUnique({
+        where: { id },
+        include: {
+          table: { select: { name: true } },
+          items: {
+            where: { kitchenStatus: 'PRINTED' },
+            include: {
+              product: {
+                include: {
+                  comboParents: {
+                    include: { childProduct: { select: { name: true, station: true } } },
+                  },
+                },
+              },
+            },
+            orderBy: { id: 'asc' },
+          },
+        },
+      }) as OrderRow | null;
       if (!current) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
       if (!['PENDING', 'SERVING'].includes(current.status)) {
         throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể huỷ đơn hàng đang mở hoặc đang phục vụ');
+      }
+
+      const tableLabel = current.table?.name ?? (current.orderType === 'TAKEAWAY' ? `Mang về #${String(current.takeawayNumber ?? 0).padStart(2, '0')}` : null);
+      const slipLabel = tableLabel ?? `Đơn #${current.orderCode}`;
+      const kitchenCancellationSlips: Array<{ station: 'BEP_NAU' | 'BEP_CHIEN' | 'PHA_CHE'; tableLabel: string; itemName: string; quantity: number }> = [];
+      for (const printedItem of current.items ?? []) {
+        const itemSlips = await this.cancellationSlips(tx, printedItem, slipLabel);
+        kitchenCancellationSlips.push(...itemSlips);
       }
 
       await tx.orderItem.deleteMany({ where: { orderId: id, kitchenStatus: 'NEW' } });
@@ -853,8 +880,7 @@ export class PosService {
           data: { status: 'AVAILABLE', activeOrderId: null },
         });
       }
-      const tableLabel = current.table?.name ?? (current.orderType === 'TAKEAWAY' ? `Mang về #${String(current.takeawayNumber ?? 0).padStart(2, '0')}` : null);
-      return { order: updated as OrderRow, tableId: current.tableId, tableLabel };
+      return { order: updated as OrderRow, tableId: current.tableId, tableLabel, kitchenCancellationSlips };
     });
 
     this.gateway.emitOrderStatusUpdated(id, {
@@ -878,7 +904,13 @@ export class PosService {
         },
       });
     }
-    return { orderId: id, status: 'VOIDED', tableId: result.tableId };
+    return CancelOrderResponseSchema.parse({
+      orderId: id,
+      status: 'VOIDED',
+      tableId: result.tableId,
+      requireCancellationSlip: result.kitchenCancellationSlips.length > 0,
+      kitchenCancellationSlips: result.kitchenCancellationSlips,
+    });
   }
 
   async patchOrderItems(id: number, input: PatchOrderItemsInput, userId?: number) {
@@ -1468,6 +1500,7 @@ export class PosService {
           unitPrice: item.unitPrice.toNumber(),
           lineTotal: item.unitPrice.mul(item.quantity).toNumber(),
           modifiers: this.modifierNames(item.modifiersSnapshot),
+          pricedModifiers: this.pricedModifierNames(item.modifiersSnapshot),
           note: item.itemNote,
         })),
       subtotalAmount: order.subtotalAmount !== undefined ? order.subtotalAmount.toNumber() : totals.subtotalAmount,
@@ -1521,6 +1554,7 @@ export class PosService {
       unitPrice: number;
       lineTotal: number;
       modifiers: string[];
+      pricedModifiers: string[];
       note: string | null;
     }> = [];
 
@@ -1542,6 +1576,7 @@ export class PosService {
         unitPrice: item.unitPrice.toNumber(),
         lineTotal: lineTotal.toNumber(),
         modifiers: this.modifierNames(item.modifiersSnapshot),
+        pricedModifiers: this.pricedModifierNames(item.modifiersSnapshot),
         note: item.itemNote,
       });
     }
@@ -2302,6 +2337,7 @@ export class PosService {
         unitPrice: item.unitPrice.toNumber(),
         lineTotal: item.unitPrice.mul(item.quantity).toNumber(),
         modifiers: this.modifierNames(item.modifiersSnapshot),
+        pricedModifiers: this.pricedModifierNames(item.modifiersSnapshot),
         itemNote: item.itemNote,
         batchNo: item.batchNo,
         kitchenStatus: item.kitchenStatus,
@@ -2365,6 +2401,15 @@ export class PosService {
     return value.flatMap((entry) => {
       if (!entry || typeof entry !== 'object' || !('name' in entry) || typeof entry.name !== 'string') return [];
       return [entry.name];
+    });
+  }
+
+  private pricedModifierNames(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || !('name' in entry) || typeof entry.name !== 'string') return [];
+      const extra = 'extraPrice' in entry ? Number((entry as { extraPrice?: unknown }).extraPrice) : 0;
+      return Number.isFinite(extra) && extra > 0 ? [entry.name] : [];
     });
   }
 

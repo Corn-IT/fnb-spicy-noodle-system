@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { AUDIT_MODULE_CONFIG, type AuditLogFilterQuery, type AuditModule } from '@fnb/shared';
 import { getRequestContext } from '../context/request-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildIyFallbackKeywords, queryMatchingIdsBySearchNorm } from '../utils/search-normalize.util';
 import { sanitizeAuditMetadata } from '../security/redact.util';
 
 export interface AuditActor {
@@ -101,18 +102,32 @@ export class AuditLogService {
     }
 
     if (query.keyword) {
-      where.OR = [
-        { summary: { contains: query.keyword, mode: 'insensitive' } },
-        { actorFullName: { contains: query.keyword, mode: 'insensitive' } },
-        { actorUsername: { contains: query.keyword, mode: 'insensitive' } },
-        { action: { contains: query.keyword, mode: 'insensitive' } },
-        ...(includeClientInfo
-          ? [
-              { ipAddress: { contains: query.keyword, mode: 'insensitive' as const } },
-              { deviceLabel: { contains: query.keyword, mode: 'insensitive' as const } },
-            ]
-          : []),
-      ];
+      const cols = includeClientInfo
+        ? ['summary', 'actor_full_name', 'actor_username', 'action', 'ip_address', 'device_label']
+        : ['summary', 'actor_full_name', 'actor_username', 'action'];
+      const matchedIds = await queryMatchingIdsBySearchNorm(
+        this.prisma,
+        'audit_logs',
+        cols,
+        query.keyword,
+      );
+      if (matchedIds !== null) {
+        where.id = { in: matchedIds };
+      } else {
+        const variants = buildIyFallbackKeywords(query.keyword);
+        where.OR = variants.flatMap((v) => [
+          { summary: { contains: v, mode: 'insensitive' as const } },
+          { actorFullName: { contains: v, mode: 'insensitive' as const } },
+          { actorUsername: { contains: v, mode: 'insensitive' as const } },
+          { action: { contains: v, mode: 'insensitive' as const } },
+          ...(includeClientInfo
+            ? [
+                { ipAddress: { contains: v, mode: 'insensitive' as const } },
+                { deviceLabel: { contains: v, mode: 'insensitive' as const } },
+              ]
+            : []),
+        ]);
+      }
     }
 
     if (query.fromDate || query.toDate) {

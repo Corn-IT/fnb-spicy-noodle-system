@@ -242,4 +242,46 @@ describe('KitchenSplitService', () => {
     expect(results.map(({ tickets }) => tickets.length).sort()).toEqual([0, 1]);
     expect(itemStatus).toBe('PRINTED');
   });
+
+  it('should compute snapshot base unitPrice (excluding modifiers) and preserve it on reprint even if product.price changes', async () => {
+    const orderItem = {
+      id: 99,
+      productId: 20,
+      quantity: 1,
+      unitPrice: 219000, // 199,000 base + 20,000 topping at order time
+      batchNo: 1,
+      kitchenStatus: 'PRINTED',
+      modifiersSnapshot: [
+        { groupId: 1, modifierId: 1, name: 'Cấp độ 1', extraPrice: '0.00' },
+        { groupId: 2, modifierId: 5, name: 'Thêm Thịt bò (20k)', extraPrice: '20000.00' },
+      ],
+      itemNote: null,
+      product: { id: 20, name: 'Lẩu Kim Chi', station: 'BEP_NAU', categoryId: 2, price: 250000 },
+    };
+    const gateway = { emitOrderStatusUpdated: vi.fn(), emitTableGridSync: vi.fn() };
+    const prisma = {
+      order: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 50,
+          orderCode: 'HD-20261123-0050',
+          status: 'SERVING',
+          tableId: 2,
+          table: { id: 2, name: 'Bàn 02' },
+          tableTransferLogs: [],
+          items: [orderItem],
+        }),
+      },
+      comboItem: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const service = new KitchenSplitService(prisma as never, gateway as never);
+
+    const reprinted = await service.reprintKitchen(50);
+    expect(reprinted.tickets).toHaveLength(1);
+    expect(reprinted.tickets[0]!.items[0]).toMatchObject({
+      name: 'Lẩu Kim Chi',
+      qty: 1,
+      unitPrice: 199000,
+      categoryId: 2,
+    });
+  });
 });

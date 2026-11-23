@@ -49,6 +49,7 @@ import { useCommitSearch } from '@/lib/use-commit-search';
 import { resolveEffectiveTheme } from '@/providers/theme-provider';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { cn } from '@/utils/cn';
+import { useDisplayScale } from '@/hooks/use-display-scale';
 import { matchesVietnameseQuery } from '@/utils/search';
 import { syncDocumentThemeMode } from '@/utils/store-theme';
 import {
@@ -153,6 +154,7 @@ function writeStoredDraftCart(qrToken: string, draft: StoredQrDraftCart): void {
 
 export function QrOrderPage() {
   useMenuSyncListener();
+  useDisplayScale('/q');
 
   const { token: rawToken = '' } = useParams<{ token: string }>();
   const token = React.useMemo(() => normalizeQrToken(rawToken), [rawToken]);
@@ -920,7 +922,10 @@ export function QrOrderPage() {
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-md bg-background pb-36 text-foreground">
+    <div
+      data-qr-order-root="true"
+      className="mx-auto min-h-screen max-w-md bg-background pb-36 text-foreground"
+    >
       <header className="sticky top-0 z-30 border-b bg-card/95 px-4 py-3 shadow-xs backdrop-blur-md">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">

@@ -30,8 +30,42 @@ export const PageHeaderOverrideSchema = z
 
 export type PageHeaderOverride = z.infer<typeof PageHeaderOverrideSchema>;
 
+export const THERMAL_FONT_SIZE_PT_MIN = 6;
+export const THERMAL_FONT_SIZE_PT_MAX = 16;
+export const THERMAL_FONT_SIZE_PT_STEP = 0.5;
+export const DEFAULT_THERMAL_FONT_SIZE_PT = 8;
+
+export const LEGACY_THERMAL_FONT_SIZE_PT_MAP = {
+  sm: 7,
+  md: 8,
+  lg: 9.5,
+} as const;
+
 export const ThermalFontSizeSchema = z.enum(['sm', 'md', 'lg']);
 export type ThermalFontSize = z.infer<typeof ThermalFontSizeSchema>;
+
+export const ThermalFontSizePtSchema = z
+  .number()
+  .min(THERMAL_FONT_SIZE_PT_MIN, `Cỡ chữ tối thiểu ${THERMAL_FONT_SIZE_PT_MIN}pt`)
+  .max(THERMAL_FONT_SIZE_PT_MAX, `Cỡ chữ tối đa ${THERMAL_FONT_SIZE_PT_MAX}pt`)
+  .refine((val) => Math.abs(Math.round(val * 2) - val * 2) < 1e-9, {
+    message: 'Cỡ chữ phải theo bước 0.5pt',
+  });
+export type ThermalFontSizePt = z.infer<typeof ThermalFontSizePtSchema>;
+
+export const DISPLAY_SCALE_MIN_PERCENT = 80;
+export const DISPLAY_SCALE_MAX_PERCENT = 150;
+export const DISPLAY_SCALE_STEP_PERCENT = 5;
+export const DEFAULT_DISPLAY_SCALE_PERCENT = 100;
+
+export const DisplayScalePercentSchema = z
+  .number()
+  .int('Tỉ lệ hiển thị phải là số nguyên')
+  .min(DISPLAY_SCALE_MIN_PERCENT, `Tỉ lệ tối thiểu ${DISPLAY_SCALE_MIN_PERCENT}%`)
+  .max(DISPLAY_SCALE_MAX_PERCENT, `Tỉ lệ tối đa ${DISPLAY_SCALE_MAX_PERCENT}%`)
+  .refine((val) => val % DISPLAY_SCALE_STEP_PERCENT === 0, {
+    message: `Tỉ lệ hiển thị phải theo bước ${DISPLAY_SCALE_STEP_PERCENT}%`,
+  });
 
 export const PrintTemplateKeySchema = z.enum([
   'provisional',
@@ -48,6 +82,7 @@ export const PrintTemplatesSchema = z
       .object({
         title: PlainText(60),
         footerNote: PlainText(200),
+        fontSizePt: ThermalFontSizePtSchema,
         blocks: z
           .object({
             logo: z.boolean(),
@@ -67,6 +102,7 @@ export const PrintTemplatesSchema = z
       .object({
         title: PlainText(60),
         footerNote: PlainText(200),
+        fontSizePt: ThermalFontSizePtSchema,
         blocks: z
           .object({
             logo: z.boolean(),
@@ -85,7 +121,8 @@ export const PrintTemplatesSchema = z
       .object({
         title: PlainText(60),
         footerNote: PlainText(200),
-        fontSize: ThermalFontSizeSchema,
+        fontSizePt: ThermalFontSizePtSchema,
+        priceCategoryIds: z.array(z.number().int().positive()).max(50),
         blocks: z
           .object({
             stationLogo: z.boolean(),
@@ -100,7 +137,7 @@ export const PrintTemplatesSchema = z
       .object({
         title: PlainText(60),
         footerNote: PlainText(200),
-        fontSize: ThermalFontSizeSchema,
+        fontSizePt: ThermalFontSizePtSchema,
         blocks: z
           .object({
             time: z.boolean(),
@@ -113,6 +150,7 @@ export const PrintTemplatesSchema = z
       .object({
         title: PlainText(60),
         footerNote: PlainText(200),
+        fontSizePt: ThermalFontSizePtSchema,
         blocks: z
           .object({
             time: z.boolean(),
@@ -148,6 +186,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
   provisional: {
     title: '',
     footerNote: '',
+    fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
     blocks: {
       logo: true,
       address: true,
@@ -163,6 +202,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
   official: {
     title: '',
     footerNote: '',
+    fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
     blocks: {
       logo: true,
       address: true,
@@ -177,7 +217,8 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
   kitchen: {
     title: '',
     footerNote: '',
-    fontSize: 'md',
+    fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
+    priceCategoryIds: [],
     blocks: {
       stationLogo: true,
       orderCode: true,
@@ -188,7 +229,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
   kitchenCancel: {
     title: '',
     footerNote: '',
-    fontSize: 'md',
+    fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
     blocks: {
       time: true,
       reason: true,
@@ -197,6 +238,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
   tableTransfer: {
     title: '',
     footerNote: '',
+    fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
     blocks: {
       time: true,
       cashier: true,
@@ -216,6 +258,7 @@ export function cloneDefaultPrintTemplates(): PrintTemplates {
     },
     kitchen: {
       ...DEFAULT_PRINT_TEMPLATES.kitchen,
+      priceCategoryIds: [...DEFAULT_PRINT_TEMPLATES.kitchen.priceCategoryIds],
       blocks: { ...DEFAULT_PRINT_TEMPLATES.kitchen.blocks },
     },
     kitchenCancel: {
@@ -363,7 +406,40 @@ export const StoreSettingsSchema = z.object({
   navOrder: z.array(NavPathSchema).max(64),
   pageHeaders: z.record(NavPathSchema, PageHeaderOverrideSchema),
   printTemplates: PrintTemplatesSchema,
+  displayScale: z.object({
+    globalPercent: DisplayScalePercentSchema,
+    perPath: z
+      .record(NavPathSchema, DisplayScalePercentSchema)
+      .superRefine((map, ctx) => {
+        for (const key of Object.keys(map)) {
+          if (!ALLOWED_STORE_NAV_PATH_SET.has(key)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [key],
+              message: `Đường dẫn ${key} không nằm trong danh sách màn hình hỗ trợ`,
+            });
+          }
+        }
+      }),
+    qrOrderPercent: DisplayScalePercentSchema,
+  }).strict(),
 }).strict();
+
+export type DisplayScale = z.infer<typeof StoreSettingsSchema>['displayScale'];
+
+export const DEFAULT_DISPLAY_SCALE: DisplayScale = {
+  globalPercent: DEFAULT_DISPLAY_SCALE_PERCENT,
+  perPath: {},
+  qrOrderPercent: DEFAULT_DISPLAY_SCALE_PERCENT,
+};
+
+export function cloneDefaultDisplayScale(): DisplayScale {
+  return {
+    globalPercent: DEFAULT_DISPLAY_SCALE.globalPercent,
+    perPath: {},
+    qrOrderPercent: DEFAULT_DISPLAY_SCALE.qrOrderPercent,
+  };
+}
 
 export type StoreSettings = z.infer<typeof StoreSettingsSchema>;
 
@@ -450,6 +526,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   navOrder: [],
   pageHeaders: {},
   printTemplates: cloneDefaultPrintTemplates(),
+  displayScale: cloneDefaultDisplayScale(),
 };
 
 export const NEUTRAL_STORE_SETTINGS: PublicStoreSettingsResponse = {
@@ -481,6 +558,7 @@ export const NEUTRAL_STORE_SETTINGS: PublicStoreSettingsResponse = {
   navOrder: [],
   pageHeaders: {},
   printTemplates: cloneDefaultPrintTemplates(),
+  displayScale: cloneDefaultDisplayScale(),
   updatedAt: null,
   assets: {
     logo: null,
@@ -627,10 +705,30 @@ function mergePrintTemplateBranch<T extends { blocks: Record<string, unknown> }>
     return candidateBranch;
   }
   const definedBranch = pickDefinedEntries(candidateBranch);
+  const { fontSize: legacyFontSize, ...restBranch } = definedBranch;
+  let resolvedFontSizePt = restBranch.fontSizePt;
+  let preserveInvalidLegacyFontSize = false;
+  if (legacyFontSize !== undefined) {
+    if (
+      typeof legacyFontSize === 'string' &&
+      legacyFontSize in LEGACY_THERMAL_FONT_SIZE_PT_MAP
+    ) {
+      if (resolvedFontSizePt === undefined) {
+        resolvedFontSizePt =
+          LEGACY_THERMAL_FONT_SIZE_PT_MAP[
+            legacyFontSize as keyof typeof LEGACY_THERMAL_FONT_SIZE_PT_MAP
+          ];
+      }
+    } else {
+      preserveInvalidLegacyFontSize = true;
+    }
+  }
   return {
     ...defaults,
-    ...definedBranch,
-    blocks: mergeNestedDefaults(defaults.blocks, 'blocks' in definedBranch, definedBranch.blocks),
+    ...restBranch,
+    ...(resolvedFontSizePt !== undefined ? { fontSizePt: resolvedFontSizePt } : {}),
+    ...(preserveInvalidLegacyFontSize ? { fontSize: legacyFontSize } : {}),
+    blocks: mergeNestedDefaults(defaults.blocks, 'blocks' in restBranch, restBranch.blocks),
   };
 }
 
@@ -721,6 +819,11 @@ export function mergeStoreSettingsWithDefaults(rawCandidate: unknown): unknown {
     printTemplates: mergePrintTemplatesDefaults(
       'printTemplates' in definedEntries,
       definedEntries.printTemplates,
+    ),
+    displayScale: mergeNestedDefaults(
+      cloneDefaultDisplayScale(),
+      'displayScale' in definedEntries,
+      definedEntries.displayScale,
     ),
   };
 }

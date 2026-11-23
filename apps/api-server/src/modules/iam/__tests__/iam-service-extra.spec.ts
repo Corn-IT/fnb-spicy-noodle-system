@@ -136,11 +136,11 @@ describe('IamService additional failure and success paths', () => {
     expect(result.items).toHaveLength(2);
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
-        OR: [
+        OR: expect.arrayContaining([
           { username: { contains: 'cashier', mode: 'insensitive' } },
           { employee: { is: { fullName: { contains: 'cashier', mode: 'insensitive' } } } },
           { employee: { is: { shortName: { contains: 'cashier', mode: 'insensitive' } } } },
-        ],
+        ]),
       }),
     }));
 

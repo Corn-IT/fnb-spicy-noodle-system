@@ -1,5 +1,6 @@
 /**
- * Chuẩn hoá chuỗi tiếng Việt (bỏ dấu, thường hoá, đ -> d) phục vụ tìm kiếm nhanh trên POS & QR.
+ * Chuẩn hoá chuỗi tiếng Việt (bỏ dấu, thường hoá, đ -> d, gập y -> i) phục vụ tìm kiếm đồng nhất
+ * trên toàn hệ thống (POS, QR khách hàng, Thực đơn, Giảm giá, Kho, Command Palette...).
  */
 export function normalizeVietnameseText(input: string): string {
   return input
@@ -7,7 +8,9 @@ export function normalizeVietnameseText(input: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd');
+    .replace(/đ/g, 'd')
+    .replace(/y/g, 'i')
+    .replace(/\s+/g, ' ');
 }
 
 export function matchesVietnameseQuery(

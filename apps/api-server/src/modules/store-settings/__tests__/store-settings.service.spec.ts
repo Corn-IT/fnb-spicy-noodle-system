@@ -426,7 +426,7 @@ describe('StoreSettingsService', () => {
               ...DEFAULT_STORE_SETTINGS.printTemplates.kitchen,
               title: 'BẾP CHUẨN BỊ',
               footerNote: 'Ưu tiên khách bàn',
-              fontSize: 'lg',
+              fontSizePt: 10,
               blocks: {
                 ...DEFAULT_STORE_SETTINGS.printTemplates.kitchen.blocks,
                 stationLogo: false,
@@ -435,7 +435,7 @@ describe('StoreSettingsService', () => {
             kitchenCancel: {
               ...DEFAULT_STORE_SETTINGS.printTemplates.kitchenCancel,
               title: 'BÁO HUỶ GẤP',
-              fontSize: 'sm',
+              fontSizePt: 7,
               blocks: { time: false, reason: true },
             },
             tableTransfer: {
@@ -453,8 +453,8 @@ describe('StoreSettingsService', () => {
     expect(updated.printTemplates.provisional.title).toBe('PHIẾU TÍNH TẠM');
     expect(updated.printTemplates.provisional.blocks.discountLine).toBe(true);
     expect(updated.printTemplates.official.blocks.cashier).toBe(false);
-    expect(updated.printTemplates.kitchen.fontSize).toBe('lg');
-    expect(updated.printTemplates.kitchenCancel.fontSize).toBe('sm');
+    expect(updated.printTemplates.kitchen.fontSizePt).toBe(10);
+    expect(updated.printTemplates.kitchenCancel.fontSizePt).toBe(7);
     expect(updated.printTemplates.tableTransfer.footerNote).toBe(
       'Đưa từ {fromTable} qua {toTable} gấp!',
     );

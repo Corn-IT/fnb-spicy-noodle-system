@@ -1,17 +1,22 @@
 import {
   cloneDefaultPrintTemplates,
   PRINT_TEMPLATE_DEFAULTS,
+  THERMAL_FONT_SIZE_PT_MAX,
+  THERMAL_FONT_SIZE_PT_MIN,
+  THERMAL_FONT_SIZE_PT_STEP,
   type PrintTemplateKey,
   type PrintTemplates,
   type PublicStoreSettingsResponse,
   type StoreSettings,
-  type ThermalFontSize,
 } from '@fnb/shared';
-import { Lock, Printer, RotateCcw } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Lock, Minus, Plus, Printer, RotateCcw } from 'lucide-react';
+import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { apiClient } from '@/lib/api-client';
 import { cn } from '@/utils/cn';
 import { ReceiptPreviewPanel } from './receipt-preview-panel';
 
@@ -50,8 +55,7 @@ export const PRINT_TEMPLATE_TABS: readonly TemplateEditorMeta[] = [
       { key: 'orderCode', label: 'Số hoá đơn (Số HĐ)' },
       { key: 'cashier', label: 'Tên thu ngân' },
       { key: 'paymentBreakdown', label: 'Chi tiết Tiền mặt & Chuyển khoản QR' },
-      { key: 'itemModifiers', label: 'Tuỳ chọn / Topping dưới mỗi món' },
-      { key: 'itemNotes', label: 'Ghi chú từng món' },
+      { key: 'itemModifiers', label: 'Tuỳ chọn / Topping có giá dưới mỗi món' },
     ],
     lockedInvariants: ['Số bàn / Mã mang về', 'Danh sách món & SL', 'Tổng tiền thanh toán'],
   },
@@ -69,8 +73,7 @@ export const PRINT_TEMPLATE_TABS: readonly TemplateEditorMeta[] = [
       { key: 'phone', label: 'Số điện thoại / Hotline' },
       { key: 'orderCode', label: 'Mã hoá đơn (Mã HĐ)' },
       { key: 'cashier', label: 'Tên thu ngân' },
-      { key: 'itemModifiers', label: 'Tuỳ chọn / Topping dưới mỗi món' },
-      { key: 'itemNotes', label: 'Ghi chú từng món' },
+      { key: 'itemModifiers', label: 'Tuỳ chọn / Topping có giá dưới mỗi món' },
       { key: 'discountLine', label: 'Hiện dòng GIẢM GIÁ (0%)' },
       { key: 'bankInfo', label: 'Tên ngân hàng & STK phía trên mã QR' },
     ],
@@ -136,11 +139,12 @@ export const PRINT_TEMPLATE_TABS: readonly TemplateEditorMeta[] = [
   },
 ];
 
-const FONT_SIZE_OPTIONS: ReadonlyArray<{ value: ThermalFontSize; label: string }> = [
-  { value: 'sm', label: 'Nhỏ (Gọn)' },
-  { value: 'md', label: 'Vừa (Mặc định)' },
-  { value: 'lg', label: 'Lớn (Dễ đọc bếp xa)' },
-];
+const FONT_SIZE_PRESETS = [6, 7, 8, 9, 10, 11, 12, 14, 16] as const;
+
+interface MenuCategoryOption {
+  id: number;
+  name: string;
+}
 
 interface PrintTemplateCustomizerProps {
   draft: StoreSettings;
@@ -166,6 +170,39 @@ export function PrintTemplateCustomizer({
 
   const activeTemplate = draft.printTemplates[selectedTemplate];
   const activeBlocks = activeTemplate.blocks as Record<string, boolean>;
+  const activeFontSizePt = activeTemplate.fontSizePt;
+
+  const [fontInputText, setFontInputText] = React.useState<string>(String(activeFontSizePt));
+  const [fontClampWarning, setFontClampWarning] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setFontInputText(String(activeFontSizePt));
+  }, [activeFontSizePt, selectedTemplate]);
+
+  React.useEffect(() => {
+    setFontClampWarning(null);
+  }, [selectedTemplate]);
+
+  const categoriesQuery = useQuery<MenuCategoryOption[]>({
+    queryKey: ['store-settings', 'menu-categories'],
+    queryFn: async () => {
+      try {
+        const res = await apiClient.get<unknown>('/api/v1/mdm/lookup', {
+          params: { category: 'MENU_CATEGORY', limit: 100 },
+        });
+        if (Array.isArray(res)) {
+          return res
+            .filter((c): c is MenuCategoryOption => Boolean(c && typeof c === 'object' && 'id' in c && 'name' in c))
+            .map((c) => ({ id: Number(c.id), name: String(c.name) }));
+        }
+        return [];
+      } catch {
+        return [];
+      }
+    },
+    staleTime: 60_000,
+    retry: false,
+  });
 
   const updateActiveField = (field: 'title' | 'footerNote', value: string) => {
     onChangePrintTemplates((prev) => ({
@@ -177,15 +214,45 @@ export function PrintTemplateCustomizer({
     }));
   };
 
-  const updateActiveFontSize = (fontSize: ThermalFontSize) => {
+  const commitFontSizePt = (rawNumber: number) => {
+    if (!Number.isFinite(rawNumber)) {
+      setFontInputText(String(activeFontSizePt));
+      return;
+    }
+    let warning: string | null = null;
+    let clamped = rawNumber;
+    if (rawNumber < THERMAL_FONT_SIZE_PT_MIN) {
+      clamped = THERMAL_FONT_SIZE_PT_MIN;
+      warning = `Đã giới hạn về cỡ nhỏ nhất ${THERMAL_FONT_SIZE_PT_MIN}pt.`;
+    } else if (rawNumber > THERMAL_FONT_SIZE_PT_MAX) {
+      clamped = THERMAL_FONT_SIZE_PT_MAX;
+      warning = `Đã giới hạn về cỡ tối đa ${THERMAL_FONT_SIZE_PT_MAX}pt để không vỡ bố cục giấy 80mm.`;
+    }
+    const stepped = Math.round(clamped * 2) / 2;
+    setFontClampWarning(warning);
+    setFontInputText(String(stepped));
+    onChangePrintTemplates((prev) => ({
+      ...prev,
+      [selectedTemplate]: {
+        ...prev[selectedTemplate],
+        fontSizePt: stepped,
+      },
+    }));
+  };
+
+  const toggleKitchenPriceCategory = (categoryId: number, checked: boolean) => {
     onChangePrintTemplates((prev) => {
-      if (selectedTemplate === 'kitchen') {
-        return { ...prev, kitchen: { ...prev.kitchen, fontSize } };
-      }
-      if (selectedTemplate === 'kitchenCancel') {
-        return { ...prev, kitchenCancel: { ...prev.kitchenCancel, fontSize } };
-      }
-      return prev;
+      const current = prev.kitchen.priceCategoryIds ?? [];
+      const next = checked
+        ? Array.from(new Set([...current, categoryId]))
+        : current.filter((id) => id !== categoryId);
+      return {
+        ...prev,
+        kitchen: {
+          ...prev.kitchen,
+          priceCategoryIds: next,
+        },
+      };
     });
   };
 
@@ -209,13 +276,6 @@ export function PrintTemplateCustomizer({
       [selectedTemplate]: freshDefaults[selectedTemplate],
     }));
   };
-
-  const activeFontSize: ThermalFontSize =
-    selectedTemplate === 'kitchen'
-      ? draft.printTemplates.kitchen.fontSize
-      : selectedTemplate === 'kitchenCancel'
-        ? draft.printTemplates.kitchenCancel.fontSize
-        : 'md';
 
   return (
     <div className="min-w-0 space-y-4">
@@ -324,6 +384,7 @@ export function PrintTemplateCustomizer({
       <div className="min-w-0 space-y-4">
         <div
           role="tablist"
+          data-scroll-intended="true"
           aria-label="Chọn mẫu phiếu in 80mm"
           className="no-scrollbar flex w-full flex-nowrap items-center gap-1.5 overflow-x-auto rounded-xl border bg-muted/40 p-1.5"
         >
@@ -407,26 +468,138 @@ export function PrintTemplateCustomizer({
               ) : null}
             </div>
 
-            {activeMeta.supportsFontSize ? (
-              <div className="space-y-2 border-t pt-3">
-                <span className="block text-sm font-semibold">
-                  Cỡ chữ in phiếu bếp (Vùng in 72mm / Khổ 80mm)
+            {/* Free font size selector (Word/Excel style, 6–16pt, step 0.5) */}
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor={`print-fontsize-input-${selectedTemplate}`}
+                  className="text-sm font-semibold"
+                >
+                  Cỡ chữ phiếu in ({THERMAL_FONT_SIZE_PT_MIN}–{THERMAL_FONT_SIZE_PT_MAX}pt)
+                </label>
+                <span className="text-[11px] text-muted-foreground">
+                  Tiêu đề tự phóng ~1.4x · Khoá trần {THERMAL_FONT_SIZE_PT_MAX}pt tránh vỡ khổ 80mm
                 </span>
-                <div className="flex flex-wrap gap-2">
-                  {FONT_SIZE_OPTIONS.map((option) => (
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  disabled={!canUpdate || activeFontSizePt <= THERMAL_FONT_SIZE_PT_MIN}
+                  data-testid={`print-fontsize-dec-${selectedTemplate}`}
+                  onClick={() => commitFontSizePt(activeFontSizePt - THERMAL_FONT_SIZE_PT_STEP)}
+                  aria-label="Giảm cỡ chữ 0.5pt"
+                  className="h-9 w-9 shrink-0"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </Button>
+                <div className="relative flex items-center">
+                  <Input
+                    id={`print-fontsize-input-${selectedTemplate}`}
+                    data-testid={`print-fontsize-input-${selectedTemplate}`}
+                    type="number"
+                    min={THERMAL_FONT_SIZE_PT_MIN}
+                    max={THERMAL_FONT_SIZE_PT_MAX}
+                    step={THERMAL_FONT_SIZE_PT_STEP}
+                    list={`print-fontsize-presets-${selectedTemplate}`}
+                    disabled={!canUpdate}
+                    value={fontInputText}
+                    onChange={(e) => setFontInputText(e.target.value)}
+                    onBlur={() => commitFontSizePt(Number(fontInputText))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitFontSizePt(Number(fontInputText));
+                      }
+                    }}
+                    className="h-9 w-24 pr-7 font-mono text-sm font-bold"
+                  />
+                  <span className="pointer-events-none absolute right-2.5 text-xs font-semibold text-muted-foreground">
+                    pt
+                  </span>
+                  <datalist id={`print-fontsize-presets-${selectedTemplate}`}>
+                    {FONT_SIZE_PRESETS.map((pt) => (
+                      <option key={pt} value={pt} />
+                    ))}
+                  </datalist>
+                </div>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  disabled={!canUpdate || activeFontSizePt >= THERMAL_FONT_SIZE_PT_MAX}
+                  data-testid={`print-fontsize-inc-${selectedTemplate}`}
+                  onClick={() => commitFontSizePt(activeFontSizePt + THERMAL_FONT_SIZE_PT_STEP)}
+                  aria-label="Tăng cỡ chữ 0.5pt"
+                  className="h-9 w-9 shrink-0"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+                <div className="flex flex-wrap gap-1">
+                  {FONT_SIZE_PRESETS.map((pt) => (
                     <Button
-                      key={option.value}
+                      key={pt}
                       type="button"
                       size="sm"
+                      variant={activeFontSizePt === pt ? 'default' : 'outline'}
                       disabled={!canUpdate}
-                      variant={activeFontSize === option.value ? 'default' : 'outline'}
-                      data-testid={`print-fontsize-${selectedTemplate}-${option.value}`}
-                      onClick={() => updateActiveFontSize(option.value)}
+                      data-testid={`print-fontsize-preset-${selectedTemplate}-${pt}`}
+                      onClick={() => commitFontSizePt(pt)}
+                      className="h-8 px-2 font-mono text-xs"
                     >
-                      {option.label}
+                      {pt}
                     </Button>
                   ))}
                 </div>
+              </div>
+              {fontClampWarning ? (
+                <p
+                  data-testid={`print-fontsize-warning-${selectedTemplate}`}
+                  className="text-xs font-semibold text-amber-600 dark:text-amber-400"
+                >
+                  {fontClampWarning}
+                </p>
+              ) : null}
+            </div>
+
+            {selectedTemplate === 'kitchen' ? (
+              <div className="space-y-2 border-t pt-3">
+                <span className="block text-sm font-semibold">
+                  Danh mục in kèm đơn giá trên phiếu bếp
+                </span>
+                <p className="text-xs text-muted-foreground">
+                  Các món thuộc danh mục được chọn (VD: Lẩu Hàn Quốc) sẽ in kèm đơn giá gốc cạnh tên món trên phiếu bếp.
+                </p>
+                {(categoriesQuery.data ?? []).length === 0 ? (
+                  <p className="text-xs italic text-muted-foreground">
+                    Chưa tải được danh sách danh mục thực đơn.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {(categoriesQuery.data ?? []).map((cat) => {
+                      const checked = (draft.printTemplates.kitchen.priceCategoryIds ?? []).includes(
+                        cat.id,
+                      );
+                      return (
+                        <label
+                          key={cat.id}
+                          className="relative flex cursor-pointer select-none items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs font-medium hover:bg-muted/40"
+                        >
+                          <Checkbox
+                            data-testid={`kitchen-price-category-${cat.id}`}
+                            disabled={!canUpdate}
+                            checked={checked}
+                            onCheckedChange={(val) =>
+                              toggleKitchenPriceCategory(cat.id, val === true)
+                            }
+                          />
+                          <span className="min-w-0 truncate">{cat.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ) : null}
 

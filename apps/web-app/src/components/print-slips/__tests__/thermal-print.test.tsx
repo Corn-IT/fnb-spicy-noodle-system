@@ -11,7 +11,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  buildVietQrFallbackSvgDataUrl,
   buildVietQrImageUrl,
   KitchenCancelItemSlip,
   KitchenSplitSlip,
@@ -587,9 +586,9 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
         'QUAN MI CAY SON BAO',
       );
 
-      const qrImg = screen.getByTestId('provisional-vietqr-image') as HTMLImageElement;
+      const qrImg = (await screen.findByTestId('provisional-vietqr-image')) as HTMLImageElement;
       expect(qrImg).toBeInTheDocument();
-      expect(qrImg.src).toContain('amount=220000');
+      expect(qrImg.src.startsWith('data:image/png;base64,')).toBe(true);
 
       // Crucial: window.print() MUST NOT be called before image finishes loading
       expect(printSpy).not.toHaveBeenCalled();
@@ -602,14 +601,8 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       });
     });
 
-    it('should fallback to internal SVG QR data URL and still call window.print() when external VietQR image fails to load (onError)', async () => {
+    it('should hide QR image and show unconfigured message (no fake SVG) while still calling window.print() when paymentAccount is missing', async () => {
       const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
-
-      const fallbackSvg = buildVietQrFallbackSvgDataUrl({
-        amount: 185000,
-        orderCode: 'HD-20261108-0099',
-      });
-      expect(fallbackSvg.startsWith('data:image/svg+xml;utf8,')).toBe(true);
 
       render(
         <ThermalPrintProvider>
@@ -622,15 +615,15 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
               takeawayNumber: 5,
               totalAmount: 185000,
               status: 'SERVING',
-              vietQrPayload: 'https://img.vietqr.io/broken-network.png?amount=185000',
               items: [
                 {
                   name: 'Mì Hải Sản',
                   quantity: 1,
                   unitPrice: 185000,
                   lineTotal: 185000,
-                  modifiers: ['Cấp 2'],
-                  note: null,
+                  modifiers: ['Cấp độ 0', 'Xúc xích (5k)'],
+                  pricedModifiers: ['Xúc xích (5k)'],
+                  note: 'Không hành',
                 },
               ],
             }}
@@ -639,14 +632,17 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
         </ThermalPrintProvider>,
       );
 
-      const qrImg = screen.getByTestId('provisional-vietqr-image') as HTMLImageElement;
-      expect(printSpy).not.toHaveBeenCalled();
-
-      // Simulate network error on external VietQR image
-      fireEvent.error(qrImg);
+      expect(screen.getByTestId('provisional-qr-unconfigured')).toHaveTextContent(
+        'Chưa cấu hình tài khoản nhận tiền',
+      );
+      expect(screen.queryByTestId('provisional-vietqr-image')).not.toBeInTheDocument();
+      // Bordered 3-column table, priced modifier shown, 0đ modifier & item note hidden
+      expect(screen.getByTestId('provisional-items-table')).toBeInTheDocument();
+      expect(screen.getByText(/\+ Xúc xích \(5k\)/)).toBeInTheDocument();
+      expect(screen.queryByText(/Cấp độ 0/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Không hành/)).not.toBeInTheDocument();
 
       await waitFor(() => {
-        expect(qrImg.src.startsWith('data:image/svg+xml;utf8,')).toBe(true);
         expect(printSpy).toHaveBeenCalledTimes(1);
       });
     });
@@ -765,7 +761,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       ...overrides,
     });
 
-    it('customizes ProvisionalVietQrSlip blocks and keeps VietQR + total locked even when optional blocks are disabled (AC-16.3, AC-16.4, AC-16.5)', () => {
+    it('customizes ProvisionalVietQrSlip blocks and keeps VietQR + total locked even when optional blocks are disabled (AC-16.3, AC-16.4, AC-16.5)', async () => {
       const settings = makePublicSettings({
         receipt: { ...DEFAULT_STORE_SETTINGS.receipt, showLogo: true },
         printTemplates: {
@@ -773,6 +769,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
           provisional: {
             title: 'TẠM TÍNH BÀN',
             footerNote: 'Kiểm tra món kỹ trước khi thanh toán',
+            fontSizePt: 8,
             blocks: {
               logo: false,
               address: false,
@@ -835,9 +832,9 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       expect(screen.queryByText(/Cấp độ 3/)).not.toBeInTheDocument();
       expect(screen.queryByText(/Ít hành/)).not.toBeInTheDocument();
       // Hard Invariant 4 locked elements remain visible:
-      expect(screen.getByText('Mì Bò Mỹ')).toBeInTheDocument();
+      expect(screen.getByText(/1\. Mì Bò Mỹ/)).toBeInTheDocument();
       expect(screen.getByTestId('provisional-total-amount')).toHaveTextContent('110.000 đ');
-      expect(screen.getByTestId('provisional-vietqr-image')).toBeInTheDocument();
+      expect(await screen.findByTestId('provisional-vietqr-image')).toBeInTheDocument();
       expect(screen.getByText(/Nội dung CK:/)).toBeInTheDocument();
     });
 
@@ -853,6 +850,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
           official: {
             title: 'HOÁ ĐƠN BÁN LẺ',
             footerNote: 'Cảm ơn quý khách nhiều!',
+            fontSizePt: 8,
             blocks: {
               logo: true,
               address: false,
@@ -882,7 +880,8 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
               quantity: 1,
               unitPrice: 100000,
               lineTotal: 100000,
-              modifiers: ['Cấp độ 1'],
+              modifiers: ['Cấp độ 1', 'Thêm Thịt bò (20k)'],
+              pricedModifiers: ['Thêm Thịt bò (20k)'],
               note: 'Không giá',
             },
           ]}
@@ -895,21 +894,23 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       expect(screen.queryByText(/Trần Thị Lan/)).not.toBeInTheDocument();
       expect(screen.queryByTestId('official-receipt-payment-breakdown')).not.toBeInTheDocument();
       expect(screen.queryByText(/Không giá/)).not.toBeInTheDocument();
-      expect(screen.getByText(/\+ Cấp độ 1/)).toBeInTheDocument();
+      expect(screen.queryByText(/Cấp độ 1/)).not.toBeInTheDocument();
+      expect(screen.getByText(/\+ Thêm Thịt bò \(20k\)/)).toBeInTheDocument();
       expect(screen.getByTestId('official-receipt-total-amount')).toHaveTextContent('100.000 đ');
       expect(screen.getByTestId('official-receipt-footer')).toHaveTextContent(
         'Cảm ơn quý khách nhiều!',
       );
     });
 
-    it('applies kitchen and kitchenCancel fontSize scales (sm/md/lg) and custom TableTransferNoticeSlip placeholders (AC-16.4, AC-16.6, AC-16.7)', () => {
+    it('applies free fontSizePt, kitchen SL header without Cấp độ cay, toppings without qty, and category unitPrice (AC-16.4, AC-16.6, AC-16.7)', () => {
       const settings = makePublicSettings({
         printTemplates: {
           ...DEFAULT_STORE_SETTINGS.printTemplates,
           kitchen: {
             title: 'BẾP CHÍNH',
             footerNote: 'Ưu tiên bàn VIP',
-            fontSize: 'lg',
+            fontSizePt: 11.5,
+            priceCategoryIds: [2],
             blocks: {
               stationLogo: false,
               orderCode: false,
@@ -920,7 +921,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
           kitchenCancel: {
             title: 'HUỶ GẤP',
             footerNote: 'Ngừng chế biến ngay',
-            fontSize: 'sm',
+            fontSizePt: 7,
             blocks: {
               time: false,
               reason: true,
@@ -929,6 +930,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
           tableTransfer: {
             title: 'CHUYỂN BÀN BẾP',
             footerNote: 'Đưa từ {fromTable} qua {toTable} gấp!',
+            fontSizePt: 8,
             blocks: {
               time: false,
               cashier: true,
@@ -949,7 +951,16 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
               logoType: 'CHEF_HAT_NOODLE',
               batchNo: 2,
               batchLabel: '[GỌI THÊM - LƯỢT 2]',
-              items: [{ name: 'Mì Hải Sản', qty: 1, modifiers: ['Cấp độ 2'], note: 'Ít cay' }],
+              items: [
+                {
+                  name: 'Lẩu Kim Chi',
+                  qty: 2,
+                  modifiers: ['Cấp độ 2', 'Thêm Thịt bò (20k)'],
+                  note: 'Ít cay',
+                  unitPrice: 199000,
+                  categoryId: 2,
+                },
+              ],
             },
           ]}
           storeSettings={settings}
@@ -957,10 +968,14 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       );
 
       const kitchenPage = screen.getByTestId('kitchen-ticket-page-BEP_NAU');
-      expect(kitchenPage).toHaveAttribute('data-font-size', 'lg');
-      expect(kitchenPage.className).toContain('text-sm');
-      expect(kitchenPage.className).toContain('break-words');
+      expect(kitchenPage).toHaveAttribute('data-font-size-pt', '11.5');
+      expect(kitchenPage.style.fontSize).toBe('11.5pt');
       expect(screen.getByText('BẾP NẤU (MÌ CAY)')).toBeInTheDocument();
+      expect(screen.queryByText(/CẤP ĐỘ CAY/i)).not.toBeInTheDocument();
+      expect(screen.getByText('Lẩu Kim Chi — 199.000')).toBeInTheDocument();
+      expect(screen.getByText('+ Thêm Thịt bò (20k)')).toBeInTheDocument();
+      // Only main item has quantity '02', NOT the topping line
+      expect(screen.getAllByText('02')).toHaveLength(1);
       expect(screen.getByTestId('kitchen-addon-batch-banner-BEP_NAU')).toBeInTheDocument();
       expect(screen.getByTestId('kitchen-custom-title-BEP_NAU')).toHaveTextContent('BẾP CHÍNH');
       expect(screen.getByTestId('kitchen-custom-footer-BEP_NAU')).toHaveTextContent(
@@ -977,8 +992,8 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
         />,
       );
       const cancelPage = screen.getByTestId('kitchen-cancel-slip-BEP_CHIEN-0');
-      expect(cancelPage).toHaveAttribute('data-font-size', 'sm');
-      expect(cancelPage.className).toContain('text-[11px]');
+      expect(cancelPage).toHaveAttribute('data-font-size-pt', '7');
+      expect(cancelPage.style.fontSize).toBe('7pt');
       expect(screen.getByText('HUỶ GẤP')).toBeInTheDocument();
       expect(screen.getByTestId('kitchen-cancel-reason-BEP_CHIEN-0')).toHaveTextContent(
         'Ngừng chế biến ngay',

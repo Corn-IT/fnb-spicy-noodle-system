@@ -22,6 +22,7 @@ import {
 import { AuditLogService } from '../../common/audit/audit-log.service';
 import { compareMdmRecords, readMetadataSortOrder } from '../../common/utils/display-order.util';
 import { normalizeVietnameseString, toTitleCase } from '../../common/utils/normalized-string.util';
+import { buildIyFallbackKeywords, queryMatchingIdsBySearchNorm } from '../../common/utils/search-normalize.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 
@@ -133,22 +134,32 @@ export class MdmService {
     return createdRecord;
   }
 
+  private async buildMdmKeywordFilter(rawKeyword?: string): Promise<Prisma.MasterDataWhereInput> {
+    const trimmedKeyword = rawKeyword?.trim();
+    if (!trimmedKeyword) return {};
+    const matchedIds = await queryMatchingIdsBySearchNorm(
+      this.prisma,
+      'master_data',
+      ['name', 'normalized_name'],
+      trimmedKeyword,
+    );
+    if (matchedIds !== null) {
+      return { id: { in: matchedIds } };
+    }
+    const variants = buildIyFallbackKeywords(trimmedKeyword);
+    return {
+      OR: variants.flatMap((v) => [
+        { name: { contains: v, mode: 'insensitive' as const } },
+        { normalizedName: { contains: v, mode: 'insensitive' as const } },
+      ]),
+    };
+  }
+
   async lookup(query: MdmLookupQuery): Promise<MasterData[]> {
     if (query.category === MdmCategory.KITCHEN_STATION) {
       await this.ensureDefaultKitchenStations();
     }
-    const trimmedKeyword = query.keyword?.trim();
-    const normalizedKeyword = trimmedKeyword ? normalizeVietnameseString(trimmedKeyword) : '';
-    const keywordFilter: Prisma.MasterDataWhereInput = trimmedKeyword
-      ? {
-          OR: [
-            { name: { contains: trimmedKeyword, mode: 'insensitive' as const } },
-            ...(normalizedKeyword
-              ? [{ normalizedName: { contains: normalizedKeyword, mode: 'insensitive' as const } }]
-              : []),
-          ],
-        }
-      : {};
+    const keywordFilter = await this.buildMdmKeywordFilter(query.keyword);
     const rows = await this.prisma.masterData.findMany({
       where: {
         category: query.category,
@@ -166,18 +177,7 @@ export class MdmService {
     if (query.category === MdmCategory.KITCHEN_STATION) {
       await this.ensureDefaultKitchenStations();
     }
-    const trimmedKeyword = query.keyword?.trim();
-    const normalizedKeyword = trimmedKeyword ? normalizeVietnameseString(trimmedKeyword) : '';
-    const keywordFilter: Prisma.MasterDataWhereInput = trimmedKeyword
-      ? {
-          OR: [
-            { name: { contains: trimmedKeyword, mode: 'insensitive' as const } },
-            ...(normalizedKeyword
-              ? [{ normalizedName: { contains: normalizedKeyword, mode: 'insensitive' as const } }]
-              : []),
-          ],
-        }
-      : {};
+    const keywordFilter = await this.buildMdmKeywordFilter(query.keyword);
     const where: Prisma.MasterDataWhereInput = {
       category: query.category,
       normalizedName: { not: InternalMdmRecord.CASHFLOW_DEFAULT_OPENING_BUDGET },

@@ -164,6 +164,8 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
         const escPosBytes = await encodeThermalContainerToEscPos(containerEl, {
           paperWidthDots: printerConfig.paperWidthDots,
           kickCashDrawer: shouldKickCashDrawer,
+          leftMarginMm: printerConfig.leftMarginMm,
+          feedLinesBeforeCut: printerConfig.feedLinesBeforeCut,
         });
 
         if (printerConfig.driver === 'RAWBT_USB') {
@@ -307,6 +309,11 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
         data-testid="thermal-print-container"
         aria-hidden="true"
         className="hidden print:block"
+        style={
+          {
+            '--thermal-left-margin-mm': `${useThermalPrinterConfigStore.getState().config.leftMarginMm ?? 0}mm`,
+          } as React.CSSProperties
+        }
       >
         {currentRenderJob?.type === 'KITCHEN_SPLIT' ? (
           <KitchenSplitSlip key={currentRenderJob.id} {...currentRenderJob.payload} />

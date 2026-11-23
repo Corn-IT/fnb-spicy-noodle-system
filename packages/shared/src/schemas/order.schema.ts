@@ -242,6 +242,7 @@ const OrderDetailItemSchema = z.object({
   unitPrice: MoneyAmountSchema,
   lineTotal: MoneyAmountSchema,
   modifiers: z.array(z.string()),
+  pricedModifiers: z.array(z.string()).optional(),
   itemNote: z.string().nullable(),
   batchNo: z.number().int().positive(),
   kitchenStatus: z.enum(['NEW', 'PRINTED', 'CANCELLED']),
@@ -283,6 +284,23 @@ export const OrderDetailResponseSchema = z.object({
 }).strict();
 export type OrderDetailResponse = z.infer<typeof OrderDetailResponseSchema>;
 
+export const KitchenCancellationSlipSchema = z.object({
+  station: KitchenStationSchema,
+  tableLabel: z.string().min(1),
+  itemName: z.string().min(1),
+  quantity: z.number().int().positive(),
+}).strict();
+export type KitchenCancellationSlip = z.infer<typeof KitchenCancellationSlipSchema>;
+
+export const CancelOrderResponseSchema = z.object({
+  orderId: IdSchema,
+  status: z.literal('VOIDED'),
+  tableId: IdSchema.nullable(),
+  requireCancellationSlip: z.boolean().default(false),
+  kitchenCancellationSlips: z.array(KitchenCancellationSlipSchema).default([]),
+}).strict();
+export type CancelOrderResponse = z.infer<typeof CancelOrderResponseSchema>;
+
 export const PatchOrderItemsResponseSchema = z.object({
   orderId: IdSchema,
   subtotalAmount: MoneyAmountSchema.optional(),
@@ -290,12 +308,7 @@ export const PatchOrderItemsResponseSchema = z.object({
   discountWarning: DiscountWarningCodeSchema.nullable().optional(),
   totalAmount: MoneyAmountSchema,
   requireCancellationSlip: z.boolean(),
-  kitchenCancellationSlips: z.array(z.object({
-    station: KitchenStationSchema,
-    tableLabel: z.string().min(1),
-    itemName: z.string().min(1),
-    quantity: z.number().int().positive(),
-  }).strict()),
+  kitchenCancellationSlips: z.array(KitchenCancellationSlipSchema),
 }).strict();
 export type PatchOrderItemsResponse = z.infer<typeof PatchOrderItemsResponseSchema>;
 
@@ -304,6 +317,8 @@ const KitchenTicketItemSchema = z.object({
   qty: z.number().int().positive(),
   modifiers: z.array(z.string()),
   note: z.string(),
+  unitPrice: MoneyAmountSchema.optional(),
+  categoryId: IdSchema.nullable().optional(),
 }).strict();
 
 const KitchenTicketSchema = z.object({
@@ -364,6 +379,7 @@ export const ProvisionalBillResponseSchema = z.object({
     unitPrice: MoneyAmountSchema,
     lineTotal: MoneyAmountSchema,
     modifiers: z.array(z.string()),
+    pricedModifiers: z.array(z.string()).optional(),
     note: z.string().nullable(),
   })),
   subtotalAmount: MoneyAmountSchema.optional(),
@@ -548,6 +564,8 @@ export const ThermalPrinterDeviceConfigSchema = z.object({
   lanHost: z.string().trim().min(1).max(64).default('192.168.1.200'),
   lanPort: z.number().int().min(1).max(65535).default(9100),
   lanTimeoutMs: z.number().int().min(500).max(15000).default(4000),
+  leftMarginMm: z.number().min(0).max(8).default(0),
+  feedLinesBeforeCut: z.number().int().min(0).max(5).default(0),
 }).strict();
 export type ThermalPrinterDeviceConfig = z.infer<typeof ThermalPrinterDeviceConfigSchema>;
 
@@ -560,6 +578,8 @@ export const DEFAULT_THERMAL_PRINTER_DEVICE_CONFIG: ThermalPrinterDeviceConfig =
   lanHost: '192.168.1.200',
   lanPort: 9100,
   lanTimeoutMs: 4000,
+  leftMarginMm: 0,
+  feedLinesBeforeCut: 0,
 };
 
 export const LanEscPosPrintRequestSchema = z.object({

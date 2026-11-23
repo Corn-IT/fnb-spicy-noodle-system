@@ -1,13 +1,15 @@
-import type { ThermalPaperWidthDots } from '@fnb/shared';
+import { DEFAULT_THERMAL_FONT_SIZE_PT, type ThermalPaperWidthDots } from '@fnb/shared';
 
 export const ESC_POS_COMMANDS = {
   /** ESC @ — Initialize printer and reset formatting */
   INIT: new Uint8Array([0x1b, 0x40]),
   /** ESC p 0 50 250 — Kick 24V RJ11 Cash Drawer (Port 5 on iPOS iTP6, Pin 2, ~100ms pulse) */
   CASH_DRAWER_KICK: new Uint8Array([0x1b, 0x70, 0x00, 0x32, 0xfa]),
-  /** ESC d 4 — Feed 4 lines before paper cut */
+  /** GS L 0 0 — Reset hardware left margin to 0 dots */
+  RESET_LEFT_MARGIN: new Uint8Array([0x1d, 0x4c, 0x00, 0x00]),
+  /** ESC d 4 — Legacy constant kept for reference; encoder only feeds when feedLinesBeforeCut > 0 */
   FEED_BEFORE_CUT: new Uint8Array([0x1b, 0x64, 0x04]),
-  /** GS V 66 0 — Feed and partial auto-cut (standard ESC/POS auto-cutter) */
+  /** GS V 66 0 — Feed to cutter and partial auto-cut (standard ESC/POS auto-cutter) */
   AUTO_CUT_PARTIAL: new Uint8Array([0x1d, 0x56, 0x42, 0x00]),
 } as const;
 
@@ -16,6 +18,30 @@ export interface EscPosEncodeOptions {
   kickCashDrawer?: boolean;
   maxBandHeight?: number;
   luminanceThreshold?: number;
+  leftMarginMm?: number;
+  feedLinesBeforeCut?: number;
+}
+
+/** Converts pt to thermal printer dots at 203 DPI (203 / 72 ≈ 2.8194 dots/pt). */
+export function ptToThermalDots(pt: number): number {
+  const safePt = Number.isFinite(pt) ? Math.max(6, Math.min(16, pt)) : DEFAULT_THERMAL_FONT_SIZE_PT;
+  return Math.max(12, Math.round(safePt * (203 / 72)));
+}
+
+/** Builds GS L nL nH hardware left margin command (8 dots/mm at 203 DPI). */
+export function buildLeftMarginCommand(leftMarginMm = 0): Uint8Array {
+  const clampedMm = Number.isFinite(leftMarginMm) ? Math.max(0, Math.min(8, leftMarginMm)) : 0;
+  const dots = Math.round(clampedMm * 8);
+  return new Uint8Array([0x1d, 0x4c, dots & 0xff, (dots >> 8) & 0xff]);
+}
+
+/** Builds ESC d n paper feed command when lines > 0; returns empty buffer when 0. */
+export function buildFeedLinesCommand(feedLinesBeforeCut = 0): Uint8Array {
+  const lines = Number.isFinite(feedLinesBeforeCut)
+    ? Math.max(0, Math.min(5, Math.floor(feedLinesBeforeCut)))
+    : 0;
+  if (lines === 0) return new Uint8Array(0);
+  return new Uint8Array([0x1b, 0x64, lines]);
 }
 
 export function concatUint8Arrays(chunks: readonly Uint8Array[]): Uint8Array {
@@ -83,7 +109,6 @@ export function rgbaToMonochrome1Bit(
         const b = rgba[pxIndex + 2] ?? 255;
         const a = (rgba[pxIndex + 3] ?? 255) / 255;
 
-        // Alpha-blend over white paper (255, 255, 255)
         const blendedR = r * a + 255 * (1 - a);
         const blendedG = g * a + 255 * (1 - a);
         const blendedB = b * a + 255 * (1 - a);
@@ -102,8 +127,7 @@ export function rgbaToMonochrome1Bit(
 
 /**
  * Slices a 1-bit monochrome bitmap into horizontal ESC/POS `GS v 0` raster bands
- * (`0x1D 0x76 0x30 0x00 xL xH yL yH d1..dk`) of at most `maxBandHeight` rows
- * so hardware print buffers (e.g., iPOS iTP6 16KB–32KB receive buffer) never overflow.
+ * (`0x1D 0x76 0x30 0x00 xL xH yL yH d1..dk`) of at most `maxBandHeight` rows.
  */
 export function encodeMonochromeRasterBands(
   monoBytes: Uint8Array,
@@ -137,21 +161,135 @@ export function encodeMonochromeRasterBands(
   return concatUint8Arrays(bands);
 }
 
+interface TableCellSpec {
+  lines: Array<{ text: string; bold: boolean; scale: number }>;
+  align: 'left' | 'center' | 'right';
+}
+
+interface TableRowSpec {
+  isHeader: boolean;
+  cells: TableCellSpec[];
+}
+
 interface TicketVisualLine {
-  kind: 'heading' | 'subheading' | 'banner' | 'pair' | 'text' | 'divider' | 'qr';
+  kind: 'heading' | 'subheading' | 'banner' | 'pair' | 'text' | 'divider' | 'qr' | 'table';
   leftText?: string;
   rightText?: string;
+  scale?: number;
+  bold?: boolean;
+  align?: 'left' | 'center' | 'right';
   qrImg?: HTMLImageElement | null;
+  tableColPercents?: number[];
+  tableRows?: TableRowSpec[];
+}
+
+function parseScaleAttr(el: Element, fallback: number): number {
+  const raw = el.getAttribute('data-print-scale');
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0.4 && parsed <= 2.5 ? parsed : fallback;
+}
+
+function parseAlignAttr(el: Element, fallback: 'left' | 'center' | 'right'): 'left' | 'center' | 'right' {
+  const raw = el.getAttribute('data-print-align');
+  if (raw === 'left' || raw === 'center' || raw === 'right') return raw;
+  return fallback;
+}
+
+function extractTableSpec(tableEl: Element): TicketVisualLine | null {
+  const rows: TableRowSpec[] = [];
+  let colPercents: number[] = [];
+
+  const headerCells = Array.from(tableEl.querySelectorAll('thead tr th, thead tr td'));
+  if (headerCells.length > 0) {
+    colPercents = headerCells.map((cell) => {
+      const w = Number(cell.getAttribute('data-print-col-width'));
+      return Number.isFinite(w) && w > 0 ? w : 0;
+    });
+  }
+
+  const trList = Array.from(tableEl.querySelectorAll('tr'));
+  for (const tr of trList) {
+    const isHeader = Boolean(tr.closest('thead')) || tr.querySelectorAll('th').length > 0;
+    const cellEls = Array.from(tr.children).filter(
+      (c) => c.tagName === 'TH' || c.tagName === 'TD',
+    );
+    if (cellEls.length === 0) continue;
+
+    const cells: TableCellSpec[] = cellEls.map((cellEl) => {
+      const align = parseAlignAttr(cellEl, isHeader ? 'left' : 'left');
+      const directChildren = Array.from(cellEl.children);
+      const cellLines: Array<{ text: string; bold: boolean; scale: number }> = [];
+
+      if (directChildren.length > 0) {
+        for (const child of directChildren) {
+          const text = (child.textContent ?? '').trim();
+          if (!text) continue;
+          const bold =
+            isHeader ||
+            child.hasAttribute('data-print-bold') ||
+            (typeof child.className === 'string' && /font-(bold|extrabold|black)/.test(child.className));
+          const scale = parseScaleAttr(child, isHeader ? 0.9 : 1);
+          cellLines.push({ text, bold, scale });
+        }
+      } else {
+        const text = (cellEl.textContent ?? '').trim();
+        if (text) {
+          const bold =
+            isHeader ||
+            cellEl.hasAttribute('data-print-bold') ||
+            (typeof cellEl.className === 'string' && /font-(bold|extrabold|black)/.test(cellEl.className));
+          cellLines.push({ text, bold, scale: parseScaleAttr(cellEl, isHeader ? 0.9 : 1) });
+        }
+      }
+
+      return { lines: cellLines, align };
+    });
+
+    rows.push({ isHeader, cells });
+  }
+
+  if (rows.length === 0) return null;
+
+  const colCount = rows[0]!.cells.length;
+  const totalSpecified = colPercents.reduce((s, v) => s + v, 0);
+  if (colPercents.length !== colCount || totalSpecified <= 0) {
+    colPercents = Array.from({ length: colCount }, () => 100 / colCount);
+  }
+
+  return {
+    kind: 'table',
+    tableColPercents: colPercents,
+    tableRows: rows,
+  };
 }
 
 /**
- * Extracts a structured sequence of visual lines and QR images from a `.ticket-page` DOM node
- * so it can be painted crisply at 576px (80mm) or 384px (58mm) onto a 2D Canvas.
+ * Extracts a structured sequence of visual lines, bordered tables, and QR images from a `.ticket-page` DOM node.
+ * Prefers explicit `data-print-*` attributes and falls back to Tailwind class heuristics for legacy slips.
  */
 function extractTicketVisualLines(ticketEl: HTMLElement): TicketVisualLine[] {
   const lines: TicketVisualLine[] = [];
 
   const walk = (el: Element) => {
+    const printKind = el.getAttribute('data-print-kind');
+
+    if (printKind === 'table' || el.tagName === 'TABLE') {
+      const tableSpec = extractTableSpec(el);
+      if (tableSpec) lines.push(tableSpec);
+      return;
+    }
+
+    if (printKind === 'divider') {
+      lines.push({ kind: 'divider' });
+      return;
+    }
+
+    if (printKind === 'qr' && el instanceof HTMLImageElement) {
+      lines.push({ kind: 'qr', qrImg: el });
+      return;
+    }
+
     if (el instanceof HTMLImageElement) {
       const testId = el.getAttribute('data-testid') ?? '';
       if (testId.includes('vietqr') || el.alt.toLowerCase().includes('vietqr') || el.height >= 80) {
@@ -160,19 +298,61 @@ function extractTicketVisualLines(ticketEl: HTMLElement): TicketVisualLine[] {
       return;
     }
 
-    const className = typeof el.className === 'string' ? el.className : '';
     const children = Array.from(el.children);
 
-    // Banner boxes (e.g., [GỌI THÊM - LƯỢT 2], [GHI CHÚ ĐỔI BÀN], [BẢN SAO - IN LẠI])
-    if (className.includes('border-2') && children.length === 0) {
+    if (printKind === 'banner') {
       const text = (el.textContent ?? '').trim();
       if (text) {
-        lines.push({ kind: 'banner', leftText: text });
+        lines.push({
+          kind: 'banner',
+          leftText: text,
+          scale: parseScaleAttr(el, 1.05),
+          bold: true,
+        });
       }
       return;
     }
 
-    // Flex row with two leaf spans/divs (left & right columns)
+    if (printKind === 'pair' && children.length >= 2) {
+      const left = (children[0]?.textContent ?? '').trim();
+      const right = (children[1]?.textContent ?? '').trim();
+      if (left || right) {
+        lines.push({
+          kind: 'pair',
+          leftText: left,
+          rightText: right,
+          scale: parseScaleAttr(el, 1),
+          bold: el.hasAttribute('data-print-bold'),
+        });
+      }
+      return;
+    }
+
+    if (printKind === 'heading' || printKind === 'text') {
+      const text = (el.textContent ?? '').trim();
+      if (text) {
+        lines.push({
+          kind: printKind,
+          leftText: text,
+          scale: parseScaleAttr(el, printKind === 'heading' ? 1.4 : 1),
+          bold: printKind === 'heading' || el.hasAttribute('data-print-bold'),
+          align: parseAlignAttr(el, printKind === 'heading' ? 'center' : 'left'),
+        });
+      }
+      return;
+    }
+
+    // Legacy class-based fallback for slips without explicit data-print-* attributes
+    const className = typeof el.className === 'string' ? el.className : '';
+
+    if (className.includes('border-2') && children.length === 0) {
+      const text = (el.textContent ?? '').trim();
+      if (text) {
+        lines.push({ kind: 'banner', leftText: text, scale: 1.05, bold: true });
+      }
+      return;
+    }
+
     if (
       className.includes('justify-between') &&
       children.length === 2 &&
@@ -181,7 +361,13 @@ function extractTicketVisualLines(ticketEl: HTMLElement): TicketVisualLine[] {
       const left = (children[0]?.textContent ?? '').trim();
       const right = (children[1]?.textContent ?? '').trim();
       if (left || right) {
-        lines.push({ kind: 'pair', leftText: left, rightText: right });
+        lines.push({
+          kind: 'pair',
+          leftText: left,
+          rightText: right,
+          scale: 1,
+          bold: /font-(bold|extrabold|black)/.test(className),
+        });
       }
       if (className.includes('border-b')) {
         lines.push({ kind: 'divider' });
@@ -193,11 +379,11 @@ function extractTicketVisualLines(ticketEl: HTMLElement): TicketVisualLine[] {
       const text = (el.textContent ?? '').trim();
       if (!text) return;
       if (className.includes('text-base') || className.includes('text-lg') || className.includes('text-xl')) {
-        lines.push({ kind: 'heading', leftText: text });
-      } else if (className.includes('font-extrabold') || className.includes('font-black') || className.includes('font-bold')) {
-        lines.push({ kind: 'subheading', leftText: text });
+        lines.push({ kind: 'heading', leftText: text, scale: 1.4, bold: true, align: 'center' });
+      } else if (/font-(bold|extrabold|black)/.test(className)) {
+        lines.push({ kind: 'subheading', leftText: text, scale: 1, bold: true, align: 'left' });
       } else {
-        lines.push({ kind: 'text', leftText: text });
+        lines.push({ kind: 'text', leftText: text, scale: 0.9, bold: false, align: 'left' });
       }
       if (className.includes('border-b')) {
         lines.push({ kind: 'divider' });
@@ -223,7 +409,7 @@ function extractTicketVisualLines(ticketEl: HTMLElement): TicketVisualLine[] {
   if (lines.length === 0) {
     const fallbackText = (ticketEl.textContent ?? '').trim();
     if (fallbackText) {
-      lines.push({ kind: 'text', leftText: fallbackText });
+      lines.push({ kind: 'text', leftText: fallbackText, scale: 1, bold: false, align: 'left' });
     }
   }
 
@@ -240,10 +426,12 @@ function wrapTextLines(
   const result: string[] = [];
   let current = words[0]!;
 
+  const measure = (s: string) =>
+    typeof ctx.measureText === 'function' ? ctx.measureText(s).width : s.length * 11;
+
   for (let i = 1; i < words.length; i += 1) {
     const candidate = `${current} ${words[i]}`;
-    const measured = typeof ctx.measureText === 'function' ? ctx.measureText(candidate).width : candidate.length * 11;
-    if (measured <= maxWidth) {
+    if (measure(candidate) <= maxWidth) {
       current = candidate;
     } else {
       result.push(current);
@@ -254,9 +442,224 @@ function wrapTextLines(
   return result;
 }
 
+function layoutAndDrawLines(
+  ctx: CanvasRenderingContext2D,
+  visualLines: TicketVisualLine[],
+  widthDots: number,
+  baseDots: number,
+  draw: boolean,
+): number {
+  const paddingX = 0;
+  const contentWidth = widthDots - paddingX * 2;
+  let cursorY = 4;
+
+  const setFont = (scale: number, bold: boolean) => {
+    const px = Math.max(10, Math.round(baseDots * scale));
+    ctx.font = `${bold ? 'bold ' : ''}${px}px monospace`;
+    return px;
+  };
+
+  for (const line of visualLines) {
+    if (line.kind === 'divider') {
+      cursorY += 3;
+      if (draw) {
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1.5;
+        if (typeof ctx.setLineDash === 'function') ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(paddingX, cursorY);
+        ctx.lineTo(widthDots - paddingX, cursorY);
+        ctx.stroke();
+        if (typeof ctx.setLineDash === 'function') ctx.setLineDash([]);
+      }
+      cursorY += 5;
+      continue;
+    }
+
+    if (line.kind === 'banner' && line.leftText) {
+      const px = setFont(line.scale ?? 1.05, true);
+      const bannerHeight = Math.round(px * 1.6);
+      if (draw) {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(paddingX, cursorY, contentWidth, bannerHeight);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        ctx.fillText(line.leftText, widthDots / 2, cursorY + Math.round((bannerHeight - px) / 2), contentWidth - 8);
+        ctx.fillStyle = '#000000';
+        ctx.textAlign = 'left';
+      }
+      cursorY += bannerHeight + 6;
+      continue;
+    }
+
+    if (line.kind === 'heading' && line.leftText) {
+      const px = setFont(line.scale ?? 1.4, true);
+      const lh = Math.round(px * 1.22);
+      const wrapped = wrapTextLines(ctx, line.leftText, contentWidth);
+      if (draw) {
+        ctx.textAlign = line.align ?? 'center';
+        const x = line.align === 'left' ? paddingX : line.align === 'right' ? widthDots - paddingX : widthDots / 2;
+        for (const w of wrapped) {
+          ctx.fillText(w, x, cursorY, contentWidth);
+          cursorY += lh;
+        }
+        ctx.textAlign = 'left';
+      } else {
+        cursorY += wrapped.length * lh;
+      }
+      continue;
+    }
+
+    if (line.kind === 'pair') {
+      const px = setFont(line.scale ?? 1, line.bold ?? true);
+      const lh = Math.round(px * 1.25);
+      const left = line.leftText ?? '';
+      const right = line.rightText ?? '';
+      const leftMaxW = Math.floor(contentWidth * 0.68);
+      const rightMaxW = Math.floor(contentWidth * 0.30);
+      const leftWrapped = wrapTextLines(ctx, left, leftMaxW);
+
+      if (draw) {
+        ctx.textAlign = 'left';
+        leftWrapped.forEach((w, idx) => {
+          ctx.fillText(w, paddingX, cursorY + idx * lh, leftMaxW);
+        });
+        ctx.textAlign = 'right';
+        ctx.fillText(right, widthDots - paddingX, cursorY, rightMaxW);
+        ctx.textAlign = 'left';
+      }
+      cursorY += Math.max(1, leftWrapped.length) * lh;
+      continue;
+    }
+
+    if ((line.kind === 'subheading' || line.kind === 'text') && line.leftText) {
+      const px = setFont(line.scale ?? (line.kind === 'subheading' ? 1 : 0.9), line.bold ?? line.kind === 'subheading');
+      const lh = Math.round(px * 1.25);
+      const wrapped = wrapTextLines(ctx, line.leftText, contentWidth);
+      if (draw) {
+        const align = line.align ?? 'left';
+        ctx.textAlign = align;
+        const x = align === 'center' ? widthDots / 2 : align === 'right' ? widthDots - paddingX : paddingX;
+        for (const w of wrapped) {
+          ctx.fillText(w, x, cursorY, contentWidth);
+          cursorY += lh;
+        }
+        ctx.textAlign = 'left';
+      } else {
+        cursorY += wrapped.length * lh;
+      }
+      continue;
+    }
+
+    if (line.kind === 'table' && line.tableRows && line.tableColPercents) {
+      const colWidths = line.tableColPercents.map((pct) => Math.floor((contentWidth * pct) / 100));
+      // Adjust last column to absorb rounding remainder so right border aligns flush
+      const sumW = colWidths.reduce((s, w) => s + w, 0);
+      if (colWidths.length > 0) {
+        colWidths[colWidths.length - 1] = (colWidths[colWidths.length - 1] ?? 0) + (contentWidth - sumW);
+      }
+
+      const cellPadX = 4;
+      const cellPadY = 4;
+      const tableStartY = cursorY;
+
+      for (const row of line.tableRows) {
+        // Measure all cells in this row
+        const measuredCells = row.cells.map((cell, colIdx) => {
+          const colW = Math.max(16, (colWidths[colIdx] ?? 40) - cellPadX * 2);
+          const renderedLines: Array<{ text: string; px: number; lh: number; bold: boolean }> = [];
+          let totalH = 0;
+          for (const cl of cell.lines) {
+            const px = setFont(cl.scale, cl.bold);
+            const lh = Math.round(px * 1.22);
+            const wrapped = wrapTextLines(ctx, cl.text, colW);
+            for (const w of wrapped) {
+              renderedLines.push({ text: w, px, lh, bold: cl.bold });
+              totalH += lh;
+            }
+          }
+          return { align: cell.align, renderedLines, totalH };
+        });
+
+        const rowHeight = Math.max(
+          Math.round(baseDots * 1.3) + cellPadY * 2,
+          ...measuredCells.map((c) => c.totalH + cellPadY * 2),
+        );
+
+        if (draw) {
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = 1.5;
+          // Draw row top & bottom horizontal lines
+          ctx.beginPath();
+          ctx.moveTo(paddingX, cursorY);
+          ctx.lineTo(widthDots - paddingX, cursorY);
+          ctx.moveTo(paddingX, cursorY + rowHeight);
+          ctx.lineTo(widthDots - paddingX, cursorY + rowHeight);
+          ctx.stroke();
+
+          let colX = paddingX;
+          measuredCells.forEach((cell, colIdx) => {
+            const cw = colWidths[colIdx] ?? 40;
+            let textY = cursorY + cellPadY;
+            for (const rl of cell.renderedLines) {
+              ctx.font = `${rl.bold ? 'bold ' : ''}${rl.px}px monospace`;
+              ctx.textAlign = cell.align;
+              const tx =
+                cell.align === 'right'
+                  ? colX + cw - cellPadX
+                  : cell.align === 'center'
+                    ? colX + cw / 2
+                    : colX + cellPadX;
+              ctx.fillText(rl.text, tx, textY, cw - cellPadX * 2);
+              textY += rl.lh;
+            }
+            colX += cw;
+          });
+          ctx.textAlign = 'left';
+        }
+
+        cursorY += rowHeight;
+      }
+
+      if (draw) {
+        // Draw vertical borders across the entire table
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1.5;
+        let colX = paddingX;
+        ctx.beginPath();
+        ctx.moveTo(colX + 0.75, tableStartY);
+        ctx.lineTo(colX + 0.75, cursorY);
+        for (const cw of colWidths) {
+          colX += cw;
+          const xLine = Math.min(widthDots - 0.75, colX);
+          ctx.moveTo(xLine, tableStartY);
+          ctx.lineTo(xLine, cursorY);
+        }
+        ctx.stroke();
+      }
+      cursorY += 4;
+      continue;
+    }
+
+    if (line.kind === 'qr') {
+      const qrSize = Math.min(220, contentWidth);
+      const qrX = Math.floor((widthDots - qrSize) / 2);
+      if (draw) {
+        if (!line.qrImg || !line.qrImg.complete || line.qrImg.naturalWidth === 0) {
+          throw new Error('Không thể dựng mã QR lên phiếu in: ảnh QR chưa tải xong hoặc không hợp lệ.');
+        }
+        ctx.drawImage(line.qrImg, qrX, cursorY, qrSize, qrSize);
+      }
+      cursorY += qrSize + 8;
+    }
+  }
+
+  return cursorY + 4;
+}
+
 /**
  * Renders a single `.ticket-page` DOM element into a 1-bit monochrome bitmap array.
- * Falls back to a deterministic synthetic bitmap when HTMLCanvasElement 2D context is not implemented (e.g. JSDOM).
+ * Throws a clear error if canvas pixel reading fails (e.g. tainted canvas) instead of printing garbage noise.
  */
 export async function renderTicketPageToMonochrome(
   ticketEl: HTMLElement,
@@ -264,11 +667,11 @@ export async function renderTicketPageToMonochrome(
   luminanceThreshold = 165,
 ): Promise<{ monoBytes: Uint8Array; widthDots: number; heightDots: number }> {
   const visualLines = extractTicketVisualLines(ticketEl);
-  const paddingX = 16;
-  const contentWidth = widthDots - paddingX * 2;
+  const rawPt = Number(ticketEl.getAttribute('data-font-size-pt'));
+  const baseDots = ptToThermalDots(
+    Number.isFinite(rawPt) && rawPt > 0 ? rawPt : DEFAULT_THERMAL_FONT_SIZE_PT,
+  );
 
-  let canvas: HTMLCanvasElement | null = null;
-  let ctx: CanvasRenderingContext2D | null = null;
   const isUnmockedJsdom =
     typeof navigator !== 'undefined' &&
     /jsdom/i.test(navigator.userAgent) &&
@@ -276,162 +679,53 @@ export async function renderTicketPageToMonochrome(
     !('mock' in HTMLCanvasElement.prototype.getContext);
 
   if (typeof document !== 'undefined' && !isUnmockedJsdom) {
-    try {
-      canvas = document.createElement('canvas');
-      ctx = canvas.getContext('2d');
-    } catch {
-      ctx = null;
-    }
-  }
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (ctx && typeof ctx.getImageData === 'function') {
+      canvas.width = widthDots;
+      // Pass 1: measure exact height
+      const measuredHeight = Math.max(
+        32,
+        layoutAndDrawLines(ctx, visualLines, widthDots, baseDots, false),
+      );
+      canvas.height = measuredHeight;
 
-  if (canvas && ctx && typeof ctx.getImageData === 'function') {
-    const estimatedHeight = Math.max(
-      160,
-      visualLines.reduce((acc, item) => {
-        if (item.kind === 'qr') return acc + 250;
-        if (item.kind === 'banner') return acc + 48;
-        if (item.kind === 'heading') return acc + 40;
-        if (item.kind === 'divider') return acc + 14;
-        return acc + 30;
-      }, 48),
-    );
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, widthDots, measuredHeight);
+      ctx.fillStyle = '#000000';
+      ctx.textBaseline = 'top';
 
-    canvas.width = widthDots;
-    canvas.height = estimatedHeight;
+      // Pass 2: draw onto sized canvas
+      layoutAndDrawLines(ctx, visualLines, widthDots, baseDots, true);
 
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, widthDots, canvas.height);
-    ctx.fillStyle = '#000000';
-    ctx.textBaseline = 'top';
-
-    let cursorY = 16;
-
-    for (const line of visualLines) {
-      if (line.kind === 'divider') {
-        cursorY += 4;
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 2;
-        if (typeof ctx.setLineDash === 'function') {
-          ctx.setLineDash([6, 4]);
-        }
-        ctx.beginPath();
-        ctx.moveTo(paddingX, cursorY);
-        ctx.lineTo(widthDots - paddingX, cursorY);
-        ctx.stroke();
-        if (typeof ctx.setLineDash === 'function') {
-          ctx.setLineDash([]);
-        }
-        cursorY += 8;
-        continue;
+      let imageData: ImageData;
+      try {
+        imageData = ctx.getImageData(0, 0, widthDots, measuredHeight);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Không thể dựng ảnh phiếu in nhiệt (canvas bị chặn đọc dữ liệu ảnh): ${detail}`,
+        );
       }
 
-      if (line.kind === 'banner' && line.leftText) {
-        const bannerHeight = 36;
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(paddingX, cursorY, contentWidth, bannerHeight);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 20px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(line.leftText, widthDots / 2, cursorY + 8, contentWidth - 12);
-        ctx.fillStyle = '#000000';
-        ctx.textAlign = 'left';
-        cursorY += bannerHeight + 8;
-        continue;
-      }
-
-      if (line.kind === 'heading' && line.leftText) {
-        ctx.font = 'bold 26px monospace';
-        ctx.textAlign = 'center';
-        const wrapped = wrapTextLines(ctx, line.leftText, contentWidth);
-        for (const w of wrapped) {
-          ctx.fillText(w, widthDots / 2, cursorY, contentWidth);
-          cursorY += 32;
-        }
-        ctx.textAlign = 'left';
-        continue;
-      }
-
-      if (line.kind === 'pair') {
-        ctx.font = 'bold 20px monospace';
-        const left = line.leftText ?? '';
-        const right = line.rightText ?? '';
-        ctx.textAlign = 'left';
-        ctx.fillText(left, paddingX, cursorY, Math.floor(contentWidth * 0.68));
-        ctx.textAlign = 'right';
-        ctx.fillText(right, widthDots - paddingX, cursorY, Math.floor(contentWidth * 0.3));
-        ctx.textAlign = 'left';
-        cursorY += 26;
-        continue;
-      }
-
-      if ((line.kind === 'subheading' || line.kind === 'text') && line.leftText) {
-        ctx.font = line.kind === 'subheading' ? 'bold 20px monospace' : '18px monospace';
-        ctx.textAlign = 'left';
-        const wrapped = wrapTextLines(ctx, line.leftText, contentWidth);
-        for (const w of wrapped) {
-          ctx.fillText(w, paddingX, cursorY, contentWidth);
-          cursorY += 24;
-        }
-        continue;
-      }
-
-      if (line.kind === 'qr') {
-        const qrSize = Math.min(220, contentWidth);
-        const qrX = Math.floor((widthDots - qrSize) / 2);
-        let drewImage = false;
-        if (line.qrImg && line.qrImg.complete && line.qrImg.naturalWidth > 0) {
-          try {
-            ctx.drawImage(line.qrImg, qrX, cursorY, qrSize, qrSize);
-            drewImage = true;
-          } catch {
-            drewImage = false;
-          }
-        }
-        if (!drewImage) {
-          // Deterministic high-contrast fallback QR finder pattern so canvas is never blank or tainted
-          ctx.strokeStyle = '#000000';
-          ctx.lineWidth = 4;
-          ctx.strokeRect(qrX, cursorY, qrSize, qrSize);
-          ctx.fillRect(qrX + 16, cursorY + 16, 42, 42);
-          ctx.fillRect(qrX + qrSize - 58, cursorY + 16, 42, 42);
-          ctx.fillRect(qrX + 16, cursorY + qrSize - 58, 42, 42);
-        }
-        cursorY += qrSize + 12;
-      }
-    }
-
-    const finalHeight = Math.max(32, Math.min(canvas.height, cursorY + 16));
-    try {
-      const imageData = ctx.getImageData(0, 0, widthDots, finalHeight);
       const monoBytes = rgbaToMonochrome1Bit(
         imageData.data,
         widthDots,
-        finalHeight,
+        measuredHeight,
         luminanceThreshold,
       );
       return {
         monoBytes,
         widthDots,
-        heightDots: finalHeight,
+        heightDots: measuredHeight,
       };
-    } catch {
-      // Fall through to deterministic synthetic raster if canvas was tainted by external image
     }
   }
 
-  // Deterministic synthetic monochrome raster (used in JSDOM or if canvas is tainted)
+  // Test-only JSDOM minimal raster (when HTMLCanvasElement 2D is unimplemented in JSDOM)
   const syntheticRows = Math.max(16, visualLines.length * 8);
   const widthBytes = widthDots / 8;
   const monoBytes = new Uint8Array(widthBytes * syntheticRows);
-  const rawText = (ticketEl.textContent ?? 'TICKET').trim();
-
-  for (let y = 0; y < syntheticRows; y += 1) {
-    for (let xByte = 0; xByte < widthBytes; xByte += 1) {
-      const charCode = rawText.charCodeAt((y + xByte) % Math.max(1, rawText.length)) || 0x55;
-      monoBytes[y * widthBytes + xByte] = (charCode + y) & 0xff;
-    }
-  }
-
   return {
     monoBytes,
     widthDots,
@@ -441,13 +735,14 @@ export async function renderTicketPageToMonochrome(
 
 /**
  * Encodes all `.ticket-page` slips inside `#thermal-print-container` into a single
- * ESC/POS binary command stream for iPOS iTP6 (80mm / 576 dots):
+ * ESC/POS binary command stream:
  *   1. `ESC @` (Init)
- *   2. Optional `ESC p 0 50 250` (24V RJ11 Cash Drawer kick when `kickCashDrawer` is true)
- *   3. For each `.ticket-page`:
+ *   2. `GS L nL nH` (Left margin calibration, default 0mm = 0 dots)
+ *   3. Optional `ESC p 0 50 250` (24V RJ11 Cash Drawer kick when `kickCashDrawer` is true)
+ *   4. For each `.ticket-page`:
  *      - `GS v 0` banded monochrome raster images
- *      - `ESC d 4` paper feed
- *      - `GS V 66 0` automatic paper cutter command (cuts each kitchen station ticket separately!)
+ *      - Optional `ESC d n` paper feed ONLY when `feedLinesBeforeCut > 0`
+ *      - `GS V 66 0` automatic paper cutter command
  */
 export async function encodeThermalContainerToEscPos(
   containerEl: HTMLElement,
@@ -456,12 +751,14 @@ export async function encodeThermalContainerToEscPos(
   const widthDots: ThermalPaperWidthDots = options.paperWidthDots ?? 576;
   const maxBandHeight = options.maxBandHeight ?? 128;
   const luminanceThreshold = options.luminanceThreshold ?? 165;
+  const leftMarginCmd = buildLeftMarginCommand(options.leftMarginMm ?? 0);
+  const feedCmd = buildFeedLinesCommand(options.feedLinesBeforeCut ?? 0);
 
   const ticketNodeList = containerEl.querySelectorAll<HTMLElement>('.ticket-page');
   const ticketElements: HTMLElement[] =
     ticketNodeList.length > 0 ? Array.from(ticketNodeList) : [containerEl];
 
-  const chunks: Uint8Array[] = [ESC_POS_COMMANDS.INIT];
+  const chunks: Uint8Array[] = [ESC_POS_COMMANDS.INIT, leftMarginCmd];
 
   if (options.kickCashDrawer) {
     chunks.push(ESC_POS_COMMANDS.CASH_DRAWER_KICK);
@@ -479,11 +776,11 @@ export async function encodeThermalContainerToEscPos(
       heightDots,
       maxBandHeight,
     );
-    chunks.push(
-      rasterBands,
-      ESC_POS_COMMANDS.FEED_BEFORE_CUT,
-      ESC_POS_COMMANDS.AUTO_CUT_PARTIAL,
-    );
+    chunks.push(rasterBands);
+    if (feedCmd.byteLength > 0) {
+      chunks.push(feedCmd);
+    }
+    chunks.push(ESC_POS_COMMANDS.AUTO_CUT_PARTIAL);
   }
 
   return concatUint8Arrays(chunks);

@@ -137,6 +137,14 @@
   }
 }
 
+/* Per-screen display zoom (80%–150%): applies to page content & portaled dialogs/popovers, never sidebar/topbar/print */
+main[data-app-content='true'],
+[data-qr-order-root='true'],
+[role='dialog'],
+[data-radix-popper-content-wrapper] {
+  zoom: var(--page-zoom, 1);
+}
+
 @media print {
   @page {
     size: 80mm auto;
@@ -156,10 +164,12 @@
     left: 0;
     top: 0;
     width: 80mm;
-    padding: 0 4mm;
+    padding: 0 0 0 var(--thermal-left-margin-mm, 0mm);
+    margin: 0;
     box-sizing: border-box;
     color: #000 !important;
     background: #fff !important;
+    zoom: 1 !important;
   }
   #thermal-print-container img {
     max-width: 100% !important;

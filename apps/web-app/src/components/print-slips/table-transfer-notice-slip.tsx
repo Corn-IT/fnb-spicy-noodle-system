@@ -5,7 +5,11 @@ import {
 } from '@fnb/shared';
 
 import { useStoreSettings } from '@/hooks/use-store-settings';
-import { formatTransferFooterNote } from './print-template.util';
+import {
+  formatTransferFooterNote,
+  getThermalSlipRootStyle,
+  resolveThermalFontSizePt,
+} from './print-template.util';
 import { STATION_META } from './station-logos';
 
 export interface TableTransferNoticeSlipProps {
@@ -30,6 +34,7 @@ export function TableTransferNoticeSlip({
   const { settings: contextSettings } = useStoreSettings();
   const activeSettings = storeSettings ?? contextSettings;
   const tpl = activeSettings.printTemplates.tableTransfer;
+  const fontSizePt = resolveThermalFontSizePt(tpl.fontSizePt);
   const resolvedTitle = tpl.title.trim() || PRINT_TEMPLATE_DEFAULTS.tableTransfer.title;
 
   const formattedTime =
@@ -55,31 +60,61 @@ export function TableTransferNoticeSlip({
   return (
     <div
       data-testid="table-transfer-notice-slip"
-      className="ticket-page break-words border-b border-dashed border-black bg-white px-4 font-mono text-xs text-black"
-      style={{ breakAfter: 'page', pageBreakAfter: 'always' }}
+      data-font-size-pt={fontSizePt}
+      className="ticket-page break-words bg-white px-0 py-0 font-mono text-black"
+      style={getThermalSlipRootStyle(fontSizePt)}
     >
-      <div className="border-b-2 border-black pb-2 text-center">
-        <div className="text-base font-extrabold uppercase">{resolvedTitle}</div>
+      <div className="border-b-2 border-black pb-1 text-center">
+        <div
+          data-print-kind="heading"
+          data-print-scale="1.35"
+          className="font-extrabold uppercase"
+          style={{ fontSize: '1.35em' }}
+        >
+          {resolvedTitle}
+        </div>
       </div>
 
-      <div className="my-2 space-y-1.5 text-xs">
-        <div className="font-bold">ĐƠN HÀNG: {orderCode}</div>
-        <div className="border-2 border-black p-2 text-center text-sm font-extrabold uppercase">
-          <div>CHUYỂN TỪ: {`>>> ${normalizedFrom} <<<`}</div>
-          <div className="mt-1">SANG BÀN: {`>>> ${normalizedTo} <<<`}</div>
+      <div className="my-1 space-y-1">
+        <div data-print-kind="text" data-print-bold className="font-bold">
+          ĐƠN HÀNG: {orderCode}
         </div>
-        {tpl.blocks.time ? <div>Thời gian: {formattedTime}</div> : null}
+        <div
+          data-print-kind="banner"
+          className="border-2 border-black p-1.5 text-center font-extrabold uppercase"
+          style={{ fontSize: '1.1em' }}
+        >
+          <div>CHUYỂN TỪ: {`>>> ${normalizedFrom} <<<`}</div>
+          <div className="mt-0.5">SANG BÀN: {`>>> ${normalizedTo} <<<`}</div>
+        </div>
+        {tpl.blocks.time ? (
+          <div data-print-kind="text" data-print-scale="0.85" style={{ fontSize: '0.85em' }}>
+            Thời gian: {formattedTime}
+          </div>
+        ) : null}
         {tpl.blocks.cashier ? (
-          <div data-testid="table-transfer-cashier">
+          <div
+            data-testid="table-transfer-cashier"
+            data-print-kind="text"
+            data-print-scale="0.85"
+            style={{ fontSize: '0.85em' }}
+          >
             Nhân viên: {cashierName?.trim() || 'Thu ngân'}
           </div>
         ) : null}
-        <div className="font-bold">Trạm ảnh hưởng: {stationLabels}</div>
+        <div data-print-kind="text" data-print-bold className="font-bold">
+          Trạm ảnh hưởng: {stationLabels}
+        </div>
       </div>
 
       <div
         data-testid="table-transfer-footer"
-        className="border-t border-dashed border-black pt-1.5 text-center text-xs font-bold"
+        data-print-kind="text"
+        data-print-scale="0.85"
+        data-print-align="center"
+        data-print-bold
+        className="border-t border-dashed border-black pt-1 text-center font-bold"
+        style={{ fontSize: '0.85em' }}
       >
         {resolvedFooter}
       </div>

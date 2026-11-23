@@ -56,6 +56,7 @@ import {
   useUpdateStoreSettingsMutation,
   useUploadStoreAssetMutation,
 } from '../api/store-settings.api';
+import { DisplayScalePanel } from './display-scale-panel';
 import { MessageCatalogEditor } from './message-catalog-editor';
 import { NavCustomizationPanel } from './nav-customization-panel';
 import { PrintTemplateCustomizer } from './print-template-customizer';
@@ -128,6 +129,7 @@ function clonePrintTemplates(source: PrintTemplates): PrintTemplates {
     },
     kitchen: {
       ...source.kitchen,
+      priceCategoryIds: [...(source.kitchen.priceCategoryIds ?? [])],
       blocks: { ...source.kitchen.blocks },
     },
     kitchenCancel: {
@@ -159,6 +161,7 @@ function normalizePrintTemplates(source: PrintTemplates): PrintTemplates {
       ...source.kitchen,
       title: source.kitchen.title.trim(),
       footerNote: source.kitchen.footerNote.trim(),
+      priceCategoryIds: Array.from(new Set(source.kitchen.priceCategoryIds ?? [])),
       blocks: { ...source.kitchen.blocks },
     },
     kitchenCancel: {
@@ -197,6 +200,11 @@ function extractFormSettings(source: StoreSettings): StoreSettings {
       Object.entries(source.pageHeaders).map(([path, header]) => [path, { ...header }]),
     ),
     printTemplates: clonePrintTemplates(source.printTemplates),
+    displayScale: {
+      globalPercent: source.displayScale?.globalPercent ?? 100,
+      perPath: { ...(source.displayScale?.perPath ?? {}) },
+      qrOrderPercent: source.displayScale?.qrOrderPercent ?? 100,
+    },
   };
 }
 
@@ -510,7 +518,7 @@ export function StoreSettingsPage() {
       ) : null}
 
       <Tabs defaultValue="general" className="w-full min-w-0">
-        <TabsList className="flex h-auto w-full max-w-full flex-nowrap justify-start gap-1 overflow-x-auto p-1 sm:flex-wrap">
+        <TabsList data-scroll-intended="true" className="flex h-auto w-full max-w-full flex-nowrap justify-start gap-1 overflow-x-auto p-1 sm:flex-wrap">
           <TabsTrigger value="general" className="shrink-0 gap-1.5">
             <Store className="h-3.5 w-3.5 shrink-0" />
             <span>Thông tin quán</span>
@@ -911,7 +919,18 @@ export function StoreSettingsPage() {
           />
         </TabsContent>
 
-        <TabsContent value="nav" className="mt-4 min-w-0 w-full">
+        <TabsContent value="nav" className="mt-4 min-w-0 w-full space-y-4">
+          <DisplayScalePanel
+            displayScale={draft.displayScale}
+            navLabels={draft.navLabels}
+            canUpdate={canUpdate}
+            onChange={(updater) =>
+              setDraft((prev) => ({
+                ...prev,
+                displayScale: updater(prev.displayScale),
+              }))
+            }
+          />
           <NavCustomizationPanel
             draft={draft}
             setDraft={setDraft}

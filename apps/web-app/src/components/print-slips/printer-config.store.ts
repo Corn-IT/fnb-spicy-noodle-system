@@ -67,6 +67,20 @@ function sanitizePrinterConfig(
       merged.lanTimeoutMs <= 15000
         ? merged.lanTimeoutMs
         : current.lanTimeoutMs,
+    leftMarginMm:
+      typeof merged.leftMarginMm === 'number' &&
+      Number.isFinite(merged.leftMarginMm) &&
+      merged.leftMarginMm >= 0 &&
+      merged.leftMarginMm <= 8
+        ? merged.leftMarginMm
+        : current.leftMarginMm,
+    feedLinesBeforeCut:
+      typeof merged.feedLinesBeforeCut === 'number' &&
+      Number.isInteger(merged.feedLinesBeforeCut) &&
+      merged.feedLinesBeforeCut >= 0 &&
+      merged.feedLinesBeforeCut <= 5
+        ? merged.feedLinesBeforeCut
+        : current.feedLinesBeforeCut,
   };
 }
 

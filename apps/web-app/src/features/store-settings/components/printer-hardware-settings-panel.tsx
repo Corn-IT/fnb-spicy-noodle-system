@@ -300,6 +300,62 @@ export function PrinterHardwareSettingsPanel({
             </span>
           </label>
         </div>
+
+        <div className="space-y-1.5">
+          <label
+            htmlFor="printer-left-margin-mm"
+            className="block text-xs font-bold uppercase tracking-wider text-muted-foreground"
+          >
+            Hiệu chỉnh lề trái (0–8 mm)
+          </label>
+          <Input
+            id="printer-left-margin-mm"
+            data-testid="input-printer-left-margin-mm"
+            type="number"
+            min={0}
+            max={8}
+            step={0.5}
+            value={config.leftMarginMm}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isFinite(v)) {
+                updateConfig({ leftMarginMm: Math.max(0, Math.min(8, v)) });
+              }
+            }}
+            className="h-9 max-w-[140px] font-mono text-xs"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Mặc định 0mm để tiết kiệm giấy tối đa. Tăng nếu đầu in bị lệch sang trái.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <label
+            htmlFor="printer-feed-lines-before-cut"
+            className="block text-xs font-bold uppercase tracking-wider text-muted-foreground"
+          >
+            Đẩy giấy trước khi cắt (0–5 dòng)
+          </label>
+          <Input
+            id="printer-feed-lines-before-cut"
+            data-testid="input-printer-feed-lines-before-cut"
+            type="number"
+            min={0}
+            max={5}
+            step={1}
+            value={config.feedLinesBeforeCut}
+            onChange={(e) => {
+              const v = Math.floor(Number(e.target.value));
+              if (Number.isFinite(v)) {
+                updateConfig({ feedLinesBeforeCut: Math.max(0, Math.min(5, v)) });
+              }
+            }}
+            className="h-9 max-w-[140px] font-mono text-xs"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Mặc định 0 dòng. Tăng lên 1–2 nếu dao cắt lẹm vào dòng cuối phiếu.
+          </p>
+        </div>
       </div>
 
       {/* Contextual Config for RAWBT_USB (iMin D3-505 + iPOS iTP6 USB) */}

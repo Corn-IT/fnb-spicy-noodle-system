@@ -483,6 +483,7 @@ describe('StoreSettingsPage (Story 14)', () => {
         provisional: {
           title: 'PHIẾU TẠM BÀN',
           footerNote: '',
+          fontSizePt: 8,
           blocks: {
             ...DEFAULT_STORE_SETTINGS.printTemplates.provisional.blocks,
             discountLine: true,
@@ -491,7 +492,7 @@ describe('StoreSettingsPage (Story 14)', () => {
         },
         kitchen: {
           ...DEFAULT_STORE_SETTINGS.printTemplates.kitchen,
-          fontSize: 'lg',
+          fontSizePt: 10,
         },
         tableTransfer: {
           ...DEFAULT_STORE_SETTINGS.printTemplates.tableTransfer,
@@ -526,22 +527,22 @@ describe('StoreSettingsPage (Story 14)', () => {
     expect(screen.getByTestId('provisional-discount-line')).toBeInTheDocument();
     expect(screen.queryByTestId('provisional-vietqr-bank-account')).not.toBeInTheDocument();
     // Hard Invariant 4: VietQR image cannot be turned off
-    expect(screen.getByTestId('provisional-vietqr-image')).toBeInTheDocument();
+    expect(await screen.findByTestId('provisional-vietqr-image')).toBeInTheDocument();
 
     // Switch to Kitchen split (previewed 1 station at a time across Bếp Nấu / Bếp Chiên / Quầy Nước)
     await user.click(screen.getByTestId('print-template-tab-kitchen'));
     expect(preview).toHaveAttribute('data-preview-template', 'kitchen');
-    await user.click(screen.getByTestId('print-fontsize-kitchen-lg'));
-    expect(screen.getByTestId('kitchen-ticket-page-BEP_NAU')).toHaveAttribute('data-font-size', 'lg');
+    await user.click(screen.getByTestId('print-fontsize-preset-kitchen-10'));
+    expect(screen.getByTestId('kitchen-ticket-page-BEP_NAU')).toHaveAttribute('data-font-size-pt', '10');
     expect(screen.queryByTestId('kitchen-ticket-page-BEP_CHIEN')).not.toBeInTheDocument();
     expect(screen.queryByTestId('kitchen-ticket-page-PHA_CHE')).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId('kitchen-preview-station-BEP_CHIEN'));
-    expect(screen.getByTestId('kitchen-ticket-page-BEP_CHIEN')).toHaveAttribute('data-font-size', 'lg');
+    expect(screen.getByTestId('kitchen-ticket-page-BEP_CHIEN')).toHaveAttribute('data-font-size-pt', '10');
     expect(screen.queryByTestId('kitchen-ticket-page-BEP_NAU')).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId('kitchen-preview-station-PHA_CHE'));
-    expect(screen.getByTestId('kitchen-ticket-page-PHA_CHE')).toHaveAttribute('data-font-size', 'lg');
+    expect(screen.getByTestId('kitchen-ticket-page-PHA_CHE')).toHaveAttribute('data-font-size-pt', '10');
     expect(screen.queryByTestId('kitchen-ticket-page-BEP_CHIEN')).not.toBeInTheDocument();
 
     // Switch to Kitchen cancel & test per-template reset
@@ -574,7 +575,7 @@ describe('StoreSettingsPage (Story 14)', () => {
               title: 'PHIẾU TẠM BÀN',
               blocks: expect.objectContaining({ discountLine: true, bankInfo: false }),
             }),
-            kitchen: expect.objectContaining({ fontSize: 'lg' }),
+            kitchen: expect.objectContaining({ fontSizePt: 10 }),
             kitchenCancel: DEFAULT_STORE_SETTINGS.printTemplates.kitchenCancel,
             tableTransfer: expect.objectContaining({
               footerNote: 'Đưa từ {fromTable} qua {toTable} gấp!',

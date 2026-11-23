@@ -173,7 +173,7 @@ describe('InventoryService', () => {
         isDeleted: false,
         paymentSource: PaymentSource.CASH_DRAWER,
         importDate: { gte: new Date('2026-11-01T00:00:00.000Z'), lt: new Date('2026-11-09T00:00:00.000Z') },
-        itemNameSnapshot: { contains: 'ba chi', mode: 'insensitive' },
+        id: { in: expect.any(Array) },
       }),
       skip: 10,
       take: 10,

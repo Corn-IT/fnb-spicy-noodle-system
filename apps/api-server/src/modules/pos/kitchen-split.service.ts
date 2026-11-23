@@ -105,11 +105,14 @@ export class KitchenSplitService {
           }
         } else {
           const station = this.physicalStation(item.product.station);
+          const baseUnitPrice = this.snapshotBaseUnitPrice(item.unitPrice, item.modifiersSnapshot);
           this.addTicketItem(tickets, station, {
             name: item.product.name,
             qty: item.quantity,
             modifiers,
             note: item.itemNote ?? '',
+            ...(baseUnitPrice !== undefined ? { unitPrice: baseUnitPrice } : {}),
+            ...(item.product.categoryId !== undefined ? { categoryId: item.product.categoryId } : {}),
           });
         }
       }
@@ -215,11 +218,14 @@ export class KitchenSplitService {
       } else {
         const station = this.physicalStation(item.product.station);
         if (options?.station && station !== options.station) continue;
+        const baseUnitPrice = this.snapshotBaseUnitPrice(item.unitPrice, item.modifiersSnapshot);
         this.addTicketItem(tickets, station, {
           name: item.product.name,
           qty: item.quantity,
           modifiers,
           note: item.itemNote ?? '',
+          ...(baseUnitPrice !== undefined ? { unitPrice: baseUnitPrice } : {}),
+          ...(item.product.categoryId !== undefined ? { categoryId: item.product.categoryId } : {}),
         });
       }
     }
@@ -269,6 +275,29 @@ export class KitchenSplitService {
       if (entry === null || typeof entry !== 'object' || Array.isArray(entry) || !('name' in entry)) return [];
       return typeof entry.name === 'string' ? [entry.name] : [];
     });
+  }
+
+  /**
+   * Computes the base item unit price at the time of ordering (snapshot unitPrice minus modifier extraPrice)
+   * using Prisma.Decimal (Hard Invariant 10) so later menu price changes do not affect reprinted kitchen tickets.
+   */
+  private snapshotBaseUnitPrice(unitPrice: Prisma.Decimal | number | undefined, modifiersSnapshot: Prisma.JsonValue): number | undefined {
+    if (unitPrice === undefined || unitPrice === null) return undefined;
+    let base = unitPrice instanceof Prisma.Decimal ? unitPrice : new Prisma.Decimal(unitPrice);
+    if (Array.isArray(modifiersSnapshot)) {
+      for (const entry of modifiersSnapshot) {
+        if (entry === null || typeof entry !== 'object' || Array.isArray(entry) || !('extraPrice' in entry)) continue;
+        const raw = (entry as { extraPrice?: unknown }).extraPrice;
+        if (typeof raw === 'number' || typeof raw === 'string') {
+          const parsed = Number(raw);
+          if (Number.isFinite(parsed) && parsed > 0) {
+            base = base.sub(new Prisma.Decimal(raw));
+          }
+        }
+      }
+    }
+    if (base.lt(0)) base = new Prisma.Decimal(0);
+    return Number(base.toFixed(2));
   }
 
   private latestTransferNotice(value: Prisma.JsonValue): string | undefined {

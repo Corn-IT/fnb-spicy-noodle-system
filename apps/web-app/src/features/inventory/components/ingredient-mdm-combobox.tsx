@@ -5,6 +5,7 @@ import * as React from 'react';
 import { Input } from '@/components/ui/input';
 import { useMdmLookupQuery } from '@/features/inventory/api/inventory.api';
 import { cn } from '@/utils/cn';
+import { matchesVietnameseQuery } from '@/utils/search';
 
 export interface SelectedIngredientValue {
   ingredientMdmId?: number;
@@ -49,12 +50,9 @@ export function IngredientMdmCombobox({
   const mdmItems = mdmRecords.filter((item) => item.category === MdmCategory.INGREDIENT);
 
   const filteredItems = React.useMemo(() => {
-    const trimmed = queryText.trim().toLocaleLowerCase('vi-VN');
-    if (!trimmed) return mdmItems;
-    return mdmItems.filter(
-      (item) =>
-        item.name.toLocaleLowerCase('vi-VN').includes(trimmed) ||
-        item.normalizedName.toLowerCase().includes(trimmed),
+    if (!queryText.trim()) return mdmItems;
+    return mdmItems.filter((item) =>
+      matchesVietnameseQuery(queryText, item.name, item.normalizedName),
     );
   }, [mdmItems, queryText]);
 

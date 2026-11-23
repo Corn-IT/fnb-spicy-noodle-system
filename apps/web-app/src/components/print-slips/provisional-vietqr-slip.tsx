@@ -8,10 +8,12 @@ import * as React from 'react';
 import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings';
 
 import {
-  buildVietQrFallbackSvgDataUrl,
-  buildVietQrImageUrl,
-  buildVietQrTransferMemo,
-} from './vietqr-url.util';
+  getThermalSlipRootStyle,
+  resolvePricedModifiers,
+  resolveThermalFontSizePt,
+} from './print-template.util';
+import { generateVietQrDataUrl } from './vietqr-emv.util';
+import { buildVietQrTransferMemo } from './vietqr-url.util';
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
   SERVING: 'Đang phục vụ',
@@ -38,6 +40,7 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
   const { settings: contextSettings } = useStoreSettings();
   const activeSettings = storeSettings ?? contextSettings;
   const tpl = activeSettings.printTemplates.provisional;
+  const fontSizePt = resolveThermalFontSizePt(tpl.fontSizePt);
   const resolvedPrintName = activeSettings.receipt.printName || activeSettings.storeName;
   const resolvedLogoUrl =
     activeSettings.receipt.showLogo && tpl.blocks.logo
@@ -45,50 +48,22 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
       : null;
   const resolvedTitle = tpl.title.trim() || PRINT_TEMPLATE_DEFAULTS.provisional.title;
   const resolvedFooterNote = tpl.footerNote.trim() || activeSettings.receipt.footerNote.trim();
-  const initialQrUrl = React.useMemo(() => {
-    if (bill.vietQrPayload && bill.vietQrPayload.trim()) {
-      return bill.vietQrPayload.trim();
-    }
-    if (bill.paymentAccount) {
-      return buildVietQrImageUrl({
-        amount: bill.totalAmount,
-        orderCode: bill.orderCode,
-        bankId: bill.paymentAccount.bankCode,
-        accountNo: bill.paymentAccount.accountNo,
-        accountName: bill.paymentAccount.accountName,
+
+  const transferMemo = React.useMemo(
+    () =>
+      buildVietQrTransferMemo(bill.orderCode, {
         tableLabel: bill.tableLabel,
         tableId: bill.tableId,
         orderType: bill.orderType,
         takeawayNumber: bill.takeawayNumber,
-      });
-    }
-    return buildVietQrFallbackSvgDataUrl({
-      amount: bill.totalAmount,
-      orderCode: bill.orderCode,
-      tableLabel: bill.tableLabel,
-      tableId: bill.tableId,
-      orderType: bill.orderType,
-      takeawayNumber: bill.takeawayNumber,
-    });
-  }, [
-    bill.vietQrPayload,
-    bill.paymentAccount,
-    bill.totalAmount,
-    bill.orderCode,
-    bill.tableLabel,
-    bill.tableId,
-    bill.orderType,
-    bill.takeawayNumber,
-  ]);
+      }),
+    [bill.orderCode, bill.tableLabel, bill.tableId, bill.orderType, bill.takeawayNumber],
+  );
 
-  const [qrSrc, setQrSrc] = React.useState<string>(initialQrUrl);
+  const [qrDataUrl, setQrDataUrl] = React.useState<string | null>(null);
+  const [qrUnavailable, setQrUnavailable] = React.useState<boolean>(!bill.paymentAccount);
   const hasNotifiedRef = React.useRef(false);
   const imgRef = React.useRef<HTMLImageElement | null>(null);
-
-  React.useEffect(() => {
-    setQrSrc(initialQrUrl);
-    hasNotifiedRef.current = false;
-  }, [initialQrUrl]);
 
   const notifyReadyOnce = React.useCallback(() => {
     if (hasNotifiedRef.current) return;
@@ -104,50 +79,58 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
     }
   }, [onReadyToPrint]);
 
-  // Check if image is already cached/complete on mount or src change
   React.useEffect(() => {
-    const el = imgRef.current;
-    if (el && el.complete && el.naturalWidth > 0) {
-      notifyReadyOnce();
-    }
-  }, [qrSrc, notifyReadyOnce]);
+    let cancelled = false;
+    hasNotifiedRef.current = false;
 
-  const handleImageError = React.useCallback(() => {
-    const fallbackDataUrl = buildVietQrFallbackSvgDataUrl({
-      amount: bill.totalAmount,
-      orderCode: bill.orderCode,
-      tableLabel: bill.tableLabel,
-      tableId: bill.tableId,
-      orderType: bill.orderType,
-      takeawayNumber: bill.takeawayNumber,
-    });
-    if (qrSrc !== fallbackDataUrl) {
-      setQrSrc(fallbackDataUrl);
+    if (!bill.paymentAccount) {
+      setQrDataUrl(null);
+      setQrUnavailable(true);
+      notifyReadyOnce();
+      return;
     }
-    notifyReadyOnce();
+
+    setQrUnavailable(false);
+    void generateVietQrDataUrl({
+      bankCode: bill.paymentAccount.bankCode,
+      accountNo: bill.paymentAccount.accountNo,
+      amount: bill.totalAmount,
+      memo: transferMemo,
+    })
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.dataUrl) {
+          setQrDataUrl(res.dataUrl);
+          setQrUnavailable(false);
+        } else {
+          setQrDataUrl(null);
+          setQrUnavailable(true);
+          notifyReadyOnce();
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setQrDataUrl(null);
+        setQrUnavailable(true);
+        notifyReadyOnce();
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [
+    bill.paymentAccount,
     bill.totalAmount,
-    bill.orderCode,
-    bill.tableLabel,
-    bill.tableId,
-    bill.orderType,
-    bill.takeawayNumber,
-    qrSrc,
+    transferMemo,
     notifyReadyOnce,
   ]);
 
-  // Safety fallback timeout: if external network hangs, fall back to SVG after 3500ms
   React.useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const el = imgRef.current;
-      if (!el || !el.complete || el.naturalWidth === 0) {
-        handleImageError();
-      } else {
-        notifyReadyOnce();
-      }
-    }, 3500);
-    return () => window.clearTimeout(timer);
-  }, [handleImageError, notifyReadyOnce]);
+    const el = imgRef.current;
+    if (qrDataUrl && el && el.complete && el.naturalWidth > 0) {
+      notifyReadyOnce();
+    }
+  }, [qrDataUrl, notifyReadyOnce]);
 
   const resolvedTableDisplay = React.useMemo(() => {
     if (bill.tableLabel) return bill.tableLabel.toUpperCase();
@@ -157,90 +140,149 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
     return `BÀN ${String(bill.tableId ?? 1).padStart(2, '0')}`;
   }, [bill.tableLabel, bill.orderType, bill.takeawayNumber, bill.tableId]);
 
-  const transferMemo = buildVietQrTransferMemo(bill.orderCode, {
-    tableLabel: bill.tableLabel,
-    tableId: bill.tableId,
-    orderType: bill.orderType,
-    takeawayNumber: bill.takeawayNumber,
-  });
-
   const resolvedStatusLabel = ORDER_STATUS_LABELS[bill.status] ?? bill.status;
 
   return (
     <div
       data-testid="provisional-vietqr-slip"
-      className="ticket-page px-4 border-b border-dashed border-black bg-white font-mono text-xs text-black"
-      style={{ breakAfter: 'page', pageBreakAfter: 'always' }}
+      data-font-size-pt={fontSizePt}
+      className="ticket-page break-words bg-white px-0 py-0 font-mono text-black"
+      style={getThermalSlipRootStyle(fontSizePt)}
     >
-      <div className="border-b-2 border-black pb-2 text-center">
+      <div className="border-b-2 border-black pb-1 text-center">
         {resolvedLogoUrl ? (
           <img
             src={resolvedLogoUrl}
             alt={`Logo ${resolvedPrintName}`}
             data-testid="provisional-receipt-logo"
-            className="mx-auto mb-1 h-10 w-10 object-contain grayscale"
+            className="mx-auto mb-0.5 h-9 w-9 object-contain grayscale"
           />
         ) : null}
-        <div className="text-sm font-extrabold uppercase">{resolvedPrintName}</div>
+        <div
+          data-print-kind="heading"
+          data-print-scale="1.2"
+          className="font-extrabold uppercase"
+          style={{ fontSize: '1.2em' }}
+        >
+          {resolvedPrintName}
+        </div>
         {tpl.blocks.address && activeSettings.receipt.address ? (
-          <div className="text-[10px]">{activeSettings.receipt.address}</div>
+          <div
+            data-print-kind="text"
+            data-print-scale="0.85"
+            data-print-align="center"
+            style={{ fontSize: '0.85em' }}
+          >
+            {activeSettings.receipt.address}
+          </div>
         ) : null}
         {tpl.blocks.phone && activeSettings.receipt.phone ? (
-          <div className="text-[10px]">ĐT: {activeSettings.receipt.phone}</div>
+          <div
+            data-print-kind="text"
+            data-print-scale="0.85"
+            data-print-align="center"
+            style={{ fontSize: '0.85em' }}
+          >
+            ĐT: {activeSettings.receipt.phone}
+          </div>
         ) : null}
-        <div className="mt-1 text-base font-extrabold uppercase">{resolvedTitle}</div>
+        <div
+          data-print-kind="heading"
+          data-print-scale="1.4"
+          className="mt-0.5 font-extrabold uppercase"
+          style={{ fontSize: '1.4em' }}
+        >
+          {resolvedTitle}
+        </div>
       </div>
 
-      <div className="my-1.5 space-y-0.5 border-b border-dashed border-black pb-1.5 text-[11px]">
-        <div className="flex items-baseline justify-between gap-2 font-bold">
+      <div data-print-kind="divider" className="hidden" />
+
+      <div className="my-1 space-y-0.5 border-b border-dashed border-black pb-1" style={{ fontSize: '0.9em' }}>
+        <div data-print-kind="pair" data-print-scale="0.9" data-print-bold className="flex items-baseline justify-between gap-2 font-bold">
           <span className="whitespace-nowrap">Số Bàn: {resolvedTableDisplay}</span>
           <span className="whitespace-nowrap text-right">Trạng thái: {resolvedStatusLabel}</span>
         </div>
         {tpl.blocks.orderCode ? (
-          <div className="flex items-baseline justify-between gap-2 font-bold">
-            <span className="whitespace-nowrap">Mã HĐ: {bill.orderCode}</span>
+          <div data-print-kind="text" data-print-scale="0.9" data-print-bold className="font-bold">
+            Mã HĐ: {bill.orderCode}
           </div>
         ) : null}
         {tpl.blocks.cashier ? (
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="truncate">Thu ngân: {bill.cashierName || 'Thu ngân'}</span>
+          <div data-print-kind="text" data-print-scale="0.9" className="truncate">
+            Thu ngân: {bill.cashierName || 'Thu ngân'}
           </div>
         ) : null}
       </div>
 
-      {/* Items */}
-      <div>
-        <div className="flex justify-between border-b border-black pb-1 text-[11px] font-bold">
-          <span>Tên món</span>
-          <span>SL x Đ.Giá = T.Tiền</span>
-        </div>
-
-        <div className="divide-y divide-dashed divide-black">
-          {bill.items.map((item, idx) => (
-            <div key={`${item.name}-${idx}`} className="py-1">
-              <div className="font-bold">{item.name}</div>
-              {tpl.blocks.itemModifiers && item.modifiers.length > 0 ? (
-                <div className="pl-2 text-[11px]">+ {item.modifiers.join(', ')}</div>
-              ) : null}
-              <div className="flex justify-between text-[11px]">
-                <span>
-                  {item.quantity} x {item.unitPrice.toLocaleString('vi-VN')}
-                </span>
-                <span className="font-bold">{item.lineTotal.toLocaleString('vi-VN')} đ</span>
-              </div>
-              {tpl.blocks.itemNotes && item.note && item.note.trim() ? (
-                <div className="mt-0.5 pl-2 text-[11px] italic font-semibold">
-                  Ghi chú: {item.note.trim()}
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Bordered 3-column Items Table: Tên món | SL | T.Tiền */}
+      <table
+        data-testid="provisional-items-table"
+        data-print-kind="table"
+        className="w-full border-collapse border border-black text-black"
+      >
+        <thead>
+          <tr>
+            <th
+              data-print-col-width="62"
+              data-print-align="left"
+              className="border border-black px-1 py-0.5 text-left font-bold"
+            >
+              Tên món
+            </th>
+            <th
+              data-print-col-width="12"
+              data-print-align="center"
+              className="border border-black px-1 py-0.5 text-center font-bold"
+            >
+              SL
+            </th>
+            <th
+              data-print-col-width="26"
+              data-print-align="right"
+              className="border border-black px-1 py-0.5 text-right font-bold"
+            >
+              T.Tiền
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {bill.items.map((item, idx) => {
+            const pricedMods = tpl.blocks.itemModifiers
+              ? resolvePricedModifiers(item.modifiers, item.pricedModifiers)
+              : [];
+            return (
+              <tr key={`${item.name}-${idx}`}>
+                <td data-print-align="left" className="border border-black px-1 py-0.5 align-top">
+                  <div data-print-bold className="font-bold">
+                    {idx + 1}. {item.name}
+                  </div>
+                  {pricedMods.map((mod, mIdx) => (
+                    <div
+                      key={`${mod}-${mIdx}`}
+                      data-print-scale="0.85"
+                      className="pl-1.5"
+                      style={{ fontSize: '0.85em' }}
+                    >
+                      + {mod}
+                    </div>
+                  ))}
+                </td>
+                <td data-print-align="center" className="border border-black px-1 py-0.5 text-center align-top font-semibold">
+                  {item.quantity}
+                </td>
+                <td data-print-align="right" className="border border-black px-1 py-0.5 text-right align-top font-bold whitespace-nowrap">
+                  {item.lineTotal.toLocaleString('vi-VN')}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
 
       {/* Totals */}
-      <div className="mt-1.5 space-y-1 border-t-2 border-black pt-1.5">
-        <div className="flex justify-between text-xs font-semibold">
+      <div className="mt-1 space-y-0.5 border-t-2 border-black pt-1">
+        <div data-print-kind="pair" data-print-bold className="flex justify-between font-semibold">
           <span>TỔNG CỘNG TIỀN MÓN:</span>
           <span data-testid="provisional-subtotal-amount">
             {(
@@ -250,7 +292,7 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
           </span>
         </div>
         {(bill.discountAmount ?? 0) > 0 ? (
-          <div data-testid="provisional-discount-line" className="flex justify-between text-xs">
+          <div data-testid="provisional-discount-line" data-print-kind="pair" className="flex justify-between">
             <span>
               GIẢM GIÁ (
               {bill.discountSnapshot?.kind === 'CODE'
@@ -261,12 +303,18 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
             <span>-{(bill.discountAmount ?? 0).toLocaleString('vi-VN')} đ</span>
           </div>
         ) : tpl.blocks.discountLine ? (
-          <div data-testid="provisional-discount-line" className="flex justify-between text-xs">
+          <div data-testid="provisional-discount-line" data-print-kind="pair" className="flex justify-between">
             <span>GIẢM GIÁ (0%):</span>
             <span>0 đ</span>
           </div>
         ) : null}
-        <div className="flex justify-between border-t border-dashed border-black pt-1 text-sm font-extrabold">
+        <div
+          data-print-kind="pair"
+          data-print-scale="1.15"
+          data-print-bold
+          className="flex justify-between border-t border-dashed border-black pt-0.5 font-extrabold"
+          style={{ fontSize: '1.15em' }}
+        >
           <span>TỔNG THANH TOÁN:</span>
           <span data-testid="provisional-total-amount">
             {bill.totalAmount.toLocaleString('vi-VN')} đ
@@ -274,42 +322,101 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
         </div>
       </div>
 
-      {/* Dynamic VietQR Napas247 Section */}
-      <div className="mt-2 flex flex-col items-center border-t border-dashed border-black pt-2 text-center">
-        <div className="text-[11px] font-extrabold uppercase">
-          QUÉT MÃ VIETQR ĐỂ CHUYỂN KHOẢN TỰ ĐỘNG
-        </div>
-        {tpl.blocks.bankInfo && bill.paymentAccount ? (
+      <div data-print-kind="divider" className="hidden" />
+
+      {/* Offline Dynamic EMVCo VietQR Napas247 Section */}
+      <div className="mt-1 flex flex-col items-center border-t border-dashed border-black pt-1 text-center">
+        {qrUnavailable ? (
+          <div
+            data-testid="provisional-qr-unconfigured"
+            data-print-kind="text"
+            data-print-align="center"
+            data-print-bold
+            className="py-1 font-bold"
+          >
+            Chưa cấu hình tài khoản nhận tiền
+          </div>
+        ) : (
           <>
-            <div className="mt-0.5 text-[11px] font-bold" data-testid="provisional-vietqr-bank-account">
-              {bill.paymentAccount.bankName} — STK: {bill.paymentAccount.accountNo}
+            <div
+              data-print-kind="text"
+              data-print-scale="0.9"
+              data-print-align="center"
+              data-print-bold
+              className="font-extrabold uppercase"
+              style={{ fontSize: '0.9em' }}
+            >
+              QUÉT MÃ VIETQR ĐỂ CHUYỂN KHOẢN TỰ ĐỘNG
             </div>
-            <div className="text-[11px] font-extrabold uppercase" data-testid="provisional-vietqr-account-name">
-              {bill.paymentAccount.accountName}
+            {tpl.blocks.bankInfo && bill.paymentAccount ? (
+              <>
+                <div
+                  data-testid="provisional-vietqr-bank-account"
+                  data-print-kind="text"
+                  data-print-scale="0.9"
+                  data-print-align="center"
+                  data-print-bold
+                  className="font-bold"
+                  style={{ fontSize: '0.9em' }}
+                >
+                  {bill.paymentAccount.bankName} — STK: {bill.paymentAccount.accountNo}
+                </div>
+                <div
+                  data-testid="provisional-vietqr-account-name"
+                  data-print-kind="text"
+                  data-print-scale="0.9"
+                  data-print-align="center"
+                  data-print-bold
+                  className="font-extrabold uppercase"
+                  style={{ fontSize: '0.9em' }}
+                >
+                  {bill.paymentAccount.accountName}
+                </div>
+              </>
+            ) : null}
+            {qrDataUrl ? (
+              <img
+                ref={imgRef}
+                data-testid="provisional-vietqr-image"
+                data-print-kind="qr"
+                src={qrDataUrl}
+                alt={`VietQR ${transferMemo}`}
+                onLoad={notifyReadyOnce}
+                className="my-1 h-40 w-40 object-contain"
+              />
+            ) : null}
+            <div
+              data-print-kind="text"
+              data-print-scale="0.9"
+              data-print-align="center"
+              data-print-bold
+              className="font-bold"
+              style={{ fontSize: '0.9em' }}
+            >
+              Nội dung CK: <span className="underline">{transferMemo}</span>
             </div>
           </>
-        ) : null}
-        <img
-          ref={imgRef}
-          data-testid="provisional-vietqr-image"
-          src={qrSrc}
-          alt={`VietQR ${transferMemo}`}
-          onLoad={notifyReadyOnce}
-          onError={handleImageError}
-          className="my-1.5 h-44 w-44 object-contain"
-        />
-        <div className="text-[11px] font-bold">
-          Nội dung CK: <span className="underline">{transferMemo}</span>
-        </div>
+        )}
         {resolvedFooterNote ? (
           <div
             data-testid="provisional-receipt-footer"
-            className="mt-1.5 whitespace-pre-line text-[10px] font-bold uppercase"
+            data-print-kind="text"
+            data-print-scale="0.85"
+            data-print-align="center"
+            data-print-bold
+            className="mt-1 whitespace-pre-line font-bold uppercase"
+            style={{ fontSize: '0.85em' }}
           >
             {resolvedFooterNote}
           </div>
         ) : null}
-        <div className="mt-1 text-[10px] font-semibold italic">
+        <div
+          data-print-kind="text"
+          data-print-scale="0.8"
+          data-print-align="center"
+          className="mt-0.5 font-semibold italic"
+          style={{ fontSize: '0.8em' }}
+        >
           Phiếu này dùng để kiểm tra món ăn. Quý khách vui lòng không dùng làm hoá đơn tài chính.
         </div>
       </div>

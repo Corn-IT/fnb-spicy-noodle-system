@@ -31,6 +31,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { type OrderPendingAlertState } from '@/lib/qr-pending-reminder';
 import { cn } from '@/utils/cn';
+import { CancelOrderConfirmDialog } from './cancel-order-confirm-dialog';
 import { type PosMenuSelectedItem } from './pos-menu-panel';
 
 export type LiveInvoiceDraftTarget =
@@ -117,6 +118,7 @@ export function LiveInvoicePanel({
   const [provisionalMenuOpen, setProvisionalMenuOpen] = React.useState(false);
   const [checkoutMenuOpen, setCheckoutMenuOpen] = React.useState(false);
   const [zoomOpen, setZoomOpen] = React.useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = React.useState(false);
   const canPerformAnyAction =
     canCreate || canUpdate || canSplitKitchen || canTableAction || canCheckout;
 
@@ -346,18 +348,43 @@ export function LiveInvoicePanel({
               {resolvedStatusLabel}
             </Badge>
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            data-testid="zoom-invoice-btn"
-            title="Phóng to danh sách món"
-            aria-label="Phóng to danh sách món"
-            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={() => setZoomOpen(true)}
-          >
-            <Maximize2 className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-1 shrink-0">
+            {canUpdate && isOrderActive && onCancelOrder ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                data-testid="btn-quick-cancel-order"
+                disabled={isCancellingOrder}
+                title={
+                  order.orderType === 'TAKEAWAY'
+                    ? 'Huỷ đơn mang về'
+                    : 'Huỷ đơn & Giải phóng bàn'
+                }
+                aria-label={
+                  order.orderType === 'TAKEAWAY'
+                    ? 'Huỷ đơn mang về'
+                    : 'Huỷ đơn & Giải phóng bàn'
+                }
+                className="h-7 w-7 shrink-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:text-rose-400 dark:hover:bg-rose-950/50"
+                onClick={() => setCancelDialogOpen(true)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              data-testid="zoom-invoice-btn"
+              title="Phóng to danh sách món"
+              aria-label="Phóng to danh sách món"
+              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={() => setZoomOpen(true)}
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         <div className="flex items-start justify-between gap-2">
@@ -1012,6 +1039,17 @@ export function LiveInvoicePanel({
           </div>
         </DialogContent>
       </Dialog>
+
+      <CancelOrderConfirmDialog
+        open={cancelDialogOpen}
+        onOpenChange={setCancelDialogOpen}
+        order={order}
+        isPending={isCancellingOrder}
+        onConfirm={async (reason) => {
+          await onCancelOrder?.(reason);
+          setCancelDialogOpen(false);
+        }}
+      />
     </div>
   );
 }

@@ -15,6 +15,7 @@ import {
 } from '@fnb/shared';
 import { AuditLogService, formatPaymentMethodVi } from '../../common/audit/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { buildIyFallbackKeywords, queryMatchingIdsBySearchNorm } from '../../common/utils/search-normalize.util';
 import { recalculateSettledCashflowsForTimestamp } from '../../common/utils/cashflow-settlement.util';
 import { PaymentQrService } from '../payment-qr/payment-qr.service';
 import { extractDiscountSnapshot } from './order-totals.helper';
@@ -88,9 +89,21 @@ export class InvoicesService {
         const digitsOnly = keyword.replace(/\D/g, '');
         const parsedNumber = digitsOnly ? parseInt(digitsOnly, 10) : NaN;
         const isTakeawayKeyword = /mang\s*v[eề]|takeaway/i.test(keyword);
+        const matchedTableIds = await queryMatchingIdsBySearchNorm(
+          this.prisma,
+          'dining_tables',
+          ['name'],
+          keyword,
+        );
+        const tableConditions: Prisma.OrderWhereInput[] =
+          matchedTableIds !== null
+            ? [{ tableId: { in: matchedTableIds } }]
+            : buildIyFallbackKeywords(keyword).map((v) => ({
+                table: { is: { name: { contains: v, mode: 'insensitive' as const } } },
+              }));
         andConditions.push({
           OR: [
-            { table: { is: { name: contains } } },
+            ...tableConditions,
             ...(isTakeawayKeyword ? [{ orderType: 'TAKEAWAY' as const }] : []),
             ...(!isNaN(parsedNumber) ? [{ orderType: 'TAKEAWAY' as const, takeawayNumber: parsedNumber }] : []),
           ],
@@ -232,6 +245,7 @@ export class InvoicesService {
         unitPrice: item.unitPrice.toNumber(),
         lineTotal: item.unitPrice.mul(item.quantity).toNumber(),
         modifiers: this.modifierNames(item.modifiersSnapshot),
+        pricedModifiers: this.pricedModifierNames(item.modifiersSnapshot),
         itemNote: item.itemNote,
         batchNo: item.batchNo,
         kitchenStatus: item.kitchenStatus,
@@ -585,6 +599,15 @@ export class InvoicesService {
     return value.flatMap((entry) => entry && typeof entry === 'object' && 'name' in entry && typeof entry.name === 'string'
       ? [entry.name]
       : []);
+  }
+
+  private pricedModifierNames(value: Prisma.JsonValue): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || !('name' in entry) || typeof entry.name !== 'string') return [];
+      const extra = 'extraPrice' in entry ? Number((entry as { extraPrice?: unknown }).extraPrice) : 0;
+      return Number.isFinite(extra) && extra > 0 ? [entry.name] : [];
+    });
   }
 
   private businessDate(now: Date): string {

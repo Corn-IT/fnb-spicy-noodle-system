@@ -298,7 +298,7 @@ describe('@fnb/shared store-settings contracts', () => {
       expect(parsedPartial.data.printTemplates.provisional.blocks.cashier).toBe(false);
       expect(parsedPartial.data.printTemplates.provisional.blocks.bankInfo).toBe(true);
       expect(parsedPartial.data.printTemplates.provisional.blocks.discountLine).toBe(false);
-      expect(parsedPartial.data.printTemplates.kitchen.fontSize).toBe('lg');
+      expect(parsedPartial.data.printTemplates.kitchen.fontSizePt).toBe(9.5);
       expect(parsedPartial.data.printTemplates.tableTransfer).toEqual(
         contracts.DEFAULT_PRINT_TEMPLATES.tableTransfer,
       );
@@ -374,5 +374,97 @@ describe('@fnb/shared store-settings contracts', () => {
     expect(resolved.tableHeadline).toBe(contracts.QR_CARD_DEFAULTS.tableHeadline);
     expect(resolved.takeawayTitle).toBe('Mang Về Nhanh');
     expect(resolved.accentColor).toBe('#2563EB');
+  });
+
+  it('migrates legacy thermal fontSize sm/md/lg to fontSizePt and validates 6..16 step 0.5 & priceCategoryIds', () => {
+    const mergedLegacy = contracts.mergeStoreSettingsWithDefaults({
+      ...contracts.DEFAULT_STORE_SETTINGS,
+      printTemplates: {
+        kitchen: { fontSize: 'sm' },
+        kitchenCancel: { fontSize: 'lg' },
+        provisional: { title: 'Tạm tính' },
+      },
+    });
+    const parsedLegacy = contracts.StoreSettingsSchema.safeParse(mergedLegacy);
+    expect(parsedLegacy.success).toBe(true);
+    if (parsedLegacy.success) {
+      expect(parsedLegacy.data.printTemplates.kitchen.fontSizePt).toBe(7);
+      expect(parsedLegacy.data.printTemplates.kitchen.priceCategoryIds).toEqual([]);
+      expect(parsedLegacy.data.printTemplates.kitchenCancel.fontSizePt).toBe(9.5);
+      expect(parsedLegacy.data.printTemplates.provisional.fontSizePt).toBe(8);
+    }
+
+    expect(contracts.ThermalFontSizePtSchema.safeParse(6).success).toBe(true);
+    expect(contracts.ThermalFontSizePtSchema.safeParse(8.5).success).toBe(true);
+    expect(contracts.ThermalFontSizePtSchema.safeParse(16).success).toBe(true);
+    expect(contracts.ThermalFontSizePtSchema.safeParse(5.5).success).toBe(false);
+    expect(contracts.ThermalFontSizePtSchema.safeParse(16.5).success).toBe(false);
+    expect(contracts.ThermalFontSizePtSchema.safeParse(7.3).success).toBe(false);
+  });
+
+  it('validates displayScale (80..150 step 5), printer calibration, cancel order response, and unique 6-digit bank BINs', () => {
+    expect(contracts.DisplayScalePercentSchema.safeParse(80).success).toBe(true);
+    expect(contracts.DisplayScalePercentSchema.safeParse(125).success).toBe(true);
+    expect(contracts.DisplayScalePercentSchema.safeParse(150).success).toBe(true);
+    expect(contracts.DisplayScalePercentSchema.safeParse(75).success).toBe(false);
+    expect(contracts.DisplayScalePercentSchema.safeParse(155).success).toBe(false);
+    expect(contracts.DisplayScalePercentSchema.safeParse(82).success).toBe(false);
+
+    const withPerPath = contracts.StoreSettingsSchema.safeParse({
+      ...contracts.DEFAULT_STORE_SETTINGS,
+      displayScale: {
+        globalPercent: 110,
+        perPath: { '/pos': 125, '/menu': 95 },
+        qrOrderPercent: 100,
+      },
+    });
+    expect(withPerPath.success).toBe(true);
+
+    const badPath = contracts.StoreSettingsSchema.safeParse({
+      ...contracts.DEFAULT_STORE_SETTINGS,
+      displayScale: {
+        globalPercent: 100,
+        perPath: { '/invalid-route': 110 },
+        qrOrderPercent: 100,
+      },
+    });
+    expect(badPath.success).toBe(false);
+
+    const printerValid = contracts.ThermalPrinterDeviceConfigSchema.safeParse({
+      ...contracts.DEFAULT_THERMAL_PRINTER_DEVICE_CONFIG,
+      leftMarginMm: 3,
+      feedLinesBeforeCut: 2,
+    });
+    expect(printerValid.success).toBe(true);
+    expect(
+      contracts.ThermalPrinterDeviceConfigSchema.safeParse({
+        ...contracts.DEFAULT_THERMAL_PRINTER_DEVICE_CONFIG,
+        leftMarginMm: 9,
+      }).success,
+    ).toBe(false);
+    expect(
+      contracts.ThermalPrinterDeviceConfigSchema.safeParse({
+        ...contracts.DEFAULT_THERMAL_PRINTER_DEVICE_CONFIG,
+        feedLinesBeforeCut: 6,
+      }).success,
+    ).toBe(false);
+
+    const cancelParsed = contracts.CancelOrderResponseSchema.safeParse({
+      orderId: 10,
+      status: 'VOIDED',
+      tableId: 2,
+      requireCancellationSlip: true,
+      kitchenCancellationSlips: [
+        { station: 'BEP_NAU', tableLabel: 'Bàn 02', itemName: 'Mì Cay', quantity: 1 },
+      ],
+    });
+    expect(cancelParsed.success).toBe(true);
+
+    const bins = contracts.VIETQR_BANKS.map((b) => b.bin);
+    expect(new Set(bins).size).toBe(bins.length);
+    for (const bank of contracts.VIETQR_BANKS) {
+      expect(bank.bin).toMatch(/^\d{6}$/);
+      expect(contracts.getVietQrBankBin(bank.code)).toBe(bank.bin);
+    }
   });
 });

@@ -5,8 +5,7 @@ import {
 } from '@fnb/shared';
 
 import { useStoreSettings } from '@/hooks/use-store-settings';
-import { cn } from '@/utils/cn';
-import { THERMAL_FONT_CLASSES } from './print-template.util';
+import { getThermalSlipRootStyle, resolveThermalFontSizePt } from './print-template.util';
 import { STATION_META, StationLogo } from './station-logos';
 
 export interface KitchenCancelSlipItem {
@@ -57,7 +56,7 @@ export function KitchenCancelItemSlip({
   const { settings: contextSettings } = useStoreSettings();
   const activeSettings = storeSettings ?? contextSettings;
   const tpl = activeSettings.printTemplates.kitchenCancel;
-  const fs = THERMAL_FONT_CLASSES[tpl.fontSize];
+  const fontSizePt = resolveThermalFontSizePt(tpl.fontSizePt);
   const resolvedTitle = tpl.title.trim() || PRINT_TEMPLATE_DEFAULTS.kitchenCancel.title;
   const resolvedReason = tpl.footerNote.trim() || PRINT_TEMPLATE_DEFAULTS.kitchenCancel.footerNote;
   const formattedTime = formatCancelSlipTime(printedAt);
@@ -76,39 +75,49 @@ export function KitchenCancelItemSlip({
           <div
             key={`${slip.station}-${slip.itemName}-${index}`}
             data-testid={`kitchen-cancel-slip-${slip.station}-${index}`}
-            data-font-size={tpl.fontSize}
-            className={cn(
-              'ticket-page break-words border-b border-dashed border-black bg-white px-4 font-mono text-black',
-              fs.body,
-            )}
-            style={{ breakAfter: 'page', pageBreakAfter: 'always' }}
+            data-font-size-pt={fontSizePt}
+            className="ticket-page break-words bg-white px-0 py-0 font-mono text-black"
+            style={getThermalSlipRootStyle(fontSizePt)}
           >
-            <div className="flex flex-col items-center border-b-2 border-black pb-2 text-center">
-              <StationLogo logoType={meta.logoType} className="mb-1 h-10 w-10" />
-              <div className={cn('font-bold uppercase', fs.item)}>{meta.title}</div>
+            <div className="flex flex-col items-center border-b-2 border-black pb-1 text-center">
+              <StationLogo logoType={meta.logoType} className="mb-0.5 h-9 w-9" />
               <div
-                className={cn(
-                  'mt-1 border-2 border-black bg-white px-2 py-0.5 font-extrabold uppercase text-black',
-                  fs.heading,
-                )}
+                data-print-kind="heading"
+                data-print-scale="1.2"
+                className="font-bold uppercase"
+                style={{ fontSize: '1.2em' }}
+              >
+                {meta.title}
+              </div>
+              <div
+                data-print-kind="banner"
+                className="mt-0.5 border-2 border-black bg-white px-1.5 py-0.5 font-extrabold uppercase text-black"
+                style={{ fontSize: '1.3em' }}
               >
                 {resolvedTitle}
               </div>
             </div>
 
-            <div className={cn('my-2 space-y-1', fs.body)}>
-              <div className="flex items-center justify-between gap-2 font-bold">
-                <span className={fs.item}>{tableUpper}</span>
-                {orderCode ? <span>Mã Đơn: {orderCode}</span> : null}
+            <div className="my-1 space-y-0.5">
+              <div
+                data-print-kind="pair"
+                data-print-bold
+                className="flex items-center justify-between gap-2 font-bold"
+              >
+                <span style={{ fontSize: '1.15em' }}>{tableUpper}</span>
+                {orderCode ? <span>Mã Đơn: {orderCode}</span> : <span />}
               </div>
-              {tpl.blocks.time ? <div>Thời gian báo huỷ: {formattedTime}</div> : null}
+              {tpl.blocks.time ? (
+                <div data-print-kind="text" data-print-scale="0.85" style={{ fontSize: '0.85em' }}>
+                  Thời gian báo huỷ: {formattedTime}
+                </div>
+              ) : null}
             </div>
 
             <div
-              className={cn(
-                'border-2 border-black p-2 text-center font-extrabold uppercase',
-                fs.item,
-              )}
+              data-print-kind="banner"
+              className="border-2 border-black p-1.5 text-center font-extrabold uppercase"
+              style={{ fontSize: '1.1em' }}
             >
               {`${tableUpper} - HUỶ ${qtyStr} ${slip.itemName.toUpperCase()}`}
             </div>
@@ -116,7 +125,11 @@ export function KitchenCancelItemSlip({
             {tpl.blocks.reason ? (
               <div
                 data-testid={`kitchen-cancel-reason-${slip.station}-${index}`}
-                className={cn('mt-1.5 text-center font-semibold', fs.sub)}
+                data-print-kind="text"
+                data-print-scale="0.85"
+                data-print-align="center"
+                className="mt-1 text-center font-semibold"
+                style={{ fontSize: '0.85em' }}
               >
                 {resolvedReason}
               </div>

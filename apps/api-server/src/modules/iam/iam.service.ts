@@ -55,6 +55,7 @@ import {
   type SupportedImageMime,
 } from '../../common/utils/image-binary.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { buildIyFallbackKeywords, queryMatchingIdsBySearchNorm } from '../../common/utils/search-normalize.util';
 import { type ClientMeta } from '../../common/security/client-info.util';
 import {
   assertActiveSessionMatches,
@@ -448,15 +449,30 @@ export class IamService {
       });
     }
     const { page, limit, keyword } = parsed.data;
-    const where: Prisma.UserWhereInput = keyword
-      ? {
+    let where: Prisma.UserWhereInput = {};
+    if (keyword) {
+      const [matchedUserIds, matchedEmpIds] = await Promise.all([
+        queryMatchingIdsBySearchNorm(this.prisma, 'users', ['username'], keyword),
+        queryMatchingIdsBySearchNorm(this.prisma, 'employees', ['full_name', 'short_name'], keyword),
+      ]);
+      if (matchedUserIds !== null || matchedEmpIds !== null) {
+        where = {
           OR: [
-            { username: { contains: keyword, mode: 'insensitive' } },
-            { employee: { is: { fullName: { contains: keyword, mode: 'insensitive' } } } },
-            { employee: { is: { shortName: { contains: keyword, mode: 'insensitive' } } } },
+            ...(matchedUserIds ? [{ id: { in: matchedUserIds } }] : []),
+            ...(matchedEmpIds ? [{ employeeId: { in: matchedEmpIds } }] : []),
           ],
-        }
-      : {};
+        };
+      } else {
+        const variants = buildIyFallbackKeywords(keyword);
+        where = {
+          OR: variants.flatMap((v) => [
+            { username: { contains: v, mode: 'insensitive' as const } },
+            { employee: { is: { fullName: { contains: v, mode: 'insensitive' as const } } } },
+            { employee: { is: { shortName: { contains: v, mode: 'insensitive' as const } } } },
+          ]),
+        };
+      }
+    }
     const users = await this.prisma.user.findMany({
       where,
       include: { employee: { include: { position: true, specialty: true } } },

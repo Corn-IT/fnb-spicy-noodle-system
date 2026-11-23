@@ -1,9 +1,12 @@
 export {
   buildCashDrawerKickPayload,
+  buildFeedLinesCommand,
+  buildLeftMarginCommand,
   concatUint8Arrays,
   encodeMonochromeRasterBands,
   encodeThermalContainerToEscPos,
   ESC_POS_COMMANDS,
+  ptToThermalDots,
   renderTicketPageToMonochrome,
   rgbaToMonochrome1Bit,
   uint8ArrayToBase64,
@@ -56,6 +59,13 @@ export {
   type ThermalPrintJob,
   type ThermalPrintProviderProps,
 } from './thermal-print-provider';
+export {
+  buildVietQrEmvPayload,
+  computeEmvCrc16,
+  generateVietQrDataUrl,
+  sanitizeVietQrMemo,
+  type VietQrEmvOptions,
+} from './vietqr-emv.util';
 export {
   buildVietQrFallbackSvgDataUrl,
   buildVietQrImageUrl,
