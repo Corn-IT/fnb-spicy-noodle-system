@@ -113,7 +113,7 @@ export function TableActionDialog({
                     setTargetTableId(null);
                   }}
                   className={cn(
-                    'flex items-center justify-center text-center rounded-lg border px-3 py-2 text-xs font-semibold transition active:scale-[0.98]',
+                    'flex items-center justify-center text-center rounded-lg border px-3 py-2 text-xs font-semibold transition active:scale-[0.98] touch-ui:min-h-12 touch-ui:text-sm',
                     action === item.type
                       ? 'border-primary bg-primary text-primary-foreground shadow-xs'
                       : 'border-border bg-card hover:bg-muted',
@@ -133,7 +133,7 @@ export function TableActionDialog({
                   Không có bàn đích phù hợp cho thao tác {action}.
                 </p>
               ) : (
-                <div className="grid max-h-40 grid-cols-3 sm:grid-cols-4 gap-2 overflow-y-auto">
+                <div className="grid max-h-40 grid-cols-3 sm:grid-cols-4 gap-2 overflow-y-auto overscroll-contain touch-ui:max-h-[min(16rem,40dvh)] touch-ui:sm:grid-cols-5">
                   {candidateTables.map((t) => (
                     <button
                       key={t.id}
@@ -141,7 +141,7 @@ export function TableActionDialog({
                       data-testid={`target-table-${t.id}`}
                       onClick={() => setTargetTableId(t.id)}
                       className={cn(
-                        'flex items-center justify-center text-center rounded-lg border p-2 text-xs font-bold transition active:scale-95',
+                        'flex items-center justify-center text-center rounded-lg border p-2 text-xs font-bold transition active:scale-95 touch-ui:min-h-12 touch-ui:text-base',
                         targetTableId === t.id
                           ? 'border-primary bg-primary text-primary-foreground shadow-xs'
                           : 'border-border bg-card hover:bg-muted',

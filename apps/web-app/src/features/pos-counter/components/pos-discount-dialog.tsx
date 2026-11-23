@@ -164,7 +164,7 @@ export function PosDiscountDialog({
               setActiveTab('codes');
             }}
             className={cn(
-              'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors',
+              'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors touch-ui:min-h-11 touch-ui:px-4 touch-ui:text-sm',
               activeTab === 'codes'
                 ? 'bg-primary text-primary-foreground'
                 : 'bg-muted text-muted-foreground hover:text-foreground',
@@ -183,7 +183,7 @@ export function PosDiscountDialog({
                 setActiveTab('manual');
               }}
               className={cn(
-                'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors',
+                'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors touch-ui:min-h-11 touch-ui:px-4 touch-ui:text-sm',
                 activeTab === 'manual'
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-muted-foreground hover:text-foreground',
@@ -303,7 +303,7 @@ export function PosDiscountDialog({
                 disabled={isSubmitting}
                 onClick={() => setManualValueType('FIXED')}
                 className={cn(
-                  'rounded-lg border px-3 py-2 text-xs font-bold transition-colors',
+                  'rounded-lg border px-3 py-2 text-xs font-bold transition-colors touch-ui:min-h-12 touch-ui:text-sm',
                   manualValueType === 'FIXED'
                     ? 'border-primary bg-primary/10 text-accent-text'
                     : 'border-border bg-background text-muted-foreground hover:bg-muted',
@@ -317,7 +317,7 @@ export function PosDiscountDialog({
                 disabled={isSubmitting}
                 onClick={() => setManualValueType('PERCENT')}
                 className={cn(
-                  'flex items-center justify-center gap-1 rounded-lg border px-3 py-2 text-xs font-bold transition-colors',
+                  'flex items-center justify-center gap-1 rounded-lg border px-3 py-2 text-xs font-bold transition-colors touch-ui:min-h-12 touch-ui:text-sm',
                   manualValueType === 'PERCENT'
                     ? 'border-primary bg-primary/10 text-accent-text'
                     : 'border-border bg-background text-muted-foreground hover:bg-muted',

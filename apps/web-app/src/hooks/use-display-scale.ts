@@ -8,6 +8,7 @@ import {
 import * as React from 'react';
 
 import { useStoreSettings } from '@/hooks/use-store-settings';
+import { POS_TOUCH_PATH } from '@/lib/pos-device-mode';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 
 export function isGuestQrPath(pathname: string): boolean {
@@ -39,6 +40,12 @@ export function resolveDisplayScalePercent(
 
   if (isGuestQrPath(pathname)) {
     return clampScalePercent(displayScale.qrOrderPercent);
+  }
+
+  // Màn POS cảm ứng đã được thiết kế cỡ lớn cho ngón tay: không kế thừa mức phóng to của `/pos`
+  // (thường được đặt 130–150% để dùng giao diện chuột trên máy cảm ứng) để tránh phóng to chồng 2 lần.
+  if (pathname === POS_TOUCH_PATH || pathname.startsWith(`${POS_TOUCH_PATH}/`)) {
+    return DEFAULT_DISPLAY_SCALE_PERCENT;
   }
 
   const matchedPath = ALLOWED_STORE_NAV_PATHS.find(

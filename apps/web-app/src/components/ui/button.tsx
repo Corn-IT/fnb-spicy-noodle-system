@@ -17,10 +17,11 @@ export const buttonVariants = cva(
         link: 'text-accent-text underline-offset-4 hover:underline',
       },
       size: {
-        default: 'h-9 px-3.5 text-sm',
-        sm: 'h-8 rounded-lg px-3 text-xs',
-        lg: 'h-10 rounded-lg px-5 text-sm',
-        icon: 'h-9 w-9 p-0',
+        // `touch-ui:` = màn POS cảm ứng: vùng chạm tối thiểu 44–48px, ghi đè cả h-7/h-8 truyền qua className.
+        default: 'h-9 px-3.5 text-sm touch-ui:min-h-12 touch-ui:px-4 touch-ui:text-base',
+        sm: 'h-8 rounded-lg px-3 text-xs touch-ui:min-h-11 touch-ui:px-3.5 touch-ui:text-sm',
+        lg: 'h-10 rounded-lg px-5 text-sm touch-ui:min-h-14 touch-ui:text-base',
+        icon: 'h-9 w-9 p-0 touch-ui:min-h-11 touch-ui:min-w-11',
       },
     },
     defaultVariants: {

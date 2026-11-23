@@ -60,7 +60,7 @@ export async function setupMockApi(page: Page, options: MockApiOptions = {}): Pr
       return json({ accessToken: 'mock-e2e-token', user: MOCK_SUPER_ADMIN });
     }
 
-    if (pathname.includes('/settings/messages')) {
+    if (pathname.includes('/settings/messages') || pathname.endsWith('/store-messages')) {
       return json({ messages: {}, updatedAt: '2026-11-23T06:00:00.000Z' });
     }
 

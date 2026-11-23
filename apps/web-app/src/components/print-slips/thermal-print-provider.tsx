@@ -106,6 +106,12 @@ export interface ThermalPrintProviderProps {
   children: React.ReactNode;
 }
 
+/** Bỏ job vừa in khỏi hàng đợi; giữ nguyên mảng khi hàng đợi đã trống để không render lại thừa. */
+function dequeuePrintJob(queue: ThermalPrintJob[], jobId: string): ThermalPrintJob[] {
+  if (queue.length === 0) return queue;
+  return queue.length > 1 ? queue.filter((item) => item.id !== jobId) : [];
+}
+
 export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
   const [printQueue, setPrintQueue] = React.useState<ThermalPrintJob[]>([]);
   const [lastJob, setLastJob] = React.useState<ThermalPrintJob | null>(null);
@@ -136,7 +142,7 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
           console.log('[ThermalPrint] Automation mode detected: simulated print for job', jobId);
         }
       }
-      setPrintQueue((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== jobId) : []));
+      setPrintQueue((prev) => dequeuePrintJob(prev, jobId));
       return;
     }
 
@@ -146,7 +152,7 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
         ? document.getElementById('thermal-print-container')
         : null);
 
-    setPrintQueue((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== jobId) : []));
+    setPrintQueue((prev) => dequeuePrintJob(prev, jobId));
 
     if (!containerEl) {
       return;
@@ -184,6 +190,16 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
       }
     })();
   }, []);
+
+  // Phiếu chờ ảnh (VietQR, logo) báo "sẵn sàng in" qua callback này. Callback phải ổn định và chỉ
+  // gắn cho job ĐANG chờ in: phiếu đã in vẫn được giữ trên màn (lastJob), nếu nó còn callback thì
+  // mỗi lần render lại sẽ tự in thêm một bản (vòng lặp in liên tục).
+  const activePrintJobIdRef = React.useRef<string | null>(null);
+  activePrintJobIdRef.current = activePrintJob?.id ?? null;
+  const handleSlipReadyToPrint = React.useCallback(() => {
+    const jobId = activePrintJobIdRef.current;
+    if (jobId) executeBrowserPrintAndDequeue(jobId);
+  }, [executeBrowserPrintAndDequeue]);
 
   const kickCashDrawerNow = React.useCallback(async (): Promise<PhysicalPrintDispatchResult | null> => {
     const printerConfig = useThermalPrinterConfigStore.getState().config;
@@ -331,7 +347,9 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
           <ProvisionalVietQrSlip
             key={currentRenderJob.id}
             bill={currentRenderJob.payload}
-            onReadyToPrint={() => executeBrowserPrintAndDequeue(currentRenderJob.id)}
+            onReadyToPrint={
+              activePrintJob?.id === currentRenderJob.id ? handleSlipReadyToPrint : undefined
+            }
           />
         ) : null}
 
@@ -344,8 +362,8 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
             key={currentRenderJob.id}
             {...currentRenderJob.payload}
             onReadyToPrint={
-              currentRenderJob.payload.logoUrl
-                ? () => executeBrowserPrintAndDequeue(currentRenderJob.id)
+              currentRenderJob.payload.logoUrl && activePrintJob?.id === currentRenderJob.id
+                ? handleSlipReadyToPrint
                 : undefined
             }
           />

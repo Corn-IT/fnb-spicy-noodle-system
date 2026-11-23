@@ -13,18 +13,11 @@ import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { persistAccountPreferences } from '@/lib/persist-account-preferences';
 import { evaluateOrderPendingAlert } from '@/lib/qr-pending-reminder';
-import {
-  getActiveQrReminderConfig,
-  isQrVoiceAlertEnabled,
-  setQrVoiceAlertEnabled,
-  subscribeQrVoiceAlertState,
-  unlockQrVoiceAudio,
-} from '@/lib/qr-voice-announcer';
+import { getActiveQrReminderConfig } from '@/lib/qr-voice-announcer';
 import { useAuthStore } from '@/stores/auth.store';
-import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { cn } from '@/utils/cn';
+import { useQrVoiceToggle } from '../hooks/use-qr-voice-toggle';
 import { QrSecurityConfigDialog } from './qr-security-config-dialog';
 import { TableManageDialog } from './table-manage-dialog';
 
@@ -60,14 +53,8 @@ export function TableGridPanel({
   const canManageQrSecurity = Boolean(user?.isSuperAdmin || user?.permissions.pos.qrSecurity);
   const [tableManageOpen, setTableManageOpen] = React.useState(false);
   const [qrSecurityOpen, setQrSecurityOpen] = React.useState(false);
-  const [voiceEnabled, setVoiceEnabled] = React.useState<boolean>(() => isQrVoiceAlertEnabled());
+  const { voiceEnabled, toggleVoice: handleToggleVoice } = useQrVoiceToggle();
   const [nowMs, setNowMs] = React.useState<number>(() => Date.now());
-
-  React.useEffect(() => {
-    return subscribeQrVoiceAlertState((enabled) => {
-      setVoiceEnabled(enabled);
-    });
-  }, []);
 
   const hasAnyPendingQr = React.useMemo(
     () =>
@@ -130,17 +117,6 @@ export function TableGridPanel({
   );
 
   const totalOverdueCount = overdueTableEntries.length + overdueTakeawayEntries.length;
-
-  const handleToggleVoice = () => {
-    const next = !voiceEnabled;
-    setVoiceEnabled(next);
-    setQrVoiceAlertEnabled(next);
-    useUiPreferencesStore.getState().setUserVoiceAlertEnabled(next);
-    void persistAccountPreferences({ voiceAlertEnabled: next });
-    if (next) {
-      void unlockQrVoiceAudio();
-    }
-  };
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-3 sm:gap-4 overflow-y-auto overscroll-contain touch-pan-y p-3 sm:p-4 pb-28 sm:pb-6">

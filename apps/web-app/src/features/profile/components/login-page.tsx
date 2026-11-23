@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { useLoginMutation } from '@/features/profile/api/auth.api';
+import { resolvePosHomePath } from '@/lib/pos-device-mode';
 import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings';
 import { ApiClientError } from '@/lib/api-client';
 import { resolveEffectiveTheme } from '@/providers/theme-provider';
@@ -100,7 +101,7 @@ export function LoginPage() {
       !pathname.startsWith('//') &&
       pathname !== '/login'
       ? `${pathname}${typeof search === 'string' ? search : ''}${typeof hash === 'string' ? hash : ''}`
-      : '/pos';
+      : resolvePosHomePath();
   }, [location.state]);
 
   // Nếu cùng trình duyệt đã có phiên đăng nhập sống và mở lại /login, tự điều hướng về POS để tránh tự đá chính mình.

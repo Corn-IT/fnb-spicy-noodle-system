@@ -1,4 +1,5 @@
 export { PosUnifiedPage } from './components/pos-unified-page';
+export { PosTouchPage } from './touch/pos-touch-page';
 export { TableGridPanel } from './components/table-grid-panel';
 export { PosMenuPanel } from './components/pos-menu-panel';
 export { LiveInvoicePanel } from './components/live-invoice-panel';
