@@ -144,16 +144,24 @@ export function PageSkeleton({
             <Skeleton key={idx} className="h-8 w-24 shrink-0 rounded-full" />
           ))}
         </div>
-        <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, idx) => (
-            <div key={idx} className="flex items-center gap-3 rounded-xl border bg-card p-3">
-              <Skeleton className="h-16 w-16 shrink-0 rounded-lg" />
-              <div className="min-w-0 flex-1 space-y-2">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-3 w-1/2" />
-                <Skeleton className="h-4 w-24" />
+        <div
+          data-testid="page-skeleton-qr-grid"
+          className="grid grid-cols-2 gap-2 sm:gap-2.5"
+        >
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <div
+              key={idx}
+              className="flex flex-col justify-between rounded-xl border bg-card p-2.5 sm:p-3"
+            >
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-16 rounded" />
+                <Skeleton className="h-4 w-4/5" />
+                <Skeleton className="h-3 w-2/3" />
               </div>
-              <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/40 pt-2">
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-7 w-12 rounded-full" />
+              </div>
             </div>
           ))}
         </div>
