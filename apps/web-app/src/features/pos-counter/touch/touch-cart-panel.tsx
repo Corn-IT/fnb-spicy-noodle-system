@@ -432,9 +432,9 @@ function LiveOrderCart({
               <span>Tạm tính</span>
               <span className="font-semibold tabular-nums">{formatMoney(subtotalAmount)}</span>
             </div>
-            <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-              <span className="truncate pr-2">Giảm giá ({discountLabel})</span>
-              <span className="font-bold tabular-nums">-{formatMoney(discountAmount)}</span>
+            <div className="flex items-start justify-between gap-2 text-emerald-700 dark:text-emerald-400">
+              <span className="leading-snug break-words">Giảm giá ({discountLabel})</span>
+              <span className="shrink-0 font-bold tabular-nums">-{formatMoney(discountAmount)}</span>
             </div>
           </div>
         ) : null}

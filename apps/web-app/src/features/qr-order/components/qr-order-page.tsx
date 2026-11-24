@@ -938,24 +938,24 @@ export function QrOrderPage() {
   return (
     <div
       data-qr-order-root="true"
-      className="mx-auto min-h-screen max-w-md bg-background pb-36 text-foreground"
+      className="mx-auto min-h-screen max-w-md md:max-w-2xl lg:max-w-3xl bg-background pb-36 text-foreground"
     >
-      <header className="sticky top-0 z-30 border-b bg-card/95 px-4 py-3 shadow-xs backdrop-blur-md">
-        <div className="flex items-center justify-between gap-2">
+      <header className="sticky top-0 z-30 border-b bg-card/95 px-3 sm:px-4 py-2.5 sm:py-3 shadow-xs backdrop-blur-md">
+        <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
             <StoreBrandLogo
               src={qrLogoUrl}
               storeName={qrStoreName}
               testId="qr-brand-logo"
-              className="h-10 w-10 rounded-xl shadow-xs"
+              className="h-10 w-10 shrink-0 rounded-xl shadow-xs"
               fallbackClassName="text-sm"
             />
             <div className="min-w-0">
-              <h1 className="text-base font-bold leading-tight truncate text-foreground">
+              <h1 className="text-sm sm:text-base font-bold leading-snug text-foreground break-words">
                 {qrStoreName}
               </h1>
               {qrSubtitle ? (
-                <p className="text-xs font-medium text-muted-foreground truncate">
+                <p className="text-xs font-medium leading-snug text-muted-foreground break-words">
                   {qrSubtitle}
                 </p>
               ) : null}
@@ -970,7 +970,7 @@ export function QrOrderPage() {
               onClick={toggleQrTheme}
               aria-label="Chuyển chế độ Sáng/Tối"
               title={effectiveQrTheme === 'dark' ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối'}
-              className="h-8 w-8 rounded-lg"
+              className="h-10 w-10 rounded-lg"
             >
               {effectiveQrTheme === 'dark' ? (
                 <Sun className="h-4 w-4 text-amber-400" />
@@ -1322,10 +1322,10 @@ export function QrOrderPage() {
 
         <div
           data-testid="qr-product-grid"
-          className="grid grid-cols-2 gap-2 sm:gap-2.5"
+          className="grid grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3"
         >
           {filteredProducts.length === 0 ? (
-            <div className="col-span-2 flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center text-muted-foreground">
+            <div className="col-span-2 md:col-span-3 flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center text-muted-foreground">
               <p className="text-sm font-semibold">Không tìm thấy món phù hợp</p>
               <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
                 {searchQuery ? (
@@ -1413,7 +1413,7 @@ export function QrOrderPage() {
                         event.stopPropagation();
                         handleProductClick(product);
                       }}
-                      className="h-7 sm:h-8 rounded-full bg-primary px-2.5 sm:px-3 text-[11px] sm:text-xs font-bold text-primary-foreground hover:bg-primary/90 shrink-0 touch-manipulation active:scale-95 shadow-xs"
+                      className="min-h-9 rounded-full bg-primary px-3 text-xs font-bold text-primary-foreground hover:bg-primary/90 shrink-0 touch-manipulation active:scale-95 shadow-xs"
                     >
                       <span>Chọn</span>
                     </Button>
@@ -1426,7 +1426,7 @@ export function QrOrderPage() {
 
       {/* Floating Bottom Action Bars (Món đã gọi & Giỏ hàng) */}
       {(activeOrder || cart.length > 0) ? (
-        <div className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md space-y-2 p-3 pb-safe">
+        <div className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md md:max-w-2xl lg:max-w-3xl space-y-2 p-3 pb-safe">
           {activeOrder ? (
             <div className="flex items-stretch gap-2">
               <button
@@ -1747,7 +1747,7 @@ export function QrOrderPage() {
               >
                 <div className="min-w-0 flex-1 pr-3">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <p className="font-semibold text-sm text-foreground truncate">{displayName}</p>
+                    <p className="font-semibold text-sm text-foreground leading-snug break-words">{displayName}</p>
                     {item.isUnavailable ? (
                       <Badge
                         variant="outline"
@@ -1767,12 +1767,12 @@ export function QrOrderPage() {
                     ) : null}
                   </div>
                   {remainingModifiers.length > 0 ? (
-                    <p className="text-xs text-muted-foreground line-clamp-1">
+                    <p className="text-xs text-muted-foreground leading-snug break-words">
                       {remainingModifiers.join(', ')}
                     </p>
                   ) : null}
                   {item.itemNote ? (
-                    <p className="text-xs italic text-amber-600 truncate">
+                    <p className="text-xs italic text-amber-600 leading-snug break-words">
                       Ghi chú: {item.itemNote}
                     </p>
                   ) : null}

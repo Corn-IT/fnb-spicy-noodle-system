@@ -325,7 +325,7 @@ export function MenuManagementPage() {
                 e.stopPropagation();
                 void handleToggleAvailability(item);
               }}
-              className="inline-flex items-center"
+              className="inline-flex min-h-10 lg:min-h-7 items-center py-1"
               title="Bấm để Ẩn / Hiện món ăn trên POS & QR"
             >
               <Badge variant={item.isAvailable ? 'success' : 'secondary'}>
@@ -699,7 +699,7 @@ export function MenuManagementPage() {
           <Button
             size="sm"
             variant={selectedCategoryId === 'ALL' ? 'secondary' : 'ghost'}
-            className="h-7 px-2.5 text-xs font-semibold"
+            className="min-h-10 lg:min-h-8 px-3 text-xs font-semibold"
             onClick={() => {
               setSelectedCategoryId('ALL');
               setPage(1);
@@ -715,7 +715,7 @@ export function MenuManagementPage() {
                 size="sm"
                 variant={selectedCategoryId === cat.id ? 'default' : 'ghost'}
                 data-testid={`menu-filter-category-${cat.id}`}
-                className="h-7 px-2.5 text-xs font-semibold"
+                className="min-h-10 lg:min-h-8 px-3 text-xs font-semibold"
                 onClick={() => {
                   setSelectedCategoryId(cat.id);
                   setPage(1);

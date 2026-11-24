@@ -287,11 +287,11 @@ export function DiscountsPage() {
             <div className="min-w-0 space-y-0.5">
               <div className="flex items-center gap-1.5 font-mono text-xs font-extrabold text-accent-text">
                 <Tag className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate" title={item.code}>
+                <span className="break-all" title={item.code}>
                   {item.code}
                 </span>
               </div>
-              <div className="truncate text-[11px] text-muted-foreground" title={item.name}>
+              <div className="text-[11px] leading-snug text-muted-foreground break-words" title={item.name}>
                 {item.name}
               </div>
             </div>
@@ -308,18 +308,18 @@ export function DiscountsPage() {
           const valueText = formatDiscountValueCell(item);
           return (
             <div className="min-w-0 space-y-0.5 text-xs">
-              <div className="truncate font-semibold text-foreground" title={valueText}>
+              <div className="font-semibold leading-snug text-foreground break-words" title={valueText}>
                 {valueText}
               </div>
               {item.minOrderAmount !== null ? (
                 <div
-                  className="truncate text-[11px] text-muted-foreground"
+                  className="text-[11px] leading-snug text-muted-foreground break-words"
                   title={`Đơn tối thiểu: ${item.minOrderAmount.toLocaleString('vi-VN')} đ`}
                 >
                   Đơn tối thiểu: {item.minOrderAmount.toLocaleString('vi-VN')} đ
                 </div>
               ) : (
-                <div className="truncate text-[11px] text-muted-foreground">Không yêu cầu đơn tối thiểu</div>
+                <div className="text-[11px] leading-snug text-muted-foreground">Không yêu cầu đơn tối thiểu</div>
               )}
             </div>
           );
@@ -342,7 +342,7 @@ export function DiscountsPage() {
               </Badge>
               {targetNames.length > 0 ? (
                 <div
-                  className="truncate text-[11px] text-muted-foreground"
+                  className="text-[11px] leading-snug text-muted-foreground break-words"
                   title={targetNames.join(', ')}
                 >
                   {targetNames.slice(0, 2).join(', ')}
@@ -369,15 +369,15 @@ export function DiscountsPage() {
             ? `Hạn: ${new Date(item.endsAt).toLocaleString('vi-VN')}`
             : 'Không giới hạn ngày';
           return (
-            <div className="min-w-0 space-y-0.5 text-[11px] text-muted-foreground">
-              <div className="truncate" title={expiryText}>
+            <div className="min-w-0 space-y-0.5 text-[11px] leading-snug text-muted-foreground">
+              <div className="break-words" title={expiryText}>
                 {expiryText}
               </div>
               {hours ? (
-                <div className="truncate font-medium text-foreground">Giờ: {hours}</div>
+                <div className="font-medium text-foreground">Giờ: {hours}</div>
               ) : null}
               {days ? (
-                <div className="truncate" title={`Thứ: ${days}`}>
+                <div className="break-words" title={`Thứ: ${days}`}>
                   Thứ: {days}
                 </div>
               ) : null}
@@ -397,7 +397,7 @@ export function DiscountsPage() {
               <div className="font-bold text-foreground">
                 {item.usedCount} / {item.usageLimit ?? '∞'}
               </div>
-              <div className="truncate text-[11px] text-muted-foreground">
+              <div className="text-[11px] text-muted-foreground">
                 {item.remainingCount !== null ? `Còn ${item.remainingCount}` : 'Không giới hạn'}
               </div>
             </div>

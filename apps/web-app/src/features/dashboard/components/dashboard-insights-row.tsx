@@ -104,8 +104,8 @@ export function DashboardInsightsRow({ data }: DashboardInsightsRowProps) {
             <div className="space-y-2.5" data-testid="dashboard-top-products">
               {filteredTopItems.map((item, idx) => (
                 <div key={item.productId} className="space-y-1">
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="truncate font-medium text-foreground">
+                  <div className="flex items-start justify-between gap-2 text-xs">
+                    <span className="font-medium leading-snug text-foreground break-words">
                       <span className="mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded bg-muted text-[10px] font-bold">
                         {idx + 1}
                       </span>
@@ -384,10 +384,10 @@ export function DashboardInsightsRow({ data }: DashboardInsightsRowProps) {
               {data.recentInventoryImports.map((imp) => (
                 <div key={imp.id} className="flex items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
                   <div className="min-w-0">
-                    <p className="truncate font-medium text-foreground">
+                    <p className="font-medium leading-snug text-foreground break-words">
                       {imp.itemName} ({imp.quantity} {imp.unitName})
                     </p>
-                    <p className="truncate text-[11px] text-muted-foreground">
+                    <p className="text-[11px] leading-snug text-muted-foreground break-words">
                       {imp.supplierName ?? 'NCC lẻ'} · {formatDashboardDateVi(imp.importDate)}
                     </p>
                   </div>
@@ -442,7 +442,7 @@ export function DashboardInsightsRow({ data }: DashboardInsightsRowProps) {
                         {inv.orderType === 'TAKEAWAY' ? `MV #${inv.takeawayNumber ?? '?'}` : inv.tableLabel ?? 'Bàn'}
                       </Badge>
                     </div>
-                    <p className="truncate text-[11px] text-muted-foreground">
+                    <p className="text-[11px] leading-snug text-muted-foreground break-words">
                       {formatDashboardTimeVi(inv.paidAt)} · {inv.orderSource}
                       {inv.paymentAccountLabel ? ` · ${inv.paymentAccountLabel}` : ''}
                     </p>
@@ -480,13 +480,13 @@ export function DashboardInsightsRow({ data }: DashboardInsightsRowProps) {
                       <Badge variant="secondary" className="px-1.5 py-0 text-[9px]">
                         {log.module}
                       </Badge>
-                      <span className="truncate font-semibold text-foreground">{log.action}</span>
+                      <span className="font-semibold leading-snug text-foreground break-words">{log.action}</span>
                     </div>
                     <span className="shrink-0 text-[10px] text-muted-foreground">
                       {formatDashboardTimeVi(log.createdAt)}
                     </span>
                   </div>
-                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground break-words">
                     {log.actorFullName} — {log.summary}
                     {log.ipAddress ? ` · IP ${log.ipAddress}` : ''}
                   </p>

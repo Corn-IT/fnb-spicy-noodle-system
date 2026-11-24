@@ -390,7 +390,7 @@ export function ProfilePage() {
             <button
               type="button"
               onClick={() => setShowExternalUrlInput((prev) => !prev)}
-              className="flex w-full items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              className="flex min-h-10 xl:min-h-8 w-full items-center justify-between py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               <span className="inline-flex items-center gap-1.5">
                 <Link2 className="h-3.5 w-3.5" />
@@ -576,9 +576,9 @@ export function ProfilePage() {
             <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
             <div className="min-w-0">
               <div className="text-muted-foreground">Thiết bị hiện tại</div>
-              <div className="flex items-center gap-1 font-semibold text-foreground truncate">
-                <Laptop className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">
+              <div className="flex items-start gap-1 font-semibold text-foreground">
+                <Laptop className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="leading-snug break-words">
                   {profile?.session?.deviceLabel ?? 'Trình duyệt hiện tại'}
                 </span>
               </div>

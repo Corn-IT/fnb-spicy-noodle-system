@@ -5,6 +5,7 @@ export interface LayoutViolation {
     | 'HORIZONTAL_OVERFLOW'
     | 'ELEMENT_OUT_OF_BOUNDS'
     | 'TEXT_CLIPPED'
+    | 'UNREADABLE_MOBILE_TRUNCATION'
     | 'TOUCH_TARGET_TOO_SMALL'
     | 'DIALOG_OUT_OF_VIEWPORT'
     | 'INTERACTIVE_OCCLUDED';
@@ -110,6 +111,21 @@ export async function auditPageLayout(
           });
         }
 
+        // Rule 3b: On touch viewports (no hover), flag buttons/tabs whose inner truncated text overflows
+        if (
+          checkTouch &&
+          (el.tagName === 'BUTTON' || el.getAttribute('role') === 'tab')
+        ) {
+          const truncatedChild = htmlEl.querySelector('.truncate') as HTMLElement | null;
+          if (truncatedChild && truncatedChild.scrollWidth > truncatedChild.clientWidth + tol) {
+            violations.push({
+              rule: 'UNREADABLE_MOBILE_TRUNCATION',
+              selector: describeEl(el),
+              detail: `truncated label "${(truncatedChild.textContent ?? '').trim()}" (${truncatedChild.scrollWidth}px > ${truncatedChild.clientWidth}px)`,
+            });
+          }
+        }
+
         // Rule 4: Touch target >= 40x40 on mobile/tablet (ignore tiny icon-only badges inside tables/chips if explicitly marked)
         if (
           checkTouch &&
@@ -171,14 +187,30 @@ export async function auditPageLayout(
 }
 
 export const RESPONSIVE_VIEWPORTS = [
+  { name: 'mobile-320', width: 320, height: 568, isTouch: true },
   { name: 'mobile-360', width: 360, height: 740, isTouch: true },
   { name: 'mobile-390', width: 390, height: 844, isTouch: true },
   { name: 'mobile-430', width: 430, height: 932, isTouch: true },
+  { name: 'mobile-landscape-667', width: 667, height: 375, isTouch: true },
   { name: 'tablet-768', width: 768, height: 1024, isTouch: true },
+  { name: 'tablet-820', width: 820, height: 1180, isTouch: true },
+  { name: 'pos-1024x600', width: 1024, height: 600, isTouch: true },
   { name: 'tablet-1024', width: 1024, height: 768, isTouch: true },
   { name: 'tablet-1180', width: 1180, height: 820, isTouch: true },
   { name: 'desktop-1366', width: 1366, height: 768, isTouch: false },
   { name: 'desktop-1920', width: 1920, height: 1080, isTouch: false },
+] as const;
+
+export const EXTENDED_RESPONSIVE_VIEWPORTS = [
+  ...RESPONSIVE_VIEWPORTS,
+  { name: 'fold-outer-344', width: 344, height: 882, isTouch: true },
+  { name: 'mobile-375', width: 375, height: 667, isTouch: true },
+  { name: 'mobile-412', width: 412, height: 915, isTouch: true },
+  { name: 'phablet-540', width: 540, height: 720, isTouch: true },
+  { name: 'tablet-small-600', width: 600, height: 960, isTouch: true },
+  { name: 'fold-open-717', width: 717, height: 512, isTouch: true },
+  { name: 'tablet-1280', width: 1280, height: 800, isTouch: true },
+  { name: 'tablet-pro-1366', width: 1366, height: 1024, isTouch: true },
 ] as const;
 
 export const DISPLAY_SCALE_LEVELS = [80, 100, 125, 150] as const;

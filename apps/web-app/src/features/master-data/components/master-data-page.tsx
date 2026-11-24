@@ -80,7 +80,7 @@ function renderMetadataSummary(category: MdmCategory, meta: Record<string, unkno
           </Badge>
         ) : null}
         {description ? (
-          <span className="text-xs text-muted-foreground truncate max-w-[160px]" title={description}>
+          <span className="text-xs leading-snug text-muted-foreground break-words" title={description}>
             {description}
           </span>
         ) : null}
@@ -113,7 +113,7 @@ function renderMetadataSummary(category: MdmCategory, meta: Record<string, unkno
           </span>
         ) : null}
         {description ? (
-          <span className="text-muted-foreground truncate max-w-[160px]" title={description}>
+          <span className="leading-snug text-muted-foreground break-words" title={description}>
             {description}
           </span>
         ) : null}
@@ -135,7 +135,7 @@ function renderMetadataSummary(category: MdmCategory, meta: Record<string, unkno
           <span className="text-[11px] font-medium text-muted-foreground">#{sortOrder}</span>
         ) : null}
         {description ? (
-          <span className="text-xs text-muted-foreground truncate max-w-[260px]" title={description}>
+          <span className="text-xs leading-snug text-muted-foreground break-words" title={description}>
             {description}
           </span>
         ) : null}
@@ -145,7 +145,7 @@ function renderMetadataSummary(category: MdmCategory, meta: Record<string, unkno
 
   return (
     <span
-      className="font-mono text-xs text-muted-foreground truncate block max-w-full"
+      className="font-mono text-xs leading-snug text-muted-foreground break-all block max-w-full"
       title={JSON.stringify(meta)}
     >
       {JSON.stringify(meta)}
@@ -544,14 +544,17 @@ export function MasterDataPage() {
       />
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <div className="w-full overflow-x-auto overscroll-contain touch-pan-x pb-1 -mb-1">
-          <TabsList data-testid="mdm-tab-list" className="inline-flex w-auto min-w-full sm:min-w-0 justify-start sm:justify-center">
+        <div
+          data-scroll-intended="true"
+          className="w-full overflow-x-auto overscroll-contain touch-pan-x pb-1 -mb-1"
+        >
+          <TabsList data-testid="mdm-tab-list" className="inline-flex h-auto w-auto min-w-full sm:min-w-0 justify-start sm:justify-center p-1">
             {TAB_CATEGORIES.map((tab) => (
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
                 data-testid={`mdm-tab-${tab.value}`}
-                className="shrink-0"
+                className="shrink-0 min-h-9 xl:min-h-8"
               >
                 {tab.label}
               </TabsTrigger>

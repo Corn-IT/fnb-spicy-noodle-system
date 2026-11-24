@@ -1,5 +1,5 @@
 import { StoreAssetKind } from '@fnb/shared';
-import { Loader2, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Loader2, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import * as React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 
@@ -44,6 +44,7 @@ interface SidebarRouteGroupsProps {
   collapsed?: boolean;
   onNavigate?: () => void;
   linkClassName?: string;
+  testIdPrefix?: string;
 }
 
 function SidebarRouteGroups({
@@ -55,6 +56,7 @@ function SidebarRouteGroups({
   collapsed = false,
   onNavigate,
   linkClassName,
+  testIdPrefix = 'sidebar',
 }: SidebarRouteGroupsProps) {
   const location = useLocation();
   const pendingRoutePath = usePendingRoutePath();
@@ -131,14 +133,14 @@ function SidebarRouteGroups({
     <div className="space-y-3">
       {standaloneRoutes.length > 0 ? (
         <div
-          data-testid="sidebar-standalone-routes"
+          data-testid={`${testIdPrefix}-standalone-routes`}
           className={cn('space-y-1', sections.length > 0 && 'border-b border-border/60 pb-2.5')}
         >
           {standaloneRoutes.map(renderNavLink)}
         </div>
       ) : null}
       {sections.map((section, sectionIndex) => (
-        <div key={section.key} data-testid={`sidebar-group-${section.key}`}>
+        <div key={section.key} data-testid={`${testIdPrefix}-group-${section.key}`}>
           {collapsed ? (
             sectionIndex > 0 ? <div className="mx-2 my-1.5 border-t border-border/60" /> : null
           ) : (
@@ -344,7 +346,70 @@ export function ResizableSidebar() {
   );
 }
 
-export function MobileSidebarNav({ onClose }: { onClose: () => void }) {
+export function TabletIconRail({ onOpenDrawer }: { onOpenDrawer: () => void }) {
+  const effectiveNavOrder = useEffectiveNavOrder();
+  const user = useAuthStore((state) => state.user);
+  const { settings } = useStoreSettings();
+  const logoUrl = buildStoreAssetUrl(StoreAssetKind.LOGO, settings.assets.logo);
+  const visibleMenuRoutes = React.useMemo(
+    () =>
+      APP_NAVIGATION_ROUTES.filter(
+        (route) => route.module && canUserAccessRoute(user, route),
+      ),
+    [user],
+  );
+
+  return (
+    <div
+      role="complementary"
+      data-testid="tablet-icon-rail"
+      className="hidden md:flex lg:hidden h-dvh w-16 shrink-0 select-none flex-col border-r bg-card text-card-foreground"
+    >
+      <div className="flex h-14 items-center justify-center border-b px-2">
+        <StoreBrandLogo
+          src={logoUrl}
+          storeName={settings.storeName}
+          className="h-9 w-9 rounded-lg"
+          fallbackClassName="text-xs"
+        />
+      </div>
+      <div className="px-2 pt-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          data-testid="tablet-rail-expand-btn"
+          className="h-10 w-full rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          onClick={onOpenDrawer}
+          title="Mở menu đầy đủ"
+          aria-label="Mở menu đầy đủ"
+        >
+          <PanelLeftOpen className="h-4 w-4" />
+        </Button>
+      </div>
+      <nav className="flex-1 overflow-y-auto p-2" aria-label="Điều hướng máy tính bảng">
+        <SidebarRouteGroups
+          routes={visibleMenuRoutes}
+          navLabels={settings.navLabels}
+          navGroupLabels={settings.navGroupLabels}
+          navGroupOrder={effectiveNavOrder.navGroupOrder}
+          navOrder={effectiveNavOrder.navOrder}
+          collapsed
+          linkClassName="min-h-10"
+          testIdPrefix="tablet-rail"
+        />
+      </nav>
+    </div>
+  );
+}
+
+export function MobileSidebarNav({
+  onClose,
+  onOpenCommandPalette,
+}: {
+  onClose: () => void;
+  onOpenCommandPalette?: () => void;
+}) {
   const effectiveNavOrder = useEffectiveNavOrder();
   const user = useAuthStore((state) => state.user);
   const { settings } = useStoreSettings();
@@ -359,22 +424,42 @@ export function MobileSidebarNav({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="flex h-full select-none flex-col bg-card text-card-foreground">
-      <div className="flex h-14 items-center justify-between border-b px-4">
+      <div className="flex min-h-14 items-center justify-between border-b px-4 py-2.5 pr-12">
         <div className="flex items-center gap-2.5 min-w-0">
           <StoreBrandLogo
             src={logoUrl}
             storeName={settings.storeName}
-            className="h-9 w-9 rounded-lg"
+            className="h-9 w-9 shrink-0 rounded-lg"
             fallbackClassName="text-xs"
           />
-          <div className="flex flex-col truncate">
-            <span className="truncate text-sm font-bold tracking-tight">{settings.storeName}</span>
+          <div className="flex min-w-0 flex-col">
+            <span className="text-sm font-bold leading-snug tracking-tight break-words">
+              {settings.storeName}
+            </span>
             {settings.subtitle ? (
-              <span className="truncate text-[11px] text-muted-foreground">{settings.subtitle}</span>
+              <span className="text-[11px] leading-snug text-muted-foreground break-words">
+                {settings.subtitle}
+              </span>
             ) : null}
           </div>
         </div>
       </div>
+      {onOpenCommandPalette ? (
+        <div className="border-b px-3 py-2.5">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 w-full justify-start gap-2 text-xs font-medium text-muted-foreground"
+            onClick={() => {
+              onClose();
+              onOpenCommandPalette();
+            }}
+          >
+            <Search className="h-4 w-4 shrink-0" />
+            <span>Tìm nhanh màn hình...</span>
+          </Button>
+        </div>
+      ) : null}
       <nav className="flex-1 overflow-y-auto p-3" aria-label="Điều hướng di động">
         <SidebarRouteGroups
           routes={visibleMenuRoutes}
@@ -383,7 +468,8 @@ export function MobileSidebarNav({ onClose }: { onClose: () => void }) {
           navGroupOrder={effectiveNavOrder.navGroupOrder}
           navOrder={effectiveNavOrder.navOrder}
           onNavigate={onClose}
-          linkClassName="px-3.5 py-3"
+          linkClassName="px-3.5 py-3 min-h-11"
+          testIdPrefix="mobile-sidebar"
         />
       </nav>
     </div>

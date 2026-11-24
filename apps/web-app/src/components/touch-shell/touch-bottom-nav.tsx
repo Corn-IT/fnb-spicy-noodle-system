@@ -69,7 +69,7 @@ export function TouchBottomNav() {
     <nav
       aria-label="Điều hướng POS cảm ứng"
       data-testid="touch-bottom-nav"
-      className="grid h-16 shrink-0 border-t bg-card px-2 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]"
+      className="grid min-h-16 shrink-0 border-t bg-card px-2 pb-[env(safe-area-inset-bottom)] shadow-[0_-2px_10px_rgba(0,0,0,0.05)]"
       style={{ gridTemplateColumns: `repeat(${Math.max(1, items.length)}, minmax(0, 1fr))` }}
     >
       {items.map((item) => {
