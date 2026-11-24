@@ -120,7 +120,7 @@ export function TouchTableBoard({
 
     return (
       <TouchBoardCard
-        key={order.orderId}
+        key={`takeaway-${order.orderId}`}
         testId={`touch-takeaway-card-${order.orderId}`}
         title={
           order.takeawayNumber
@@ -163,7 +163,7 @@ export function TouchTableBoard({
 
     return (
       <TouchBoardCard
-        key={table.id}
+        key={`table-${table.id}`}
         testId={`touch-table-card-${table.id}`}
         title={table.name}
         tone={

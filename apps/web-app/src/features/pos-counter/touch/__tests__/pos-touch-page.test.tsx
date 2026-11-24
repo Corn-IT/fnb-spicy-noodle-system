@@ -567,6 +567,27 @@ describe('POS cảm ứng (/pos/touch)', () => {
     expect(screen.queryByTestId('touch-only-occupied')).not.toBeInTheDocument();
   });
 
+  it('does not duplicate a takeaway while switching tabs when its id matches a table id', async () => {
+    mockGetApi({
+      ...grid,
+      takeaways: [{ ...takeaway01, orderId: 7, takeawayNumber: 7 }],
+    });
+    renderTouchPage();
+
+    const allTab = await screen.findByTestId('touch-tab-all');
+    const tablesTab = screen.getByTestId('touch-tab-tables');
+    const takeawayTab = screen.getByTestId('touch-tab-takeaway');
+    const board = screen.getByTestId('touch-table-grid');
+
+    for (let index = 0; index < 3; index += 1) {
+      fireEvent.click(tablesTab);
+      fireEvent.click(takeawayTab);
+      expect(within(board).getAllByTestId('touch-takeaway-card-7')).toHaveLength(1);
+      fireEvent.click(allTab);
+      expect(within(board).getAllByTestId('touch-takeaway-card-7')).toHaveLength(1);
+    }
+  });
+
   it('keeps takeaway tiles visible when the All tab filters out empty tables', async () => {
     mockGetApi(boardGridWithTakeaways);
     renderTouchPage();
