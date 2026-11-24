@@ -1,5 +1,5 @@
 import type { PosOrderSummary, PosTableGridResponse } from '@fnb/shared';
-import { BellRing, Clock3, Plus, ShoppingBag, Utensils } from 'lucide-react';
+import { BellRing, Clock3, Plus, ShoppingBag } from 'lucide-react';
 import * as React from 'react';
 
 import {
@@ -13,7 +13,10 @@ import { type ColumnChoice, useGridColumns } from './touch-layout';
 
 type PosTable = PosTableGridResponse['tables'][number];
 
+export type TouchBoardTab = 'all' | 'tables' | 'takeaway';
+
 export interface TouchTableBoardProps {
+  tab: TouchBoardTab;
   /** Số thẻ mỗi hàng ('auto' = theo bề ngang màn hình). */
   columns?: ColumnChoice;
   tables: PosTable[];
@@ -29,7 +32,16 @@ export interface TouchTableBoardProps {
 
 const formatMoney = (amount: number) => `${amount.toLocaleString('vi-VN')}`;
 
-export const TAKEAWAY_SECTION_ID = 'touch-takeaway-section';
+export function sortTakeawaysForBoard(takeaways: PosOrderSummary[]): PosOrderSummary[] {
+  return [...takeaways].sort((left, right) => {
+    if (left.takeawayNumber === null && right.takeawayNumber === null) {
+      return Date.parse(left.createdAt) - Date.parse(right.createdAt);
+    }
+    if (left.takeawayNumber === null) return 1;
+    if (right.takeawayNumber === null) return -1;
+    return left.takeawayNumber - right.takeawayNumber;
+  });
+}
 
 export function resolveTakeawayLabel(order: PosOrderSummary): string {
   return order.tableLabel ?? `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`;
@@ -53,8 +65,9 @@ function resolveAlertBadge(
 /** Lưới thẻ dùng chung cho Phòng bàn và Mang về. Số cột tính theo bố cục đã chọn. */
 const BOARD_GRID_CLASS = 'grid gap-3';
 
-/** Sơ đồ bàn cảm ứng: Phòng bàn ở trên, Mang về ngay bên dưới trên cùng một màn. */
+/** Sơ đồ bàn cảm ứng: hiển thị một lưới theo tab đang chọn. */
 export function TouchTableBoard({
+  tab,
   columns = 'auto',
   tables,
   takeaways,
@@ -73,177 +86,153 @@ export function TouchTableBoard({
     () => (onlyOccupied ? tables.filter((table) => table.status !== 'AVAILABLE') : tables),
     [tables, onlyOccupied],
   );
+  const sortedTakeaways = React.useMemo(() => sortTakeawaysForBoard(takeaways), [takeaways]);
 
-  const takeawaySection = (
-    <section
-      id={TAKEAWAY_SECTION_ID}
-      data-testid="touch-takeaway-board"
-      aria-labelledby="touch-takeaway-heading"
-      className="scroll-mt-2 space-y-3"
-    >
-      <SectionHeading
-        id="touch-takeaway-heading"
-        icon={<ShoppingBag className="h-5 w-5" />}
-        title="Mang về"
-        detail={`${takeaways.length} đơn đang phục vụ`}
+  const renderNewTakeawayTile = () =>
+    canCreateOrder ? (
+      <button
+        key="new-takeaway"
+        type="button"
+        data-testid="touch-new-takeaway"
+        onClick={onStartNewTakeaway}
+        className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary/60 bg-primary/5 p-3 text-accent-text transition-transform active:scale-[0.97]"
+      >
+        <Plus className="h-10 w-10" />
+        <span className="text-lg font-bold">Đơn mang về mới</span>
+      </button>
+    ) : null;
+
+  const renderTakeawayCard = (order: PosOrderSummary) => {
+    const alert = evaluateOrderPendingAlert(
+      order,
+      order.status === 'PENDING' ? 'PENDING' : 'OCCUPIED',
+      nowMs,
+      reminderConfig,
+    );
+    const addonBatch = addonBadgesByOrderId[order.orderId] ?? order.unprintedAddonBatchNo;
+    const hasAddon = addonBatch !== undefined && addonBatch !== null && addonBatch >= 2;
+    const badge = resolveAlertBadge(
+      alert,
+      hasAddon,
+      order.status === 'PENDING',
+      reminderConfig.reminderDelayMinutes,
+    );
+
+    return (
+      <TouchBoardCard
+        key={order.orderId}
+        testId={`touch-takeaway-card-${order.orderId}`}
+        title={
+          order.takeawayNumber
+            ? `#${String(order.takeawayNumber).padStart(2, '0')}`
+            : resolveTakeawayLabel(order)
+        }
+        eyebrow={
+          <>
+            <ShoppingBag className="h-3.5 w-3.5" />
+            Mang về
+          </>
+        }
+        tone={order.status === 'PENDING' ? 'pending' : 'occupied'}
+        isOverdue={alert.isOverdue}
+        badge={badge}
+        elapsed={formatElapsedSince(order.createdAt, nowMs)}
+        amount={formatMoney(order.totalAmount)}
+        onSelect={() => onSelectTakeaway(order)}
       />
-      <div className={BOARD_GRID_CLASS} style={grid.style}>
-        {canCreateOrder ? (
-          <button
-            type="button"
-            data-testid="touch-new-takeaway"
-            onClick={onStartNewTakeaway}
-            className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary/60 bg-primary/5 p-3 text-accent-text transition-transform active:scale-[0.97]"
-          >
-            <Plus className="h-10 w-10" />
-            <span className="text-lg font-bold">Đơn mang về mới</span>
-          </button>
-        ) : null}
-        {takeaways.map((order) => {
-          const alert = evaluateOrderPendingAlert(
-            order,
-            order.status === 'PENDING' ? 'PENDING' : 'OCCUPIED',
-            nowMs,
-            reminderConfig,
-          );
-          const addonBatch = addonBadgesByOrderId[order.orderId] ?? order.unprintedAddonBatchNo;
-          const hasAddon = addonBatch !== undefined && addonBatch !== null && addonBatch >= 2;
-          const badge = resolveAlertBadge(
+    );
+  };
+
+  const renderTableCard = (table: PosTable) => {
+    const order = table.activeOrder;
+    const alert = evaluateOrderPendingAlert(order, table.status, nowMs, reminderConfig);
+    const addonBatch =
+      (table.activeOrderId !== null ? addonBadgesByOrderId[table.activeOrderId] : undefined) ??
+      order?.unprintedAddonBatchNo ??
+      undefined;
+    const hasAddon = table.status === 'OCCUPIED' && addonBatch !== undefined && addonBatch >= 2;
+    const badge =
+      table.status === 'AVAILABLE'
+        ? null
+        : resolveAlertBadge(
             alert,
             hasAddon,
-            order.status === 'PENDING',
+            table.status === 'PENDING',
             reminderConfig.reminderDelayMinutes,
           );
-          return (
-            <TouchBoardCard
-              key={order.orderId}
-              testId={`touch-takeaway-card-${order.orderId}`}
-              title={
-                order.takeawayNumber
-                  ? `#${String(order.takeawayNumber).padStart(2, '0')}`
-                  : resolveTakeawayLabel(order)
-              }
-              eyebrow={
-                <>
-                  <ShoppingBag className="h-3.5 w-3.5" />
-                  Mang về
-                </>
-              }
-              tone={order.status === 'PENDING' ? 'pending' : 'occupied'}
-              isOverdue={alert.isOverdue}
-              badge={badge}
-              elapsed={formatElapsedSince(order.createdAt, nowMs)}
-              amount={formatMoney(order.totalAmount)}
-              onSelect={() => onSelectTakeaway(order)}
-            />
-          );
-        })}
-      </div>
-      {takeaways.length === 0 && !canCreateOrder ? (
-        <p className="py-6 text-center text-base font-semibold text-muted-foreground">
-          Chưa có đơn mang về nào đang phục vụ
+
+    return (
+      <TouchBoardCard
+        key={table.id}
+        testId={`touch-table-card-${table.id}`}
+        title={table.name}
+        tone={
+          table.status === 'AVAILABLE'
+            ? 'available'
+            : table.status === 'PENDING'
+              ? 'pending'
+              : 'occupied'
+        }
+        isOverdue={alert.isOverdue}
+        badge={badge}
+        elapsed={order ? formatElapsedSince(order.createdAt, nowMs) : null}
+        amount={order ? formatMoney(order.totalAmount) : null}
+        onSelect={() => onSelectTable(table)}
+      />
+    );
+  };
+
+  const boardCards =
+    tab === 'tables'
+      ? visibleTables.map(renderTableCard)
+      : tab === 'takeaway'
+        ? [renderNewTakeawayTile(), ...sortedTakeaways.map(renderTakeawayCard)]
+        : [
+            renderNewTakeawayTile(),
+            ...sortedTakeaways.map(renderTakeawayCard),
+            ...visibleTables.map(renderTableCard),
+          ];
+
+  const emptyMessage =
+    tab === 'tables' && visibleTables.length === 0
+      ? onlyOccupied
+        ? 'Chưa có bàn nào đang có hoá đơn'
+        : 'Chưa cấu hình bàn nào'
+      : tab === 'takeaway' && sortedTakeaways.length === 0 && !canCreateOrder
+        ? 'Chưa có đơn mang về nào đang phục vụ'
+        : tab === 'all' && visibleTables.length === 0 && sortedTakeaways.length === 0
+          ? onlyOccupied
+            ? 'Chưa có bàn nào đang có hoá đơn'
+            : tables.length === 0
+              ? 'Chưa cấu hình bàn nào'
+              : null
+          : null;
+
+  return (
+    <div
+      id="touch-table-board"
+      data-testid="touch-table-board"
+      data-tab={tab}
+      className="space-y-3 p-4"
+    >
+      {grid.clamped ? (
+        <p data-testid="touch-board-columns-clamped" className="text-xs font-medium text-muted-foreground">
+          Màn hình hẹp: tự giảm còn {grid.columns} thẻ mỗi hàng để dễ chạm.
         </p>
       ) : null}
-    </section>
-  );
-
-  return (
-    <div className="space-y-6 p-4">
-      <section
-        data-testid="touch-table-board"
-        aria-labelledby="touch-tables-heading"
-        className="space-y-3"
+      <div
+        ref={grid.ref}
+        data-testid="touch-table-grid"
+        data-columns={grid.columns}
+        className={BOARD_GRID_CLASS}
+        style={grid.style}
       >
-        <SectionHeading
-          id="touch-tables-heading"
-          icon={<Utensils className="h-5 w-5" />}
-          title="Phòng bàn"
-          detail={onlyOccupied ? 'Đang lọc bàn có hoá đơn' : undefined}
-        />
-        {grid.clamped ? (
-          <p data-testid="touch-board-columns-clamped" className="text-xs font-medium text-muted-foreground">
-            Màn hình hẹp: tự giảm còn {grid.columns} thẻ mỗi hàng để dễ chạm.
-          </p>
-        ) : null}
-        <div
-          ref={grid.ref}
-          data-testid="touch-table-grid"
-          data-columns={grid.columns}
-          className={BOARD_GRID_CLASS}
-          style={grid.style}
-        >
-          {visibleTables.map((table) => {
-            const order = table.activeOrder;
-            const alert = evaluateOrderPendingAlert(order, table.status, nowMs, reminderConfig);
-            const addonBatch =
-              (table.activeOrderId !== null
-                ? addonBadgesByOrderId[table.activeOrderId]
-                : undefined) ??
-              order?.unprintedAddonBatchNo ??
-              undefined;
-            const hasAddon =
-              table.status === 'OCCUPIED' && addonBatch !== undefined && addonBatch >= 2;
-            const badge =
-              table.status === 'AVAILABLE'
-                ? null
-                : resolveAlertBadge(
-                    alert,
-                    hasAddon,
-                    table.status === 'PENDING',
-                    reminderConfig.reminderDelayMinutes,
-                  );
-            return (
-              <TouchBoardCard
-                key={table.id}
-                testId={`touch-table-card-${table.id}`}
-                title={table.name}
-                tone={
-                  table.status === 'AVAILABLE'
-                    ? 'available'
-                    : table.status === 'PENDING'
-                      ? 'pending'
-                      : 'occupied'
-                }
-                isOverdue={alert.isOverdue}
-                badge={badge}
-                elapsed={order ? formatElapsedSince(order.createdAt, nowMs) : null}
-                amount={order ? formatMoney(order.totalAmount) : null}
-                onSelect={() => onSelectTable(table)}
-              />
-            );
-          })}
-        </div>
-        {visibleTables.length === 0 ? (
-          <p className="py-6 text-center text-base font-semibold text-muted-foreground">
-            {onlyOccupied ? 'Chưa có bàn nào đang có hoá đơn' : 'Chưa cấu hình bàn nào'}
-          </p>
-        ) : null}
-      </section>
-
-      {takeawaySection}
-    </div>
-  );
-}
-
-function SectionHeading({
-  id,
-  icon,
-  title,
-  detail,
-}: {
-  id: string;
-  icon: React.ReactNode;
-  title: string;
-  detail?: string;
-}) {
-  return (
-    <div className="flex items-center gap-2 border-b pb-2">
-      <span className="text-muted-foreground">{icon}</span>
-      <h2 id={id} className="text-lg font-extrabold uppercase tracking-wide">
-        {title}
-      </h2>
-      {detail ? (
-        <span className="text-sm font-semibold text-muted-foreground">· {detail}</span>
+        {boardCards}
+      </div>
+      {emptyMessage ? (
+        <p className="py-6 text-center text-base font-semibold text-muted-foreground">
+          {emptyMessage}
+        </p>
       ) : null}
     </div>
   );
