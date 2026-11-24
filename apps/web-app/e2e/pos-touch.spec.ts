@@ -138,7 +138,7 @@ test.describe('POS cảm ứng — điện thoại', () => {
 test.describe('POS cảm ứng — đơn mang về', () => {
   test.use({ viewport: { width: 1366, height: 768 }, hasTouch: true });
 
-  test('creates a TAKEAWAY order with tableId null from the header action', async ({ page }) => {
+  test('creates a TAKEAWAY order with tableId null from the All tab tile', async ({ page }) => {
     await setupMockApi(page);
     let createdBody: unknown = null;
     await page.route('**/api/v1/pos/orders', async (route) => {
@@ -161,7 +161,7 @@ test.describe('POS cảm ứng — đơn mang về', () => {
     });
 
     await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
-    await page.getByTestId('touch-header-new-takeaway').tap();
+    await page.getByTestId('touch-new-takeaway').tap();
     await expect(page.getByTestId('touch-order-title')).toContainText('Mang về');
 
     const plainProduct = page

@@ -5,7 +5,6 @@ import {
   LayoutGrid,
   LogOut,
   MonitorSmartphone,
-  Plus,
   RefreshCw,
   Shrink,
   ShoppingBag,
@@ -361,18 +360,6 @@ export function PosTouchPage() {
                 <span className="hidden min-[1100px]:inline">Bàn có hoá đơn</span>
                 <span className="min-[1100px]:hidden">Có HĐ</span>
               </button>
-            ) : null}
-            {workspace.permissions.canCreateOrder ? (
-              <Button
-                type="button"
-                data-testid="touch-header-new-takeaway"
-                onClick={workspace.actions.startNewTakeaway}
-                className="h-12 shrink-0 gap-1.5 px-3 text-sm font-bold"
-              >
-                <Plus className="h-5 w-5" />
-                <span className="hidden min-[1100px]:inline">Mang về mới</span>
-                <span className="min-[1100px]:hidden">Mới</span>
-              </Button>
             ) : null}
             <Button
               type="button"

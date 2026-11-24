@@ -689,11 +689,11 @@ describe('POS cảm ứng (/pos/touch)', () => {
     expect(await screen.findByText('Chưa có đơn mang về nào đang phục vụ')).toBeInTheDocument();
   });
 
-  it('starts a new takeaway from the header', async () => {
+  it('starts a new takeaway from the All tab tile', async () => {
     mockGetApi();
     renderTouchPage();
 
-    fireEvent.click(screen.getByTestId('touch-header-new-takeaway'));
+    fireEvent.click(await screen.findByTestId('touch-new-takeaway'));
     expect(await screen.findByTestId('touch-order-title')).toHaveTextContent('Mang về');
   });
 
