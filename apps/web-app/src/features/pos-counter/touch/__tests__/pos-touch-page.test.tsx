@@ -103,6 +103,35 @@ const grid: PosTableGridResponse = {
   takeaways: [],
 };
 
+const takeaway02: PosTableGridResponse['takeaways'][number] = {
+  orderId: 802,
+  orderCode: 'HD-20261124-0802',
+  orderType: 'TAKEAWAY',
+  tableId: null,
+  tableLabel: null,
+  takeawayNumber: 2,
+  status: 'SERVING',
+  totalAmount: 30000,
+  createdAt: minutesAgo(20),
+};
+
+const takeaway01: PosTableGridResponse['takeaways'][number] = {
+  orderId: 801,
+  orderCode: 'HD-20261124-0801',
+  orderType: 'TAKEAWAY',
+  tableId: null,
+  tableLabel: null,
+  takeawayNumber: 1,
+  status: 'SERVING',
+  totalAmount: 45000,
+  createdAt: minutesAgo(10),
+};
+
+const boardGridWithTakeaways: PosTableGridResponse = {
+  ...grid,
+  takeaways: [takeaway02, takeaway01],
+};
+
 const servingOrder: OrderDetailResponse = {
   orderId: 700,
   orderCode: 'HD-20261123-0020',
@@ -148,9 +177,9 @@ const servingOrder: OrderDetailResponse = {
   ],
 };
 
-function mockGetApi() {
+function mockGetApi(tableGrid: PosTableGridResponse = grid) {
   return vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/api/v1/pos/tables') return grid;
+    if (url === '/api/v1/pos/tables') return tableGrid;
     if (url === '/api/v1/menu/products') return products;
     if (url === '/api/v1/pos/orders/700') return servingOrder;
     return [];
@@ -442,44 +471,229 @@ describe('POS cảm ứng (/pos/touch)', () => {
     expect(toastTexts()).not.toContain('máy khác');
   });
 
-  it('shows takeaway orders on the same screen below the tables and starts one from the header', async () => {
+  it('selects the All tab and shows a board for the default tab', async () => {
+    mockGetApi();
+    renderTouchPage();
+
+    await screen.findByTestId('touch-table-card-1');
+    expect(screen.getByTestId('touch-tab-all')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'all');
+  });
+
+  it('shows the new takeaway tile, numbered takeaways and then tables in one All grid', async () => {
+    mockGetApi(boardGridWithTakeaways);
+    renderTouchPage();
+
+    const takeawayCard01 = await screen.findByTestId('touch-takeaway-card-801');
+    expect(takeawayCard01).toHaveTextContent('Mang về');
+    expect(takeawayCard01).toHaveTextContent('#01');
+    expect(screen.getByTestId('touch-takeaway-card-802')).toHaveTextContent('#02');
+    expect(screen.getByTestId('touch-table-card-7')).toBeInTheDocument();
+    expect(Array.from(screen.getByTestId('touch-table-grid').children).map((child) => child.getAttribute('data-testid'))).toEqual([
+      'touch-new-takeaway',
+      'touch-takeaway-card-801',
+      'touch-takeaway-card-802',
+      'touch-table-card-1',
+      'touch-table-card-7',
+    ]);
+  });
+
+  it('omits the new takeaway tile without create permission and starts with the first takeaway', async () => {
+    mockGetApi(boardGridWithTakeaways);
+    const user = useAuthStore.getState().user!;
+    useAuthStore.getState().setAuth({
+      accessToken: 'cashier-jwt-token',
+      user: {
+        ...user,
+        permissions: UserPermissionsSchema.parse({ pos: { view: true, create: false } }),
+      },
+    });
+    renderTouchPage();
+
+    await screen.findByTestId('touch-takeaway-card-801');
+    expect(screen.queryByTestId('touch-new-takeaway')).not.toBeInTheDocument();
+    expect(screen.getByTestId('touch-table-grid').firstElementChild).toHaveAttribute(
+      'data-testid',
+      'touch-takeaway-card-801',
+    );
+  });
+
+  it('starts with the first table when there are no takeaways and no create permission', async () => {
+    mockGetApi({ ...grid, takeaways: [] });
+    const user = useAuthStore.getState().user!;
+    useAuthStore.getState().setAuth({
+      accessToken: 'cashier-jwt-token',
+      user: {
+        ...user,
+        permissions: UserPermissionsSchema.parse({ pos: { view: true, create: false } }),
+      },
+    });
+    renderTouchPage();
+
+    await screen.findByTestId('touch-table-card-1');
+    expect(screen.queryByTestId('touch-new-takeaway')).not.toBeInTheDocument();
+    expect(screen.getByTestId('touch-table-grid').firstElementChild).toHaveAttribute(
+      'data-testid',
+      'touch-table-card-1',
+    );
+  });
+
+  it('shows only table cards in the Tables tab', async () => {
+    mockGetApi(boardGridWithTakeaways);
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-tab-tables'));
+
+    expect(screen.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'tables');
+    expect(screen.queryByTestId('touch-new-takeaway')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('touch-takeaway-card-801')).not.toBeInTheDocument();
+    expect(Array.from(screen.getByTestId('touch-table-grid').children).map((child) => child.getAttribute('data-testid'))).toEqual([
+      'touch-table-card-1',
+      'touch-table-card-7',
+    ]);
+  });
+
+  it('shows only takeaways in the Takeaway tab and hides the table filter', async () => {
+    mockGetApi(boardGridWithTakeaways);
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-tab-takeaway'));
+
+    expect(screen.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'takeaway');
+    expect(screen.queryByTestId('touch-table-card-1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('touch-new-takeaway')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-takeaway-card-801')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-tab-takeaway')).toHaveTextContent('Mang về (2)');
+    expect(screen.queryByTestId('touch-only-occupied')).not.toBeInTheDocument();
+  });
+
+  it('does not duplicate a takeaway while switching tabs when its id matches a table id', async () => {
+    mockGetApi({
+      ...grid,
+      takeaways: [{ ...takeaway01, orderId: 7, takeawayNumber: 7 }],
+    });
+    renderTouchPage();
+
+    const allTab = await screen.findByTestId('touch-tab-all');
+    const tablesTab = screen.getByTestId('touch-tab-tables');
+    const takeawayTab = screen.getByTestId('touch-tab-takeaway');
+    const board = screen.getByTestId('touch-table-grid');
+
+    for (let index = 0; index < 3; index += 1) {
+      fireEvent.click(tablesTab);
+      fireEvent.click(takeawayTab);
+      expect(within(board).getAllByTestId('touch-takeaway-card-7')).toHaveLength(1);
+      fireEvent.click(allTab);
+      expect(within(board).getAllByTestId('touch-takeaway-card-7')).toHaveLength(1);
+    }
+  });
+
+  it('keeps takeaway tiles visible when the All tab filters out empty tables', async () => {
+    mockGetApi(boardGridWithTakeaways);
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-only-occupied'));
+
+    expect(screen.queryByTestId('touch-table-card-1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('touch-new-takeaway')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-takeaway-card-801')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-table-card-7')).toBeInTheDocument();
+  });
+
+  it('keeps takeaway tiles and shows the existing empty-table message when no tables have orders', async () => {
+    const emptyTableGrid: PosTableGridResponse = {
+      tables: grid.tables.map((table) => ({
+        ...table,
+        status: 'AVAILABLE',
+        activeOrderId: null,
+        activeOrder: null,
+      })),
+      takeaways: [takeaway02, takeaway01],
+    };
+    mockGetApi(emptyTableGrid);
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-only-occupied'));
+
+    expect(screen.queryByTestId('touch-table-card-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('touch-table-card-7')).not.toBeInTheDocument();
+    expect(screen.getByTestId('touch-new-takeaway')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-takeaway-card-801')).toBeInTheDocument();
+    expect(screen.queryByText('Chưa có bàn nào đang có hoá đơn')).not.toBeInTheDocument();
+  });
+
+  it('shows the existing empty-table message when the All filter removes every table and takeaway', async () => {
+    const emptyTableGrid: PosTableGridResponse = {
+      tables: grid.tables.map((table) => ({
+        ...table,
+        status: 'AVAILABLE',
+        activeOrderId: null,
+        activeOrder: null,
+      })),
+      takeaways: [],
+    };
+    mockGetApi(emptyTableGrid);
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-only-occupied'));
+
+    expect(await screen.findByText('Chưa có bàn nào đang có hoá đơn')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-new-takeaway')).toBeInTheDocument();
+  });
+
+  it('keeps the selected board tab after opening a takeaway and returning to the board', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/api/v1/pos/tables') {
+      if (url === '/api/v1/pos/tables') return boardGridWithTakeaways;
+      if (url === '/api/v1/menu/products') return products;
+      if (url === '/api/v1/pos/orders/801') {
         return {
-          ...grid,
-          takeaways: [
-            {
-              orderId: 801,
-              orderCode: 'HD-20261124-0801',
-              orderType: 'TAKEAWAY',
-              tableId: null,
-              tableLabel: null,
-              takeawayNumber: 3,
-              status: 'SERVING',
-              totalAmount: 30000,
-              createdAt: minutesAgo(5),
-            },
-          ],
+          ...servingOrder,
+          orderId: 801,
+          orderCode: takeaway01.orderCode,
+          orderType: 'TAKEAWAY',
+          tableId: null,
+          tableLabel: 'Mang về #01',
+          takeawayNumber: 1,
         };
       }
-      if (url === '/api/v1/menu/products') return products;
       return [];
     });
     renderTouchPage();
 
-    const takeawayCard = await screen.findByTestId('touch-takeaway-card-801');
-    expect(takeawayCard).toHaveTextContent('Mang về');
-    expect(takeawayCard).toHaveTextContent('#03');
-    expect(screen.getByTestId('touch-table-card-7')).toBeInTheDocument();
-    // Khu mang về nằm sau khu phòng bàn trong cùng một màn, không còn tab chuyển.
-    expect(
-      screen.getByTestId('touch-table-board').compareDocumentPosition(
-        screen.getByTestId('touch-takeaway-board'),
-      ) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(screen.getByTestId('touch-jump-takeaway')).toHaveTextContent('Mang về (1)');
+    fireEvent.click(await screen.findByTestId('touch-tab-takeaway'));
+    fireEvent.click(await screen.findByTestId('touch-takeaway-card-801'));
+    await waitFor(() =>
+      expect(screen.getByTestId('touch-order-title')).toHaveTextContent('Mang về'),
+    );
+    fireEvent.click(screen.getByTestId('touch-back-to-tables'));
 
-    fireEvent.click(screen.getByTestId('touch-header-new-takeaway'));
+    await waitFor(() => {
+      expect(screen.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'takeaway');
+      expect(screen.getByTestId('touch-tab-takeaway')).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
+  it('shows the empty takeaway message when the cashier cannot create orders', async () => {
+    mockGetApi({ ...grid, takeaways: [] });
+    const user = useAuthStore.getState().user!;
+    useAuthStore.getState().setAuth({
+      accessToken: 'cashier-jwt-token',
+      user: {
+        ...user,
+        permissions: UserPermissionsSchema.parse({ pos: { view: true, create: false } }),
+      },
+    });
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-tab-takeaway'));
+    expect(await screen.findByText('Chưa có đơn mang về nào đang phục vụ')).toBeInTheDocument();
+  });
+
+  it('starts a new takeaway from the All tab tile', async () => {
+    mockGetApi();
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-new-takeaway'));
     expect(await screen.findByTestId('touch-order-title')).toHaveTextContent('Mang về');
   });
 

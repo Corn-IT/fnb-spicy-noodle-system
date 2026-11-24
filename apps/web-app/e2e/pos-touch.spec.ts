@@ -138,7 +138,7 @@ test.describe('POS cảm ứng — điện thoại', () => {
 test.describe('POS cảm ứng — đơn mang về', () => {
   test.use({ viewport: { width: 1366, height: 768 }, hasTouch: true });
 
-  test('creates a TAKEAWAY order with tableId null from the takeaway tab', async ({ page }) => {
+  test('creates a TAKEAWAY order with tableId null from the All tab tile', async ({ page }) => {
     await setupMockApi(page);
     let createdBody: unknown = null;
     await page.route('**/api/v1/pos/orders', async (route) => {
@@ -161,8 +161,7 @@ test.describe('POS cảm ứng — đơn mang về', () => {
     });
 
     await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
-    // Không còn tab riêng: nút "Mang về mới" luôn có trên thanh trên cùng.
-    await page.getByTestId('touch-header-new-takeaway').tap();
+    await page.getByTestId('touch-new-takeaway').tap();
     await expect(page.getByTestId('touch-order-title')).toContainText('Mang về');
 
     const plainProduct = page
@@ -181,32 +180,151 @@ test.describe('POS cảm ứng — đơn mang về', () => {
       items: [expect.objectContaining({ quantity: 2 })],
     });
   });
-});
 
-test.describe('POS cảm ứng — sơ đồ bàn và mang về trên cùng một màn', () => {
-  test.use({ viewport: { width: 1280, height: 720 }, hasTouch: true });
-
-  test('shows big table cards, then the takeaway section below with a jump button', async ({
+  test('creates a TAKEAWAY order by tapping the new-order tile in the Takeaway tab', async ({
     page,
   }) => {
     await setupMockApi(page);
     await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
 
+    await page.getByTestId('touch-tab-takeaway').tap();
+    await page.getByTestId('touch-new-takeaway').tap();
+
+    await expect(page.getByTestId('touch-order-title')).toContainText('Mang về');
+  });
+});
+
+test.describe('POS cảm ứng — các tab của sơ đồ bàn', () => {
+  test.use({ viewport: { width: 1280, height: 720 }, hasTouch: true });
+
+  test('shows new takeaway and numbered orders before tables in the All grid', async ({ page }) => {
+    await setupMockApi(page);
+    await page.route('**/api/v1/pos/tables', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          tables: [
+            {
+              id: 1,
+              name: 'Bàn 01',
+              qrToken: `01${'a'.repeat(62)}`,
+              status: 'AVAILABLE',
+              activeOrderId: null,
+              activeOrder: null,
+            },
+            {
+              id: 7,
+              name: 'Bàn 07',
+              qrToken: `07${'a'.repeat(62)}`,
+              status: 'AVAILABLE',
+              activeOrderId: null,
+              activeOrder: null,
+            },
+          ],
+          takeaways: [
+            {
+              orderId: 802,
+              orderCode: 'HD-20261124-0802',
+              orderType: 'TAKEAWAY',
+              tableId: null,
+              tableLabel: null,
+              takeawayNumber: 2,
+              status: 'SERVING',
+              totalAmount: 30000,
+              createdAt: '2026-11-24T08:20:00.000Z',
+            },
+            {
+              orderId: 801,
+              orderCode: 'HD-20261124-0801',
+              orderType: 'TAKEAWAY',
+              tableId: null,
+              tableLabel: null,
+              takeawayNumber: 1,
+              status: 'SERVING',
+              totalAmount: 45000,
+              createdAt: '2026-11-24T08:10:00.000Z',
+            },
+          ],
+          takeawayQrToken: 'b'.repeat(64),
+        }),
+      });
+    });
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByTestId('touch-tab-all')).toHaveAttribute('aria-selected', 'true');
     const tableBoard = page.getByTestId('touch-table-board');
-    const takeawayBoard = page.getByTestId('touch-takeaway-board');
-    await expect(tableBoard).toBeVisible();
+    const grid = page.getByTestId('touch-table-grid');
+    await expect(tableBoard).toHaveAttribute('data-tab', 'all');
+    await expect(grid.locator(':scope > *').first()).toHaveAttribute(
+      'data-testid',
+      'touch-new-takeaway',
+    );
     await expect(page.getByTestId('touch-new-takeaway')).toBeAttached();
+    await expect(page.getByTestId('touch-takeaway-card-801')).toContainText('#01');
+    await expect(page.getByTestId('touch-takeaway-card-802')).toContainText('#02');
 
-    const tableBox = await tableBoard.boundingBox();
-    const takeawayBox = await takeawayBoard.boundingBox();
-    expect(takeawayBox!.y).toBeGreaterThan(tableBox!.y + tableBox!.height - 1);
+    const takeawayBox = (await page.getByTestId('touch-takeaway-card-801').boundingBox())!;
+    const tableBox = (await page.getByTestId('touch-table-card-1').boundingBox())!;
+    expect(
+      takeawayBox.y < tableBox.y ||
+        (Math.abs(takeawayBox.y - tableBox.y) < 1 && takeawayBox.x < tableBox.x),
+    ).toBe(true);
 
-    const card = await page.getByTestId('touch-table-card-3').boundingBox();
+    const card = await page.getByTestId('touch-table-card-7').boundingBox();
     expect(card!.height).toBeGreaterThanOrEqual(140);
     expect(card!.width).toBeGreaterThanOrEqual(180);
+  });
 
-    await page.getByTestId('touch-jump-takeaway').tap();
-    await expect(page.getByTestId('touch-new-takeaway')).toBeInViewport();
+  test('switches between the Tables and Takeaway tabs', async ({ page }) => {
+    await setupMockApi(page);
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+
+    await page.getByTestId('touch-tab-tables').tap();
+    await expect(page.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'tables');
+    await expect(page.getByTestId('touch-new-takeaway')).toHaveCount(0);
+
+    await page.getByTestId('touch-tab-takeaway').tap();
+    await expect(page.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'takeaway');
+    await expect(page.getByTestId('touch-table-card-1')).toHaveCount(0);
+    await expect(page.getByTestId('touch-only-occupied')).toHaveCount(0);
+  });
+
+  test('does not overflow the header or viewport at supported touch widths', async ({ page }) => {
+    await setupMockApi(page);
+    await page.setViewportSize({ width: 960, height: 540 });
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+
+    for (const viewport of [
+      { width: 960, height: 540 },
+      { width: 1024, height: 600 },
+      { width: 1280, height: 720 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.evaluate(async () => {
+        if (document.fullscreenElement) await document.exitFullscreen();
+      });
+      await page.setViewportSize(viewport);
+      const measurements = await page.evaluate(() => {
+        const header = document.querySelector('header');
+        return {
+          headerScrollWidth: header?.scrollWidth ?? 0,
+          headerClientWidth: header?.clientWidth ?? 0,
+          pageScrollWidth: document.documentElement.scrollWidth,
+          viewportWidth: window.innerWidth,
+        };
+      });
+      expect(measurements.headerScrollWidth).toBeLessThanOrEqual(measurements.headerClientWidth + 1);
+      expect(measurements.pageScrollWidth).toBeLessThanOrEqual(measurements.viewportWidth + 1);
+      await expect(page.getByTestId('touch-kiosk-menu-btn')).toBeInViewport();
+    }
+
+    await page.setViewportSize({ width: 960, height: 540 });
+    await expect(page.getByTestId('touch-tab-tables')).toContainText('Bàn');
+    await expect(page.getByTestId('touch-only-occupied')).toHaveAttribute(
+      'aria-label',
+      'Bàn có hoá đơn',
+    );
   });
 });
 

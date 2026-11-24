@@ -438,12 +438,13 @@ describe('@fnb/shared store-settings contracts', () => {
     });
     expect(printerValid.success).toBe(true);
     // Legacy config without rightMarginMm defaults cleanly to 0
-    const { rightMarginMm: _omittedRight, ...legacyPrinterConfig } =
+    const { rightMarginMm: defaultRightMarginMm, ...legacyPrinterConfig } =
       contracts.DEFAULT_THERMAL_PRINTER_DEVICE_CONFIG;
+    expect(defaultRightMarginMm).toBe(0);
     const legacyParsed = contracts.ThermalPrinterDeviceConfigSchema.safeParse(legacyPrinterConfig);
     expect(legacyParsed.success).toBe(true);
     if (legacyParsed.success) {
-      expect(legacyParsed.data.rightMarginMm).toBe(0);
+      expect(legacyParsed.data.rightMarginMm).toBe(defaultRightMarginMm);
     }
     expect(
       contracts.ThermalPrinterDeviceConfigSchema.safeParse({

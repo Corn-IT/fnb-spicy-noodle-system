@@ -771,6 +771,8 @@ describe('@fnb/shared contracts', () => {
     expect(contracts.isDrinkSizeCategoryName('Nước Ngọt - Bia - Rượu')).toBe(false);
     expect(contracts.isDrinkSizeCategoryName('Đồ Uống Nóng')).toBe(false);
     expect(contracts.isDrinkSizeCategoryName('Đồ Ăn Vặt (Quầy Nước)')).toBe(false);
+    expect(contracts.isDrinkSizeCategoryName(undefined)).toBe(false);
+    expect(contracts.isDrinkSizeCategoryName('')).toBe(false);
 
     expect(
       contracts.formatProductNameWithSize('Trà Đào', ['Size L', 'Ít đá'], ['Size L']),
@@ -786,6 +788,12 @@ describe('@fnb/shared contracts', () => {
       displayName: 'Trà Đào (M)',
       sizeCode: 'M',
       remainingModifiers: ['Giảm ngọt'],
+      remainingPricedModifiers: [],
+    });
+    expect(contracts.formatProductNameWithSize('Trà Đào', ['L'])).toEqual({
+      displayName: 'Trà Đào (L)',
+      sizeCode: 'L',
+      remainingModifiers: [],
       remainingPricedModifiers: [],
     });
   });
