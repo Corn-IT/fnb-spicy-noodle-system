@@ -74,6 +74,13 @@ function sanitizePrinterConfig(
       merged.leftMarginMm <= 8
         ? merged.leftMarginMm
         : current.leftMarginMm,
+    rightMarginMm:
+      typeof merged.rightMarginMm === 'number' &&
+      Number.isFinite(merged.rightMarginMm) &&
+      merged.rightMarginMm >= 0 &&
+      merged.rightMarginMm <= 8
+        ? merged.rightMarginMm
+        : current.rightMarginMm,
     feedLinesBeforeCut:
       typeof merged.feedLinesBeforeCut === 'number' &&
       Number.isInteger(merged.feedLinesBeforeCut) &&
@@ -107,6 +114,13 @@ export const useThermalPrinterConfigStore = create<ThermalPrinterConfigState>()(
       partialize: (state) => ({
         config: state.config,
       }),
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<ThermalPrinterConfigState> | undefined;
+        return {
+          ...currentState,
+          config: sanitizePrinterConfig(currentState.config, persisted?.config ?? {}),
+        };
+      },
     },
   ),
 );

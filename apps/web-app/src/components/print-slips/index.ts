@@ -2,6 +2,7 @@ export {
   buildCashDrawerKickPayload,
   buildFeedLinesCommand,
   buildLeftMarginCommand,
+  computeThermalPrintArea,
   concatUint8Arrays,
   encodeMonochromeRasterBands,
   encodeThermalContainerToEscPos,
@@ -11,6 +12,7 @@ export {
   rgbaToMonochrome1Bit,
   uint8ArrayToBase64,
   type EscPosEncodeOptions,
+  type ThermalPrintAreaMetrics,
 } from './escpos-encoder.util';
 export {
   KitchenCancelItemSlip,

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildCashDrawerKickPayload,
+  computeThermalPrintArea,
   dispatchLanEscPosPrint,
   dispatchRawbtUsbPrint,
   encodeMonochromeRasterBands,
@@ -149,7 +150,8 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
       expect(countSubsequenceOccurrences(escPosBytes, ESC_POS_COMMANDS.RESET_LEFT_MARGIN)).toBe(1);
       expect(countSubsequenceOccurrences(escPosBytes, ESC_POS_COMMANDS.FEED_BEFORE_CUT)).toBe(0);
 
-      // Emits GS L with calibrated dots (3mm = 24 dots) and ESC d 2 when configured
+      // Emits GS L with calibrated dots (3mm = 24 dots) and ESC d 2 when configured,
+      // and narrows GS v 0 raster width to 552 dots (69 bytes) so left margin never overflows right edge
       const calibrated = await encodeThermalContainerToEscPos(printContainer, {
         paperWidthDots: 576,
         leftMarginMm: 3,
@@ -161,6 +163,115 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
       expect(
         countSubsequenceOccurrences(calibrated, new Uint8Array([0x1b, 0x64, 2])),
       ).toBe(3);
+      expect(
+        countSubsequenceOccurrences(calibrated, new Uint8Array([0x1d, 0x76, 0x30, 0x00, 69, 0])),
+      ).toBe(3);
+
+      // With both leftMarginMm=3 (24 dots) and rightMarginMm=3 (24 dots), raster width narrows to 528 dots (66 bytes)
+      const calibratedBothMargins = await encodeThermalContainerToEscPos(printContainer, {
+        paperWidthDots: 576,
+        leftMarginMm: 3,
+        rightMarginMm: 3,
+      });
+      expect(
+        countSubsequenceOccurrences(
+          calibratedBothMargins,
+          new Uint8Array([0x1d, 0x76, 0x30, 0x00, 66, 0]),
+        ),
+      ).toBe(3);
+    });
+
+    it('computes ESC/POS printable area so content width = paperWidth - leftMargin - rightMargin without overflowing', () => {
+      expect(computeThermalPrintArea(576, 0, 0)).toEqual({
+        leftMarginDots: 0,
+        rightMarginDots: 0,
+        rasterWidthDots: 576,
+        contentWidthDots: 576,
+      });
+      expect(computeThermalPrintArea(576, 3, 0)).toEqual({
+        leftMarginDots: 24,
+        rightMarginDots: 0,
+        rasterWidthDots: 552,
+        contentWidthDots: 552,
+      });
+      expect(computeThermalPrintArea(576, 2, 3)).toEqual({
+        leftMarginDots: 16,
+        rightMarginDots: 24,
+        rasterWidthDots: 536,
+        contentWidthDots: 536,
+      });
+      expect(computeThermalPrintArea(576, 0, 0.5)).toEqual({
+        leftMarginDots: 0,
+        rightMarginDots: 4,
+        rasterWidthDots: 576,
+        contentWidthDots: 572,
+      });
+      expect(computeThermalPrintArea(384, 8, 8)).toEqual({
+        leftMarginDots: 64,
+        rightMarginDots: 64,
+        rasterWidthDots: 256,
+        contentWidthDots: 256,
+      });
+    });
+
+    it('aligns centered headings, right-aligned pair values, and QR codes within narrowed contentWidthDots', async () => {
+      const textPositions: Array<{ text: string; x: number; align: CanvasTextAlign }> = [];
+      const qrDraws: Array<{ x: number; w: number }> = [];
+      const mockCtx = {
+        fillStyle: '#FFFFFF',
+        strokeStyle: '#000000',
+        lineWidth: 1,
+        font: '18px monospace',
+        textAlign: 'left' as CanvasTextAlign,
+        textBaseline: 'top' as CanvasTextBaseline,
+        fillRect: vi.fn(),
+        strokeRect: vi.fn(),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        stroke: vi.fn(),
+        setLineDash: vi.fn(),
+        drawImage: vi.fn((_img: unknown, x: number, _y: number, w: number) => {
+          qrDraws.push({ x, w });
+        }),
+        measureText: (txt: string) => ({ width: txt.length * 8 }),
+        fillText: vi.fn((txt: string, x: number) => {
+          textPositions.push({ text: txt, x, align: mockCtx.textAlign });
+        }),
+        getImageData: vi.fn((_x: number, _y: number, w: number, h: number) => ({
+          data: new Uint8ClampedArray(w * h * 4).fill(255),
+          width: w,
+          height: h,
+        })),
+      } as unknown as CanvasRenderingContext2D;
+
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockCtx as never);
+
+      const ticketDiv = document.createElement('div');
+      ticketDiv.className = 'ticket-page';
+      ticketDiv.innerHTML = `
+        <div class="text-base font-extrabold">QUẦY NƯỚC UỐNG</div>
+        <div class="flex justify-between"><span>Matcha Latte Nóng</span><span>02</span></div>
+        <img data-testid="provisional-vietqr-image" alt="VietQR" width="176" height="176" />
+      `;
+      const img = ticketDiv.querySelector('img')!;
+      Object.defineProperty(img, 'complete', { value: true });
+      Object.defineProperty(img, 'naturalWidth', { value: 176 });
+
+      // Simulate 576 dots paper with 2mm left (16 dots) and 3mm right (24 dots) => contentWidth 536 dots
+      const result = await renderTicketPageToMonochrome(ticketDiv, 536, 165, 536);
+      expect(result.widthDots).toBe(536);
+
+      const headingDraw = textPositions.find((p) => p.text === 'QUẦY NƯỚC UỐNG');
+      expect(headingDraw?.x).toBe(268); // 536 / 2
+      expect(headingDraw?.align).toBe('center');
+
+      const qtyDraw = textPositions.find((p) => p.text === '02');
+      expect(qtyDraw?.x).toBe(536);
+      expect(qtyDraw?.align).toBe('right');
+
+      expect(qrDraws).toHaveLength(1);
+      expect(qrDraws[0]).toEqual({ x: Math.floor((536 - 220) / 2), w: 220 });
     });
 
     it('throws a clear error when canvas getImageData fails instead of printing synthetic garbage raster', async () => {
@@ -373,6 +484,36 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
       expect(localStorage.getItem(THERMAL_PRINTER_CONFIG_STORAGE_KEY)).toContain('RAWBT_USB');
     });
 
+    it('defaults rightMarginMm to 0 when rehydrating legacy localStorage config without rightMarginMm', async () => {
+      localStorage.setItem(
+        THERMAL_PRINTER_CONFIG_STORAGE_KEY,
+        JSON.stringify({
+          state: {
+            config: {
+              driver: 'RAWBT_USB',
+              paperWidthDots: 576,
+              cashDrawerKick: true,
+              rawbtWsUrl: 'ws://127.0.0.1:40213/',
+              rawbtFallbackToIntent: true,
+              lanHost: '192.168.1.200',
+              lanPort: 9100,
+              lanTimeoutMs: 4000,
+              leftMarginMm: 3,
+              feedLinesBeforeCut: 1,
+            },
+          },
+          version: 0,
+        }),
+      );
+
+      await useThermalPrinterConfigStore.persist.rehydrate();
+      const cfg = useThermalPrinterConfigStore.getState().config;
+      expect(cfg.driver).toBe('RAWBT_USB');
+      expect(cfg.leftMarginMm).toBe(3);
+      expect(cfg.rightMarginMm).toBe(0);
+      expect(cfg.feedLinesBeforeCut).toBe(1);
+    });
+
     it('automatically includes ESC p (RJ11 Cash Drawer kick) when printing OFFICIAL_RECEIPT with CASH or SPLIT, but omits it for TRANSFER', async () => {
       const sentPayloads: Uint8Array[] = [];
 
@@ -542,6 +683,24 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
         expect(postSpy).toHaveBeenCalledTimes(2);
       });
       expect(screen.getByTestId('printer-last-dispatch-badge')).toHaveTextContent(/LAN_ESCPOS/i);
+
+      // Update left & right margin inputs and verify store + CSS custom properties update cleanly
+      const leftMarginInput = screen.getByTestId('input-printer-left-margin-mm');
+      const rightMarginInput = screen.getByTestId('input-printer-right-margin-mm');
+      expect(rightMarginInput).toHaveValue(0);
+
+      fireEvent.change(leftMarginInput, { target: { value: '2.5' } });
+      fireEvent.change(rightMarginInput, { target: { value: '3.5' } });
+      expect(useThermalPrinterConfigStore.getState().config.leftMarginMm).toBe(2.5);
+      expect(useThermalPrinterConfigStore.getState().config.rightMarginMm).toBe(3.5);
+
+      const printContainer = screen.getByTestId('thermal-print-container');
+      expect(printContainer.style.getPropertyValue('--thermal-left-margin-mm')).toBe('2.5mm');
+      expect(printContainer.style.getPropertyValue('--thermal-right-margin-mm')).toBe('3.5mm');
+
+      // Out-of-range value clamps safely to 8mm
+      fireEvent.change(rightMarginInput, { target: { value: '12' } });
+      expect(useThermalPrinterConfigStore.getState().config.rightMarginMm).toBe(8);
     });
   });
 });

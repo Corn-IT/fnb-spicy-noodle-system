@@ -580,6 +580,7 @@ export const ThermalPrinterDeviceConfigSchema = z.object({
   lanPort: z.number().int().min(1).max(65535).default(9100),
   lanTimeoutMs: z.number().int().min(500).max(15000).default(4000),
   leftMarginMm: z.number().min(0).max(8).default(0),
+  rightMarginMm: z.number().min(0).max(8).default(0),
   feedLinesBeforeCut: z.number().int().min(0).max(5).default(0),
 }).strict();
 export type ThermalPrinterDeviceConfig = z.infer<typeof ThermalPrinterDeviceConfigSchema>;
@@ -594,6 +595,7 @@ export const DEFAULT_THERMAL_PRINTER_DEVICE_CONFIG: ThermalPrinterDeviceConfig =
   lanPort: 9100,
   lanTimeoutMs: 4000,
   leftMarginMm: 0,
+  rightMarginMm: 0,
   feedLinesBeforeCut: 0,
 };
 

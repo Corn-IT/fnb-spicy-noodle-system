@@ -119,6 +119,8 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
     React.useState<PhysicalPrintDispatchResult | null>(null);
   const [lastPhysicalPrintError, setLastPhysicalPrintError] = React.useState<string | null>(null);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const leftMarginMm = useThermalPrinterConfigStore((state) => state.config.leftMarginMm ?? 0);
+  const rightMarginMm = useThermalPrinterConfigStore((state) => state.config.rightMarginMm ?? 0);
 
   const activePrintJob = printQueue[0] ?? null;
   const currentRenderJob = activePrintJob ?? lastJob;
@@ -171,6 +173,7 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
           paperWidthDots: printerConfig.paperWidthDots,
           kickCashDrawer: shouldKickCashDrawer,
           leftMarginMm: printerConfig.leftMarginMm,
+          rightMarginMm: printerConfig.rightMarginMm,
           feedLinesBeforeCut: printerConfig.feedLinesBeforeCut,
         });
 
@@ -332,7 +335,8 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
         className="hidden print:block"
         style={
           {
-            '--thermal-left-margin-mm': `${useThermalPrinterConfigStore.getState().config.leftMarginMm ?? 0}mm`,
+            '--thermal-left-margin-mm': `${leftMarginMm}mm`,
+            '--thermal-right-margin-mm': `${rightMarginMm}mm`,
           } as React.CSSProperties
         }
       >

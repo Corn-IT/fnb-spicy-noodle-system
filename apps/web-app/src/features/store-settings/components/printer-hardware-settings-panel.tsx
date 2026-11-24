@@ -331,6 +331,34 @@ export function PrinterHardwareSettingsPanel({
 
         <div className="space-y-1.5">
           <label
+            htmlFor="printer-right-margin-mm"
+            className="block text-xs font-bold uppercase tracking-wider text-muted-foreground"
+          >
+            Hiệu chỉnh lề phải (0–8 mm)
+          </label>
+          <Input
+            id="printer-right-margin-mm"
+            data-testid="input-printer-right-margin-mm"
+            type="number"
+            min={0}
+            max={8}
+            step={0.5}
+            value={config.rightMarginMm}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isFinite(v)) {
+                updateConfig({ rightMarginMm: Math.max(0, Math.min(8, v)) });
+              }
+            }}
+            className="h-9 max-w-[140px] font-mono text-xs"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Mặc định 0mm. Tăng nếu chữ bị cắt hụt ở mép phải.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <label
             htmlFor="printer-feed-lines-before-cut"
             className="block text-xs font-bold uppercase tracking-wider text-muted-foreground"
           >

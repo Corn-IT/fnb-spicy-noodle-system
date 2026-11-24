@@ -19,7 +19,46 @@ export interface EscPosEncodeOptions {
   maxBandHeight?: number;
   luminanceThreshold?: number;
   leftMarginMm?: number;
+  rightMarginMm?: number;
   feedLinesBeforeCut?: number;
+}
+
+export interface ThermalPrintAreaMetrics {
+  leftMarginDots: number;
+  rightMarginDots: number;
+  rasterWidthDots: number;
+  contentWidthDots: number;
+}
+
+/**
+ * Computes printable dot widths for ESC/POS raster rendering at 203 DPI (8 dots/mm).
+ * Because `GS L` shifts the left origin rightward by `leftMarginDots`, the raster width
+ * is reduced so `leftMarginDots + rasterWidthDots <= paperWidthDots`, preventing
+ * right-edge clipping when left/right margins are configured.
+ */
+export function computeThermalPrintArea(
+  paperWidthDots: ThermalPaperWidthDots = 576,
+  leftMarginMm = 0,
+  rightMarginMm = 0,
+): ThermalPrintAreaMetrics {
+  const clampedLeftMm = Number.isFinite(leftMarginMm) ? Math.max(0, Math.min(8, leftMarginMm)) : 0;
+  const clampedRightMm = Number.isFinite(rightMarginMm) ? Math.max(0, Math.min(8, rightMarginMm)) : 0;
+  const leftMarginDots = Math.round(clampedLeftMm * 8);
+  const rightMarginDots = Math.round(clampedRightMm * 8);
+
+  const maxRasterWidthDots = Math.max(64, Math.floor((paperWidthDots - leftMarginDots) / 8) * 8);
+  const contentWidthDots = Math.min(
+    maxRasterWidthDots,
+    Math.max(64, paperWidthDots - leftMarginDots - rightMarginDots),
+  );
+  const rasterWidthDots = Math.min(maxRasterWidthDots, Math.ceil(contentWidthDots / 8) * 8);
+
+  return {
+    leftMarginDots,
+    rightMarginDots,
+    rasterWidthDots,
+    contentWidthDots,
+  };
 }
 
 /** Converts pt to thermal printer dots at 203 DPI (203 / 72 ≈ 2.8194 dots/pt). */
@@ -445,12 +484,13 @@ function wrapTextLines(
 function layoutAndDrawLines(
   ctx: CanvasRenderingContext2D,
   visualLines: TicketVisualLine[],
-  widthDots: number,
+  contentWidth: number,
   baseDots: number,
   draw: boolean,
 ): number {
   const paddingX = 0;
-  const contentWidth = widthDots - paddingX * 2;
+  const rightEdgeX = paddingX + contentWidth;
+  const centerX = paddingX + contentWidth / 2;
   let cursorY = 4;
 
   const setFont = (scale: number, bold: boolean) => {
@@ -468,7 +508,7 @@ function layoutAndDrawLines(
         if (typeof ctx.setLineDash === 'function') ctx.setLineDash([6, 4]);
         ctx.beginPath();
         ctx.moveTo(paddingX, cursorY);
-        ctx.lineTo(widthDots - paddingX, cursorY);
+        ctx.lineTo(rightEdgeX, cursorY);
         ctx.stroke();
         if (typeof ctx.setLineDash === 'function') ctx.setLineDash([]);
       }
@@ -484,7 +524,7 @@ function layoutAndDrawLines(
         ctx.fillRect(paddingX, cursorY, contentWidth, bannerHeight);
         ctx.fillStyle = '#FFFFFF';
         ctx.textAlign = 'center';
-        ctx.fillText(line.leftText, widthDots / 2, cursorY + Math.round((bannerHeight - px) / 2), contentWidth - 8);
+        ctx.fillText(line.leftText, centerX, cursorY + Math.round((bannerHeight - px) / 2), contentWidth - 8);
         ctx.fillStyle = '#000000';
         ctx.textAlign = 'left';
       }
@@ -498,7 +538,7 @@ function layoutAndDrawLines(
       const wrapped = wrapTextLines(ctx, line.leftText, contentWidth);
       if (draw) {
         ctx.textAlign = line.align ?? 'center';
-        const x = line.align === 'left' ? paddingX : line.align === 'right' ? widthDots - paddingX : widthDots / 2;
+        const x = line.align === 'left' ? paddingX : line.align === 'right' ? rightEdgeX : centerX;
         for (const w of wrapped) {
           ctx.fillText(w, x, cursorY, contentWidth);
           cursorY += lh;
@@ -525,7 +565,7 @@ function layoutAndDrawLines(
           ctx.fillText(w, paddingX, cursorY + idx * lh, leftMaxW);
         });
         ctx.textAlign = 'right';
-        ctx.fillText(right, widthDots - paddingX, cursorY, rightMaxW);
+        ctx.fillText(right, rightEdgeX, cursorY, rightMaxW);
         ctx.textAlign = 'left';
       }
       cursorY += Math.max(1, leftWrapped.length) * lh;
@@ -539,7 +579,7 @@ function layoutAndDrawLines(
       if (draw) {
         const align = line.align ?? 'left';
         ctx.textAlign = align;
-        const x = align === 'center' ? widthDots / 2 : align === 'right' ? widthDots - paddingX : paddingX;
+        const x = align === 'center' ? centerX : align === 'right' ? rightEdgeX : paddingX;
         for (const w of wrapped) {
           ctx.fillText(w, x, cursorY, contentWidth);
           cursorY += lh;
@@ -592,9 +632,9 @@ function layoutAndDrawLines(
           // Draw row top & bottom horizontal lines
           ctx.beginPath();
           ctx.moveTo(paddingX, cursorY);
-          ctx.lineTo(widthDots - paddingX, cursorY);
+          ctx.lineTo(rightEdgeX, cursorY);
           ctx.moveTo(paddingX, cursorY + rowHeight);
-          ctx.lineTo(widthDots - paddingX, cursorY + rowHeight);
+          ctx.lineTo(rightEdgeX, cursorY + rowHeight);
           ctx.stroke();
 
           let colX = paddingX;
@@ -631,7 +671,7 @@ function layoutAndDrawLines(
         ctx.lineTo(colX + 0.75, cursorY);
         for (const cw of colWidths) {
           colX += cw;
-          const xLine = Math.min(widthDots - 0.75, colX);
+          const xLine = Math.min(rightEdgeX - 0.75, colX);
           ctx.moveTo(xLine, tableStartY);
           ctx.lineTo(xLine, cursorY);
         }
@@ -643,7 +683,7 @@ function layoutAndDrawLines(
 
     if (line.kind === 'qr') {
       const qrSize = Math.min(220, contentWidth);
-      const qrX = Math.floor((widthDots - qrSize) / 2);
+      const qrX = paddingX + Math.floor((contentWidth - qrSize) / 2);
       if (draw) {
         if (!line.qrImg || !line.qrImg.complete || line.qrImg.naturalWidth === 0) {
           throw new Error('Không thể dựng mã QR lên phiếu in: ảnh QR chưa tải xong hoặc không hợp lệ.');
@@ -663,9 +703,15 @@ function layoutAndDrawLines(
  */
 export async function renderTicketPageToMonochrome(
   ticketEl: HTMLElement,
-  widthDots: ThermalPaperWidthDots = 576,
+  widthDots: ThermalPaperWidthDots | number = 576,
   luminanceThreshold = 165,
+  contentWidthDots?: number,
 ): Promise<{ monoBytes: Uint8Array; widthDots: number; heightDots: number }> {
+  const safeRasterWidth = Math.max(64, Math.floor(widthDots / 8) * 8);
+  const safeContentWidth = Math.min(
+    safeRasterWidth,
+    Math.max(64, Math.round(contentWidthDots ?? safeRasterWidth)),
+  );
   const visualLines = extractTicketVisualLines(ticketEl);
   const rawPt = Number(ticketEl.getAttribute('data-font-size-pt'));
   const baseDots = ptToThermalDots(
@@ -682,25 +728,25 @@ export async function renderTicketPageToMonochrome(
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (ctx && typeof ctx.getImageData === 'function') {
-      canvas.width = widthDots;
+      canvas.width = safeRasterWidth;
       // Pass 1: measure exact height
       const measuredHeight = Math.max(
         32,
-        layoutAndDrawLines(ctx, visualLines, widthDots, baseDots, false),
+        layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, false),
       );
       canvas.height = measuredHeight;
 
       ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, widthDots, measuredHeight);
+      ctx.fillRect(0, 0, safeRasterWidth, measuredHeight);
       ctx.fillStyle = '#000000';
       ctx.textBaseline = 'top';
 
       // Pass 2: draw onto sized canvas
-      layoutAndDrawLines(ctx, visualLines, widthDots, baseDots, true);
+      layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, true);
 
       let imageData: ImageData;
       try {
-        imageData = ctx.getImageData(0, 0, widthDots, measuredHeight);
+        imageData = ctx.getImageData(0, 0, safeRasterWidth, measuredHeight);
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
         throw new Error(
@@ -710,13 +756,13 @@ export async function renderTicketPageToMonochrome(
 
       const monoBytes = rgbaToMonochrome1Bit(
         imageData.data,
-        widthDots,
+        safeRasterWidth,
         measuredHeight,
         luminanceThreshold,
       );
       return {
         monoBytes,
-        widthDots,
+        widthDots: safeRasterWidth,
         heightDots: measuredHeight,
       };
     }
@@ -724,11 +770,11 @@ export async function renderTicketPageToMonochrome(
 
   // Test-only JSDOM minimal raster (when HTMLCanvasElement 2D is unimplemented in JSDOM)
   const syntheticRows = Math.max(16, visualLines.length * 8);
-  const widthBytes = widthDots / 8;
+  const widthBytes = safeRasterWidth / 8;
   const monoBytes = new Uint8Array(widthBytes * syntheticRows);
   return {
     monoBytes,
-    widthDots,
+    widthDots: safeRasterWidth,
     heightDots: syntheticRows,
   };
 }
@@ -740,7 +786,7 @@ export async function renderTicketPageToMonochrome(
  *   2. `GS L nL nH` (Left margin calibration, default 0mm = 0 dots)
  *   3. Optional `ESC p 0 50 250` (24V RJ11 Cash Drawer kick when `kickCashDrawer` is true)
  *   4. For each `.ticket-page`:
- *      - `GS v 0` banded monochrome raster images
+ *      - `GS v 0` banded monochrome raster images (width narrowed by left/right margins)
  *      - Optional `ESC d n` paper feed ONLY when `feedLinesBeforeCut > 0`
  *      - `GS V 66 0` automatic paper cutter command
  */
@@ -748,11 +794,18 @@ export async function encodeThermalContainerToEscPos(
   containerEl: HTMLElement,
   options: EscPosEncodeOptions = {},
 ): Promise<Uint8Array> {
-  const widthDots: ThermalPaperWidthDots = options.paperWidthDots ?? 576;
+  const paperWidthDots: ThermalPaperWidthDots = options.paperWidthDots ?? 576;
   const maxBandHeight = options.maxBandHeight ?? 128;
   const luminanceThreshold = options.luminanceThreshold ?? 165;
-  const leftMarginCmd = buildLeftMarginCommand(options.leftMarginMm ?? 0);
+  const leftMarginMm = options.leftMarginMm ?? 0;
+  const rightMarginMm = options.rightMarginMm ?? 0;
+  const leftMarginCmd = buildLeftMarginCommand(leftMarginMm);
   const feedCmd = buildFeedLinesCommand(options.feedLinesBeforeCut ?? 0);
+  const { rasterWidthDots, contentWidthDots } = computeThermalPrintArea(
+    paperWidthDots,
+    leftMarginMm,
+    rightMarginMm,
+  );
 
   const ticketNodeList = containerEl.querySelectorAll<HTMLElement>('.ticket-page');
   const ticketElements: HTMLElement[] =
@@ -765,14 +818,16 @@ export async function encodeThermalContainerToEscPos(
   }
 
   for (const ticketEl of ticketElements) {
-    const { monoBytes, heightDots } = await renderTicketPageToMonochrome(
-      ticketEl,
-      widthDots,
-      luminanceThreshold,
-    );
+    const { monoBytes, widthDots: actualWidthDots, heightDots } =
+      await renderTicketPageToMonochrome(
+        ticketEl,
+        rasterWidthDots,
+        luminanceThreshold,
+        contentWidthDots,
+      );
     const rasterBands = encodeMonochromeRasterBands(
       monoBytes,
-      widthDots,
+      actualWidthDots,
       heightDots,
       maxBandHeight,
     );

@@ -184,7 +184,7 @@ html[data-pos-touch] [contenteditable='true'] {
     left: 0;
     top: 0;
     width: 80mm;
-    padding: 0 0 0 var(--thermal-left-margin-mm, 0mm);
+    padding: 0 var(--thermal-right-margin-mm, 0mm) 0 var(--thermal-left-margin-mm, 0mm);
     margin: 0;
     box-sizing: border-box;
     color: #000 !important;
