@@ -189,8 +189,10 @@ describe('POS — đặt cùng món thì cộng dồn số lượng trên một 
     );
   });
 
-  it('on a live order, raises the quantity of the NEW line and counts rapid double taps correctly', async () => {
+  it('on a live order, sends rapid taps as additive adds one after another (server merges them)', async () => {
     let serverQty = 1;
+    let inFlight = 0;
+    let maxInFlight = 0;
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/api/v1/pos/tables') return grid;
       if (url === '/api/v1/menu/products') return products;
@@ -198,9 +200,12 @@ describe('POS — đặt cùng món thì cộng dồn số lượng trên một 
       return [];
     });
     const patchSpy = vi.spyOn(apiClient, 'patch').mockImplementation(async (_url, body) => {
-      const update = (body as { updates?: Array<{ quantity: number }> }).updates?.[0];
-      if (update) serverQty = update.quantity;
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      const added = (body as { addItems?: Array<{ quantity: number }> }).addItems?.[0];
+      if (added) serverQty += added.quantity;
       await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight -= 1;
       return patchResponse(30000 * serverQty);
     });
     renderDesktopPos();
@@ -209,18 +214,48 @@ describe('POS — đặt cùng món thì cộng dồn số lượng trên một 
     await screen.findByTestId('invoice-item-9002');
     fireEvent.mouseDown(screen.getByTestId('pos-tab-menu'));
     const tile = await screen.findByTestId('pos-menu-product-102');
-    // Hai lần chạm liên tiếp trước khi lần đầu kịp xong.
     fireEvent.click(tile);
     fireEvent.click(tile);
 
     await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(2));
     expect(patchSpy.mock.calls.map((call) => call[1])).toEqual([
-      { updates: [{ orderItemId: 9002, quantity: 2 }] },
-      { updates: [{ orderItemId: 9002, quantity: 3 }] },
+      { addItems: [{ productId: 102, quantity: 1, modifiers: [] }] },
+      { addItems: [{ productId: 102, quantity: 1, modifiers: [] }] },
     ]);
+    expect(maxInFlight).toBe(1);
+    await waitFor(() => expect(serverQty).toBe(3));
   });
 
-  it('adds a new line when the same item was already sent to the kitchen', async () => {
+  it('a "+" tapped right after a dish tap applies +1 on top of the merged quantity', async () => {
+    let serverQty = 1;
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/tables') return grid;
+      if (url === '/api/v1/menu/products') return products;
+      if (url === '/api/v1/pos/orders/700') return orderWithTea(serverQty, 'NEW');
+      return [];
+    });
+    const patchSpy = vi.spyOn(apiClient, 'patch').mockImplementation(async (_url, body) => {
+      const payload = body as { addItems?: Array<{ quantity: number }>; updates?: Array<{ quantity: number }> };
+      if (payload.addItems) serverQty += payload.addItems[0].quantity; // server cộng dồn vào dòng NEW
+      if (payload.updates) serverQty = payload.updates[0].quantity;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return patchResponse(30000 * serverQty);
+    });
+    renderDesktopPos();
+
+    fireEvent.click(await screen.findByTestId('table-card-7'));
+    await screen.findByTestId('invoice-item-9002');
+    fireEvent.mouseDown(screen.getByTestId('pos-tab-menu'));
+    fireEvent.click(await screen.findByTestId('pos-menu-product-102'));
+    // Ngay sau đó bấm "+" trên dòng đang hiển thị số lượng 1.
+    fireEvent.click(screen.getByRole('button', { name: 'Tăng số lượng Trà Đào Cam Sả' }));
+
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(2));
+    expect(patchSpy.mock.calls[1][1]).toEqual({ updates: [{ orderItemId: 9002, quantity: 3 }] });
+    expect(serverQty).toBe(3);
+  });
+
+  it('always sends an additive add (the server decides whether to merge)', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/api/v1/pos/tables') return grid;
       if (url === '/api/v1/menu/products') return products;

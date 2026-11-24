@@ -269,3 +269,29 @@ test.describe('POS cảm ứng — bố cục số cột theo máy', () => {
     expect(tileWidth).toBeGreaterThanOrEqual(130);
   });
 });
+
+test.describe('POS cảm ứng — thông báo không chặn thao tác', () => {
+  test.use({ viewport: { width: 1280, height: 720 }, hasTouch: true });
+
+  test('a tile under a toast still receives the tap (toasts pass taps through)', async ({ page }) => {
+    await setupMockApi(page);
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('touch-table-card-3').tap();
+    const tiles = page.locator('[data-testid^="touch-product-"]').filter({ hasNotText: 'Có tuỳ chọn' });
+    await tiles.first().tap();
+    const toast = page.getByTestId('toast-viewport-top-right');
+    await page.evaluate(() =>
+      import('/src/components/ui/toast.tsx').then((m) =>
+        m.toast({ title: 'Thông báo kiểm tra', description: 'Che phía dưới bên trái', duration: 10_000 }),
+      ),
+    );
+    await expect(toast).toBeVisible();
+    const box = (await toast.locator('[role="alert"]').first().boundingBox())!;
+    // Chạm vào giữa toast (không phải nút X): phần tử nhận chạm phải là thứ nằm bên dưới, không phải toast.
+    const hit = await page.evaluate(
+      ([x, y]) => document.elementFromPoint(x, y)?.closest('[role="alert"]') !== null,
+      [box.x + 40, box.y + box.height / 2],
+    );
+    expect(hit).toBe(false);
+  });
+});
