@@ -1,5 +1,6 @@
 import {
   StoreAssetKind,
+  formatProductNameWithSize,
   normalizeQrToken,
   type OrderItemModifierSelection,
   type Product,
@@ -276,6 +277,7 @@ export function QrOrderPage() {
   const initialDraft = React.useMemo(() => readStoredDraftCart(token), [token]);
   const [cart, setCart] = React.useState<CartLineItem[]>(() => initialDraft.items);
   const [takeawayNote, setTakeawayNote] = React.useState(() => initialDraft.takeawayNote);
+  const [addonIsTakeawayBatch, setAddonIsTakeawayBatch] = React.useState(false);
 
   React.useEffect(() => {
     writeStoredDraftCart(token, { items: cart, takeawayNote });
@@ -299,6 +301,8 @@ export function QrOrderPage() {
     if (endedState !== null || orderStatus === 'PAID' || orderStatus === 'VOIDED') return null;
     return order;
   }, [menuData?.activeOrder, endedState, orderStatus]);
+
+  const isAddonForDineIn = !isTakeaway && Boolean(resolvedActiveOrderId || activeOrder);
 
   const isPaidLocked = endedState?.kind === 'PAID';
 
@@ -731,11 +735,13 @@ export function QrOrderPage() {
           ? { note: takeawayNote.trim() }
           : {}),
         ...(guestCoords ? { latitude: guestCoords.lat, longitude: guestCoords.lng } : {}),
+        ...(isAddonForDineIn && addonIsTakeawayBatch ? { isTakeawayBatch: true } : {}),
         items: cart.map((item) => ({
           productId: item.productId,
           quantity: item.quantity,
           modifiers: item.modifiers,
           ...(item.itemNote ? { itemNote: item.itemNote } : {}),
+          ...(isAddonForDineIn && addonIsTakeawayBatch ? { isTakeaway: true } : {}),
         })),
       });
 
@@ -748,6 +754,7 @@ export function QrOrderPage() {
       });
       setCart([]);
       setTakeawayNote('');
+      setAddonIsTakeawayBatch(false);
       writeStoredDraftCart(token, { items: [], takeawayNote: '' });
       void queryClient.invalidateQueries({ queryKey: ['public-menu', token] });
       notify('qr.order.submitSuccess', {
@@ -901,7 +908,7 @@ export function QrOrderPage() {
     );
   }
 
-  if (isError || !menuData) {
+  if (!menuData) {
     const apiErr = error instanceof ApiClientError ? error : null;
     const isInvalidQrStatus = !apiErr || apiErr.statusCode === 404 || apiErr.statusCode === 400;
     const invalidQrCopy = resolveMessage('qr.lock.invalidQr');
@@ -1421,6 +1428,46 @@ export function QrOrderPage() {
                   }).title}
                 </div>
               ) : null}
+              {isAddonForDineIn ? (
+                <div
+                  data-testid="qr-addon-serving-mode-bar"
+                  className="flex items-center justify-between gap-2 rounded-xl border bg-muted/40 px-2.5 py-1.5"
+                >
+                  <span className="text-[11px] font-bold text-foreground">
+                    Lượt gọi này:
+                  </span>
+                  <div className="inline-flex rounded-lg border bg-background p-0.5 shadow-2xs">
+                    <button
+                      type="button"
+                      data-testid="qr-addon-mode-dine-in"
+                      aria-pressed={!addonIsTakeawayBatch}
+                      onClick={() => setAddonIsTakeawayBatch(false)}
+                      className={cn(
+                        'rounded-md px-2.5 py-1 text-xs font-bold transition-colors',
+                        !addonIsTakeawayBatch
+                          ? 'bg-primary text-primary-foreground shadow-2xs'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      Dùng tại bàn
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="qr-addon-mode-takeaway"
+                      aria-pressed={addonIsTakeawayBatch}
+                      onClick={() => setAddonIsTakeawayBatch(true)}
+                      className={cn(
+                        'rounded-md px-2.5 py-1 text-xs font-bold transition-colors',
+                        addonIsTakeawayBatch
+                          ? 'bg-amber-600 text-white shadow-2xs'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      Mang về
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-3">
                 <button
                   type="button"
@@ -1505,6 +1552,17 @@ export function QrOrderPage() {
                     label: item.kitchenStatus,
                     className: 'border-border text-muted-foreground',
                   };
+                  const rawModLabels = item.modifiers.map((m) =>
+                    m.action === 'SUBSTITUTE' && m.substituteName
+                      ? `Đổi ${m.substitutedFromName ?? m.name} → ${m.substituteName}`
+                      : m.action === 'REMOVED'
+                        ? `Không ${m.name}`
+                        : m.name,
+                  );
+                  const { displayName, remainingModifiers } = formatProductNameWithSize(
+                    item.productName,
+                    rawModLabels,
+                  );
                   return (
                     <div
                       key={item.id}
@@ -1512,20 +1570,23 @@ export function QrOrderPage() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="text-sm font-bold text-foreground">
-                            {item.quantity}x {item.productName}
-                          </p>
-                          {item.modifiers.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p className="text-sm font-bold text-foreground">
+                              {item.quantity}x {displayName}
+                            </p>
+                            {!isTakeaway && item.isTakeaway ? (
+                              <Badge
+                                variant="outline"
+                                data-testid={`qr-placed-item-takeaway-badge-${item.id}`}
+                                className="border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300 text-[10px] font-bold"
+                              >
+                                Mang về
+                              </Badge>
+                            ) : null}
+                          </div>
+                          {remainingModifiers.length > 0 ? (
                             <p className="text-xs text-muted-foreground">
-                              {item.modifiers
-                                .map((m) =>
-                                  m.action === 'SUBSTITUTE' && m.substituteName
-                                    ? `Đổi ${m.substitutedFromName ?? m.name} → ${m.substituteName}`
-                                    : m.action === 'REMOVED'
-                                      ? `Không ${m.name}`
-                                      : m.name,
-                                )
-                                .join(', ')}
+                              {remainingModifiers.join(', ')}
                             </p>
                           ) : null}
                           {item.itemNote ? (
@@ -1630,7 +1691,12 @@ export function QrOrderPage() {
                 {resolveMessage('qr.cart.priceChanged').title}
               </div>
             ) : null}
-            {reconciledCart.map((item) => (
+            {reconciledCart.map((item) => {
+              const { displayName, remainingModifiers } = formatProductNameWithSize(
+                item.effectiveName,
+                item.modifierLabels,
+              );
+              return (
               <div
                 key={item.key}
                 className={cn(
@@ -1640,7 +1706,7 @@ export function QrOrderPage() {
               >
                 <div className="min-w-0 flex-1 pr-3">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <p className="font-semibold text-sm text-foreground truncate">{item.effectiveName}</p>
+                    <p className="font-semibold text-sm text-foreground truncate">{displayName}</p>
                     {item.isUnavailable ? (
                       <Badge
                         variant="outline"
@@ -1659,9 +1725,9 @@ export function QrOrderPage() {
                       </Badge>
                     ) : null}
                   </div>
-                  {item.modifierLabels.length > 0 ? (
+                  {remainingModifiers.length > 0 ? (
                     <p className="text-xs text-muted-foreground line-clamp-1">
-                      {item.modifierLabels.join(', ')}
+                      {remainingModifiers.join(', ')}
                     </p>
                   ) : null}
                   {item.itemNote ? (
@@ -1708,7 +1774,8 @@ export function QrOrderPage() {
                   </Button>
                 </div>
               </div>
-            ))}
+              );
+            })}
 
             {isTakeaway && !resolvedActiveOrderId ? (
               <div
@@ -1737,6 +1804,46 @@ export function QrOrderPage() {
           </div>
 
           <div className="shrink-0 border-t pt-3 space-y-3">
+            {isAddonForDineIn ? (
+              <div
+                data-testid="qr-sheet-addon-serving-mode"
+                className="flex items-center justify-between gap-2 rounded-xl border bg-muted/30 p-2"
+              >
+                <span className="text-xs font-bold text-foreground pl-1">
+                  Hình thức phục vụ lượt này:
+                </span>
+                <div className="inline-flex rounded-lg border bg-background p-0.5">
+                  <button
+                    type="button"
+                    data-testid="qr-sheet-addon-mode-dine-in"
+                    aria-pressed={!addonIsTakeawayBatch}
+                    onClick={() => setAddonIsTakeawayBatch(false)}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-xs font-bold transition-colors',
+                      !addonIsTakeawayBatch
+                        ? 'bg-primary text-primary-foreground shadow-2xs'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    Dùng tại bàn
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="qr-sheet-addon-mode-takeaway"
+                    aria-pressed={addonIsTakeawayBatch}
+                    onClick={() => setAddonIsTakeawayBatch(true)}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-xs font-bold transition-colors',
+                      addonIsTakeawayBatch
+                        ? 'bg-amber-600 text-white shadow-2xs'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    Mang về
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-muted-foreground">Tổng cộng</span>
               <span className="text-lg font-extrabold text-price">

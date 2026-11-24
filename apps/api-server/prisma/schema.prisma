@@ -266,6 +266,7 @@ model OrderItem {
   batchNo           Int      @default(1) @map("batch_no")
   itemSource        String   @default("POS_COUNTER") @map("item_source") @db.VarChar(16)
   kitchenStatus     String   @default("NEW") @map("kitchen_status") @db.VarChar(16)
+  isTakeaway        Boolean  @default(false) @map("is_takeaway")
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product           Product  @relation(fields: [productId], references: [id], onDelete: Restrict)

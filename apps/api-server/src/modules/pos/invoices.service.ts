@@ -249,6 +249,7 @@ export class InvoicesService {
         itemNote: item.itemNote,
         batchNo: item.batchNo,
         kitchenStatus: item.kitchenStatus,
+        ...((item as { isTakeaway?: boolean }).isTakeaway ? { isTakeaway: true } : {}),
       })),
     });
   }

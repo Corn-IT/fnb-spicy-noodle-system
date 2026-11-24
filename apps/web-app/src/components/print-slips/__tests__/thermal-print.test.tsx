@@ -1206,5 +1206,133 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
         'https://pos.micay.vn/q/ban01-zry8',
       );
     });
+
+    it('centers "Tên món" header, appends drink size (M)/(L) to product names without duplicate modifier lines, and groups takeaway items under *** MANG VỀ *** on kitchen tickets', () => {
+      const { unmount: unmountOfficial } = render(
+        <ThermalPrintProvider>
+          <OfficialReceiptSlip
+            orderCode="HD-20261124-0001"
+            tableLabel="Bàn 03"
+            paymentMethod="CASH"
+            cashAmount={82000}
+            transferAmount={0}
+            totalAmount={82000}
+            items={[
+              {
+                name: 'Trà Đào Cam Sả',
+                quantity: 1,
+                unitPrice: 37000,
+                lineTotal: 37000,
+                modifiers: ['Size L', 'Trân châu trắng (5k)'],
+                pricedModifiers: ['Size L', 'Trân châu trắng (5k)'],
+                note: null,
+                isTakeaway: true,
+              },
+              {
+                name: 'Trà Sữa Truyền Thống',
+                quantity: 1,
+                unitPrice: 30000,
+                lineTotal: 30000,
+                modifiers: ['Size M'],
+                pricedModifiers: [],
+                note: null,
+                isTakeaway: false,
+              },
+            ]}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      const officialHeader = screen.getByRole('columnheader', { name: 'Tên món' });
+      expect(officialHeader).toHaveClass('text-center');
+      expect(officialHeader).toHaveAttribute('data-print-align', 'center');
+      expect(screen.getByText('1. Trà Đào Cam Sả (L) [Mang về]')).toBeInTheDocument();
+      expect(screen.getByText('2. Trà Sữa Truyền Thống (M)')).toBeInTheDocument();
+      expect(screen.getByText('+ Trân châu trắng (5k)')).toBeInTheDocument();
+      expect(screen.queryByText(/\+ Size L/)).not.toBeInTheDocument();
+      unmountOfficial();
+
+      const { unmount: unmountProvisional } = render(
+        <ThermalPrintProvider>
+          <ProvisionalVietQrSlip
+            bill={{
+              orderId: 910,
+              orderCode: 'HD-20261124-0910',
+              orderType: 'DINE_IN',
+              tableId: 3,
+              takeawayNumber: null,
+              totalAmount: 37000,
+              status: 'SERVING',
+              paymentAccount: {
+                id: 1,
+                label: 'VPBank',
+                bankName: 'VPBank',
+                bankCode: 'VPB',
+                accountNo: '186877721',
+                accountName: 'CHU QUAN',
+              },
+              items: [
+                {
+                  name: 'Trà Đào Cam Sả',
+                  quantity: 1,
+                  unitPrice: 37000,
+                  lineTotal: 37000,
+                  modifiers: ['Size L'],
+                  pricedModifiers: ['Size L'],
+                  note: null,
+                  isTakeaway: true,
+                },
+              ],
+            }}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      const provisionalHeader = screen.getByRole('columnheader', { name: 'Tên món' });
+      expect(provisionalHeader).toHaveClass('text-center');
+      expect(provisionalHeader).toHaveAttribute('data-print-align', 'center');
+      expect(screen.getByText('1. Trà Đào Cam Sả (L) [Mang về]')).toBeInTheDocument();
+      expect(screen.queryByText(/\+ Size L/)).not.toBeInTheDocument();
+      unmountProvisional();
+
+      render(
+        <KitchenSplitSlip
+          orderCode="HD-20261124-0910"
+          tableLabel="BÀN 03"
+          tickets={[
+            {
+              station: 'PHA_CHE',
+              stationTitle: 'QUẦY PHA CHẾ & NƯỚC',
+              logoType: 'DRINK_CUP',
+              batchNo: 2,
+              batchLabel: '[GỌI THÊM - LƯỢT 2]',
+              items: [
+                {
+                  name: 'Trà Sữa Truyền Thống',
+                  qty: 1,
+                  modifiers: ['Size M'],
+                  note: '',
+                  isTakeaway: false,
+                },
+                {
+                  name: 'Trà Đào Cam Sả',
+                  qty: 2,
+                  modifiers: ['Size L', 'Trân châu trắng (5k)'],
+                  note: '',
+                  isTakeaway: true,
+                },
+              ],
+            },
+          ]}
+        />,
+      );
+
+      expect(screen.getByText('Trà Sữa Truyền Thống (M)')).toBeInTheDocument();
+      const takeawaySection = screen.getByTestId('kitchen-takeaway-section-PHA_CHE');
+      expect(takeawaySection).toHaveTextContent('*** MANG VỀ ***');
+      expect(takeawaySection).toHaveTextContent('Trà Đào Cam Sả (L)');
+      expect(takeawaySection).toHaveTextContent('+ Trân châu trắng (5k)');
+      expect(takeawaySection).not.toHaveTextContent('+ Size L');
+    });
   });
 });

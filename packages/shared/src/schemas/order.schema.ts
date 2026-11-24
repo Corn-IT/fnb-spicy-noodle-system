@@ -34,6 +34,7 @@ export const CreateOrderItemInputSchema = z.object({
   quantity: z.number().int().positive(),
   modifiers: z.array(OrderItemModifierSelectionSchema).default([]),
   itemNote: z.string().trim().max(500).optional(),
+  isTakeaway: z.boolean().optional(),
 }).strict();
 export type CreateOrderItemInput = z.infer<typeof CreateOrderItemInputSchema>;
 
@@ -49,6 +50,7 @@ export const CreateQrOrderSchema = z.object({
   note: z.string().trim().max(1000).optional(),
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
+  isTakeawayBatch: z.boolean().optional(),
 }).strict();
 export type CreateQrOrderInput = z.infer<typeof CreateQrOrderSchema>;
 
@@ -71,7 +73,8 @@ export const UpdateOrderItemSchema = z.object({
   quantity: z.number().int().positive().optional(),
   modifiers: z.array(OrderItemModifierSelectionSchema).optional(),
   itemNote: z.string().trim().max(500).nullable().optional(),
-}).strict().refine((value) => value.quantity !== undefined || value.modifiers !== undefined || value.itemNote !== undefined, {
+  isTakeaway: z.boolean().optional(),
+}).strict().refine((value) => value.quantity !== undefined || value.modifiers !== undefined || value.itemNote !== undefined || value.isTakeaway !== undefined, {
   message: 'Phải cung cấp ít nhất một trường cần cập nhật',
 });
 export type UpdateOrderItemInput = z.infer<typeof UpdateOrderItemSchema>;
@@ -246,6 +249,7 @@ const OrderDetailItemSchema = z.object({
   itemNote: z.string().nullable(),
   batchNo: z.number().int().positive(),
   kitchenStatus: z.enum(['NEW', 'PRINTED', 'CANCELLED']),
+  isTakeaway: z.boolean().optional(),
 }).strict();
 
 export const OrderDetailResponseSchema = z.object({
@@ -319,6 +323,7 @@ const KitchenTicketItemSchema = z.object({
   note: z.string(),
   unitPrice: MoneyAmountSchema.optional(),
   categoryId: IdSchema.nullable().optional(),
+  isTakeaway: z.boolean().optional(),
 }).strict();
 
 const KitchenTicketSchema = z.object({
@@ -348,15 +353,24 @@ export type ReprintKitchenRequest = z.infer<typeof ReprintKitchenRequestSchema>;
 
 export const TableActionRequestSchema = z.object({
   action: TableActionTypeSchema,
-  targetTableId: IdSchema,
+  targetTableId: IdSchema.nullable().optional(),
   reason: z.string().trim().min(1).max(500),
-}).strict();
+}).strict().refine((input) => {
+  if (input.action === 'TO_TAKEAWAY') {
+    return input.targetTableId === null || input.targetTableId === undefined;
+  }
+  return typeof input.targetTableId === 'number' && input.targetTableId > 0;
+}, {
+  message: 'Thao tác chuyển/gộp/hoán đổi bàn cần targetTableId; chuyển sang mang về không được gắn bàn',
+  path: ['targetTableId'],
+});
 export type TableActionRequest = z.infer<typeof TableActionRequestSchema>;
 
 export const TableActionResponseSchema = z.object({
   action: TableActionTypeSchema,
-  sourceTableId: IdSchema,
-  targetTableId: IdSchema,
+  sourceTableId: IdSchema.nullable(),
+  targetTableId: IdSchema.nullable(),
+  takeawayNumber: IdSchema.nullable().optional(),
   requireKitchenNoticePrint: z.boolean(),
   kitchenTransferSlip: z.object({
     orderCode: z.string().min(1),
@@ -381,6 +395,7 @@ export const ProvisionalBillResponseSchema = z.object({
     modifiers: z.array(z.string()),
     pricedModifiers: z.array(z.string()).optional(),
     note: z.string().nullable(),
+    isTakeaway: z.boolean().optional(),
   })),
   subtotalAmount: MoneyAmountSchema.optional(),
   discountAmount: MoneyAmountSchema.optional(),

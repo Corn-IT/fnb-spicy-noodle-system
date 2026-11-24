@@ -36,22 +36,28 @@ export class TableTransferService {
     const result = await this.prisma.$transaction(async (tx) => {
       const sourceSnapshot = await tx.order.findUnique({
         where: { id: orderId },
-        select: { id: true, orderType: true, tableId: true },
+        select: { id: true, orderType: true, tableId: true, takeawayNumber: true },
       });
       if (!sourceSnapshot) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
 
-      const targetSnapshot = await tx.diningTable.findUnique({
-        where: { id: parsed.targetTableId },
-        select: { id: true, activeOrderId: true },
-      });
-      if (!targetSnapshot) throw new NotFoundException({ message: 'Không tìm thấy bàn đích' });
+      const targetSnapshot = parsed.action === 'TO_TAKEAWAY'
+        ? null
+        : await tx.diningTable.findUnique({
+            where: { id: parsed.targetTableId! },
+            select: { id: true, activeOrderId: true },
+          });
+      if (parsed.action !== 'TO_TAKEAWAY' && !targetSnapshot) {
+        throw new NotFoundException({ message: 'Không tìm thấy bàn đích' });
+      }
 
       const relatedOrderIds = [
         orderId,
-        ...(parsed.action === 'MOVE' || targetSnapshot.activeOrderId === null ? [] : [targetSnapshot.activeOrderId]),
+        ...(parsed.action === 'MOVE' || parsed.action === 'TO_TAKEAWAY' || !targetSnapshot || targetSnapshot.activeOrderId === null
+          ? []
+          : [targetSnapshot.activeOrderId]),
       ];
       await this.lockOrders(tx, relatedOrderIds);
-      await this.lockTables(tx, [sourceSnapshot.tableId, targetSnapshot.id]);
+      await this.lockTables(tx, [sourceSnapshot.tableId, targetSnapshot?.id ?? null]);
 
       const source = await tx.order.findUnique({
         where: { id: orderId },
@@ -63,47 +69,116 @@ export class TableTransferService {
         },
       });
       if (!source) throw new NotFoundException({ message: 'Không tìm thấy đơn hàng' });
-      if (source.tableId !== sourceSnapshot.tableId) {
+      if (source.tableId !== sourceSnapshot.tableId || source.orderType !== sourceSnapshot.orderType) {
         throw this.conflict(ErrorCodes.POS_CONCURRENT_MODIFICATION, 'Đơn nguồn vừa thay đổi, vui lòng tải lại sơ đồ bàn');
+      }
+      if (!activeStatuses.includes(source.status)) {
+        throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Đơn hàng không còn mở để chuyển bàn');
       }
 
       const sourceTable = source.tableId === null
         ? null
         : await tx.diningTable.findUnique({ where: { id: source.tableId } });
-      const targetTable = await tx.diningTable.findUnique({ where: { id: parsed.targetTableId } });
-      if (!targetTable || (source.tableId !== null && !sourceTable)) {
-        throw new NotFoundException({ message: 'Không tìm thấy bàn hoặc đơn hàng' });
+      if (source.tableId !== null && !sourceTable) {
+        throw new NotFoundException({ message: 'Không tìm thấy bàn nguồn' });
       }
-      if (targetTable.activeOrderId !== targetSnapshot.activeOrderId) {
-        throw this.conflict(ErrorCodes.POS_CONCURRENT_MODIFICATION, 'Bàn đích vừa thay đổi, vui lòng tải lại sơ đồ bàn');
-      }
-      if (!activeStatuses.includes(source.status)) {
-        throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Đơn hàng không còn mở để chuyển bàn');
-      }
-      if (source.orderType !== 'DINE_IN' || source.tableId === null || !sourceTable) {
-        if (parsed.action === 'MERGE') {
-          throw this.conflict(ErrorCodes.POS_TAKEAWAY_CANNOT_MERGE, 'Không thể gộp đơn mang về');
-        }
-        throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Thao tác bàn chỉ áp dụng cho đơn tại bàn');
-      }
-      if (sourceTable.activeOrderId !== source.id) {
+      if (sourceTable && sourceTable.activeOrderId !== source.id) {
         throw this.conflict(ErrorCodes.POS_CONCURRENT_MODIFICATION, 'Bàn nguồn không còn trỏ tới đơn này, vui lòng tải lại sơ đồ bàn');
+      }
+
+      const sourceStations = this.printedStations(source.items);
+      const sourceLabel = source.orderType === 'TAKEAWAY'
+        ? `Mang về #${String(source.takeawayNumber ?? 1).padStart(2, '0')}`
+        : (sourceTable?.name ?? `Bàn #${source.tableId}`);
+      const sourceNoticeStatus: 'PENDING' | 'SERVING' = source.status === 'PENDING' ? 'PENDING' : 'SERVING';
+
+      // Case 1: DINE_IN -> TAKEAWAY (TO_TAKEAWAY)
+      if (parsed.action === 'TO_TAKEAWAY') {
+        if (source.orderType !== 'DINE_IN' || source.tableId === null || !sourceTable) {
+          throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Chỉ có thể chuyển đơn tại bàn sang Mang về');
+        }
+        const now = new Date();
+        const businessDay = this.businessDay(now);
+        await this.lockOrderSequence(tx, businessDay.key);
+        const takeawayNumber = await this.nextTakeawayNumber(tx, businessDay);
+        const toLabel = `Mang về #${String(takeawayNumber).padStart(2, '0')}`;
+        const logEntry = {
+          action: parsed.action,
+          fromTable: sourceLabel,
+          toTable: toLabel,
+          timestamp: now.toISOString(),
+          reason: parsed.reason,
+        };
+
+        if (typeof (tx.orderItem as { updateMany?: unknown })?.updateMany === 'function') {
+          await tx.orderItem.updateMany({
+            where: { orderId: source.id },
+            data: { isTakeaway: false },
+          });
+        }
+        await tx.order.update({
+          where: { id: source.id },
+          data: {
+            orderType: 'TAKEAWAY',
+            tableId: null,
+            takeawayNumber,
+            tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry),
+          },
+        });
+        await tx.diningTable.update({
+          where: { id: sourceTable.id },
+          data: { status: 'AVAILABLE', activeOrderId: null },
+        });
+
+        const kitchenTransferSlip = sourceStations.length > 0 ? {
+          orderCode: source.orderCode,
+          fromLabel: sourceLabel,
+          toLabel,
+          affectedStations: sourceStations,
+        } : undefined;
+
+        return {
+          response: TableActionResponseSchema.parse({
+            action: parsed.action,
+            sourceTableId: sourceTable.id,
+            targetTableId: null,
+            takeawayNumber,
+            requireKitchenNoticePrint: kitchenTransferSlip !== undefined,
+            kitchenTransferSlip,
+          }),
+          action: parsed.action,
+          previousOrderId: source.id,
+          redirectedOrderId: source.id,
+          sourceNoticeStatus,
+          newTableId: null as number | null,
+          newTableLabel: toLabel,
+          previousTableLabel: sourceLabel,
+          tableIds: [sourceTable.id],
+          secondRedirect: undefined,
+        };
+      }
+
+      const targetTable = await tx.diningTable.findUnique({ where: { id: parsed.targetTableId! } });
+      if (!targetTable) {
+        throw new NotFoundException({ message: 'Không tìm thấy bàn đích' });
+      }
+      if (targetTable.activeOrderId !== targetSnapshot!.activeOrderId) {
+        throw this.conflict(ErrorCodes.POS_CONCURRENT_MODIFICATION, 'Bàn đích vừa thay đổi, vui lòng tải lại sơ đồ bàn');
       }
 
       const targetOrderId = targetTable.activeOrderId;
       if (parsed.action !== 'MOVE' && targetOrderId === source.id) {
         throw this.conflict(ErrorCodes.POS_TABLE_NOT_OCCUPIED, 'Bàn đích phải có một đơn đang mở khác');
       }
-      const sourceStations = this.printedStations(source.items);
+
       const logEntry = {
         action: parsed.action,
-        fromTable: sourceTable.name,
+        fromTable: sourceLabel,
         toTable: targetTable.name,
         timestamp: new Date().toISOString(),
         reason: parsed.reason,
       };
       let redirectedOrderId = source.id;
-      const sourceNoticeStatus: 'PENDING' | 'SERVING' = source.status === 'PENDING' ? 'PENDING' : 'SERVING';
       let secondRedirect: { orderId: number; fromTable: string; toTable: string; orderStatus: 'PENDING' | 'SERVING' } | undefined;
       let affectedStations = sourceStations;
 
@@ -111,14 +186,34 @@ export class TableTransferService {
         if (targetTable.status !== 'AVAILABLE' || targetOrderId !== null) {
           throw this.conflict(ErrorCodes.POS_TABLE_NOT_AVAILABLE, 'Bàn đích hiện không trống');
         }
-        await tx.order.update({
-          where: { id: source.id },
-          data: { tableId: targetTable.id, tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry) },
-        });
-        await tx.diningTable.update({
-          where: { id: sourceTable.id },
-          data: { status: 'AVAILABLE', activeOrderId: null },
-        });
+        if (source.orderType === 'TAKEAWAY') {
+          if (typeof (tx.orderItem as { updateMany?: unknown })?.updateMany === 'function') {
+            await tx.orderItem.updateMany({
+              where: { orderId: source.id },
+              data: { isTakeaway: true },
+            });
+          }
+          await tx.order.update({
+            where: { id: source.id },
+            data: {
+              orderType: 'DINE_IN',
+              tableId: targetTable.id,
+              takeawayNumber: null,
+              tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry),
+            },
+          });
+        } else {
+          await tx.order.update({
+            where: { id: source.id },
+            data: { tableId: targetTable.id, tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry) },
+          });
+          if (sourceTable) {
+            await tx.diningTable.update({
+              where: { id: sourceTable.id },
+              data: { status: 'AVAILABLE', activeOrderId: null },
+            });
+          }
+        }
         await tx.diningTable.update({
           where: { id: targetTable.id },
           data: { status: source.status === 'PENDING' ? 'PENDING' : 'OCCUPIED', activeOrderId: source.id },
@@ -131,7 +226,13 @@ export class TableTransferService {
         if (!targetOrder || !activeStatuses.includes(targetOrder.status) || targetOrder.tableId !== targetTable.id) {
           throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Đơn đích không còn mở');
         }
-        await tx.orderItem.updateMany({ where: { orderId: source.id }, data: { orderId: targetOrder.id } });
+        await tx.orderItem.updateMany({
+          where: { orderId: source.id },
+          data: {
+            orderId: targetOrder.id,
+            ...(source.orderType === 'TAKEAWAY' ? { isTakeaway: true } : {}),
+          },
+        });
         const canRecomputeItems = typeof (tx.orderItem as { findMany?: unknown })?.findMany === 'function';
         if (canRecomputeItems) {
           await recomputeOrderTotals(
@@ -171,14 +272,24 @@ export class TableTransferService {
             },
           });
         }
-        await tx.diningTable.update({
-          where: { id: sourceTable.id },
-          data: { status: 'AVAILABLE', activeOrderId: null },
-        });
+        if (sourceTable) {
+          await tx.diningTable.update({
+            where: { id: sourceTable.id },
+            data: { status: 'AVAILABLE', activeOrderId: null },
+          });
+        }
         redirectedOrderId = targetOrder.id;
       } else {
-        if (sourceTable.status !== 'OCCUPIED' || targetTable.status !== 'OCCUPIED' || targetOrderId === null
-          || source.status !== 'SERVING') {
+        // SWAP requires both orders to be DINE_IN at OCCUPIED tables
+        if (
+          source.orderType !== 'DINE_IN' ||
+          source.tableId === null ||
+          !sourceTable ||
+          sourceTable.status !== 'OCCUPIED' ||
+          targetTable.status !== 'OCCUPIED' ||
+          targetOrderId === null ||
+          source.status !== 'SERVING'
+        ) {
           throw this.conflict(ErrorCodes.POS_TABLE_NOT_OCCUPIED, 'Cần hai bàn đang có đơn để đổi bàn');
         }
         const targetOrder = await tx.order.findUnique({
@@ -225,14 +336,14 @@ export class TableTransferService {
 
       const kitchenTransferSlip = affectedStations.length > 0 ? {
         orderCode: source.orderCode,
-        fromLabel: sourceTable.name,
+        fromLabel: sourceLabel,
         toLabel: targetTable.name,
         affectedStations,
       } : undefined;
       return {
         response: TableActionResponseSchema.parse({
           action: parsed.action,
-          sourceTableId: sourceTable.id,
+          sourceTableId: sourceTable?.id ?? null,
           targetTableId: targetTable.id,
           requireKitchenNoticePrint: kitchenTransferSlip !== undefined,
           kitchenTransferSlip,
@@ -241,10 +352,10 @@ export class TableTransferService {
         previousOrderId: source.id,
         redirectedOrderId,
         sourceNoticeStatus,
-        newTableId: targetTable.id,
+        newTableId: targetTable.id as number | null,
         newTableLabel: targetTable.name,
-        previousTableLabel: sourceTable.name,
-        tableIds: [sourceTable.id, targetTable.id],
+        previousTableLabel: sourceLabel,
+        tableIds: [sourceTable?.id ?? null, targetTable.id].filter((id): id is number => id !== null),
         secondRedirect,
       };
     });
@@ -253,7 +364,7 @@ export class TableTransferService {
       result.previousOrderId,
       result.redirectedOrderId,
       result.previousTableLabel,
-      result.newTableId,
+      result.newTableId ?? 0,
       result.newTableLabel,
     );
     if (result.secondRedirect) {
@@ -261,12 +372,12 @@ export class TableTransferService {
         result.secondRedirect.orderId,
         result.secondRedirect.orderId,
         result.secondRedirect.fromTable,
-        result.tableIds[0],
+        result.tableIds[0]!,
         result.secondRedirect.toTable,
       );
     }
     const nowIso = new Date().toISOString();
-    if (result.action === 'MERGE') {
+    if (result.action === 'MERGE' && result.newTableId !== null) {
       this.gateway.emitTableOrderNotice?.(
         result.newTableId,
         {
@@ -279,7 +390,7 @@ export class TableTransferService {
         },
         result.redirectedOrderId,
       );
-    } else if (result.action === 'MOVE') {
+    } else if (result.action === 'MOVE' && result.newTableId !== null) {
       this.gateway.emitTableOrderNotice?.(result.newTableId, {
         orderId: result.redirectedOrderId,
         tableId: result.newTableId,
@@ -287,10 +398,10 @@ export class TableTransferService {
         orderStatus: result.sourceNoticeStatus,
         timestamp: nowIso,
       });
-    } else if (result.action === 'SWAP' && result.secondRedirect) {
-      this.gateway.emitTableOrderNotice?.(result.tableIds[0], {
+    } else if (result.action === 'SWAP' && result.secondRedirect && result.newTableId !== null) {
+      this.gateway.emitTableOrderNotice?.(result.tableIds[0]!, {
         orderId: result.secondRedirect.orderId,
-        tableId: result.tableIds[0],
+        tableId: result.tableIds[0]!,
         kind: 'GUEST_ORDER_CREATED',
         orderStatus: result.secondRedirect.orderStatus,
         timestamp: nowIso,
@@ -318,6 +429,30 @@ export class TableTransferService {
     const ids = [...new Set(tableIds.filter((id): id is number => id !== null))].sort((left, right) => left - right);
     if (ids.length === 0) return;
     await tx.$queryRaw`SELECT id FROM dining_tables WHERE id IN (${Prisma.join(ids)}) ORDER BY id ASC FOR UPDATE`;
+  }
+
+  private businessDay(now: Date): { key: string; start: Date; end: Date } {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(now);
+    const part = (type: string) => parts.find((value) => value.type === type)?.value ?? '';
+    const key = `${part('year')}${part('month')}${part('day')}`;
+    const start = new Date(`${part('year')}-${part('month')}-${part('day')}T00:00:00.000+07:00`);
+    return { key, start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+  }
+
+  private async lockOrderSequence(tx: Prisma.TransactionClient, businessDate: string): Promise<void> {
+    if (typeof (tx as { $executeRaw?: unknown }).$executeRaw !== 'function') return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fnb-pos-order-sequence:${businessDate}`}))`;
+  }
+
+  private async nextTakeawayNumber(tx: Prisma.TransactionClient, day: { start: Date; end: Date }): Promise<number> {
+    if (typeof (tx.order as { aggregate?: unknown })?.aggregate !== 'function') return 1;
+    const aggregate = await tx.order.aggregate({
+      where: { orderType: 'TAKEAWAY', createdAt: { gte: day.start, lt: day.end } },
+      _max: { takeawayNumber: true },
+    });
+    return (aggregate._max.takeawayNumber ?? 0) + 1;
   }
 
   private printedStations(items: Array<{

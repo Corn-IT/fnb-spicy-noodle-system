@@ -284,8 +284,12 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
         screen.getByText(/Đơn hàng của bạn đã được chuyển sang Bàn 07/i),
       ).toBeInTheDocument();
 
-      // Guest orders an add-on drink (Trà Đào Cam Sả - no modifiers required)
+      // Guest orders an add-on drink (Trà Đào Cam Sả - no modifiers required) and selects "Mang về" for the 2nd batch
       fireEvent.click(screen.getByTestId('qr-product-card-102'));
+      expect(screen.getByTestId('qr-addon-serving-mode-bar')).toBeInTheDocument();
+      expect(screen.getByTestId('qr-addon-mode-dine-in')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.click(screen.getByTestId('qr-addon-mode-takeaway'));
+      expect(screen.getByTestId('qr-addon-mode-takeaway')).toHaveAttribute('aria-pressed', 'true');
       fireEvent.click(screen.getByTestId('qr-submit-order-btn'));
 
       await waitFor(() => {
@@ -294,10 +298,12 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
           expect.objectContaining({
             qrToken: validQrToken,
             activeOrderId: 540,
+            isTakeawayBatch: true,
             items: [
               expect.objectContaining({
                 productId: 102,
                 quantity: 1,
+                isTakeaway: true,
               }),
             ],
           }),
@@ -876,10 +882,12 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
         });
       });
 
-      // EC-POS-03: Click [Đổi / Gộp bàn] on TAKEAWAY order -> shows blocked message and hides confirm button
+      // EC-POS-03 (updated): Click [Đổi / Gộp bàn] on TAKEAWAY order -> allows MOVE to empty table or MERGE into occupied table (no SWAP)
       fireEvent.click(screen.getByTestId('btn-table-action'));
-      expect(screen.getByTestId('takeaway-action-blocked-msg')).toBeInTheDocument();
-      expect(screen.queryByTestId('confirm-table-action-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('table-action-type-MOVE')).toBeInTheDocument();
+      expect(screen.getByTestId('table-action-type-MERGE')).toBeInTheDocument();
+      expect(screen.queryByTestId('table-action-type-SWAP')).not.toBeInTheDocument();
+      expect(screen.getByTestId('confirm-table-action-btn')).toBeInTheDocument();
     });
   });
 

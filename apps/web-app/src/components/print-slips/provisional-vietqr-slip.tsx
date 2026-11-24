@@ -1,6 +1,7 @@
 import {
   PRINT_TEMPLATE_DEFAULTS,
   StoreAssetKind,
+  formatProductNameWithSize,
   type ProvisionalBillResponse,
   type PublicStoreSettingsResponse,
 } from '@fnb/shared';
@@ -239,8 +240,8 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
           <tr>
             <th
               data-print-col-width="62"
-              data-print-align="left"
-              className="border border-black px-1 py-0.5 text-left font-bold"
+              data-print-align="center"
+              className="border border-black px-1 py-0.5 text-center font-bold"
             >
               Tên món
             </th>
@@ -262,14 +263,17 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
         </thead>
         <tbody>
           {bill.items.map((item, idx) => {
+            const { displayName, remainingModifiers, remainingPricedModifiers } =
+              formatProductNameWithSize(item.name, item.modifiers, item.pricedModifiers);
             const pricedMods = tpl.blocks.itemModifiers
-              ? resolvePricedModifiers(item.modifiers, item.pricedModifiers)
+              ? resolvePricedModifiers(remainingModifiers, remainingPricedModifiers)
               : [];
             return (
               <tr key={`${item.name}-${idx}`}>
                 <td data-print-align="left" className="border border-black px-1 py-0.5 align-top">
                   <div data-print-bold className="font-bold">
-                    {idx + 1}. {item.name}
+                    {idx + 1}. {displayName}
+                    {bill.orderType !== 'TAKEAWAY' && item.isTakeaway ? ' [Mang về]' : ''}
                   </div>
                   {pricedMods.map((mod, mIdx) => (
                     <div

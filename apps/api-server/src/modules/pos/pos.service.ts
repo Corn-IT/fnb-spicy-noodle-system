@@ -117,6 +117,7 @@ type ResolvedOrderItem = {
   unitPrice: Prisma.Decimal;
   modifiersSnapshot: Prisma.InputJsonValue;
   itemNote: string | null;
+  isTakeaway: boolean;
 };
 type OrderRow = {
   id: number;
@@ -152,6 +153,7 @@ type OrderRow = {
     batchNo: number;
     itemSource?: string;
     kitchenStatus: string;
+    isTakeaway?: boolean;
     createdAt?: Date;
     product: {
       id: number;
@@ -299,23 +301,37 @@ export class PosService {
               throw new RetryQrOrderWithActiveSession(target.id);
             }
           }
-          if (!['PENDING', 'SERVING'].includes(target.status) || target.orderType !== 'DINE_IN' || !target.table) {
+          if (!['PENDING', 'SERVING'].includes(target.status)) {
+            throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Đơn hàng không còn mở để gọi thêm món');
+          }
+          if (target.orderType === 'DINE_IN' && !target.table) {
             throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Đơn hàng không còn mở để gọi thêm món');
           }
 
-          const response = await this.appendItems(tx, target, parsed.items);
+          const addonItems = parsed.isTakeawayBatch
+            ? parsed.items.map((item) => ({ ...item, isTakeaway: true }))
+            : parsed.items;
+          const response = await this.appendItems(tx, target, addonItems);
+          const resolvedTableLabel = target.orderType === 'TAKEAWAY'
+            ? `Mang về #${String(target.takeawayNumber ?? 1).padStart(2, '0')}`
+            : target.table!.name;
           return {
             kind: 'addon' as const,
             response: QrOrderResponseSchema.parse({
               orderId: target.id,
               activeOrderId: target.id,
               orderCode: target.orderCode,
-              currentTableLabel: target.table.name,
+              currentTableLabel: resolvedTableLabel,
               status: target.status,
               batchNo: response.batchNo,
               totalAmount: response.totalAmount,
             }),
-            payload: { ...response, orderId: target.id, tableId: target.table.id, tableLabel: target.table.name },
+            payload: {
+              ...response,
+              orderId: target.id,
+              tableId: target.table?.id ?? null,
+              tableLabel: resolvedTableLabel,
+            },
           };
         }
 
@@ -913,11 +929,12 @@ export class PosService {
     });
   }
 
-  /** Khoá so sánh 2 dòng món có thể gộp: cùng món, giá (đã gồm tuỳ chọn), ghi chú và tuỳ chọn. */
+  /** Khoá so sánh 2 dòng món có thể gộp: cùng món, giá (đã gồm tuỳ chọn), ghi chú, cờ mang về và tuỳ chọn. */
   private orderItemMergeKey(item: {
     productId: number;
     unitPrice: Prisma.Decimal | number | string;
     itemNote?: string | null;
+    isTakeaway?: boolean;
     modifiersSnapshot: unknown;
   }): string {
     const modifiers = Array.isArray(item.modifiersSnapshot) ? item.modifiersSnapshot : [];
@@ -932,6 +949,7 @@ export class PosService {
       item.productId,
       new Prisma.Decimal(item.unitPrice).toFixed(2),
       (item.itemNote ?? '').trim(),
+      Boolean(item.isTakeaway),
       normalized,
     ]);
   }
@@ -978,11 +996,26 @@ export class PosService {
         changedIds.add(update.orderItemId);
         if (item.kitchenStatus === 'CANCELLED') throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Món đã huỷ không thể sửa tiếp');
 
+        const isOnlyTakeawayToggle =
+          update.isTakeaway !== undefined &&
+          update.quantity === undefined &&
+          update.modifiers === undefined &&
+          update.itemNote === undefined;
+
+        if (isOnlyTakeawayToggle) {
+          await tx.orderItem.update({
+            where: { id: item.id },
+            data: { isTakeaway: Boolean(update.isTakeaway) },
+          });
+          continue;
+        }
+
         const replacementInput: CreateOrderItemInput = {
           productId: item.productId,
           quantity: update.quantity ?? item.quantity,
           modifiers: update.modifiers ?? this.modifierSelections(item.modifiersSnapshot),
           itemNote: update.itemNote === undefined ? (item.itemNote ?? undefined) : (update.itemNote ?? undefined),
+          isTakeaway: update.isTakeaway ?? item.isTakeaway ?? false,
         };
         const [replacement] = await this.resolveItems(tx, [replacementInput]);
         replacementsByOrderItemId.set(update.orderItemId, replacement);
@@ -992,6 +1025,7 @@ export class PosService {
             unitPrice: replacement.unitPrice,
             modifiersSnapshot: replacement.modifiersSnapshot,
             itemNote: replacement.itemNote,
+            ...(update.isTakeaway !== undefined ? { isTakeaway: replacement.isTakeaway } : {}),
           } });
         } else {
           await tx.orderItem.update({ where: { id: item.id }, data: { kitchenStatus: 'CANCELLED' } });
@@ -1162,12 +1196,15 @@ export class PosService {
         MOVE: { title: 'Chuyển bàn', verb: 'chuyển bàn' },
         MERGE: { title: 'Gộp bàn', verb: 'gộp bàn' },
         SWAP: { title: 'Đổi bàn', verb: 'đổi chỗ 2 bàn' },
+        TO_TAKEAWAY: { title: 'Chuyển sang Mang về', verb: 'chuyển đơn sang Mang về' },
       };
       const label = tableActionLabels[input.action];
       const slip = res.kitchenTransferSlip;
       const detailText = slip
         ? `từ ${slip.fromLabel} sang ${slip.toLabel} (đơn ${slip.orderCode})`
-        : `cho đơn #${id} sang bàn #${input.targetTableId}`;
+        : input.action === 'TO_TAKEAWAY'
+          ? `cho đơn #${id} sang Mang về #${String(res.takeawayNumber ?? 1).padStart(2, '0')}`
+          : `cho đơn #${id} sang bàn #${input.targetTableId}`;
       await this.auditLogService?.record({
         module: 'POS',
         action: label.title,
@@ -1177,7 +1214,7 @@ export class PosService {
         metadata: {
           orderId: id,
           reason: input.reason,
-          ...(slip ? { orderCode: slip.orderCode, fromLabel: slip.fromLabel, toLabel: slip.toLabel } : { targetTableId: input.targetTableId }),
+          ...(slip ? { orderCode: slip.orderCode, fromLabel: slip.fromLabel, toLabel: slip.toLabel } : { targetTableId: input.targetTableId ?? null }),
         },
       });
     }
@@ -1556,6 +1593,7 @@ export class PosService {
           modifiers: this.modifierNames(item.modifiersSnapshot),
           pricedModifiers: this.pricedModifierNames(item.modifiersSnapshot),
           note: item.itemNote,
+          ...(item.isTakeaway ? { isTakeaway: true } : {}),
         })),
       subtotalAmount: order.subtotalAmount !== undefined ? order.subtotalAmount.toNumber() : totals.subtotalAmount,
       discountAmount: order.discountAmount !== undefined ? order.discountAmount.toNumber() : totals.discountAmount,
@@ -1610,6 +1648,7 @@ export class PosService {
       modifiers: string[];
       pricedModifiers: string[];
       note: string | null;
+      isTakeaway?: boolean;
     }> = [];
 
     for (const [itemId, selectedQty] of selectedQtyByItemId.entries()) {
@@ -1632,6 +1671,7 @@ export class PosService {
         modifiers: this.modifierNames(item.modifiersSnapshot),
         pricedModifiers: this.pricedModifierNames(item.modifiersSnapshot),
         note: item.itemNote,
+        ...(item.isTakeaway ? { isTakeaway: true } : {}),
       });
     }
     splitTotal = splitTotal.toDecimalPlaces(2);
@@ -1981,6 +2021,7 @@ export class PosService {
               itemNote: item.itemNote,
               batchNo: item.batchNo,
               ...(item.itemSource ? { itemSource: item.itemSource } : {}),
+              ...(item.isTakeaway ? { isTakeaway: true } : {}),
               kitchenStatus: item.kitchenStatus as 'NEW' | 'PRINTED',
             },
           });
@@ -2108,6 +2149,7 @@ export class PosService {
         unitPrice: item.unitPrice,
         modifiersSnapshot: item.modifiersSnapshot,
         itemNote: item.itemNote,
+        ...(item.isTakeaway ? { isTakeaway: true } : {}),
         batchNo,
         itemSource: 'QR_CODE',
         kitchenStatus: 'NEW',
@@ -2192,6 +2234,8 @@ export class PosService {
             !exceptionSelections.some((ex) => ex.modifierId === candidate.id),
         );
 
+        const isSizeGroup = /^size$/i.test(group.name.trim());
+
         for (const selection of selections) {
           if (selectedIds.has(selection.modifierId)) throw new UnprocessableEntityException({ code: 'VALIDATION_FAILED', message: 'Không thể chọn trùng tuỳ chọn món' });
           selectedIds.add(selection.modifierId);
@@ -2258,10 +2302,23 @@ export class PosService {
           }
 
           modifierTotal = modifierTotal.add(modifier.extraPrice);
-          if (modifier.isDefaultChecked && modifier.extraPrice.equals(0)) {
+          if (modifier.isDefaultChecked && modifier.extraPrice.equals(0) && !isSizeGroup) {
             continue;
           }
           snapshots.push({ groupId: group.id, modifierId: modifier.id, name: modifier.name, extraPrice: modifier.extraPrice });
+        }
+
+        if (isSizeGroup && positiveSelections.length === 0) {
+          const defaultSizeMod = group.modifiers.find((m) => m.isDefaultChecked && m.isAvailable !== false);
+          if (defaultSizeMod) {
+            modifierTotal = modifierTotal.add(defaultSizeMod.extraPrice);
+            snapshots.push({
+              groupId: group.id,
+              modifierId: defaultSizeMod.id,
+              name: defaultSizeMod.name,
+              extraPrice: defaultSizeMod.extraPrice,
+            });
+          }
         }
       }
       if (input.modifiers.some((selection) => !product.modifierGroups.some((group) => group.id === selection.groupId))) {
@@ -2273,6 +2330,7 @@ export class PosService {
         unitPrice: product.price.add(modifierTotal),
         modifiersSnapshot: snapshots.map((snapshot) => ({ ...snapshot, extraPrice: snapshot.extraPrice.toFixed(2) })) as unknown as Prisma.InputJsonValue,
         itemNote: input.itemNote ?? null,
+        isTakeaway: Boolean(input.isTakeaway),
       };
     });
   }
@@ -2395,6 +2453,7 @@ export class PosService {
         itemNote: item.itemNote,
         batchNo: item.batchNo,
         kitchenStatus: item.kitchenStatus,
+        ...(item.isTakeaway ? { isTakeaway: true } : {}),
       })),
     });
   }

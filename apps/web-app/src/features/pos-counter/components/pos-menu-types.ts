@@ -8,4 +8,5 @@ export interface PosMenuSelectedItem {
   modifiers: OrderItemModifierSelection[];
   modifierLabels: string[];
   itemNote?: string;
+  isTakeaway?: boolean;
 }

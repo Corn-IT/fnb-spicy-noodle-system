@@ -86,6 +86,7 @@ export class KitchenSplitService {
       const tickets = new Map<KitchenStation, TicketItem[]>();
       for (const item of order.items) {
         const modifiers = this.modifierNames(item.modifiersSnapshot);
+        const itemIsTakeaway = Boolean((item as { isTakeaway?: boolean }).isTakeaway);
         if (item.product.station === 'COMBO') {
           const parts = comboParts.filter((part) => part.parentProductId === item.productId);
           if (parts.length === 0) {
@@ -101,6 +102,7 @@ export class KitchenSplitService {
               qty: item.quantity * part.quantity,
               modifiers,
               note: item.itemNote ?? '',
+              ...(itemIsTakeaway ? { isTakeaway: true } : {}),
             });
           }
         } else {
@@ -113,6 +115,7 @@ export class KitchenSplitService {
             note: item.itemNote ?? '',
             ...(baseUnitPrice !== undefined ? { unitPrice: baseUnitPrice } : {}),
             ...(item.product.categoryId !== undefined ? { categoryId: item.product.categoryId } : {}),
+            ...(itemIsTakeaway ? { isTakeaway: true } : {}),
           });
         }
       }
@@ -203,6 +206,7 @@ export class KitchenSplitService {
     const tickets = new Map<KitchenStation, TicketItem[]>();
     for (const item of order.items) {
       const modifiers = this.modifierNames(item.modifiersSnapshot);
+      const itemIsTakeaway = Boolean((item as { isTakeaway?: boolean }).isTakeaway);
       if (item.product.station === 'COMBO') {
         const parts = comboParts.filter((part) => part.parentProductId === item.productId);
         for (const part of parts) {
@@ -213,6 +217,7 @@ export class KitchenSplitService {
             qty: item.quantity * part.quantity,
             modifiers,
             note: item.itemNote ?? '',
+            ...(itemIsTakeaway ? { isTakeaway: true } : {}),
           });
         }
       } else {
@@ -226,6 +231,7 @@ export class KitchenSplitService {
           note: item.itemNote ?? '',
           ...(baseUnitPrice !== undefined ? { unitPrice: baseUnitPrice } : {}),
           ...(item.product.categoryId !== undefined ? { categoryId: item.product.categoryId } : {}),
+          ...(itemIsTakeaway ? { isTakeaway: true } : {}),
         });
       }
     }

@@ -181,12 +181,13 @@ export function computeOrderModifiersPayload(
       continue;
     }
 
+    const isSizeGroup = /^size$/i.test(group.name.trim());
     for (const modId of chosenIds) {
       const mod = group.modifiers.find((m) => m.id === modId);
       if (mod) {
         extraPrice += mod.extraPrice;
         modifiers.push({ groupId: group.id, modifierId: mod.id });
-        if (!(mod.isDefaultChecked && mod.extraPrice === 0)) {
+        if (isSizeGroup || !(mod.isDefaultChecked && mod.extraPrice === 0)) {
           modifierLabels.push(mod.name);
         }
       }

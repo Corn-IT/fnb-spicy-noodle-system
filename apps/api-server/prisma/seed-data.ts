@@ -274,21 +274,43 @@ const standardIceGroup: SeedModifierGroupDef = {
   ],
 };
 
+const standardDrinkSizeGroup: SeedModifierGroupDef = {
+  name: 'Size',
+  isRequired: true,
+  maxSelect: 1,
+  modifiers: [
+    { name: 'Size M', extraPrice: '0.00', isDefaultChecked: true },
+    { name: 'Size L', extraPrice: '7000.00' },
+  ],
+};
+
 const standardColdDrinkModifierGroups: readonly SeedModifierGroupDef[] = [
+  standardDrinkSizeGroup,
   standardSweetnessGroup,
   standardIceGroup,
 ];
 
 const juiceDrinkModifierGroups: readonly SeedModifierGroupDef[] = [
+  standardDrinkSizeGroup,
   juiceSweetnessGroup,
   standardIceGroup,
 ];
 
-const blendedOrHotDrinkModifierGroups: readonly SeedModifierGroupDef[] = [
+const blendedColdDrinkModifierGroups: readonly SeedModifierGroupDef[] = [
+  standardDrinkSizeGroup,
   standardSweetnessGroup,
 ];
 
+const hotDrinkModifierGroups: readonly SeedModifierGroupDef[] = [
+  standardSweetnessGroup,
+];
+
+const yogurtDrinkModifierGroups: readonly SeedModifierGroupDef[] = [
+  standardDrinkSizeGroup,
+];
+
 const sodaDrinkModifierGroups: readonly SeedModifierGroupDef[] = [
+  standardDrinkSizeGroup,
   standardIceGroup,
 ];
 
@@ -783,20 +805,20 @@ const rawProductSeed: Omit<ProductSeed, 'sortOrder'>[] = [
   { name: 'Coffee Đen', categoryName: 'Coffee', price: '20000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: standardColdDrinkModifierGroups },
   { name: 'Bạc Xỉu', categoryName: 'Coffee', price: '25000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: standardColdDrinkModifierGroups },
   { name: 'Coffee Kem Trứng Nướng', categoryName: 'Coffee', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: standardColdDrinkModifierGroups },
-  { name: 'Coffee Cốt Dừa Đá Xay', categoryName: 'Coffee', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
+  { name: 'Coffee Cốt Dừa Đá Xay', categoryName: 'Coffee', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
   { name: 'Bạc Xỉu Trân Châu Đường Đen', categoryName: 'Coffee', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: standardColdDrinkModifierGroups },
 
   // ------------------------------------------------
   // XVI. SINH TỐ (PHA_CHE — 8 món)
   // ------------------------------------------------
-  { name: 'Bơ Già Dừa Non', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Sinh Tố Bơ', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Sinh Tố Xoài', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Sinh Tố Việt Quất', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Sinh Tố Dâu', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Sinh Tố Hoa Quả', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Sinh Tố Bơ Xoài', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Sinh Tố Mãng Cầu', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
+  { name: 'Bơ Già Dừa Non', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Sinh Tố Bơ', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Sinh Tố Xoài', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Sinh Tố Việt Quất', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Sinh Tố Dâu', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Sinh Tố Hoa Quả', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Sinh Tố Bơ Xoài', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Sinh Tố Mãng Cầu', categoryName: 'Sinh Tố', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
 
   // ------------------------------------------------
   // XVII. NƯỚC ÉP HOA QUẢ (PHA_CHE — 4 món)
@@ -809,23 +831,23 @@ const rawProductSeed: Omit<ProductSeed, 'sortOrder'>[] = [
   // ------------------------------------------------
   // XVIII. ĐÁ XAY (PHA_CHE — 6 món)
   // ------------------------------------------------
-  { name: 'Matcha Trà Xanh Đá Xay', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Đá Xay Bạc Hà', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Đá Xay Việt Quất', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Đá Xay Dâu', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Chanh Tuyết', categoryName: 'Đá Xay', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Xoài Kem Cốt Dừa', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
+  { name: 'Matcha Trà Xanh Đá Xay', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Đá Xay Bạc Hà', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Đá Xay Việt Quất', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Đá Xay Dâu', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Chanh Tuyết', categoryName: 'Đá Xay', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
+  { name: 'Xoài Kem Cốt Dừa', categoryName: 'Đá Xay', price: '35000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedColdDrinkModifierGroups },
 
   // ------------------------------------------------
-  // XIX. SỮA CHUA (PHA_CHE — 7 món, để nguyên)
+  // XIX. SỮA CHUA (PHA_CHE — 7 món)
   // ------------------------------------------------
-  { name: 'Sữa Chua Hoa Quả', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [] },
-  { name: 'Sữa Chua Yến Mạch', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [] },
-  { name: 'Sữa Chua Trân Châu', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [] },
-  { name: 'Sữa Chua Xoài', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [] },
-  { name: 'Sữa Chua Đánh Đá', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [] },
-  { name: 'Sữa Chua Việt Quất', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [] },
-  { name: 'Sữa Chua Dâu', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [] },
+  { name: 'Sữa Chua Hoa Quả', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: yogurtDrinkModifierGroups },
+  { name: 'Sữa Chua Yến Mạch', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: yogurtDrinkModifierGroups },
+  { name: 'Sữa Chua Trân Châu', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: yogurtDrinkModifierGroups },
+  { name: 'Sữa Chua Xoài', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: yogurtDrinkModifierGroups },
+  { name: 'Sữa Chua Đánh Đá', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: yogurtDrinkModifierGroups },
+  { name: 'Sữa Chua Việt Quất', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: yogurtDrinkModifierGroups },
+  { name: 'Sữa Chua Dâu', categoryName: 'Sữa Chua', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: yogurtDrinkModifierGroups },
 
   // ------------------------------------------------
   // XX. SỮA TƯƠI (PHA_CHE — 6 món)
@@ -840,8 +862,8 @@ const rawProductSeed: Omit<ProductSeed, 'sortOrder'>[] = [
   // ------------------------------------------------
   // XXI. ĐỒ UỐNG NÓNG (PHA_CHE — 2 món)
   // ------------------------------------------------
-  { name: 'Trà Gừng Mật Ong', categoryName: 'Đồ Uống Nóng', price: '25000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
-  { name: 'Matcha Latte Nóng', categoryName: 'Đồ Uống Nóng', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: blendedOrHotDrinkModifierGroups },
+  { name: 'Trà Gừng Mật Ong', categoryName: 'Đồ Uống Nóng', price: '25000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: hotDrinkModifierGroups },
+  { name: 'Matcha Latte Nóng', categoryName: 'Đồ Uống Nóng', price: '30000.00', station: ProductStation.PHA_CHE, comboItems: [], modifierGroups: hotDrinkModifierGroups },
 
   // ------------------------------------------------
   // XXII. SODA Ý (PHA_CHE — 3 món)

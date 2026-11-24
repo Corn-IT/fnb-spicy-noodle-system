@@ -4,6 +4,7 @@ import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Input } from '@/components/ui/input';
+import { buildInitialSelectedByGroup, computeOrderModifiersPayload } from '@/lib/modifier-selection';
 import { useCommitSearch } from '@/lib/use-commit-search';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/utils/cn';
@@ -20,9 +21,18 @@ export type { PosMenuSelectedItem } from './pos-menu-types';
 export interface PosMenuPanelProps {
   products: Product[];
   onAddItem: (item: PosMenuSelectedItem) => void;
+  showAddonServingModeSelector?: boolean;
+  addonIsTakeaway?: boolean;
+  onChangeAddonIsTakeaway?: (isTakeaway: boolean) => void;
 }
 
-export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
+export function PosMenuPanel({
+  products,
+  onAddItem,
+  showAddonServingModeSelector = false,
+  addonIsTakeaway = false,
+  onChangeAddonIsTakeaway,
+}: PosMenuPanelProps) {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const canAddItems = user
@@ -50,6 +60,43 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
     [filterProducts, stationFilter, categoryFilter, searchQuery],
   );
 
+  const handleQuickAddItem = (product: Product, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (!canAddItems) return;
+    if (product.modifierGroups.length === 0) {
+      onAddItem({
+        productId: product.id,
+        name: product.name,
+        quantity: 1,
+        unitPrice: product.price,
+        modifiers: [],
+        modifierLabels: [],
+      });
+      return;
+    }
+
+    const initialSelected = buildInitialSelectedByGroup(product);
+    const hasAllRequiredDefaults = product.modifierGroups.every((group) => {
+      if (!group.isRequired) return true;
+      return (initialSelected[group.id]?.length ?? 0) > 0;
+    });
+
+    if (hasAllRequiredDefaults) {
+      const computed = computeOrderModifiersPayload(product, initialSelected);
+      onAddItem({
+        productId: product.id,
+        name: product.name,
+        quantity: 1,
+        unitPrice: product.price + computed.extraPrice,
+        modifiers: computed.modifiers,
+        modifierLabels: computed.modifierLabels,
+      });
+      return;
+    }
+
+    setModalProduct(product);
+  };
+
   const handleProductClick = (product: Product) => {
     if (!canAddItems) return;
     if (product.modifierGroups.length > 0) {
@@ -70,6 +117,47 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-y-auto overscroll-contain touch-pan-y p-3 sm:p-4 pb-28 sm:pb-6">
       {/* Tầng 1: Khu vực Bếp + Nút tắt sang Quản trị Thực đơn */}
+      {showAddonServingModeSelector && onChangeAddonIsTakeaway ? (
+        <div
+          data-testid="pos-addon-serving-mode-selector"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 shrink-0"
+        >
+          <span className="text-xs font-bold text-foreground">
+            Hình thức món gọi thêm cho bàn này:
+          </span>
+          <div className="inline-flex rounded-lg border bg-background p-0.5 shadow-2xs">
+            <button
+              type="button"
+              data-testid="pos-addon-mode-dine-in"
+              aria-pressed={!addonIsTakeaway}
+              onClick={() => onChangeAddonIsTakeaway(false)}
+              className={cn(
+                'rounded-md px-3 py-1 text-xs font-bold transition-colors',
+                !addonIsTakeaway
+                  ? 'bg-primary text-primary-foreground shadow-2xs'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Dùng tại bàn
+            </button>
+            <button
+              type="button"
+              data-testid="pos-addon-mode-takeaway"
+              aria-pressed={addonIsTakeaway}
+              onClick={() => onChangeAddonIsTakeaway(true)}
+              className={cn(
+                'rounded-md px-3 py-1 text-xs font-bold transition-colors',
+                addonIsTakeaway
+                  ? 'bg-amber-600 text-white shadow-2xs'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Mang về
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between gap-2 shrink-0">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
           {stationFilters.map((tab) => {
@@ -227,7 +315,11 @@ export function PosMenuPanel({ products, onAddItem }: PosMenuPanelProps) {
                 {product.price.toLocaleString('vi-VN')} đ
               </span>
               {canAddItems ? (
-                <span className="inline-flex h-7 shrink-0 items-center justify-center rounded-full bg-primary px-3 text-xs font-semibold leading-normal text-primary-foreground shadow-xs transition-transform active:scale-95 whitespace-nowrap select-none">
+                <span
+                  data-testid={`pos-quick-add-product-${product.id}`}
+                  onClick={(e) => handleQuickAddItem(product, e)}
+                  className="inline-flex h-7 shrink-0 items-center justify-center rounded-full bg-primary px-3 text-xs font-semibold leading-normal text-primary-foreground shadow-xs transition-transform active:scale-95 whitespace-nowrap select-none"
+                >
                   <span>Thêm</span>
                 </span>
               ) : null}

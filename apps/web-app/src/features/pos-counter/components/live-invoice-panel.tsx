@@ -1,4 +1,4 @@
-import { type OrderDetailResponse } from '@fnb/shared';
+import { formatProductNameWithSize, type OrderDetailResponse } from '@fnb/shared';
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -66,7 +66,10 @@ export interface LiveInvoicePanelProps {
   onSubmitDraftOrder: () => void;
   onApproveQrOrder: () => void;
   onUpdateOrderItemQuantity: (orderItemId: number, newQuantity: number) => void;
+  onToggleOrderItemTakeaway?: (orderItemId: number, nextIsTakeaway: boolean) => void;
   onRemoveOrCancelOrderItem: (orderItemId: number) => void;
+  addonIsTakeaway?: boolean;
+  onChangeAddonIsTakeaway?: (isTakeaway: boolean) => void;
   onOpenTableAction: () => void;
   onSplitKitchen: () => void;
   onReprintKitchen?: (batchNo?: number) => void;
@@ -101,7 +104,10 @@ export function LiveInvoicePanel({
   onSubmitDraftOrder,
   onApproveQrOrder,
   onUpdateOrderItemQuantity,
+  onToggleOrderItemTakeaway,
   onRemoveOrCancelOrderItem,
+  addonIsTakeaway = false,
+  onChangeAddonIsTakeaway,
   onOpenTableAction,
   onSplitKitchen,
   onReprintKitchen,
@@ -155,17 +161,22 @@ export function LiveInvoicePanel({
                 Chưa có món trong giỏ. Vui lòng chọn món bên Tab Thực đơn.
               </p>
             ) : (
-              draftItems.map((item, idx) => (
+              draftItems.map((item, idx) => {
+                const { displayName, remainingModifiers } = formatProductNameWithSize(
+                  item.name,
+                  item.modifierLabels,
+                );
+                return (
                 <div
                   key={`${item.productId}-${idx}`}
                   data-testid={`draft-item-${idx}`}
                   className="flex items-center justify-between rounded-lg border p-2.5 text-sm"
                 >
                   <div>
-                    <p className="font-semibold">{item.name}</p>
-                    {item.modifierLabels.length > 0 ? (
+                    <p className="font-semibold">{displayName}</p>
+                    {remainingModifiers.length > 0 ? (
                       <p className="text-xs text-muted-foreground">
-                        {item.modifierLabels.join(', ')}
+                        {remainingModifiers.join(', ')}
                       </p>
                     ) : null}
                     <p className="text-xs font-bold text-price">
@@ -238,11 +249,12 @@ export function LiveInvoicePanel({
                         </PopoverContent>
                       </Popover>
                     </div>
-                  ) : (
-                    <span className="text-xs font-bold tabular-nums">x{item.quantity}</span>
-                  )}
-                </div>
-              ))
+                    ) : (
+                      <span className="text-xs font-bold tabular-nums">x{item.quantity}</span>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -483,6 +495,12 @@ export function LiveInvoicePanel({
                 const isCancelled = item.kitchenStatus === 'CANCELLED';
                 const isPrinted = item.kitchenStatus === 'PRINTED';
                 const isNew = item.kitchenStatus === 'NEW';
+                const { displayName, remainingModifiers } = formatProductNameWithSize(
+                  item.name,
+                  item.modifiers,
+                );
+                const isTableOrder = order.orderType === 'DINE_IN';
+                const itemIsTakeaway = Boolean(item.isTakeaway);
 
                 return (
                   <div
@@ -496,7 +514,7 @@ export function LiveInvoicePanel({
                     <div className="min-w-0 flex-1 pr-2 space-y-0.5">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="font-semibold leading-snug">
-                          {item.quantity}x {item.name}
+                          {item.quantity}x {displayName}
                         </span>
                         <Badge
                           variant="outline"
@@ -512,10 +530,30 @@ export function LiveInvoicePanel({
                         >
                           {isNew ? 'Mới gọi' : isPrinted ? 'Đã in bếp' : 'Đã huỷ'}
                         </Badge>
+                        {isTableOrder && itemIsTakeaway ? (
+                          <Badge
+                            variant="outline"
+                            data-testid={`invoice-item-takeaway-badge-${item.id}`}
+                            className="text-[10px] px-1.5 py-0.5 font-bold shrink-0 border-sky-500/80 bg-sky-50 text-sky-800 dark:border-sky-400/70 dark:bg-sky-950/60 dark:text-sky-200"
+                          >
+                            Mang về
+                          </Badge>
+                        ) : null}
+                        {isTableOrder && !isCancelled && canUpdate && isOrderActive && onToggleOrderItemTakeaway ? (
+                          <button
+                            type="button"
+                            data-testid={`toggle-item-takeaway-${item.id}`}
+                            onClick={() => onToggleOrderItemTakeaway(item.id, !itemIsTakeaway)}
+                            className="text-[10px] font-semibold text-muted-foreground hover:text-foreground underline"
+                            title={itemIsTakeaway ? 'Đổi sang dùng tại bàn' : 'Đánh dấu món này đóng hộp mang về'}
+                          >
+                            {itemIsTakeaway ? 'Bỏ nhãn MV' : '+ Mang về'}
+                          </button>
+                        ) : null}
                       </div>
-                      {item.modifiers.length > 0 ? (
+                      {remainingModifiers.length > 0 ? (
                         <p className="text-xs text-muted-foreground">
-                          {item.modifiers.join(', ')}
+                          {remainingModifiers.join(', ')}
                         </p>
                       ) : null}
                       {item.itemNote ? (
@@ -709,6 +747,51 @@ export function LiveInvoicePanel({
             </>
           );
         })()}
+
+        {order.orderType === 'DINE_IN' &&
+        isOrderActive &&
+        order.items.length > 0 &&
+        canUpdate &&
+        onChangeAddonIsTakeaway ? (
+          <div
+            data-testid="invoice-addon-serving-mode-selector"
+            className="mb-2.5 flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-2.5 py-1.5"
+          >
+            <span className="text-[11px] font-bold text-muted-foreground">
+              Lượt gọi thêm:
+            </span>
+            <div className="inline-flex rounded-md border bg-background p-0.5">
+              <button
+                type="button"
+                data-testid="invoice-addon-mode-dine-in"
+                aria-pressed={!addonIsTakeaway}
+                onClick={() => onChangeAddonIsTakeaway(false)}
+                className={cn(
+                  'rounded px-2.5 py-1 text-[11px] font-bold transition-colors',
+                  !addonIsTakeaway
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Dùng tại bàn
+              </button>
+              <button
+                type="button"
+                data-testid="invoice-addon-mode-takeaway"
+                aria-pressed={addonIsTakeaway}
+                onClick={() => onChangeAddonIsTakeaway(true)}
+                className={cn(
+                  'rounded px-2.5 py-1 text-[11px] font-bold transition-colors',
+                  addonIsTakeaway
+                    ? 'bg-amber-600 text-white'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Mang về
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="mb-2.5 sm:mb-3 flex items-center justify-between">
           <span className="text-xs sm:text-sm font-semibold text-muted-foreground">Tổng thanh toán</span>
@@ -994,6 +1077,10 @@ export function LiveInvoicePanel({
                     {batchItems.map((item) => {
                       const isCancelled = item.kitchenStatus === 'CANCELLED';
                       const isPrinted = item.kitchenStatus === 'PRINTED';
+                      const { displayName, remainingModifiers } = formatProductNameWithSize(
+                        item.name,
+                        item.modifiers,
+                      );
                       return (
                         <div
                           key={item.id}
@@ -1005,14 +1092,22 @@ export function LiveInvoicePanel({
                           <div className="min-w-0 flex-1 space-y-0.5">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="font-semibold">
-                                {item.quantity}x {item.name}
+                                {item.quantity}x {displayName}
                               </span>
                               <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                                 {item.kitchenStatus === 'NEW' ? 'Mới gọi' : isPrinted ? 'Đã in bếp' : 'Đã huỷ'}
                               </Badge>
+                              {order.orderType === 'DINE_IN' && item.isTakeaway ? (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] px-1.5 py-0 border-sky-500/80 bg-sky-50 text-sky-800 dark:border-sky-400/70 dark:bg-sky-950/60 dark:text-sky-200"
+                                >
+                                  Mang về
+                                </Badge>
+                              ) : null}
                             </div>
-                            {item.modifiers.length > 0 ? (
-                              <p className="text-xs text-muted-foreground">{item.modifiers.join(', ')}</p>
+                            {remainingModifiers.length > 0 ? (
+                              <p className="text-xs text-muted-foreground">{remainingModifiers.join(', ')}</p>
                             ) : null}
                             {item.itemNote ? (
                               <p className="text-xs italic text-amber-600 dark:text-amber-300">

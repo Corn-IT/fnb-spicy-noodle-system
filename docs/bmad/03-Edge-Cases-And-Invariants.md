@@ -203,9 +203,14 @@ $$\text{status} = \text{'MATCHED' (Chuẩn)}$$
 - **Bối cảnh:** Thu ngân chọn nhầm bàn đích đang có khách ngồi ăn.
 - **Giải pháp:** Backend kiểm tra trong transaction: Nếu `targetTable.status !== 'AVAILABLE'` -> Bắn ngay lỗi `HTTP 409 Conflict` kèm mã `POS_TABLE_NOT_AVAILABLE` và thông báo `"Bàn đích đang có khách phục vụ, vui lòng chọn bàn trống hoặc dùng tính năng Gộp bàn"`. Giao diện POS hiển thị toast lỗi màu đỏ, rollback toàn bộ transaction.
 
-#### `EC-POS-03`: Yêu cầu Gộp bàn (`MERGE`) đối với đơn Mang về (`TAKEAWAY`)
-- **Bối cảnh:** Thu ngân vô tình chọn đơn Mang về để gộp vào một bàn ăn tại chỗ.
-- **Giải pháp:** Backend kiểm tra `if (order.order_type === 'TAKEAWAY')` -> Bắn lỗi `HTTP 409 Conflict` kèm mã `POS_TAKEAWAY_CANNOT_MERGE`. Đơn mang về là độc lập, **CẤM TUYỆT ĐỐI** tham gia vào nghiệp vụ MERGE bàn.
+#### `EC-POS-03`: Chuyển đổi 2 chiều giữa Đơn Mang về (`TAKEAWAY`) và Đơn Tại bàn (`DINE_IN`)
+- **Bối cảnh:** Khách đặt Mang về nhưng đổi ý xin ngồi lại bàn (bàn trống hoặc nhập chung với bạn đang ngồi ăn), hoặc khách đang ăn tại bàn nhưng có việc gấp xin gói toàn bộ đơn mang về.
+- **Giải pháp (Tuân thủ Hard Invariant 2 & 5):**
+  1. **Mang về → Bàn trống (`MOVE`):** Cập nhật `order_type = 'DINE_IN'`, `table_id = targetTableId`, `takeaway_number = NULL`, bàn đích chuyển sang `'OCCUPIED'` (hoặc `'PENDING'`), đánh dấu các món hiện có `is_takeaway = TRUE` (thu ngân có thể bật/tắt lại từng món nếu khách dùng tại bàn).
+  2. **Mang về → Gộp vào bàn đang ăn (`MERGE`):** Chuyển toàn bộ `order_items` sang đơn của bàn đích với `is_takeaway = TRUE`, tính lại tổng tiền đơn đích, đóng đơn nguồn `status = 'MERGED'`.
+  3. **Tại bàn → Mang về (`TO_TAKEAWAY`):** Giải phóng bàn nguồn về `'AVAILABLE'` (`active_order_id = NULL`), cập nhật `order_type = 'TAKEAWAY'`, `table_id = NULL`, cấp số `takeaway_number = MAX(today) + 1`, reset `is_takeaway = FALSE` trên các món.
+  4. **Cấm `SWAP` với đơn Mang về:** Đơn `TAKEAWAY` không có bàn vật lý nên không hỗ trợ `SWAP` (`POS_TAKEAWAY_CANNOT_MERGE`).
+  5. **Ghi log & Báo bếp:** Bắt buộc nhập lý do (`reason`), ghi `table_transfer_logs`, và nếu có món `PRINTED` thì tự động in `TableTransferNoticeSlip` (`Mang về #05 → Bàn 03` hoặc `Bàn 01 → Mang về #05`).
 
 #### `EC-POS-04`: Chuyển bàn khi đơn ĐÃ CÓ món gửi xuống bếp (`kitchen_status = 'PRINTED'`)
 - **Bối cảnh:** Khách chuyển từ Bàn 1 sang Bàn 7 sau khi bếp đã nấu được 5 phút (phiếu bếp cũ in chữ to BÀN 01).

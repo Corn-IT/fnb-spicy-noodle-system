@@ -1,4 +1,6 @@
 import {
+  DEFAULT_DRINK_SIZE_MODIFIER_GROUP,
+  isDrinkSizeCategoryName,
   type CreateProductInput,
   type MdmItem,
   type Product,
@@ -144,6 +146,21 @@ export function ProductFormDrawer({
     }
   }, [open, editingProduct, categories, allProducts.length]);
 
+  const buildSizePresetGroup = (): EditableModifierGroup => ({
+    name: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.name,
+    isRequired: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.isRequired,
+    maxSelect: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.maxSelect,
+    isAutoSelect: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.isAutoSelect,
+    allowSubstitution: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.allowSubstitution,
+    modifiers: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.modifiers.map((m) => ({
+      name: m.name,
+      extraPrice: m.extraPrice,
+      isDefaultChecked: m.isDefaultChecked,
+      isAvailable: m.isAvailable,
+      defaultSubstituteName: m.defaultSubstituteName ?? '',
+    })),
+  });
+
   const handleCategoryChange = (nextCategoryId: number | null) => {
     setCategoryId(nextCategoryId);
     if (nextCategoryId !== null && station !== 'COMBO') {
@@ -152,10 +169,23 @@ export function ProductFormDrawer({
       if (typeof defaultStation === 'string' && defaultStation.trim()) {
         setStation(defaultStation as ProductStation);
       }
+      if (!editingProduct && isDrinkSizeCategoryName(matched?.name)) {
+        setModifierGroups((prev) => {
+          if (prev.some((g) => /^size$/i.test(g.name.trim()))) return prev;
+          return [buildSizePresetGroup(), ...prev];
+        });
+      }
     }
   };
 
   // Preset Group Helpers
+  const addPresetDrinkSizeGroup = () => {
+    setModifierGroups((prev) => {
+      if (prev.some((g) => /^size$/i.test(g.name.trim()))) return prev;
+      return [buildSizePresetGroup(), ...prev];
+    });
+  };
+
   const addPresetSpiceGroup = () => {
     setModifierGroups((prev) => [
       ...prev,
@@ -704,6 +734,16 @@ export function ProductFormDrawer({
               <span className="text-[11px] font-semibold text-muted-foreground mr-1">
                 Chèn mẫu nhanh:
               </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2.5 text-xs font-semibold"
+                onClick={addPresetDrinkSizeGroup}
+              >
+                <Layers className="h-3.5 w-3.5 text-sky-600" />
+                <span>Size Pha chế (M +0đ / L +7k)</span>
+              </Button>
               <Button
                 type="button"
                 variant="outline"

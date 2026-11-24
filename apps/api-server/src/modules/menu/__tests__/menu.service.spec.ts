@@ -450,4 +450,67 @@ describe('MenuService', () => {
     });
     expect(res.table.activeOrderId).toBe(118);
   });
+
+  it('automatically attaches the default Size (M +0đ / L +7.000đ) modifier group when creating a product in one of the 10 drink categories with empty modifierGroups', async () => {
+    const tx = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({ name: 'Trà Sữa' }),
+      },
+      product: {
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue({
+          ...productRow,
+          id: 50,
+          name: 'Trà Sữa Mới',
+          station: 'PHA_CHE',
+          price: new Prisma.Decimal('30000.00'),
+          modifierGroups: [
+            {
+              id: 500,
+              name: 'Size',
+              isRequired: true,
+              maxSelect: 1,
+              modifiers: [
+                { id: 501, name: 'Size M', extraPrice: new Prisma.Decimal('0.00'), isDefaultChecked: true },
+                { id: 502, name: 'Size L', extraPrice: new Prisma.Decimal('7000.00'), isDefaultChecked: false },
+              ],
+            },
+          ],
+          comboParents: [],
+        }),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (op: (client: typeof tx) => Promise<unknown>) => op(tx)),
+    };
+    const service = new MenuService(prisma as never);
+
+    await service.createProduct({
+      name: 'Trà Sữa Mới',
+      categoryId: 15,
+      price: 30000,
+      station: 'PHA_CHE',
+      modifierGroups: [],
+    });
+
+    expect(tx.product.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        modifierGroups: {
+          create: [
+            expect.objectContaining({
+              name: 'Size',
+              isRequired: true,
+              maxSelect: 1,
+              modifiers: {
+                create: [
+                  expect.objectContaining({ name: 'Size M', extraPrice: new Prisma.Decimal(0), isDefaultChecked: true }),
+                  expect.objectContaining({ name: 'Size L', extraPrice: new Prisma.Decimal(7000) }),
+                ],
+              },
+            }),
+          ],
+        },
+      }),
+    }));
+  });
 });

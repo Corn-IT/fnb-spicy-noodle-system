@@ -48,10 +48,16 @@ export const TableStatusSchema = z.enum([
   TableStatus.OCCUPIED,
 ]);
 
-export const TableActionType = { MOVE: 'MOVE', MERGE: 'MERGE', SWAP: 'SWAP' } as const;
+export const TableActionType = {
+  MOVE: 'MOVE',
+  MERGE: 'MERGE',
+  SWAP: 'SWAP',
+  TO_TAKEAWAY: 'TO_TAKEAWAY',
+} as const;
 export type TableActionType = (typeof TableActionType)[keyof typeof TableActionType];
 export const TableActionTypeSchema = z.enum([
   TableActionType.MOVE,
   TableActionType.MERGE,
   TableActionType.SWAP,
+  TableActionType.TO_TAKEAWAY,
 ]);

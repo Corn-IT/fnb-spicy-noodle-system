@@ -722,4 +722,71 @@ describe('@fnb/shared contracts', () => {
       }).success,
     ).toBe(true);
   });
+
+  it('validates TO_TAKEAWAY table action, isTakeaway item flag, and drink size formatting helpers', () => {
+    expect(contracts.TableActionTypeSchema.safeParse('TO_TAKEAWAY').success).toBe(true);
+    expect(
+      contracts.TableActionRequestSchema.safeParse({
+        action: 'TO_TAKEAWAY',
+        targetTableId: null,
+        reason: 'Khách xin gói mang về',
+      }).success,
+    ).toBe(true);
+    expect(
+      contracts.TableActionRequestSchema.safeParse({
+        action: 'TO_TAKEAWAY',
+        targetTableId: 5,
+        reason: 'Khách xin gói mang về',
+      }).success,
+    ).toBe(false);
+    expect(
+      contracts.TableActionResponseSchema.safeParse({
+        action: 'TO_TAKEAWAY',
+        sourceTableId: 1,
+        targetTableId: null,
+        takeawayNumber: 5,
+        requireKitchenNoticePrint: true,
+        kitchenTransferSlip: {
+          orderCode: 'HD-20261124-0001',
+          fromLabel: 'Bàn 01',
+          toLabel: 'Mang về #05',
+          affectedStations: ['BEP_NAU'],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      contracts.CreateOrderItemInputSchema.safeParse({
+        productId: 1,
+        quantity: 2,
+        isTakeaway: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      contracts.UpdateOrderItemSchema.safeParse({
+        orderItemId: 1,
+        isTakeaway: false,
+      }).success,
+    ).toBe(true);
+    expect(contracts.isDrinkSizeCategoryName('Trà Sữa')).toBe(true);
+    expect(contracts.isDrinkSizeCategoryName('Nước Ngọt - Bia - Rượu')).toBe(false);
+    expect(contracts.isDrinkSizeCategoryName('Đồ Uống Nóng')).toBe(false);
+    expect(contracts.isDrinkSizeCategoryName('Đồ Ăn Vặt (Quầy Nước)')).toBe(false);
+
+    expect(
+      contracts.formatProductNameWithSize('Trà Đào', ['Size L', 'Ít đá'], ['Size L']),
+    ).toEqual({
+      displayName: 'Trà Đào (L)',
+      sizeCode: 'L',
+      remainingModifiers: ['Ít đá'],
+      remainingPricedModifiers: [],
+    });
+    expect(
+      contracts.formatProductNameWithSize('Trà Đào', ['M', 'Giảm ngọt'], []),
+    ).toEqual({
+      displayName: 'Trà Đào (M)',
+      sizeCode: 'M',
+      remainingModifiers: ['Giảm ngọt'],
+      remainingPricedModifiers: [],
+    });
+  });
 });

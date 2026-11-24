@@ -358,13 +358,11 @@ export class PosSocketGateway
           );
         const validSessionOrder = isTakeawayQr
           ? order !== null &&
-            order.orderType === 'TAKEAWAY' &&
             order.orderSource === 'QR_CODE' &&
             order.status !== 'VOIDED' &&
             typeof order.orderCode === 'string' &&
             verifyTakeawayGuestSessionToken(auth.guestSessionToken, order.id, order.orderCode)
           : order !== null &&
-            order.orderType === 'DINE_IN' &&
             order.status !== 'VOIDED' &&
             (order.tableId === table?.id || isTransferredFromTable);
         if (!validSessionOrder) {

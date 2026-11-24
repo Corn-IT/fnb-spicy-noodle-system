@@ -1,4 +1,4 @@
-import type { OrderDetailResponse } from '@fnb/shared';
+import { formatProductNameWithSize, type OrderDetailResponse } from '@fnb/shared';
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -169,7 +169,7 @@ function LiveOrderCart({
   order: OrderDetailResponse;
   askConfirm: AskConfirm;
 }) {
-  const { permissions, pending, actions, dialogs, selectedPendingAlert } = workspace;
+  const { permissions, pending, actions, dialogs, selectedPendingAlert, addonIsTakeaway, setAddonIsTakeaway } = workspace;
   const { canUpdateOrder, canSplitKitchen, canTableAction, canCheckout } = permissions;
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [cancelOpen, setCancelOpen] = React.useState(false);
@@ -205,8 +205,7 @@ function LiveOrderCart({
     return [...map.entries()].sort((a, b) => a[0] - b[0]);
   }, [order.items]);
 
-  const tableActionDisabled =
-    !canTableAction || !isOrderActive || order.orderType === 'TAKEAWAY';
+  const tableActionDisabled = !canTableAction || !isOrderActive;
   const discountDisabled = !canUseDiscount || pending.isDiscountPending;
 
   const moreActions: TouchSheetAction[] = [
@@ -215,7 +214,6 @@ function LiveOrderCart({
           {
             key: 'table-action',
             label: 'Đổi / Gộp / Hoán đổi bàn',
-            hint: order.orderType === 'TAKEAWAY' ? 'Không áp dụng cho đơn mang về' : undefined,
             icon: ArrowLeftRight,
             disabled: tableActionDisabled,
             onSelect: () => dialogs.setTableActionOpen(true),
@@ -369,9 +367,13 @@ function LiveOrderCart({
                   <LiveItemRow
                     key={item.id}
                     item={item}
+                    isTableOrder={order.orderType === 'DINE_IN'}
                     canEdit={canUpdateOrder && isOrderActive}
                     onChangeQuantity={(quantity) =>
                       void actions.updateOrderItemQuantity(item.id, quantity)
+                    }
+                    onToggleTakeaway={() =>
+                      void actions.toggleOrderItemTakeaway(item.id, !item.isTakeaway)
                     }
                     onRemove={() => confirmRemoveItem(item)}
                   />
@@ -383,6 +385,47 @@ function LiveOrderCart({
       </div>
 
       <div className={cn('shrink-0 border-t', isShortScreen ? 'space-y-2 p-2.5' : 'space-y-2.5 p-3')}>
+        {order.orderType === 'DINE_IN' &&
+        isOrderActive &&
+        order.items.length > 0 &&
+        canUpdateOrder ? (
+          <div
+            data-testid="touch-addon-serving-mode-selector"
+            className="flex items-center justify-between gap-2 rounded-xl border bg-muted/30 px-2.5 py-1.5"
+          >
+            <span className="text-xs font-bold text-muted-foreground">Lượt gọi thêm:</span>
+            <div className="inline-flex rounded-lg border bg-background p-0.5">
+              <button
+                type="button"
+                data-testid="touch-addon-mode-dine-in"
+                aria-pressed={!addonIsTakeaway}
+                onClick={() => setAddonIsTakeaway(false)}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-xs font-bold transition-colors',
+                  !addonIsTakeaway
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground',
+                )}
+              >
+                Dùng tại bàn
+              </button>
+              <button
+                type="button"
+                data-testid="touch-addon-mode-takeaway"
+                aria-pressed={addonIsTakeaway}
+                onClick={() => setAddonIsTakeaway(true)}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-xs font-bold transition-colors',
+                  addonIsTakeaway
+                    ? 'bg-amber-600 text-white'
+                    : 'text-muted-foreground',
+                )}
+              >
+                Mang về
+              </button>
+            </div>
+          </div>
+        ) : null}
         {hasDiscount ? (
           <div className="space-y-1 text-sm">
             <div className="flex justify-between text-muted-foreground">
@@ -592,17 +635,22 @@ function MoreButton({
 
 function LiveItemRow({
   item,
+  isTableOrder,
   canEdit,
   onChangeQuantity,
+  onToggleTakeaway,
   onRemove,
 }: {
   item: OrderItem;
+  isTableOrder: boolean;
   canEdit: boolean;
   onChangeQuantity: (quantity: number) => void;
+  onToggleTakeaway: () => void;
   onRemove: () => void;
 }) {
   const isCancelled = item.kitchenStatus === 'CANCELLED';
   const isNew = item.kitchenStatus === 'NEW';
+  const itemIsTakeaway = Boolean(item.isTakeaway);
 
   return (
     <div
@@ -621,17 +669,33 @@ function LiveItemRow({
             lineTotal={item.lineTotal}
           />
         </div>
-        <span
-          className={cn(
-            'shrink-0 rounded-md px-2 py-0.5 text-xs font-bold',
-            isNew && 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200',
-            item.kitchenStatus === 'PRINTED' &&
-              'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200',
-            isCancelled && 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-200',
-          )}
-        >
-          {isNew ? 'Mới' : isCancelled ? 'Đã huỷ' : 'Đã in bếp'}
-        </span>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <span
+            className={cn(
+              'rounded-md px-2 py-0.5 text-xs font-bold',
+              isNew && 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200',
+              item.kitchenStatus === 'PRINTED' &&
+                'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200',
+              isCancelled && 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-200',
+            )}
+          >
+            {isNew ? 'Mới' : isCancelled ? 'Đã huỷ' : 'Đã in bếp'}
+          </span>
+          {isTableOrder && itemIsTakeaway ? (
+            <span className="rounded-md bg-sky-100 px-2 py-0.5 text-xs font-bold text-sky-800 dark:bg-sky-950/60 dark:text-sky-200">
+              Mang về
+            </span>
+          ) : null}
+          {isTableOrder && canEdit && !isCancelled ? (
+            <button
+              type="button"
+              onClick={onToggleTakeaway}
+              className="text-xs font-semibold text-muted-foreground underline"
+            >
+              {itemIsTakeaway ? 'Bỏ nhãn MV' : '+ Mang về'}
+            </button>
+          ) : null}
+        </div>
       </div>
       {canEdit && !isCancelled ? (
         <div className="flex items-center justify-between gap-2">
@@ -676,11 +740,12 @@ function ItemText({
   note: string | null;
   lineTotal: number;
 }) {
+  const { displayName, remainingModifiers } = formatProductNameWithSize(name, modifiers);
   return (
     <div className="min-w-0 space-y-0.5">
-      <p className="text-base font-bold leading-snug">{name}</p>
-      {modifiers.length > 0 ? (
-        <p className="text-sm text-muted-foreground">{modifiers.join(', ')}</p>
+      <p className="text-base font-bold leading-snug">{displayName}</p>
+      {remainingModifiers.length > 0 ? (
+        <p className="text-sm text-muted-foreground">{remainingModifiers.join(', ')}</p>
       ) : null}
       {note ? (
         <p className="text-sm font-medium italic text-amber-700 dark:text-amber-300">

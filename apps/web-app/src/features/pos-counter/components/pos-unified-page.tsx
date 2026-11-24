@@ -46,6 +46,8 @@ export function PosUnifiedPage() {
     selectedOrderId,
     draftTarget,
     draftItems,
+    addonIsTakeaway,
+    setAddonIsTakeaway,
     addonBadgesByOrderId,
     selectedPendingAlert,
     permissions,
@@ -146,7 +148,18 @@ export function PosUnifiedPage() {
           </TabsContent>
 
           <TabsContent value="menu" className="mt-0 flex-1 min-h-0 h-full overflow-hidden flex flex-col data-[state=inactive]:hidden">
-            <PosMenuPanel products={products} onAddItem={actions.addItemFromMenu} />
+            <PosMenuPanel
+              products={products}
+              onAddItem={actions.addItemFromMenu}
+              showAddonServingModeSelector={Boolean(
+                currentOrder &&
+                  currentOrder.orderType === 'DINE_IN' &&
+                  (currentOrder.status === 'PENDING' || currentOrder.status === 'SERVING') &&
+                  currentOrder.items.length > 0,
+              )}
+              addonIsTakeaway={addonIsTakeaway}
+              onChangeAddonIsTakeaway={setAddonIsTakeaway}
+            />
           </TabsContent>
         </Tabs>
       </div>
@@ -207,7 +220,10 @@ export function PosUnifiedPage() {
           onSubmitDraftOrder={actions.submitDraftOrder}
           onApproveQrOrder={actions.approveQrOrder}
           onUpdateOrderItemQuantity={actions.updateOrderItemQuantity}
+          onToggleOrderItemTakeaway={actions.toggleOrderItemTakeaway}
           onRemoveOrCancelOrderItem={actions.removeOrCancelOrderItem}
+          addonIsTakeaway={addonIsTakeaway}
+          onChangeAddonIsTakeaway={setAddonIsTakeaway}
           onOpenTableAction={() => dialogs.setTableActionOpen(true)}
           onSplitKitchen={actions.splitKitchen}
           onReprintKitchen={actions.reprintKitchen}

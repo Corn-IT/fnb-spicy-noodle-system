@@ -46,13 +46,30 @@ export function TableActionDialog({
     if (open) {
       setAction(TableActionType.MOVE);
       setTargetTableId(null);
-      setReason('Khách yêu cầu đổi chỗ ngồi');
+      setReason(
+        order?.orderType === 'TAKEAWAY'
+          ? 'Khách đổi ý ngồi dùng tại bàn'
+          : 'Khách yêu cầu đổi chỗ ngồi',
+      );
     }
-  }, [open]);
+  }, [open, order?.orderType]);
 
   if (!order) return null;
 
   const isTakeaway = order.orderType === 'TAKEAWAY';
+  const requiresTargetTable = action !== TableActionType.TO_TAKEAWAY;
+
+  const availableActions = isTakeaway
+    ? ([
+        { type: TableActionType.MOVE, label: 'Chuyển sang bàn trống' },
+        { type: TableActionType.MERGE, label: 'Gộp vào bàn đang ăn' },
+      ] as const)
+    : ([
+        { type: TableActionType.MOVE, label: 'Chuyển bàn trống' },
+        { type: TableActionType.MERGE, label: 'Gộp vào bàn khác' },
+        { type: TableActionType.SWAP, label: 'Hoán đổi 2 bàn' },
+        { type: TableActionType.TO_TAKEAWAY, label: 'Chuyển sang Mang về' },
+      ] as const);
 
   const candidateTables = tables.filter((t) => {
     if (t.id === order.tableId) return false;
@@ -63,11 +80,28 @@ export function TableActionDialog({
     return false;
   });
 
+  const handleSelectAction = (nextAction: TableActionTypeValue) => {
+    setAction(nextAction);
+    setTargetTableId(null);
+    if (nextAction === TableActionType.TO_TAKEAWAY) {
+      setReason('Khách yêu cầu chuyển cả đơn sang Mang về');
+    } else if (isTakeaway) {
+      setReason(
+        nextAction === TableActionType.MERGE
+          ? 'Khách mang về gộp chung với bàn đang ăn'
+          : 'Khách đổi ý ngồi dùng tại bàn',
+      );
+    } else {
+      setReason('Khách yêu cầu đổi chỗ ngồi');
+    }
+  };
+
   const handleConfirm = () => {
-    if (isTakeaway || !targetTableId || !reason.trim()) return;
+    if (!reason.trim()) return;
+    if (requiresTargetTable && !targetTableId) return;
     onConfirm({
       action,
-      targetTableId,
+      targetTableId: requiresTargetTable ? targetTableId : null,
       reason: reason.trim(),
     });
   };
@@ -75,6 +109,17 @@ export function TableActionDialog({
   const dialogCopy = resolveMessage('pos.dialog.tableAction', {
     tableLabel: order.tableLabel,
   });
+
+  const confirmLabel =
+    action === TableActionType.MOVE
+      ? isTakeaway
+        ? 'Xác nhận Chuyển vào bàn'
+        : 'Xác nhận Chuyển bàn'
+      : action === TableActionType.MERGE
+        ? 'Xác nhận Gộp bàn'
+        : action === TableActionType.TO_TAKEAWAY
+          ? 'Xác nhận Chuyển sang Mang về'
+          : 'Xác nhận Hoán đổi bàn';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -86,44 +131,32 @@ export function TableActionDialog({
           ) : null}
         </DialogHeader>
 
-        {isTakeaway ? (
+        <div className="space-y-4 py-2">
           <div
-            data-testid="takeaway-action-blocked-msg"
-            className="rounded-lg border border-rose-500/40 bg-rose-50 p-4 text-sm font-medium text-rose-700 dark:bg-rose-950/50 dark:text-rose-200"
+            className={cn(
+              'grid grid-cols-1 gap-2',
+              isTakeaway ? 'sm:grid-cols-2' : 'sm:grid-cols-2',
+            )}
           >
-            Đơn Mang về ({order.tableLabel}) hoạt động độc lập, không được phép Gộp hoặc Chuyển
-            vào bàn vật lý (EC-POS-03).
+            {availableActions.map((item) => (
+              <button
+                key={item.type}
+                type="button"
+                data-testid={`table-action-type-${item.type}`}
+                onClick={() => handleSelectAction(item.type)}
+                className={cn(
+                  'flex items-center justify-center text-center rounded-lg border px-3 py-2 text-xs font-semibold transition active:scale-[0.98] touch-ui:min-h-12 touch-ui:text-sm',
+                  action === item.type
+                    ? 'border-primary bg-primary text-primary-foreground shadow-xs'
+                    : 'border-border bg-card hover:bg-muted',
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
-        ) : (
-          <div className="space-y-4 py-2">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {(
-                [
-                  { type: TableActionType.MOVE, label: 'Chuyển bàn trống' },
-                  { type: TableActionType.MERGE, label: 'Gộp vào bàn khác' },
-                  { type: TableActionType.SWAP, label: 'Hoán đổi 2 bàn' },
-                ] as const
-              ).map((item) => (
-                <button
-                  key={item.type}
-                  type="button"
-                  data-testid={`table-action-type-${item.type}`}
-                  onClick={() => {
-                    setAction(item.type);
-                    setTargetTableId(null);
-                  }}
-                  className={cn(
-                    'flex items-center justify-center text-center rounded-lg border px-3 py-2 text-xs font-semibold transition active:scale-[0.98] touch-ui:min-h-12 touch-ui:text-sm',
-                    action === item.type
-                      ? 'border-primary bg-primary text-primary-foreground shadow-xs'
-                      : 'border-border bg-card hover:bg-muted',
-                  )}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
 
+          {requiresTargetTable ? (
             <div className="space-y-1.5">
               <span className="text-xs font-semibold">
                 Chọn bàn đích ({candidateTables.length} bàn khả dụng)
@@ -153,30 +186,37 @@ export function TableActionDialog({
                 </div>
               )}
             </div>
-
-            <div className="space-y-1.5">
-              <label htmlFor="table-action-reason" className="text-xs font-semibold">
-                Lý do thực hiện
-              </label>
-              <Input
-                id="table-action-reason"
-                data-testid="table-action-reason-input"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
+          ) : (
+            <div
+              data-testid="to-takeaway-info-box"
+              className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 text-xs font-medium text-sky-900 dark:text-sky-200"
+            >
+              Bàn hiện tại ({order.tableLabel}) sẽ được giải phóng về trạng thái <strong>Trống</strong>. Đơn hàng được cấp số Mang về tiếp theo trong ngày và giữ nguyên toàn bộ món ăn cùng trạng thái bếp.
             </div>
+          )}
 
-            {action === TableActionType.MERGE &&
-            (Boolean(order.discountSnapshot) || (order.discountAmount ?? 0) > 0) ? (
-              <div
-                data-testid="merge-discount-drop-warning"
-                className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs font-medium text-amber-800 dark:text-amber-300"
-              >
-                Cảnh báo: Bàn nguồn đang có ưu đãi giảm giá. Khi gộp bàn, giảm giá của bàn nguồn sẽ tự động bị huỷ và bàn đích sẽ tính lại tổng tiền.
-              </div>
-            ) : null}
+          <div className="space-y-1.5">
+            <label htmlFor="table-action-reason" className="text-xs font-semibold">
+              Lý do thực hiện
+            </label>
+            <Input
+              id="table-action-reason"
+              data-testid="table-action-reason-input"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
           </div>
-        )}
+
+          {action === TableActionType.MERGE &&
+          (Boolean(order.discountSnapshot) || (order.discountAmount ?? 0) > 0) ? (
+            <div
+              data-testid="merge-discount-drop-warning"
+              className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs font-medium text-amber-800 dark:text-amber-300"
+            >
+              Cảnh báo: Đơn nguồn đang có ưu đãi giảm giá. Khi gộp bàn, giảm giá của đơn nguồn sẽ tự động bị huỷ và bàn đích sẽ tính lại tổng tiền.
+            </div>
+          ) : null}
+        </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button
@@ -187,21 +227,15 @@ export function TableActionDialog({
           >
             Huỷ bỏ
           </Button>
-          {!isTakeaway ? (
-            <Button
-              type="button"
-              data-testid="confirm-table-action-btn"
-              disabled={!targetTableId || !reason.trim() || isSubmitting}
-              onClick={handleConfirm}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold active:scale-[0.98] transition-transform select-none shadow-xs"
-            >
-              {action === TableActionType.MOVE
-                ? 'Xác nhận Chuyển bàn'
-                : action === TableActionType.MERGE
-                  ? 'Xác nhận Gộp bàn'
-                  : 'Xác nhận Hoán đổi bàn'}
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            data-testid="confirm-table-action-btn"
+            disabled={(requiresTargetTable && !targetTableId) || !reason.trim() || isSubmitting}
+            onClick={handleConfirm}
+            className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold active:scale-[0.98] transition-transform select-none shadow-xs"
+          >
+            {confirmLabel}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

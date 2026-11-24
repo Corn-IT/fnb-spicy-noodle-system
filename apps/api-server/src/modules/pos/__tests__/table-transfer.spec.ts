@@ -123,20 +123,59 @@ describe('TableTransferService', () => {
     expect(harness.tx.order.update).not.toHaveBeenCalled();
   });
 
-  it('should reject merging a takeaway order', async () => {
+  it('should merge a takeaway order into an occupied table and mark its items as takeaway', async () => {
     const harness = createHarness();
+    const source = {
+      id: 42,
+      orderCode: 'HD-20261107-0007',
+      orderType: 'TAKEAWAY',
+      tableId: null,
+      takeawayNumber: 5,
+      status: 'SERVING',
+      totalAmount: new Prisma.Decimal('50.00'),
+      tableTransferLogs: [],
+      table: null,
+      items: [{ kitchenStatus: 'PRINTED', product: { station: 'BEP_NAU', comboParents: [] } }],
+    };
+    const targetOrder = {
+      id: 99,
+      orderType: 'DINE_IN',
+      tableId: 7,
+      status: 'SERVING',
+      totalAmount: new Prisma.Decimal('200.00'),
+      tableTransferLogs: [],
+    };
     harness.tx.order.findUnique
-      .mockResolvedValueOnce({ id: 42, orderType: 'TAKEAWAY', tableId: null })
-      .mockResolvedValueOnce({ id: 42, orderType: 'TAKEAWAY', tableId: null, status: 'SERVING', items: [] });
-    harness.tx.diningTable.findUnique.mockResolvedValue({ ...targetTable });
+      .mockResolvedValueOnce({ id: 42, orderType: 'TAKEAWAY', tableId: null, takeawayNumber: 5 })
+      .mockResolvedValueOnce(source)
+      .mockResolvedValueOnce(targetOrder);
+    harness.tx.diningTable.findUnique.mockResolvedValue({
+      id: 7,
+      name: 'Bàn 07',
+      status: 'OCCUPIED',
+      activeOrderId: 99,
+    });
 
-    const failure = await harness.service.executeTableAction(42, {
-      action: 'MERGE', targetTableId: 7, reason: 'Gộp đơn mang về',
-    }).catch((error: unknown) => error as ConflictException);
+    const result = await harness.service.executeTableAction(42, {
+      action: 'MERGE', targetTableId: 7, reason: 'Gộp đơn mang về vào bàn',
+    });
 
-    expect(failure).toBeInstanceOf(ConflictException);
-    expect(failure.getResponse()).toMatchObject({ code: 'POS_TAKEAWAY_CANNOT_MERGE' });
-    expect(harness.tx.orderItem.updateMany).not.toHaveBeenCalled();
+    expect(harness.tx.orderItem.updateMany).toHaveBeenCalledWith({
+      where: { orderId: 42 },
+      data: { orderId: 99, isTakeaway: true },
+    });
+    expect(result).toMatchObject({
+      action: 'MERGE',
+      sourceTableId: null,
+      targetTableId: 7,
+      requireKitchenNoticePrint: true,
+      kitchenTransferSlip: {
+        orderCode: 'HD-20261107-0007',
+        fromLabel: 'Mang về #05',
+        toLabel: 'Bàn 07',
+        affectedStations: ['BEP_NAU'],
+      },
+    });
   });
 
   it('should merge all source items without changing their kitchen status', async () => {
@@ -323,18 +362,107 @@ describe('TableTransferService', () => {
     expect(failure.getResponse()).toMatchObject({ code: 'POS_ORDER_NOT_ACTIVE' });
   });
 
-  it('should reject moving a takeaway order because it has no physical source table', async () => {
+  it('should convert a takeaway order to a dine-in order at an available table and mark its items as takeaway', async () => {
     const harness = createHarness();
     harness.tx.order.findUnique
-      .mockResolvedValueOnce({ id: 42, orderType: 'TAKEAWAY', tableId: null })
-      .mockResolvedValueOnce({ id: 42, orderType: 'TAKEAWAY', tableId: null, status: 'SERVING', items: [] });
+      .mockResolvedValueOnce({ id: 42, orderType: 'TAKEAWAY', tableId: null, takeawayNumber: 3 })
+      .mockResolvedValueOnce({
+        id: 42,
+        orderCode: 'HD-20261107-0007',
+        orderType: 'TAKEAWAY',
+        tableId: null,
+        takeawayNumber: 3,
+        status: 'SERVING',
+        tableTransferLogs: [],
+        table: null,
+        items: [{ kitchenStatus: 'PRINTED', product: { station: 'PHA_CHE', comboParents: [] } }],
+      });
     harness.tx.diningTable.findUnique.mockResolvedValue({ ...targetTable });
 
-    const failure = await harness.service.executeTableAction(42, {
-      action: 'MOVE', targetTableId: 7, reason: 'Chuyển đơn',
-    }).catch((error: unknown) => error as ConflictException);
+    const result = await harness.service.executeTableAction(42, {
+      action: 'MOVE', targetTableId: 7, reason: 'Khách đổi ý ngồi tại bàn',
+    });
 
-    expect(failure.getResponse()).toMatchObject({ code: 'POS_ORDER_NOT_ACTIVE' });
+    expect(harness.tx.orderItem.updateMany).toHaveBeenCalledWith({
+      where: { orderId: 42 },
+      data: { isTakeaway: true },
+    });
+    expect(harness.tx.order.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 42 },
+      data: expect.objectContaining({
+        orderType: 'DINE_IN',
+        tableId: 7,
+        takeawayNumber: null,
+      }),
+    }));
+    expect(harness.tx.diningTable.update).toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: { status: 'OCCUPIED', activeOrderId: 42 },
+    });
+    expect(result).toMatchObject({
+      action: 'MOVE',
+      sourceTableId: null,
+      targetTableId: 7,
+      requireKitchenNoticePrint: true,
+      kitchenTransferSlip: {
+        orderCode: 'HD-20261107-0007',
+        fromLabel: 'Mang về #03',
+        toLabel: 'Bàn 07',
+        affectedStations: ['PHA_CHE'],
+      },
+    });
+  });
+
+  it('should convert a dine-in order to takeaway (TO_TAKEAWAY), free the table, and allocate a daily takeaway number', async () => {
+    const harness = createHarness();
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 42, orderType: 'DINE_IN', tableId: 1, takeawayNumber: null })
+      .mockResolvedValueOnce({
+        id: 42,
+        orderCode: 'HD-20261107-0007',
+        orderType: 'DINE_IN',
+        tableId: 1,
+        takeawayNumber: null,
+        status: 'SERVING',
+        tableTransferLogs: [],
+        table: { id: 1, name: 'Bàn 01' },
+        items: [{ kitchenStatus: 'PRINTED', product: { station: 'BEP_NAU', comboParents: [] } }],
+      });
+    harness.tx.diningTable.findUnique.mockResolvedValue({ ...sourceTable });
+
+    const result = await harness.service.executeTableAction(42, {
+      action: 'TO_TAKEAWAY', targetTableId: null, reason: 'Khách ăn không hết xin gói mang về',
+    });
+
+    expect(harness.tx.orderItem.updateMany).toHaveBeenCalledWith({
+      where: { orderId: 42 },
+      data: { isTakeaway: false },
+    });
+    expect(harness.tx.order.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 42 },
+      data: expect.objectContaining({
+        orderType: 'TAKEAWAY',
+        tableId: null,
+        takeawayNumber: 1,
+      }),
+    }));
+    expect(harness.tx.diningTable.update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { status: 'AVAILABLE', activeOrderId: null },
+    });
+    expect(result).toMatchObject({
+      action: 'TO_TAKEAWAY',
+      sourceTableId: 1,
+      targetTableId: null,
+      takeawayNumber: 1,
+      requireKitchenNoticePrint: true,
+      kitchenTransferSlip: {
+        orderCode: 'HD-20261107-0007',
+        fromLabel: 'Bàn 01',
+        toLabel: 'Mang về #01',
+        affectedStations: ['BEP_NAU'],
+      },
+    });
   });
 
   it('should reject table actions when the source table no longer points to the order', async () => {

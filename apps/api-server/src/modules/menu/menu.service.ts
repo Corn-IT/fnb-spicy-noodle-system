@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException, Optional, U
 import { Prisma } from '@prisma/client';
 import {
   CreateProductSchema,
+  DEFAULT_DRINK_SIZE_MODIFIER_GROUP,
   ImportMenuExcelRequestSchema,
   ImportMenuExcelResponseSchema,
   MdmCategory,
@@ -9,6 +10,7 @@ import {
   PublicMenuResponseSchema,
   QrTokenSchema,
   UpdateProductSchema,
+  isDrinkSizeCategoryName,
   normalizeQrToken,
   type AuthPrincipal,
   type CreateProductInput,
@@ -326,6 +328,7 @@ export class MenuService {
             itemNote: true,
             batchNo: true,
             kitchenStatus: true,
+            isTakeaway: true,
             createdAt: true,
             product: { select: { name: true } },
           },
@@ -386,6 +389,7 @@ export class MenuService {
           batchNo: item.batchNo,
           kitchenStatus: item.kitchenStatus as 'NEW' | 'PRINTED' | 'CANCELLED',
           itemNote: item.itemNote ?? null,
+          ...((item as { isTakeaway?: boolean }).isTakeaway ? { isTakeaway: true } : {}),
           modifiers,
           createdAt: item.createdAt.toISOString(),
         };
@@ -421,6 +425,35 @@ export class MenuService {
 
     const product = await this.prisma.$transaction(async (tx) => {
       await this.assertPhysicalComboChildren(tx, parsed.data.station, parsed.data.comboItems);
+      let effectiveModifierGroups = parsed.data.modifierGroups;
+      if (effectiveModifierGroups.length === 0 && parsed.data.station !== 'COMBO') {
+        let resolvedCategoryName = parsed.data.categoryName ?? null;
+        if (!resolvedCategoryName && parsed.data.categoryId && typeof tx.masterData?.findUnique === 'function') {
+          const catRow = await tx.masterData.findUnique({
+            where: { id: parsed.data.categoryId },
+            select: { name: true },
+          });
+          resolvedCategoryName = catRow?.name ?? null;
+        }
+        if (isDrinkSizeCategoryName(resolvedCategoryName)) {
+          effectiveModifierGroups = [
+            {
+              name: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.name,
+              isRequired: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.isRequired,
+              maxSelect: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.maxSelect,
+              isAutoSelect: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.isAutoSelect,
+              allowSubstitution: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.allowSubstitution,
+              modifiers: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.modifiers.map((m) => ({
+                name: m.name,
+                extraPrice: m.extraPrice,
+                isDefaultChecked: m.isDefaultChecked,
+                isAvailable: m.isAvailable,
+                defaultSubstituteName: m.defaultSubstituteName,
+              })),
+            },
+          ];
+        }
+      }
       return tx.product.create({
         data: {
           name: parsed.data.name,
@@ -437,7 +470,7 @@ export class MenuService {
             })),
           },
           modifierGroups: {
-            create: parsed.data.modifierGroups.map((group) => ({
+            create: effectiveModifierGroups.map((group) => ({
               name: group.name,
               isRequired: group.isRequired,
               maxSelect: group.maxSelect,
@@ -844,6 +877,24 @@ export class MenuService {
           updatedCount += 1;
         } else {
           const safeCreateStation = mappedStation === 'COMBO' ? 'BEP_NAU' : mappedStation;
+          const autoSizeGroups = isDrinkSizeCategoryName(cleanCategoryName)
+            ? [
+                {
+                  name: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.name,
+                  isRequired: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.isRequired,
+                  maxSelect: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.maxSelect,
+                  isAutoSelect: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.isAutoSelect,
+                  allowSubstitution: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.allowSubstitution,
+                  modifiers: {
+                    create: DEFAULT_DRINK_SIZE_MODIFIER_GROUP.modifiers.map((m) => ({
+                      name: m.name,
+                      extraPrice: new Prisma.Decimal(m.extraPrice),
+                      ...(m.isDefaultChecked ? { isDefaultChecked: true } : {}),
+                    })),
+                  },
+                },
+              ]
+            : [];
           const created = await tx.product.create({
             data: {
               name: row.name.trim(),
@@ -853,6 +904,7 @@ export class MenuService {
               station: safeCreateStation,
               isAvailable: row.isAvailable,
               sortOrder: row.sortOrder > 0 ? row.sortOrder : nextSortOrder++,
+              ...(autoSizeGroups.length > 0 ? { modifierGroups: { create: autoSizeGroups } } : {}),
             },
             include: productInclude,
           });

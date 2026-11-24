@@ -75,14 +75,14 @@ interface KitchenTicket {
   3. Giải phóng bàn (nếu `DINE_IN`): `dining_tables.status = 'AVAILABLE'`, `active_order_id = NULL`.
   4. Emit Socket.io: `order:status_updated` (tới `order_session_{orderId}`) và `table:grid_sync` (tới `pos_cashier_room`).
 
-## 4. Table Transfer Actions (MOVE / MERGE / SWAP — Hard Invariant 5)
+## 4. Table Transfer Actions (MOVE / MERGE / SWAP / TO_TAKEAWAY — Hard Invariant 5)
 
 **API:** `POST /api/v1/pos/orders/:id/table-action`
 
 ```typescript
 interface TableActionRequest {
-  action: 'MOVE' | 'MERGE' | 'SWAP';
-  targetTableId: number;
+  action: 'MOVE' | 'MERGE' | 'SWAP' | 'TO_TAKEAWAY';
+  targetTableId: number | null;
   reason: string;
 }
 ```
@@ -91,21 +91,28 @@ interface TableActionRequest {
 1. Khoá các bản ghi `orders` liên quan theo `ORDER BY id ASC FOR UPDATE`.
 2. Khoá các bản ghi `dining_tables` liên quan theo `ORDER BY id ASC FOR UPDATE`.
 
-### MOVE (Chuyển sang bàn trống):
-- Precondition: đơn nguồn là `DINE_IN` và bàn đích **MUST** là `AVAILABLE` (nếu `OCCUPIED` → trả `409 Conflict` `POS_TABLE_NOT_AVAILABLE`).
-- Steps: cập nhật `order.table_id` → `targetTableId`, bàn nguồn → `AVAILABLE` (`active_order_id = NULL`), bàn đích → `OCCUPIED` (`active_order_id = order.id`).
+### MOVE (Chuyển sang bàn trống — hỗ trợ cả `DINE_IN` và `TAKEAWAY` → `DINE_IN`):
+- Precondition: bàn đích **MUST** là `AVAILABLE` (nếu `OCCUPIED` → trả `409 Conflict` `POS_TABLE_NOT_AVAILABLE`).
+- Steps:
+  - Nếu đơn nguồn là `DINE_IN`: cập nhật `order.table_id` → `targetTableId`, bàn nguồn → `AVAILABLE` (`active_order_id = NULL`), bàn đích → `OCCUPIED` (`active_order_id = order.id`).
+  - Nếu đơn nguồn là `TAKEAWAY` (`EC-POS-03`): cập nhật `order_type = 'DINE_IN'`, `table_id = targetTableId`, `takeaway_number = NULL`, đánh dấu các món hiện có `is_takeaway = TRUE`, bàn đích → `OCCUPIED` (hoặc `PENDING` nếu đơn đang `PENDING`).
 - Ghi log vào `order.table_transfer_logs`.
 - Nếu đơn có ít nhất 1 món `kitchen_status = 'PRINTED'` → `requireKitchenNoticePrint = true`, sinh `kitchenTransferSlip` để máy in nhiệt in ngay `"PHIẾU THÔNG BÁO CHUYỂN BÀN"` (`EC-POS-04`).
 
-### MERGE (Gộp vào bàn đang ăn):
-- Precondition: đơn nguồn là `DINE_IN` (**FORBIDDEN** merge đơn `TAKEAWAY` → trả `409 Conflict` `POS_TAKEAWAY_CANNOT_MERGE`), bàn đích **MUST** là `OCCUPIED` (nếu `AVAILABLE` → trả `409 Conflict` `POS_TABLE_NOT_OCCUPIED`).
-- Steps: chuyển **TẤT CẢ** `order_items` từ đơn nguồn → đơn đích (`UPDATE order_items SET order_id = targetOrderId`, giữ nguyên `kitchen_status`), cộng dồn `total_amount` sang đơn đích, đơn nguồn → `status = 'MERGED'`, `merged_into_order_id = targetOrderId`, `total_amount = 0`, giải phóng bàn nguồn về `AVAILABLE` (`active_order_id = NULL`).
+### MERGE (Gộp vào bàn đang ăn — hỗ trợ cả `DINE_IN` và `TAKEAWAY` → `DINE_IN`):
+- Precondition: bàn đích **MUST** là `OCCUPIED` (nếu `AVAILABLE` → trả `409 Conflict` `POS_TABLE_NOT_OCCUPIED`).
+- Steps: chuyển **TẤT CẢ** `order_items` từ đơn nguồn → đơn đích (`UPDATE order_items SET order_id = targetOrderId`, giữ nguyên `kitchen_status`; nếu đơn nguồn là `TAKEAWAY` thì đặt `is_takeaway = TRUE` cho các món chuyển sang), tính lại `total_amount` đơn đích, đơn nguồn → `status = 'MERGED'`, `merged_into_order_id = targetOrderId`, `total_amount = 0`, giải phóng bàn nguồn (nếu có) về `AVAILABLE` (`active_order_id = NULL`).
 - Nếu có món `PRINTED` → `requireKitchenNoticePrint = true`, sinh `kitchenTransferSlip`.
 
 ### SWAP (Hoán đổi 2 bàn):
-- Precondition: cả 2 bàn **MUST** đang `OCCUPIED` có đơn đang mở.
+- Precondition: cả 2 đơn đều là `DINE_IN` và cả 2 bàn **MUST** đang `OCCUPIED` có đơn đang mở.
 - Steps: hoán đổi `table_id` giữa 2 đơn, hoán đổi `active_order_id` trên `dining_tables`.
 - Ghi log vào **CẢ HAI** đơn và sinh `kitchenTransferSlip` nếu có món `PRINTED`.
+
+### TO_TAKEAWAY (Chuyển đơn Tại bàn sang Mang về — `EC-POS-03`):
+- Precondition: đơn nguồn là `DINE_IN` (`targetTableId = null`).
+- Steps: giải phóng bàn nguồn về `AVAILABLE` (`active_order_id = NULL`), cấp số `takeaway_number` mới trong ngày (`MAX(takeaway_number) + 1`), cập nhật `order_type = 'TAKEAWAY'`, `table_id = NULL`, reset `is_takeaway = FALSE` trên các món của đơn.
+- Ghi log vào `order.table_transfer_logs` và sinh `kitchenTransferSlip` (`Bàn XX → Mang về #YY`) nếu có món `PRINTED`.
 
 ### WebSocket khi Transfer:
 - Emit `order:session_redirected` tới room `order_session_{orderId}`:

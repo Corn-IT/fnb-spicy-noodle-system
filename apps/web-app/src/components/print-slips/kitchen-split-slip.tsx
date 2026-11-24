@@ -1,4 +1,5 @@
 import {
+  formatProductNameWithSize,
   type OrderType,
   type PublicStoreSettingsResponse,
   type SplitKitchenResponse,
@@ -222,20 +223,36 @@ export function KitchenSplitSlip({
               </div>
               <div data-print-kind="divider" className="hidden" />
 
-              <div className="divide-y divide-dashed divide-black">
-                {ticket.items.map((item, idx) => {
-                  const { spicyLevels, toppings } = classifyModifiers(item.modifiers);
+              {(() => {
+                const isTableOrder = orderType !== 'TAKEAWAY' && takeawayNumber == null;
+                const dineInItems = isTableOrder
+                  ? ticket.items.filter((i) => !i.isTakeaway)
+                  : ticket.items;
+                const takeawayItems = isTableOrder
+                  ? ticket.items.filter((i) => Boolean(i.isTakeaway))
+                  : [];
+
+                const renderTicketItem = (
+                  item: SplitKitchenResponse['tickets'][number]['items'][number],
+                  idx: number,
+                  keyPrefix: string,
+                ) => {
+                  const { displayName, remainingModifiers } = formatProductNameWithSize(
+                    item.name,
+                    item.modifiers,
+                  );
+                  const { spicyLevels, toppings } = classifyModifiers(remainingModifiers);
                   const trimmedNote = item.note ? item.note.trim() : '';
                   const showUnitPrice =
                     item.categoryId != null &&
                     priceCategorySet.has(item.categoryId) &&
                     typeof item.unitPrice === 'number';
                   const itemDisplayName = showUnitPrice
-                    ? `${item.name} — ${item.unitPrice!.toLocaleString('vi-VN')}`
-                    : item.name;
+                    ? `${displayName} — ${item.unitPrice!.toLocaleString('vi-VN')}`
+                    : displayName;
 
                   return (
-                    <div key={`${item.name}-${idx}`} className="py-1">
+                    <div key={`${keyPrefix}-${item.name}-${idx}`} className="py-1">
                       <div
                         data-print-kind="pair"
                         data-print-scale="1.05"
@@ -286,8 +303,37 @@ export function KitchenSplitSlip({
                       <div data-print-kind="divider" className="hidden" />
                     </div>
                   );
-                })}
-              </div>
+                };
+
+                return (
+                  <>
+                    {dineInItems.length > 0 ? (
+                      <div className="divide-y divide-dashed divide-black">
+                        {dineInItems.map((item, idx) => renderTicketItem(item, idx, 'dine'))}
+                      </div>
+                    ) : null}
+                    {takeawayItems.length > 0 ? (
+                      <div
+                        data-testid={`kitchen-takeaway-section-${ticket.station}`}
+                        className="mt-1"
+                      >
+                        <div
+                          data-testid={`kitchen-takeaway-heading-${ticket.station}`}
+                          data-print-kind="banner"
+                          className="my-0.5 border-2 border-black bg-white px-1 py-0.5 text-center font-extrabold uppercase tracking-wider text-black"
+                        >
+                          *** MANG VỀ ***
+                        </div>
+                        <div className="divide-y divide-dashed divide-black">
+                          {takeawayItems.map((item, idx) =>
+                            renderTicketItem(item, dineInItems.length + idx, 'takeaway'),
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                );
+              })()}
             </div>
 
             {tpl.blocks.itemNotes && orderNote && orderNote.trim() ? (

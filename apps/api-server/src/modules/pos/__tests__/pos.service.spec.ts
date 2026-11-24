@@ -1058,4 +1058,121 @@ describe('PosService', () => {
       }),
     );
   });
+
+  it('snapshots Size M (0đ default) and Size L (+7.000đ) and propagates isTakeaway flag on QR addon and kitchen split', async () => {
+    const harness = createHarness();
+    harness.tx.product.findMany.mockResolvedValue([{
+      id: 77,
+      name: 'Trà Đào',
+      price: new Prisma.Decimal('25000.00'),
+      station: 'PHA_CHE',
+      isAvailable: true,
+      modifierGroups: [
+        {
+          id: 90,
+          name: 'Size',
+          isRequired: true,
+          maxSelect: 1,
+          modifiers: [
+            { id: 901, name: 'Size M', extraPrice: new Prisma.Decimal('0.00'), isDefaultChecked: true },
+            { id: 902, name: 'Size L', extraPrice: new Prisma.Decimal('7000.00'), isDefaultChecked: false },
+          ],
+        },
+      ],
+    }]);
+    harness.tx.diningTable.findUnique.mockResolvedValue({
+      id: 3,
+      name: 'Bàn 03',
+      status: 'OCCUPIED',
+      activeOrderId: 500,
+    });
+    harness.tx.order.findUnique.mockResolvedValue({
+      id: 500,
+      orderCode: 'HD-500',
+      orderType: 'DINE_IN',
+      orderSource: 'QR_CODE',
+      tableId: 3,
+      status: 'SERVING',
+      mergedIntoOrderId: null,
+      table: { id: 3, name: 'Bàn 03' },
+      totalAmount: new Prisma.Decimal('50000.00'),
+    });
+    harness.tx.orderItem.aggregate.mockResolvedValue({ _max: { batchNo: 1 } });
+    harness.tx.order.update.mockResolvedValue({ id: 500, totalAmount: new Prisma.Decimal('107000.00') });
+
+    const service = createPosService(harness);
+    await service.createQrOrder({
+      qrToken: 'ban03-abcd',
+      activeOrderId: 500,
+      isTakeawayBatch: true,
+      items: [
+        { productId: 77, quantity: 1, modifiers: [{ groupId: 90, modifierId: 901 }] },
+        { productId: 77, quantity: 1, modifiers: [{ groupId: 90, modifierId: 902 }] },
+      ],
+    });
+
+    expect(harness.tx.orderItem.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          orderId: 500,
+          productId: 77,
+          unitPrice: new Prisma.Decimal('25000.00'),
+          isTakeaway: true,
+          modifiersSnapshot: [{ groupId: 90, modifierId: 901, name: 'Size M', extraPrice: '0.00' }],
+        }),
+        expect.objectContaining({
+          orderId: 500,
+          productId: 77,
+          unitPrice: new Prisma.Decimal('32000.00'),
+          isTakeaway: true,
+          modifiersSnapshot: [{ groupId: 90, modifierId: 902, name: 'Size L', extraPrice: '7000.00' }],
+        }),
+      ],
+    });
+  });
+
+  it('toggles isTakeaway on an already PRINTED order item without cancelling or creating a cancellation slip', async () => {
+    const harness = createHarness();
+    harness.tx.order.findUnique.mockResolvedValue({
+      id: 42,
+      orderCode: 'HD-42',
+      status: 'SERVING',
+      orderType: 'DINE_IN',
+      tableId: 7,
+      table: { id: 7, name: 'Bàn 07' },
+      items: [{
+        id: 10,
+        orderId: 42,
+        productId: 11,
+        quantity: 1,
+        unitPrice: new Prisma.Decimal('100.00'),
+        modifiersSnapshot: [],
+        itemNote: null,
+        batchNo: 1,
+        kitchenStatus: 'PRINTED',
+        isTakeaway: true,
+        product,
+      }],
+    });
+    harness.tx.orderItem.findMany.mockResolvedValue([{
+      id: 10,
+      quantity: 1,
+      unitPrice: new Prisma.Decimal('100.00'),
+      modifiersSnapshot: [],
+      product: { categoryId: null },
+    }]);
+    harness.tx.order.update.mockResolvedValue({ id: 42, totalAmount: new Prisma.Decimal('100.00') });
+
+    const service = createPosService(harness);
+    const res = await service.patchOrderItems(42, {
+      updates: [{ orderItemId: 10, isTakeaway: false }],
+    });
+
+    expect(harness.tx.orderItem.update).toHaveBeenCalledWith({
+      where: { id: 10 },
+      data: { isTakeaway: false },
+    });
+    expect(res.requireCancellationSlip).toBe(false);
+    expect(res.kitchenCancellationSlips).toEqual([]);
+  });
 });

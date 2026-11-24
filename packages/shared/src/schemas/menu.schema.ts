@@ -137,6 +137,7 @@ export const PublicMenuActiveOrderItemSchema = z.object({
   batchNo: z.number().int().positive(),
   kitchenStatus: z.enum(['NEW', 'PRINTED', 'CANCELLED']),
   itemNote: z.string().nullable(),
+  isTakeaway: z.boolean().optional(),
   modifiers: z.array(z.object({
     groupId: IdSchema.optional(),
     modifierId: IdSchema.optional(),

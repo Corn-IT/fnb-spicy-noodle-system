@@ -18,6 +18,7 @@ export function findMatchingDraftIndex(
     (candidate) =>
       candidate.productId === item.productId &&
       candidate.unitPrice === item.unitPrice &&
+      Boolean(candidate.isTakeaway) === Boolean(item.isTakeaway) &&
       normalizeNote(candidate.itemNote) === normalizeNote(item.itemNote) &&
       modifierKey(candidate) === modifierKey(item),
   );

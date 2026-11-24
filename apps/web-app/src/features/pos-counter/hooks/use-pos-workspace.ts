@@ -113,6 +113,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
 
   const [draftTarget, setDraftTarget] = React.useState<LiveInvoiceDraftTarget | null>(null);
   const [draftItems, setDraftItems] = React.useState<PosMenuSelectedItem[]>([]);
+  const [addonIsTakeaway, setAddonIsTakeaway] = React.useState(false);
 
   const [tableActionOpen, setTableActionOpen] = React.useState(false);
   const [checkoutOpen, setCheckoutOpen] = React.useState(false);
@@ -140,6 +141,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
 
   React.useEffect(() => {
     setLastSplitPaymentAccountId(null);
+    setAddonIsTakeaway(false);
   }, [selectedOrderId]);
 
   const selectedTableRow = React.useMemo(
@@ -245,6 +247,10 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
 
   const addItemToLiveOrder = async (orderId: number, item: PosMenuSelectedItem) => {
     try {
+      const canMarkTakeaway =
+        currentOrder?.orderType === 'DINE_IN' &&
+        (currentOrder.items?.length ?? 0) > 0 &&
+        Boolean(item.isTakeaway ?? addonIsTakeaway);
       await patchItemsMutation.mutateAsync({
         orderId,
         input: {
@@ -254,6 +260,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
               quantity: item.quantity,
               modifiers: item.modifiers,
               ...(item.itemNote ? { itemNote: item.itemNote } : {}),
+              ...(canMarkTakeaway ? { isTakeaway: true } : {}),
             },
           ],
         },
@@ -363,6 +370,21 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         await patchItemsMutation.mutateAsync({
           orderId,
           input: { updates: [{ orderItemId, quantity }] },
+        });
+      } catch (err) {
+        notifyErr('pos.order.addItemError', err);
+      }
+    });
+  };
+
+  const handleToggleOrderItemTakeaway = async (orderItemId: number, nextIsTakeaway: boolean) => {
+    if (!selectedOrderId) return;
+    const orderId = selectedOrderId;
+    await enqueueOrderMutation(async () => {
+      try {
+        await patchItemsMutation.mutateAsync({
+          orderId,
+          input: { updates: [{ orderItemId, isTakeaway: nextIsTakeaway }] },
         });
       } catch (err) {
         notifyErr('pos.order.addItemError', err);
@@ -577,6 +599,9 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
               modifiers: item.modifiers,
               pricedModifiers: item.pricedModifiers,
               note: item.itemNote,
+              ...(orderSnapshot.orderType !== 'TAKEAWAY' && item.isTakeaway
+                ? { isTakeaway: true }
+                : {}),
             })),
         });
       }
@@ -757,7 +782,13 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         setSelectedOrderId(mergedTargetOrderId);
       }
       const actionText =
-        result.action === 'MOVE' ? 'chuyển' : result.action === 'MERGE' ? 'gộp' : 'hoán đổi';
+        result.action === 'MOVE'
+          ? 'chuyển'
+          : result.action === 'MERGE'
+            ? 'gộp'
+            : result.action === 'TO_TAKEAWAY'
+              ? 'chuyển sang Mang về'
+              : 'hoán đổi';
       notify(
         result.requireKitchenNoticePrint
           ? 'pos.tableAction.successPrinted'
@@ -840,6 +871,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     selectedOrderId,
     draftTarget,
     draftItems,
+    addonIsTakeaway,
+    setAddonIsTakeaway,
     addonBadgesByOrderId,
     selectedPendingAlert,
     permissions: {
@@ -891,6 +924,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       submitDraftOrder: handleSubmitDraftOrder,
       approveQrOrder: handleApproveQrOrder,
       updateOrderItemQuantity: handleUpdateOrderItemQuantity,
+      toggleOrderItemTakeaway: handleToggleOrderItemTakeaway,
       removeOrCancelOrderItem: handleRemoveOrCancelOrderItem,
       splitKitchen: handleSplitKitchen,
       reprintKitchen: handleReprintKitchen,
