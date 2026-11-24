@@ -62,10 +62,10 @@ export function TouchOrderScreen({
           Sơ đồ bàn
         </Button>
         <div className="min-w-0 flex-1">
-          <h1 data-testid="touch-order-title" className="truncate text-xl font-extrabold leading-tight">
+          <h1 data-testid="touch-order-title" className="text-lg sm:text-xl font-extrabold leading-tight break-words">
             {title}
           </h1>
-          <p className="flex items-center gap-2 truncate text-sm text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs sm:text-sm text-muted-foreground">
             {currentOrder ? (
               <>
                 <span className="font-mono font-semibold">{currentOrder.orderCode}</span>

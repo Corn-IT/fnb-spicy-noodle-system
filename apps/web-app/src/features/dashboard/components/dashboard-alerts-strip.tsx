@@ -67,8 +67,8 @@ export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
                 <BellRing className="h-4 w-4 animate-pulse" />
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-xs font-semibold text-foreground">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs font-semibold leading-snug text-foreground break-words">
                     {item.tableLabel} · {item.kind === 'NEW' ? 'Đơn QR mới' : 'Gọi thêm QR'}
                   </span>
                   <Badge variant={isOverdue ? 'destructive' : 'warning'} className="px-1.5 py-0 text-[10px]">
@@ -76,7 +76,7 @@ export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
                     {formatWaitDuration(liveWait)}
                   </Badge>
                 </div>
-                <p className="truncate text-[11px] text-muted-foreground">
+                <p className="text-[11px] leading-snug text-muted-foreground break-words">
                   {item.orderCode} · Tạm tính {formatVnd(item.totalAmount)}
                   {isOverdue ? ' · Quá 3 phút chờ duyệt' : ''}
                 </p>
@@ -85,7 +85,7 @@ export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
             <Button
               size="sm"
               variant={isOverdue ? 'destructive' : 'outline'}
-              className="h-7 shrink-0 px-2.5 text-xs"
+              className="min-h-10 lg:min-h-8 shrink-0 px-3 text-xs"
               onClick={() => navigate('/pos')}
             >
               Xử lý <ArrowRight className="ml-1 h-3 w-3" />
@@ -104,15 +104,15 @@ export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
               <CreditCard className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="truncate text-xs font-semibold text-foreground">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs font-semibold leading-snug text-foreground break-words">
                   Yêu cầu đổi PTTT · {item.tableLabel}
                 </span>
                 <Badge variant="info" className="px-1.5 py-0 text-[10px]">
                   {item.currentMethod ?? 'N/A'} → {item.requestedMethod}
                 </Badge>
               </div>
-              <p className="truncate text-[11px] text-muted-foreground">
+              <p className="text-[11px] leading-snug text-muted-foreground break-words">
                 {item.orderCode} ({formatVnd(item.totalAmount)}) · Gửi bởi {item.requestedByName}
               </p>
             </div>
@@ -120,7 +120,7 @@ export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
           <Button
             size="sm"
             variant="outline"
-            className="h-7 shrink-0 px-2.5 text-xs"
+            className="min-h-10 lg:min-h-8 shrink-0 px-3 text-xs"
             onClick={() => navigate('/invoices')}
           >
             Duyệt <ArrowRight className="ml-1 h-3 w-3" />
@@ -152,15 +152,15 @@ export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
                 {isBlocked ? <AlertTriangle className="h-4 w-4" /> : <QrCode className="h-4 w-4" />}
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-xs font-semibold text-foreground">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs font-semibold leading-snug text-foreground break-words">
                     {acc.label} ({acc.bankCode})
                   </span>
                   <Badge variant={isBlocked ? 'destructive' : 'warning'} className="px-1.5 py-0 text-[10px]">
                     {acc.dayPercent !== null ? `${acc.dayPercent}% hạn mức` : acc.status}
                   </Badge>
                 </div>
-                <p className="truncate text-[11px] text-muted-foreground">
+                <p className="text-[11px] leading-snug text-muted-foreground break-words">
                   Đã nhận {formatVnd(acc.usedDay)}
                   {acc.dailyLimit ? ` / ${formatVnd(acc.dailyLimit)}` : ''} hôm nay
                 </p>
@@ -169,7 +169,7 @@ export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
             <Button
               size="sm"
               variant="outline"
-              className="h-7 shrink-0 px-2.5 text-xs"
+              className="min-h-10 lg:min-h-8 shrink-0 px-3 text-xs"
               onClick={() => navigate('/payment-qr')}
             >
               Tài khoản <ArrowRight className="ml-1 h-3 w-3" />

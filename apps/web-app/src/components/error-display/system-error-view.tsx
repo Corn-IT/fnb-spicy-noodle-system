@@ -377,7 +377,7 @@ export function SystemErrorView({
             type="button"
             data-testid="error-tech-details-toggle"
             onClick={() => setShowTechDetails((prev) => !prev)}
-            className="flex w-full items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            className="flex min-h-10 xl:min-h-8 w-full items-center justify-between py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
           >
             <span>Chi tiết kỹ thuật (dành cho tra cứu sự cố)</span>
             {showTechDetails ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}

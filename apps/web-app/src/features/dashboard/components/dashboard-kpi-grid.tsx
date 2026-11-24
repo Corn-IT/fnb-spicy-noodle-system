@@ -177,7 +177,7 @@ export function DashboardKpiGrid({ data }: DashboardKpiGridProps) {
               <p className="text-2xl font-bold tracking-tight text-foreground" data-testid="kpi-cash-expected">
                 {formatVnd(cashDrawer.expectedCashInDrawer)}
               </p>
-              <p className="mt-2 truncate text-[11px] text-muted-foreground" title="Đầu ca + Thu tiền mặt - Nhập hàng bằng tiền két">
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground break-words" title="Đầu ca + Thu tiền mặt - Nhập hàng bằng tiền két">
                 +Thu TM {formatVnd(cashDrawer.totalCashSales)} · -Chi két {formatVnd(cashDrawer.totalCashImports)}
               </p>
             </>
@@ -209,7 +209,7 @@ export function DashboardKpiGrid({ data }: DashboardKpiGridProps) {
               <p className="text-2xl font-bold tracking-tight text-foreground" data-testid="kpi-transfer-amount">
                 {formatVnd(transfer.totalTransferSales)}
               </p>
-              <p className="mt-2 truncate text-[11px] text-muted-foreground">
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground break-words">
                 {transfer.byAccount[0]
                   ? `Top TK: ${transfer.byAccount[0].label} (${formatVnd(transfer.byAccount[0].amount)})`
                   : 'Chưa phát sinh chuyển khoản'}
@@ -224,8 +224,8 @@ export function DashboardKpiGrid({ data }: DashboardKpiGridProps) {
                   <QrCode className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-muted-foreground">Tài khoản VietQR</p>
-                  <p className="truncate text-[11px] text-muted-foreground">Hạn mức ngày</p>
+                  <p className="text-xs font-medium leading-snug text-muted-foreground">Tài khoản VietQR</p>
+                  <p className="text-[11px] leading-snug text-muted-foreground">Hạn mức ngày</p>
                 </div>
               </div>
               <Badge variant="secondary" className="text-[10px]">
@@ -328,7 +328,7 @@ export function DashboardKpiGrid({ data }: DashboardKpiGridProps) {
                   signed: true,
                 })}
               </p>
-              <p className="mt-2 truncate text-[11px] text-muted-foreground">
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground break-words">
                 {profit.estimatedLaborCost !== null
                   ? `Quỹ lương kỳ: -${formatVnd(profit.estimatedLaborCost)}`
                   : 'Chưa cộng trừ quỹ lương kỳ'}
@@ -343,8 +343,8 @@ export function DashboardKpiGrid({ data }: DashboardKpiGridProps) {
                   <ChefHat className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-muted-foreground">Phục vụ & Bếp</p>
-                  <p className="truncate text-[11px] text-muted-foreground">Trực tiếp</p>
+                  <p className="text-xs font-medium leading-snug text-muted-foreground">Phục vụ &amp; Bếp</p>
+                  <p className="text-[11px] leading-snug text-muted-foreground">Trực tiếp</p>
                 </div>
               </div>
               {openOrders && openOrders.unprintedKitchenItemsCount > 0 ? (
@@ -360,7 +360,7 @@ export function DashboardKpiGrid({ data }: DashboardKpiGridProps) {
                     {openOrders.occupiedTableCount + openOrders.pendingTableCount}/
                     {openOrders.totalPhysicalTables} bàn
                   </p>
-                  <p className="mt-2 truncate text-[11px] text-muted-foreground">
+                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground break-words">
                     {openOrders.pendingTableCount} chờ QR · {openOrders.takeawayOpenCount} đơn Mang về
                   </p>
                 </>

@@ -219,7 +219,7 @@ export function DashboardPage() {
                   aria-selected={filter.preset === opt.value}
                   onClick={() => handlePresetChange(opt.value)}
                   className={cn(
-                    'rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    'min-h-10 xl:min-h-8 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                     filter.preset === opt.value
                       ? 'bg-background text-foreground shadow-xs'
                       : 'text-muted-foreground hover:text-foreground',

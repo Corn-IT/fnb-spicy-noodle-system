@@ -1,11 +1,12 @@
 import { type ScheduleAttendanceEntry } from '@fnb/shared';
-import { ChevronLeft, ChevronRight, Copy, FileSpreadsheet, Save } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Copy, FileSpreadsheet, Save, Table2 } from 'lucide-react';
 import * as React from 'react';
 
 import { AuditHistoryButton } from '@/components/audit-history-drawer/audit-history-drawer';
 import { SystemErrorView } from '@/components/error-display';
 import { PageHeader } from '@/components/layout/page-header';
 import { ScheduleMatrixSkeleton } from '@/components/loading';
+import { useMediaQuery } from '@/components/touch-shell/use-media-query';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAppMessages } from '@/hooks/use-app-messages';
@@ -87,6 +88,12 @@ export function SchedulesMatrixPage() {
 
   const [weekOffset, setWeekOffset] = React.useState(0);
   const [pendingWeekOffset, setPendingWeekOffset] = React.useState<number | null>(null);
+  const isMobileViewport = useMediaQuery('(max-width: 767px)');
+  const [mobileViewMode, setMobileViewMode] = React.useState<'day' | 'matrix'>('day');
+  const [selectedMobileDay, setSelectedMobileDay] = React.useState<number>(() => {
+    const day = new Date().getDay();
+    return day === 0 ? 6 : day - 1;
+  });
 
   const currentMonday = React.useMemo(() => {
     const today = new Date();
@@ -317,20 +324,20 @@ export function SchedulesMatrixPage() {
         <Button
           variant="outline"
           size="sm"
-          className="font-medium active:scale-95 transition-transform select-none"
+          className="min-h-10 lg:min-h-8 font-medium active:scale-95 transition-transform select-none"
           data-testid="prev-week-btn"
           onClick={() => requestWeekChange(weekOffset - 1)}
         >
           <ChevronLeft className="h-4 w-4" />
           Tuần trước
         </Button>
-        <span className="text-xs sm:text-sm font-semibold px-2.5 py-1 rounded bg-muted/50 tabular-nums whitespace-nowrap" data-testid="week-range-label">
+        <span className="text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded bg-muted/50 tabular-nums whitespace-nowrap" data-testid="week-range-label">
           {weekStartDate} → {weekEndDate}
         </span>
         <Button
           variant="outline"
           size="sm"
-          className="font-medium active:scale-95 transition-transform select-none"
+          className="min-h-10 lg:min-h-8 font-medium active:scale-95 transition-transform select-none"
           data-testid="current-week-btn"
           onClick={() => requestWeekChange(0)}
         >
@@ -339,19 +346,99 @@ export function SchedulesMatrixPage() {
         <Button
           variant="outline"
           size="sm"
-          className="font-medium active:scale-95 transition-transform select-none"
+          className="min-h-10 lg:min-h-8 font-medium active:scale-95 transition-transform select-none"
           data-testid="next-week-btn"
           onClick={() => requestWeekChange(weekOffset + 1)}
         >
           Tuần sau
           <ChevronRight className="h-4 w-4" />
         </Button>
+        {isMobileViewport ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="schedule-mobile-view-toggle"
+            className="min-h-10 gap-1.5 font-semibold"
+            onClick={() => setMobileViewMode((prev) => (prev === 'day' ? 'matrix' : 'day'))}
+          >
+            {mobileViewMode === 'day' ? (
+              <>
+                <Table2 className="h-4 w-4" />
+                <span>Ma trận</span>
+              </>
+            ) : (
+              <>
+                <CalendarDays className="h-4 w-4" />
+                <span>Theo ngày</span>
+              </>
+            )}
+          </Button>
+        ) : null}
       </div>
 
       {isLoading ? (
         <ScheduleMatrixSkeleton />
+      ) : isMobileViewport && mobileViewMode === 'day' ? (
+        <div data-testid="schedule-mobile-day-view" className="space-y-3">
+          <div
+            data-scroll-intended="true"
+            className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1"
+          >
+            {DAY_LABELS.map((label, idx) => {
+              const dateLabel = formatDateIso(addDays(currentMonday, idx)).slice(5).split('-').reverse().join('/');
+              const active = selectedMobileDay === idx;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setSelectedMobileDay(idx)}
+                  className={cn(
+                    'min-h-11 shrink-0 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors',
+                    active
+                      ? 'border-transparent bg-primary text-primary-foreground shadow-sm'
+                      : 'border-border bg-card text-foreground hover:bg-accent',
+                  )}
+                >
+                  <div>{label}</div>
+                  <div className={cn('text-[10px] tabular-nums', active ? 'opacity-90' : 'text-muted-foreground')}>
+                    {dateLabel}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div className="space-y-2.5">
+            {timeSlots.map((slot) => {
+              const key = buildCellKey(selectedMobileDay, slot);
+              return (
+                <div key={slot} className="rounded-xl border bg-card p-3.5 shadow-sm space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-foreground">
+                      Ca {slot} · {DAY_LABELS[selectedMobileDay]}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {(draftCells[key]?.employeeIds ?? []).length} nhân sự
+                    </span>
+                  </div>
+                  <ScheduleCellMultiselect
+                    timeSlot={slot}
+                    employees={employees}
+                    selectedIds={draftCells[key]?.employeeIds ?? []}
+                    attendances={draftCells[key]?.attendances ?? []}
+                    onChange={(ids, attendances) =>
+                      updateCell(selectedMobileDay, slot, ids, attendances)
+                    }
+                    disabled={!canSave}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
       ) : (
         <div
+          data-scroll-intended="true"
           className={cn(
             'relative overflow-x-auto rounded-xl border bg-card shadow-sm touch-pan-x transition-opacity duration-150',
             (scheduleQuery.isFetching || scheduleQuery.isPlaceholderData) && 'opacity-65',
@@ -369,7 +456,7 @@ export function SchedulesMatrixPage() {
           <table className="w-full min-w-[700px] table-fixed border-collapse text-left text-sm" data-testid="schedule-matrix-table">
             <thead className="border-b bg-muted/60 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="w-28 px-3 py-3 whitespace-nowrap">Ca / Ngày</th>
+                <th className="sticky left-0 z-10 bg-muted/95 w-28 px-3 py-3 whitespace-nowrap">Ca / Ngày</th>
                 {DAY_LABELS.map((label, idx) => (
                   <th key={idx} className="px-2 py-3 text-center whitespace-nowrap">
                     {label}
@@ -380,7 +467,7 @@ export function SchedulesMatrixPage() {
             <tbody className="divide-y divide-border">
               {timeSlots.map((slot) => (
                 <tr key={slot}>
-                  <td className="px-3 py-2 font-medium text-foreground whitespace-nowrap">{slot}</td>
+                  <td className="sticky left-0 z-10 bg-card px-3 py-2 font-medium text-foreground whitespace-nowrap shadow-[4px_0_8px_-4px_rgba(0,0,0,0.08)]">{slot}</td>
                   {Array.from({ length: 7 }, (_, dayIdx) => {
                     const key = buildCellKey(dayIdx, slot);
                     return (

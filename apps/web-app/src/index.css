@@ -120,6 +120,18 @@
     scrollbar-width: none;
   }
 
+  /* Apple iOS / iPadOS Safe-Area Insets (Home Indicator & Notch) */
+  .pb-safe {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .px-safe {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
   @keyframes top-progress-indeterminate {
     0% {
       transform: translateX(-100%) scaleX(0.35);
@@ -137,11 +149,11 @@
   }
 }
 
-/* Per-screen display zoom (80%–150%): applies to page content & portaled dialogs/popovers, never sidebar/topbar/print */
-main[data-app-content='true'],
-[data-qr-order-root='true'],
-[role='dialog'],
-[data-radix-popper-content-wrapper] {
+/* Per-screen display zoom (80%–150%): only apply CSS zoom when != 100% to avoid WebKit/Safari hit-test drift at 100% */
+html[data-page-zoomed='true'] main[data-app-content='true'],
+html[data-page-zoomed='true'] [data-qr-order-root='true'],
+html[data-page-zoomed='true'] [role='dialog'],
+html[data-page-zoomed='true'] [data-radix-popper-content-wrapper] {
   zoom: var(--page-zoom, 1);
 }
 
