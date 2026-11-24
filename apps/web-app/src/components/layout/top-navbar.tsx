@@ -3,6 +3,7 @@ import { type QueryClient } from '@tanstack/react-query';
 import { ChevronDown, LogOut, Menu, Moon, Search, Sun, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+import { MobileAlertControlButton } from '@/components/layout/mobile-alert-controls';
 import { StoreBrandLogo } from '@/components/store-brand-logo';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings';
 import { apiClient } from '@/lib/api-client';
+import { stopMobileAudioKeepAlive } from '@/lib/mobile-audio-keepalive';
 import { AUTH_STORAGE_KEY, useAuthStore } from '@/stores/auth.store';
 import { resolveEffectiveTheme } from '@/providers/theme-provider';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
@@ -35,6 +37,8 @@ export async function executeCleanLogout(queryClient: QueryClient): Promise<void
   } catch {
     // Ignore logout API failures so client auth state always clears
   } finally {
+    // Dừng phiên giữ âm thanh nền của ca cũ (không xoá preference trong localStorage — Invariant 9)
+    stopMobileAudioKeepAlive();
     // 2. Xoá toàn bộ cache dữ liệu nghiệp vụ API trong bộ nhớ (chống rò rỉ dữ liệu ca trước)
     queryClient.clear();
     // 3. Xoá token và thông tin định danh khỏi authStore
@@ -129,10 +133,12 @@ export function TopNavbar({
 
       {/* AC-08.3: Góc phải Navbar đúng thứ tự từ trái sang phải:
           [Search Button (Ctrl+K)] -> [Theme Toggle] -> [User Avatar + Name Dropdown] */}
-      <div
-        data-testid="navbar-right-controls"
-        className="flex shrink-0 items-center gap-2 sm:gap-3"
-      >
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <MobileAlertControlButton />
+        <div
+          data-testid="navbar-right-controls"
+          className="flex shrink-0 items-center gap-2 sm:gap-3"
+        >
         {/* 1. Search / Command Palette (Ctrl+K) */}
         <Button
           type="button"
@@ -222,6 +228,7 @@ export function TopNavbar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       </div>
     </header>
   );

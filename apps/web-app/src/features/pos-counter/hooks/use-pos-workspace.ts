@@ -226,6 +226,21 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     emitViewChange('order-opened');
   };
 
+  const handleSelectOrderById = (orderId: number): boolean => {
+    if (!gridData || !Number.isInteger(orderId) || orderId <= 0) return false;
+    const matchedTable = gridData.tables.find((table) => table.activeOrderId === orderId);
+    if (matchedTable) {
+      handleSelectTable(matchedTable);
+      return true;
+    }
+    const matchedTakeaway = gridData.takeaways.find((order) => order.orderId === orderId);
+    if (matchedTakeaway) {
+      handleSelectTakeawayOrder(matchedTakeaway);
+      return true;
+    }
+    return false;
+  };
+
   const handleStartNewTakeaway = () => {
     if (!canCreateOrder) return;
     // Source C: Click [+ TẠO ĐƠN MANG VỀ] -> prepare TAKEAWAY draft (tableId: null) and switch to Menu tab
@@ -932,6 +947,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       clearSelection,
       selectTable: handleSelectTable,
       selectTakeawayOrder: handleSelectTakeawayOrder,
+      selectOrderById: handleSelectOrderById,
       startNewTakeaway: handleStartNewTakeaway,
       addItemFromMenu: handleAddItemFromMenu,
       updateDraftQty: handleUpdateDraftQty,

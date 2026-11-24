@@ -100,7 +100,52 @@ export function getActiveQrVoiceEngineConfig(
   };
 }
 
+export type QrAudioUnlockState = 'unknown' | 'locked' | 'unlocked';
+
 let sharedAudioContext: AudioContext | null = null;
+let sharedHtmlAudioElement: HTMLAudioElement | null = null;
+let audioUnlockState: QrAudioUnlockState = 'unknown';
+const audioUnlockListeners = new Set<(state: QrAudioUnlockState) => void>();
+const decodedAudioBufferCache = new Map<string, AudioBuffer>();
+const MAX_DECODED_AUDIO_CACHE = 64;
+
+/** Minimal valid 0.05s 8kHz mono PCM silence WAV for unlocking HTMLAudioElement inside a mobile gesture. */
+const SILENT_UNLOCK_WAV_DATA_URI =
+  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+
+function setAudioUnlockState(next: QrAudioUnlockState): void {
+  if (audioUnlockState === next) return;
+  audioUnlockState = next;
+  for (const listener of audioUnlockListeners) {
+    try {
+      listener(next);
+    } catch {
+      // Never allow listener errors to break audio unlock state propagation
+    }
+  }
+}
+
+export function getQrAudioUnlockState(): QrAudioUnlockState {
+  if (sharedAudioContext) {
+    const rawState = sharedAudioContext.state as string;
+    if (rawState === 'running') {
+      return 'unlocked';
+    }
+    if (rawState === 'suspended' || rawState === 'interrupted') {
+      return 'locked';
+    }
+  }
+  return audioUnlockState;
+}
+
+export function subscribeQrAudioUnlockState(
+  listener: (state: QrAudioUnlockState) => void,
+): () => void {
+  audioUnlockListeners.add(listener);
+  return () => {
+    audioUnlockListeners.delete(listener);
+  };
+}
 
 function getAudioContextConstructor(): typeof AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -110,6 +155,29 @@ function getAudioContextConstructor(): typeof AudioContext | null {
   return typeof ctor === 'function' ? ctor : null;
 }
 
+function syncUnlockStateFromContext(ctx: AudioContext): void {
+  const rawState = ctx.state as string;
+  if (rawState === 'running') {
+    setAudioUnlockState('unlocked');
+  } else if (rawState === 'suspended' || rawState === 'interrupted') {
+    setAudioUnlockState('locked');
+  }
+}
+
+function configureIosAudioSessionPlayback(): void {
+  if (typeof navigator === 'undefined') return;
+  try {
+    const navWithAudioSession = navigator as Navigator & {
+      audioSession?: { type: string };
+    };
+    if (navWithAudioSession.audioSession && navWithAudioSession.audioSession.type !== 'playback') {
+      navWithAudioSession.audioSession.type = 'playback';
+    }
+  } catch {
+    // Ignore unsupported audioSession environments
+  }
+}
+
 export function getSharedAudioContext(): AudioContext | null {
   if (sharedAudioContext && sharedAudioContext.state !== 'closed') {
     return sharedAudioContext;
@@ -117,8 +185,37 @@ export function getSharedAudioContext(): AudioContext | null {
   const Ctor = getAudioContextConstructor();
   if (!Ctor) return null;
   try {
-    sharedAudioContext = new Ctor();
+    const ctx = new Ctor();
+    sharedAudioContext = ctx;
+    syncUnlockStateFromContext(ctx);
+    if (typeof ctx.addEventListener === 'function') {
+      ctx.addEventListener('statechange', () => {
+        if (sharedAudioContext === ctx) {
+          syncUnlockStateFromContext(ctx);
+        }
+      });
+    }
     return sharedAudioContext;
+  } catch {
+    return null;
+  }
+}
+
+function getSharedHtmlAudioElement(): HTMLAudioElement | null {
+  if (typeof window === 'undefined' || typeof window.Audio !== 'function') return null;
+  if (sharedHtmlAudioElement) return sharedHtmlAudioElement;
+  try {
+    const el = new window.Audio();
+    el.preload = 'auto';
+    if ('playsInline' in el) {
+      (el as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
+    }
+    if (typeof el.setAttribute === 'function') {
+      el.setAttribute('playsinline', '');
+      el.setAttribute('webkit-playsinline', '');
+    }
+    sharedHtmlAudioElement = el;
+    return el;
   } catch {
     return null;
   }
@@ -126,17 +223,97 @@ export function getSharedAudioContext(): AudioContext | null {
 
 export function resetAudioContextForTesting(): void {
   sharedAudioContext = null;
+  sharedHtmlAudioElement = null;
+  audioUnlockState = 'unknown';
+  decodedAudioBufferCache.clear();
 }
 
-export async function unlockQrVoiceAudio(): Promise<void> {
+export function clearDecodedAudioCacheForTesting(): void {
+  decodedAudioBufferCache.clear();
+}
+
+function isAutoplayBlockedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.name === 'NotAllowedError' ||
+    /notallowed|autoplay|user gesture|play\(\) failed/i.test(error.message)
+  );
+}
+
+/**
+ * Unlocks Web Audio (`AudioContext`) + reusable `HTMLAudioElement` inside a user gesture
+ * (tap/click/touchend/keydown). Safe to call repeatedly — especially after returning from
+ * iOS lock screen or background tab where AudioContext enters `suspended` / `interrupted`.
+ */
+export async function unlockQrVoiceAudio(): Promise<boolean> {
+  configureIosAudioSessionPlayback();
   const ctx = getSharedAudioContext();
-  if (ctx && ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+  let unlocked = false;
+
+  if (ctx) {
+    const rawState = ctx.state as string;
+    if (rawState !== 'running' && typeof ctx.resume === 'function') {
+      try {
+        await ctx.resume();
+      } catch {
+        // Ignore autoplay restriction errors
+      }
+    }
+
+    // Play a 1-sample silent buffer inside the gesture (canonical iOS Safari WebKit unlock)
+    if (
+      (ctx.state as string) === 'running' &&
+      typeof ctx.createBuffer === 'function' &&
+      typeof ctx.createBufferSource === 'function'
+    ) {
+      try {
+        const silentBuf = ctx.createBuffer(1, 1, 22050);
+        const src = ctx.createBufferSource();
+        src.buffer = silentBuf;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch {
+        // Ignore silent buffer errors
+      }
+    }
+
+    unlocked = (ctx.state as string) === 'running';
+    syncUnlockStateFromContext(ctx);
+  }
+
+  // Also warm up reusable HTMLAudioElement inside the same user gesture for mobile fallback
+  const htmlAudio = getSharedHtmlAudioElement();
+  if (
+    htmlAudio &&
+    htmlAudio.paused &&
+    typeof navigator !== 'undefined' &&
+    !/jsdom/i.test(navigator.userAgent ?? '')
+  ) {
     try {
-      await ctx.resume();
-    } catch {
-      // Ignore autoplay restriction errors
+      const prevSrc = htmlAudio.src;
+      htmlAudio.src = SILENT_UNLOCK_WAV_DATA_URI;
+      htmlAudio.volume = 0.001;
+      const playRes = htmlAudio.play();
+      if (playRes && typeof playRes.then === 'function') {
+        await playRes;
+        htmlAudio.pause();
+        htmlAudio.currentTime = 0;
+        if (!ctx) {
+          unlocked = true;
+          setAudioUnlockState('unlocked');
+        }
+      }
+      if (prevSrc && prevSrc !== SILENT_UNLOCK_WAV_DATA_URI) {
+        htmlAudio.src = prevSrc;
+      }
+    } catch (err) {
+      if (!unlocked && isAutoplayBlockedError(err)) {
+        setAudioUnlockState('locked');
+      }
     }
   }
+
+  return unlocked;
 }
 
 export function normalizeTableSpokenLabel(rawTableLabel: string | undefined | null): string {
@@ -317,10 +494,15 @@ export function getMultiTableReminderClipSequence(rawTableLabels: string[]): str
  */
 export async function playCashierChime(volume = 1): Promise<void> {
   try {
+    configureIosAudioSessionPlayback();
     const ctx = getSharedAudioContext();
     if (!ctx) return;
-    if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+    if ((ctx.state as string) !== 'running' && typeof ctx.resume === 'function') {
       await ctx.resume().catch(() => undefined);
+    }
+    if ((ctx.state as string) !== 'running') {
+      setAudioUnlockState('locked');
+      return;
     }
 
     const gainPeak = Math.max(0.02, Math.min(0.3, 0.16 * clampVoiceVolume(volume)));
@@ -347,32 +529,50 @@ export async function playCashierChime(volume = 1): Promise<void> {
   }
 }
 
-async function playDetunedAudioBuffer(
+async function playAudioClipViaWebAudio(
   src: string,
   rate: number,
   volume: number,
   detuneCents: number,
 ): Promise<boolean> {
   const ctx = getSharedAudioContext();
-  if (!ctx || typeof ctx.decodeAudioData !== 'function' || typeof ctx.createBufferSource !== 'function') {
+  if (
+    !ctx ||
+    typeof ctx.decodeAudioData !== 'function' ||
+    typeof ctx.createBufferSource !== 'function'
+  ) {
     return false;
   }
 
   try {
-    if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+    configureIosAudioSessionPlayback();
+    if ((ctx.state as string) !== 'running' && typeof ctx.resume === 'function') {
       await ctx.resume().catch(() => undefined);
     }
-    const res = await fetch(src);
-    if (!res.ok) return false;
-    const arrayBuffer = await res.arrayBuffer();
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    if ((ctx.state as string) !== 'running') {
+      setAudioUnlockState('locked');
+      return false;
+    }
+
+    let audioBuffer = decodedAudioBufferCache.get(src);
+    if (!audioBuffer) {
+      const res = await fetch(src);
+      if (!res.ok) return false;
+      const arrayBuffer = await res.arrayBuffer();
+      audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+      if (decodedAudioBufferCache.size >= MAX_DECODED_AUDIO_CACHE) {
+        const oldestKey = decodedAudioBufferCache.keys().next().value;
+        if (oldestKey) decodedAudioBufferCache.delete(oldestKey);
+      }
+      decodedAudioBufferCache.set(src, audioBuffer);
+    }
 
     return await new Promise<boolean>((resolve) => {
       const source = ctx.createBufferSource();
       const gainNode = ctx.createGain();
       source.buffer = audioBuffer;
       source.playbackRate.value = clampVoiceRate(rate);
-      if (source.detune) {
+      if (detuneCents !== 0 && source.detune) {
         source.detune.value = detuneCents;
       }
       gainNode.gain.value = clampVoiceVolume(volume);
@@ -380,11 +580,15 @@ async function playDetunedAudioBuffer(
       gainNode.connect(ctx.destination);
 
       let settled = false;
+      const durationMs =
+        audioBuffer.duration && Number.isFinite(audioBuffer.duration)
+          ? Math.ceil((audioBuffer.duration / clampVoiceRate(rate)) * 1000) + 1800
+          : 5500;
       const timer = window.setTimeout(() => {
         if (settled) return;
         settled = true;
         resolve(true);
-      }, 5500);
+      }, Math.max(2500, Math.min(12_000, durationMs)));
 
       source.onended = () => {
         if (settled) return;
@@ -394,7 +598,10 @@ async function playDetunedAudioBuffer(
       };
       source.start(0);
     });
-  } catch {
+  } catch (err) {
+    if (isAutoplayBlockedError(err)) {
+      setAudioUnlockState('locked');
+    }
     return false;
   }
 }
@@ -412,15 +619,18 @@ export async function defaultPlayAudioClip(
     throw new Error('JSDOM does not support real media playback');
   }
 
+  // Primary path for mobile & desktop: play via unlocked singleton AudioContext.
+  // Unlike `new Audio(src).play()`, Web Audio BufferSource is NOT blocked by iOS/Android
+  // autoplay policies on async Socket.io events once the AudioContext has been unlocked,
+  // and GainNode volume works reliably on iOS Safari (where HTMLAudioElement.volume is read-only).
   const detuneCents = getVoiceProfileDetuneCents(voiceProfile);
-  if (detuneCents !== 0) {
-    const playedWithDetune = await playDetunedAudioBuffer(src, rate, volume, detuneCents);
-    if (playedWithDetune) return;
-  }
+  const playedViaWebAudio = await playAudioClipViaWebAudio(src, rate, volume, detuneCents);
+  if (playedViaWebAudio) return;
 
   return new Promise<void>((resolve, reject) => {
-    const audio = new window.Audio(src);
+    const audio = getSharedHtmlAudioElement() ?? new window.Audio();
     audio.preload = 'auto';
+    audio.src = src;
     const clampedRate = clampVoiceRate(rate);
     audio.playbackRate = clampedRate;
     audio.defaultPlaybackRate = clampedRate;
@@ -435,7 +645,7 @@ export async function defaultPlayAudioClip(
       settled = true;
       cleanup();
       reject(new Error(`Audio clip timeout: ${src}`));
-    }, 5500);
+    }, 6500);
 
     const cleanup = () => {
       window.clearTimeout(timer);
@@ -460,6 +670,9 @@ export async function defaultPlayAudioClip(
     const playPromise = audio.play();
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch((err) => {
+        if (isAutoplayBlockedError(err)) {
+          setAudioUnlockState('locked');
+        }
         if (settled) return;
         settled = true;
         cleanup();

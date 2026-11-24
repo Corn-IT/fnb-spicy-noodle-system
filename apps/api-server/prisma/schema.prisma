@@ -76,6 +76,7 @@ model User {
   settlements   CashDrawerSettlement[]
   schedules     WorkSchedule[]
   createdDiscounts Discount[]          @relation("DiscountCreator")
+  pushSubscriptions PushSubscription[]
 
   @@map("users")
 }
@@ -354,4 +355,22 @@ model AuditLog {
   @@index([module, createdAt(sort: Desc)], map: "idx_audit_logs_module_created")
   @@index([ipAddress], map: "idx_audit_logs_ip")
   @@map("audit_logs")
+}
+
+model PushSubscription {
+  id             Int       @id @default(autoincrement())
+  userId         Int       @map("user_id")
+  sessionId      String?   @map("session_id") @db.VarChar(64)
+  endpoint       String    @unique(map: "uq_push_subscriptions_endpoint") @db.VarChar(2048)
+  p256dh         String    @db.VarChar(512)
+  auth           String    @db.VarChar(256)
+  userAgent      String?   @map("user_agent") @db.VarChar(512)
+  deviceLabel    String?   @map("device_label") @db.VarChar(128)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  lastNotifiedAt DateTime? @map("last_notified_at") @db.Timestamptz(6)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, sessionId], map: "idx_push_subscriptions_user_session")
+  @@map("push_subscriptions")
 }

@@ -27,3 +27,4 @@ export * from './schemas/audit-log.schema';
 export * from './utils/discount-calculator';
 export * from './schemas/store-settings.schema';
 export * from './schemas/dashboard.schema';
+export * from './schemas/web-push.schema';

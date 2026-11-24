@@ -15,15 +15,16 @@ const discountsMigration = readFileSync(
 );
 
 describe('Prisma schema and initial migration', () => {
-  it('should define all seventeen physical models including payment_accounts, discounts, and audit_logs', () => {
+  it('should define all eighteen physical models including payment_accounts, discounts, audit_logs, and push_subscriptions', () => {
     const tableNames = [
       'master_data', 'employees', 'users', 'dining_tables', 'products', 'combo_items',
       'modifier_groups', 'modifiers', 'payment_accounts', 'orders', 'discounts', 'discount_targets',
       'order_items', 'inventory_imports', 'cash_drawer_settlements', 'work_schedules', 'audit_logs',
+      'push_subscriptions',
     ];
 
     expect([...schema.matchAll(/@@map\("([a-z_]+)"\)/g)].map((match) => match[1])).toEqual(tableNames);
-    expect([...schema.matchAll(/^model\s+/gm)]).toHaveLength(17);
+    expect([...schema.matchAll(/^model\s+/gm)]).toHaveLength(18);
   });
 
   it('should keep every monetary column as Decimal(12, 2)', () => {

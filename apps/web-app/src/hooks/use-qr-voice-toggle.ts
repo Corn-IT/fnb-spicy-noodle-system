@@ -1,5 +1,10 @@
 import * as React from 'react';
 
+import {
+  isMobileBackgroundKeepAliveEnabled,
+  startMobileAudioKeepAlive,
+  stopMobileAudioKeepAlive,
+} from '@/lib/mobile-audio-keepalive';
 import { persistAccountPreferences } from '@/lib/persist-account-preferences';
 import {
   isQrVoiceAlertEnabled,
@@ -26,7 +31,13 @@ export function useQrVoiceToggle() {
     useUiPreferencesStore.getState().setUserVoiceAlertEnabled(next);
     void persistAccountPreferences({ voiceAlertEnabled: next });
     if (next) {
-      void unlockQrVoiceAudio();
+      void unlockQrVoiceAudio().then((ok) => {
+        if (ok && isMobileBackgroundKeepAliveEnabled()) {
+          void startMobileAudioKeepAlive();
+        }
+      });
+    } else {
+      stopMobileAudioKeepAlive();
     }
   };
 

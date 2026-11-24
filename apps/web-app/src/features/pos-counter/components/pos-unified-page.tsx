@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Hand, Receipt } from 'lucide-react';
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { AuditHistoryButton } from '@/components/audit-history-drawer/audit-history-drawer';
 import { SystemErrorView } from '@/components/error-display';
@@ -25,6 +25,7 @@ const isNarrowViewport = () =>
 
 export function PosUnifiedPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [posTab, setPosTab] = React.useState<PosDesktopTab>('tables');
   const workspace = usePosWorkspace({
     onViewChange: (event) => {
@@ -59,6 +60,19 @@ export function PosUnifiedPage() {
   const { canCreateOrder, canUpdateOrder, canSplitKitchen, canTableAction, canCheckout } =
     permissions;
   const { activeBadgeCount, activeTotal, activeLabel } = summary;
+
+  // Deep-link từ Web Push Notification (`/pos?orderId=42`) -> tự mở đúng bàn/hoá đơn để xác nhận ngay.
+  const deepLinkOrderIdParam = searchParams.get('orderId');
+  React.useEffect(() => {
+    if (!deepLinkOrderIdParam || !gridData) return;
+    const parsedId = Number(deepLinkOrderIdParam);
+    if (Number.isInteger(parsedId) && parsedId > 0) {
+      actions.selectOrderById(parsedId);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('orderId');
+    setSearchParams(next, { replace: true });
+  }, [deepLinkOrderIdParam, gridData]);
 
   const handleEnterTouchMode = () => {
     // Fullscreen phải được gọi trong chính lần bấm của người dùng (quy định của trình duyệt).

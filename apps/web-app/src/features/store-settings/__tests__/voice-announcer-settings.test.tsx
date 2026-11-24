@@ -34,7 +34,7 @@ describe('VoiceAnnouncerSettingsCard — QR Reminder & Auto-Cancel Settings', ()
     const enqueueSpy = vi
       .spyOn(qrVoiceAnnouncer, 'enqueueQrVoiceAlert')
       .mockResolvedValue(undefined);
-    vi.spyOn(qrVoiceAnnouncer, 'unlockQrVoiceAudio').mockResolvedValue(undefined);
+    vi.spyOn(qrVoiceAnnouncer, 'unlockQrVoiceAudio').mockResolvedValue(true);
 
     render(<ControlledVoiceSettingsCard />);
 
