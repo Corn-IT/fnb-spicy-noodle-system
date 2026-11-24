@@ -77,7 +77,7 @@ function TableBodyInner<TData>({
               style={{
                 width: `calc(var(--col-${cell.column.id}-size) * 1px)`,
               }}
-              className="px-3 py-2.5 text-sm text-foreground align-middle"
+              className="px-3 py-2.5 text-sm text-foreground align-middle touch-ui:px-3.5 touch-ui:py-3.5 touch-ui:text-[15px]"
             >
               {flexRender(cell.column.columnDef.cell, cell.getContext())}
             </td>
@@ -216,7 +216,7 @@ export function BaseTable<TData>({
           <div className="flex flex-wrap items-center gap-2">
             {onSearchChange ? (
               <div ref={search.containerRef} className="relative w-full sm:w-72 lg:w-80">
-                <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground touch-ui:left-3 touch-ui:top-3.5 touch-ui:h-5 touch-ui:w-5" />
                 <Input
                   {...search.inputProps}
                   type="search"
@@ -227,7 +227,7 @@ export function BaseTable<TData>({
                   data-bwignore="true"
                   data-form-type="other"
                   placeholder={searchPlaceholder}
-                  className="pl-8 pr-8 w-full [&::-webkit-search-cancel-button]:hidden"
+                  className="pl-8 pr-8 w-full touch-ui:pl-10 touch-ui:pr-11 [&::-webkit-search-cancel-button]:hidden"
                 />
                 <button
                   type="button"
@@ -241,13 +241,13 @@ export function BaseTable<TData>({
                   title="Đặt lại tìm kiếm"
                   aria-label="Đặt lại tìm kiếm"
                   className={cn(
-                    'absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex h-6 w-6 items-center justify-center rounded transition-colors',
+                    'absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex h-6 w-6 items-center justify-center rounded transition-colors touch-ui:h-9 touch-ui:w-9',
                     search.draft || searchValue
                       ? 'text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer'
                       : 'text-muted-foreground/45 cursor-default',
                   )}
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
+                  <RotateCcw className="h-3.5 w-3.5 touch-ui:h-4 touch-ui:w-4" />
                 </button>
               </div>
             ) : null}
@@ -266,7 +266,10 @@ export function BaseTable<TData>({
             <div className="animate-top-progress h-full w-1/2 rounded-r-full bg-primary" />
           </div>
         ) : null}
-        <div data-scroll-intended="true" className="w-full overflow-x-auto touch-pan-x">
+        <div
+          data-scroll-intended="true"
+          className="w-full overflow-x-auto overscroll-x-contain touch-pan-x"
+        >
           <table
             ref={tableRef}
             style={{
@@ -285,7 +288,7 @@ export function BaseTable<TData>({
                     style={{
                       width: `calc(var(--header-${header.id}-size) * 1px)`,
                     }}
-                    className="relative select-none whitespace-nowrap px-2.5 sm:px-3 py-2.5 sm:py-3 font-semibold text-xs"
+                    className="relative select-none whitespace-nowrap px-2.5 sm:px-3 py-2.5 sm:py-3 font-semibold text-xs touch-ui:px-3.5 touch-ui:py-3.5"
                   >
                     <div
                       className="whitespace-nowrap pr-2"
@@ -309,7 +312,7 @@ export function BaseTable<TData>({
                         onMouseDown={header.getResizeHandler()}
                         onTouchStart={header.getResizeHandler()}
                         className={cn(
-                          'absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none touch-none transition-colors hover:bg-primary/60',
+                          'absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none touch-none transition-colors hover:bg-primary/60 touch-ui:hidden',
                           header.column.getIsResizing() && 'bg-primary w-1.5',
                         )}
                       />
@@ -372,7 +375,7 @@ export function BaseTable<TData>({
       </div>
 
       {pagination ? (
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground">
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground touch-ui:text-sm">
           <div>
             Hiển thị trang <span className="font-semibold text-foreground">{pagination.page}</span> /{' '}
             <span className="font-semibold text-foreground">
@@ -386,7 +389,7 @@ export function BaseTable<TData>({
                 aria-label="Số dòng mỗi trang"
                 value={pagination.limit}
                 onChange={(e) => pagination.onLimitChange?.(Number(e.target.value))}
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground touch-ui:h-11 touch-ui:px-3 touch-ui:text-sm"
               >
                 {[10, 20, 50, 100].map((size) => (
                   <option key={size} value={size}>

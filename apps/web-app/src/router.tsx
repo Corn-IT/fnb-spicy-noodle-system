@@ -9,6 +9,7 @@ import {
 import { AppShell } from '@/components/layout/app-shell';
 import { RbacRouteGuard } from '@/components/layout/rbac-route-guard';
 import { DelayedPageFallback } from '@/components/loading';
+import { TouchShellLayout } from '@/components/touch-shell';
 import { resolvePosHomePath } from '@/lib/pos-device-mode';
 import {
   loadCashflowPage,
@@ -29,6 +30,9 @@ import {
   loadRbacUsersPage,
   loadSchedulesMatrixPage,
   loadStoreSettingsPage,
+  loadTouchHubPage,
+  loadTouchPrinterPage,
+  loadTouchStockStatusPage,
 } from '@/lib/route-prefetch';
 
 const LazyLoginPage = React.lazy(loadLoginPage);
@@ -37,6 +41,9 @@ const LazyQrOrderPage = React.lazy(loadQrOrderPage);
 const LazyDashboardPage = React.lazy(loadDashboardPage);
 const LazyPosUnifiedPage = React.lazy(loadPosUnifiedPage);
 const LazyPosTouchPage = React.lazy(loadPosTouchPage);
+const LazyTouchHubPage = React.lazy(loadTouchHubPage);
+const LazyTouchStockStatusPage = React.lazy(loadTouchStockStatusPage);
+const LazyTouchPrinterPage = React.lazy(loadTouchPrinterPage);
 
 function PosHomeRedirect() {
   return <Navigate to={resolvePosHomePath()} replace />;
@@ -163,15 +170,197 @@ export const appRoutes: RouteObject[] = [
             path: 'pos/touch',
             element: (
               <RbacRouteGuard module="pos">
-                <React.Suspense
-                  fallback={
-                    <DelayedPageFallback variant="pos" label="Đang tải POS cảm ứng..." />
-                  }
-                >
-                  <LazyPosTouchPage />
-                </React.Suspense>
+                <TouchShellLayout />
               </RbacRouteGuard>
             ),
+            children: [
+              {
+                index: true,
+                element: (
+                  <React.Suspense
+                    fallback={
+                      <DelayedPageFallback variant="pos" label="Đang tải POS cảm ứng..." />
+                    }
+                  >
+                    <LazyPosTouchPage />
+                  </React.Suspense>
+                ),
+              },
+              {
+                path: 'hub',
+                element: (
+                  <React.Suspense
+                    fallback={
+                      <DelayedPageFallback variant="pos" label="Đang tải Trung tâm Quản lý..." />
+                    }
+                  >
+                    <LazyTouchHubPage />
+                  </React.Suspense>
+                ),
+              },
+              {
+                path: 'stock-status',
+                element: (
+                  <RbacRouteGuard module="menu">
+                    <React.Suspense
+                      fallback={
+                        <DelayedPageFallback variant="pos" label="Đang tải màn báo hết món..." />
+                      }
+                    >
+                      <LazyTouchStockStatusPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'printer',
+                element: (
+                  <React.Suspense
+                    fallback={
+                      <DelayedPageFallback variant="form" label="Đang tải cấu hình máy in..." />
+                    }
+                  >
+                    <LazyTouchPrinterPage />
+                  </React.Suspense>
+                ),
+              },
+              {
+                path: 'invoices',
+                element: (
+                  <RbacRouteGuard module="invoices">
+                    <React.Suspense
+                      fallback={
+                        <DelayedPageFallback variant="table" label="Đang tải danh sách hoá đơn..." />
+                      }
+                    >
+                      <LazyInvoicesPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'cashflow',
+                element: (
+                  <RbacRouteGuard module="cashflow">
+                    <React.Suspense
+                      fallback={
+                        <DelayedPageFallback variant="table" label="Đang tải dòng tiền kết ca..." />
+                      }
+                    >
+                      <LazyCashflowPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'inventory',
+                element: (
+                  <RbacRouteGuard module="inventory">
+                    <React.Suspense
+                      fallback={
+                        <DelayedPageFallback variant="table" label="Đang tải quản lý nhập hàng..." />
+                      }
+                    >
+                      <LazyInventoryPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'dashboard',
+                element: (
+                  <RbacRouteGuard module="dashboard">
+                    <React.Suspense
+                      fallback={
+                        <DelayedPageFallback
+                          variant="pos"
+                          label="Đang tải bảng điều khiển tổng quan..."
+                        />
+                      }
+                    >
+                      <LazyDashboardPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'menu',
+                element: (
+                  <RbacRouteGuard module="menu">
+                    <React.Suspense
+                      fallback={
+                        <DelayedPageFallback
+                          variant="table"
+                          label="Đang tải quản trị thực đơn..."
+                        />
+                      }
+                    >
+                      <LazyMenuManagementPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'discounts',
+                element: (
+                  <RbacRouteGuard module="discounts">
+                    <React.Suspense
+                      fallback={
+                        <DelayedPageFallback
+                          variant="table"
+                          label="Đang tải quản lý mã giảm giá..."
+                        />
+                      }
+                    >
+                      <LazyDiscountsPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'payment-qr',
+                element: (
+                  <RbacRouteGuard module="paymentQr">
+                    <React.Suspense
+                      fallback={
+                        <DelayedPageFallback
+                          variant="table"
+                          label="Đang tải quản lý mã QR thanh toán..."
+                        />
+                      }
+                    >
+                      <LazyPaymentQrPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'settings',
+                element: (
+                  <RbacRouteGuard module="settings">
+                    <React.Suspense
+                      fallback={<DelayedPageFallback variant="form" label="Đang tải cài đặt..." />}
+                    >
+                      <LazyStoreSettingsPage />
+                    </React.Suspense>
+                  </RbacRouteGuard>
+                ),
+              },
+              {
+                path: 'profile',
+                element: (
+                  <React.Suspense
+                    fallback={<DelayedPageFallback variant="form" label="Đang tải hồ sơ..." />}
+                  >
+                    <LazyProfilePage />
+                  </React.Suspense>
+                ),
+              },
+              {
+                path: '*',
+                element: <Navigate to="/pos/touch" replace />,
+              },
+            ],
           },
           {
             path: 'menu',

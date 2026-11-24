@@ -12,13 +12,18 @@ import {
 import { MobileSidebarNav, ResizableSidebar } from '@/components/layout/resizable-sidebar';
 import { TopNavbar } from '@/components/layout/top-navbar';
 import { clearPendingNavigation, TopProgressBar } from '@/components/loading';
+import {
+  findTouchRouteMeta,
+  isPosLiveBoardPath,
+  isPosTouchShellPath,
+  TOUCH_PATHS,
+} from '@/components/touch-shell';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { useDisplayScale } from '@/hooks/use-display-scale';
 import { resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
 import { useSyncAccountPreferencesOnFocus } from '@/hooks/use-sync-account-preferences-on-focus';
 import { apiClient } from '@/lib/api-client';
-import { POS_TOUCH_PATH } from '@/lib/pos-device-mode';
 import { POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
 import { useQrPendingReminderMonitor } from '@/lib/qr-pending-reminder';
 import { enqueueQrVoiceAlert, unlockQrVoiceAudio } from '@/lib/qr-voice-announcer';
@@ -54,13 +59,15 @@ export function AppShell() {
   );
   const [isSocketDisconnected, setIsSocketDisconnected] = React.useState<boolean>(false);
 
-  const isPosRoute = location.pathname.startsWith('/pos');
-  // Màn POS cảm ứng chạy kiểu "trình chiếu": ẩn sidebar, navbar, banner, command palette.
-  // Chỉ chạy kiểu "trình chiếu" khi tài khoản xem được POS; nếu không (màn 403), giữ sidebar/navbar
-  // để người dùng còn đường sang màn khác hoặc đăng xuất.
+  // Chỉ màn bán hàng POS trực tiếp (`/pos` và `/pos/touch`) có `usePosWorkspace` nghe socket QR.
+  // Các màn con trong Touch Shell (`/pos/touch/hub`, `/pos/touch/invoices`...) vẫn cần AppShell
+  // phát giọng đọc QR mới và hiện banner đỏ cảnh báo đơn QR quá hạn.
+  const isPosLiveBoardRoute = isPosLiveBoardPath(location.pathname);
+  // Toàn bộ nhánh Touch Shell (`/pos/touch` và `/pos/touch/*`) chạy kiểu "trình chiếu":
+  // ẩn sidebar, navbar, command palette. Chỉ áp dụng khi tài khoản xem được POS; nếu không (403),
+  // giữ sidebar/navbar để người dùng còn đường sang màn khác hoặc đăng xuất.
   const isPosTouchRoute =
-    canReceivePosAlerts &&
-    (location.pathname === POS_TOUCH_PATH || location.pathname.startsWith(`${POS_TOUCH_PATH}/`));
+    canReceivePosAlerts && isPosTouchShellPath(location.pathname);
   useDisplayScale(location.pathname);
 
   const globalTableGridQuery = useQuery<PosTableGridResponse | null>({
@@ -141,6 +148,15 @@ export function AppShell() {
   }, [accessToken, user]);
 
   React.useEffect(() => {
+    const touchMeta = findTouchRouteMeta(location.pathname);
+    if (touchMeta) {
+      const resolvedLabel = touchMeta.navLabelPath
+        ? resolveNavLabel(touchMeta.navLabelPath, touchMeta.label, settings.navLabels)
+        : touchMeta.label;
+      document.title = `${resolvedLabel} · ${settings.storeName}`;
+      return;
+    }
+
     const matchedRoute = APP_NAVIGATION_ROUTES.find(
       (route) =>
         location.pathname === route.path ||
@@ -173,9 +189,9 @@ export function AppShell() {
     };
   }, []);
 
-  // Global QR order voice alert & toast when staff is browsing non-POS admin screens
+  // Global QR order voice alert & toast when staff is browsing non-POS screens (including Touch Shell subpages)
   React.useEffect(() => {
-    if (!socket || !canReceivePosAlerts || isPosRoute) return;
+    if (!socket || !canReceivePosAlerts || isPosLiveBoardRoute) return;
 
     const handleGlobalQrNew = (raw: unknown) => {
       const payload = raw as QrSocketAlertPayload;
@@ -231,7 +247,7 @@ export function AppShell() {
       socket.off(SocketEvents.TABLE_GRID_SYNC, handleGlobalGridSync);
       socket.off(SocketEvents.ORDER_QR_AUTO_CANCELLED, handleGlobalQrAutoCancelled);
     };
-  }, [socket, canReceivePosAlerts, isPosRoute, queryClient]);
+  }, [socket, canReceivePosAlerts, isPosLiveBoardRoute, queryClient]);
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
@@ -262,14 +278,17 @@ export function AppShell() {
             onToggleMobileMenu={() => setMobileMenuOpen(true)}
           />
         )}
-        {!isPosRoute && overdueQrItems.length > 0 ? (
+        {!isPosLiveBoardRoute && overdueQrItems.length > 0 ? (
           <button
             type="button"
             data-testid="global-overdue-qr-banner"
-            onClick={() => navigate('/pos')}
-            className="flex w-full items-center justify-center gap-2 bg-red-600 px-3 py-1.5 text-center text-xs font-bold text-white shadow-xs transition-colors hover:bg-red-700 animate-pulse"
+            onClick={() => navigate(isPosTouchRoute ? TOUCH_PATHS.POS : '/pos')}
+            className={cn(
+              'flex w-full items-center justify-center gap-2 bg-red-600 px-3 py-1.5 text-center text-xs font-bold text-white shadow-xs transition-colors hover:bg-red-700 animate-pulse',
+              isPosTouchRoute && 'min-h-12 py-2.5 text-sm',
+            )}
           >
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 touch-ui:h-5 touch-ui:w-5" />
             <span className="truncate">
               Cảnh báo đỏ: {overdueQrItems.map((entry) => entry.tableLabel).join(', ')} chưa xác nhận đơn QR quá hạn — Nhấn để mở quầy POS xử lý ngay
             </span>
@@ -280,7 +299,9 @@ export function AppShell() {
           className={cn(
             'flex-1 min-h-0 flex flex-col',
             isPosTouchRoute ? 'p-0' : 'p-2.5 sm:p-4 md:p-5',
-            isPosRoute ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden',
+            isPosLiveBoardRoute || isPosTouchRoute
+              ? 'overflow-hidden'
+              : 'overflow-y-auto overflow-x-hidden',
           )}
         >
           <Outlet />

@@ -60,6 +60,18 @@ export const loadPosTouchPage = createMemoizedLoader(
   () => import('@/features/pos-counter'),
   (m) => m.PosTouchPage,
 );
+export const loadTouchHubPage = createMemoizedLoader(
+  () => import('@/components/touch-shell'),
+  (m) => m.TouchHubPage,
+);
+export const loadTouchStockStatusPage = createMemoizedLoader(
+  () => import('@/features/menu'),
+  (m) => m.TouchStockStatusPage,
+);
+export const loadTouchPrinterPage = createMemoizedLoader(
+  () => import('@/features/store-settings'),
+  (m) => m.TouchPrinterPage,
+);
 export const loadInvoicesPage = createMemoizedLoader(
   () => import('@/features/invoices'),
   (m) => m.InvoicesPage,
@@ -125,6 +137,19 @@ const STAFF_ROUTE_CHUNK_LOADERS: Record<string, RouteChunkLoader> = {
   '/rbac': loadRbacUsersPage,
   '/settings': loadStoreSettingsPage,
   '/profile': loadProfilePage,
+  '/pos/touch': loadPosTouchPage,
+  '/pos/touch/hub': loadTouchHubPage,
+  '/pos/touch/stock-status': loadTouchStockStatusPage,
+  '/pos/touch/printer': loadTouchPrinterPage,
+  '/pos/touch/invoices': loadInvoicesPage,
+  '/pos/touch/cashflow': loadCashflowPage,
+  '/pos/touch/inventory': loadInventoryPage,
+  '/pos/touch/dashboard': loadDashboardPage,
+  '/pos/touch/menu': loadMenuManagementPage,
+  '/pos/touch/discounts': loadDiscountsPage,
+  '/pos/touch/payment-qr': loadPaymentQrPage,
+  '/pos/touch/settings': loadStoreSettingsPage,
+  '/pos/touch/profile': loadProfilePage,
 };
 
 function getTodayVietnamDateIso(): string {

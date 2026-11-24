@@ -371,7 +371,7 @@ export function InventoryPage() {
                 setFromDate(e.target.value);
                 setPage(1);
               }}
-              className="h-8 w-36 text-xs"
+              className="h-8 w-36 touch-ui:w-44 text-xs"
             />
             <span className="text-xs text-muted-foreground">→</span>
             <Input
@@ -383,7 +383,7 @@ export function InventoryPage() {
                 setToDate(e.target.value);
                 setPage(1);
               }}
-              className="h-8 w-36 text-xs"
+              className="h-8 w-36 touch-ui:w-44 text-xs"
             />
           </div>
         }
