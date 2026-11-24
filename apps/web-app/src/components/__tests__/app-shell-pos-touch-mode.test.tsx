@@ -82,4 +82,21 @@ describe('AppShell — chế độ trình chiếu cho /pos/touch', () => {
     renderShellAt('/pos/touch');
     expect(await screen.findByTestId('network-offline-banner')).toBeInTheDocument();
   });
+
+  it('keeps the sidebar and navbar on /pos/touch for an account without POS access (no 403 dead end)', async () => {
+    useAuthStore.getState().setAuth({
+      accessToken: 'tok',
+      user: {
+        id: 5,
+        employeeId: 5,
+        username: 'ketoan',
+        fullName: 'Kế toán',
+        isSuperAdmin: false,
+        permissions: UserPermissionsSchema.parse({ invoices: { view: true } }),
+      },
+    });
+    renderShellAt('/pos/touch');
+    expect(await screen.findByTestId('mock-pos-touch-view')).toBeInTheDocument();
+    expect(screen.getByTestId('navbar-right-controls')).toBeInTheDocument();
+  });
 });

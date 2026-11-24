@@ -41,7 +41,7 @@ import type {
   SplitOrderDialogMode,
   SplitSelectedItemSummary,
 } from '../components/split-order-items-dialog';
-import { findMatchingDraftIndex, findMergeableOrderItem } from '../utils/order-item-merge';
+import { findMatchingDraftIndex } from '../utils/order-item-merge';
 import { usePosCashierSocket } from './use-pos-cashier-socket';
 
 /**
@@ -67,11 +67,15 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   const emitViewChange = (event: PosWorkspaceViewEvent) => {
     onViewChangeRef.current?.(event);
   };
-  // Đơn do chính máy này đóng (thanh toán / huỷ / đổi-gộp bàn): giao diện dùng để phân biệt với
-  // trường hợp đơn bị đóng ở máy khác.
+  // Đơn do chính máy này đang đóng (thanh toán, thanh toán tách trọn đơn, huỷ, gộp sang bàn khác):
+  // giao diện dùng để phân biệt với đơn bị đóng ở máy khác. Đánh dấu TRƯỚC khi gọi API (dữ liệu đơn
+  // đã đóng có thể về trước khi lệnh trả kết quả) và GỠ ngay nếu lệnh lỗi / đơn vẫn còn mở.
   const locallyClosedOrderIdsRef = React.useRef<Set<number>>(new Set());
   const markClosingLocally = (orderId: number) => {
     locallyClosedOrderIdsRef.current.add(orderId);
+  };
+  const unmarkClosingLocally = (orderId: number) => {
+    locallyClosedOrderIdsRef.current.delete(orderId);
   };
   const isOrderClosedLocally = (orderId: number) => locallyClosedOrderIdsRef.current.has(orderId);
 
@@ -228,35 +232,31 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     emitViewChange('draft-started');
   };
 
-  // Các lần chạm thêm món vào hoá đơn được xếp hàng: lần sau chờ lần trước xong (kể cả tải lại đơn)
-  // mới đọc số lượng hiện tại, nên chạm nhanh liên tiếp vẫn cộng đủ và không bao giờ mất món.
+  // Mọi thay đổi món trên hoá đơn đang mở (chạm thêm món, nút −/+) đi qua một hàng đợi: lần sau chờ
+  // lần trước xong (kể cả tải lại đơn) mới chạy. Thêm món luôn gửi "addItems" để server tự cộng dồn
+  // vào dòng trùng trong giao dịch có khoá dòng; −/+ áp dụng mức thay đổi lên số lượng mới nhất.
   const queryClient = useQueryClient();
-  const addItemQueueRef = React.useRef<Promise<void>>(Promise.resolve());
+  const orderMutationQueueRef = React.useRef<Promise<void>>(Promise.resolve());
+  const enqueueOrderMutation = (task: () => Promise<void>) => {
+    const run = orderMutationQueueRef.current.then(task);
+    orderMutationQueueRef.current = run.catch(() => undefined);
+    return run;
+  };
 
   const addItemToLiveOrder = async (orderId: number, item: PosMenuSelectedItem) => {
-    const latestOrder =
-      queryClient.getQueryData<OrderDetailResponse>(posQueryKeys.orderDetail(orderId)) ??
-      (currentOrder?.orderId === orderId ? currentOrder : undefined);
-    const mergeTarget = latestOrder ? findMergeableOrderItem(latestOrder, item) : undefined;
     try {
       await patchItemsMutation.mutateAsync({
         orderId,
-        input: mergeTarget
-          ? {
-              updates: [
-                { orderItemId: mergeTarget.id, quantity: mergeTarget.quantity + item.quantity },
-              ],
-            }
-          : {
-              addItems: [
-                {
-                  productId: item.productId,
-                  quantity: item.quantity,
-                  modifiers: item.modifiers,
-                  ...(item.itemNote ? { itemNote: item.itemNote } : {}),
-                },
-              ],
+        input: {
+          addItems: [
+            {
+              productId: item.productId,
+              quantity: item.quantity,
+              modifiers: item.modifiers,
+              ...(item.itemNote ? { itemNote: item.itemNote } : {}),
             },
+          ],
+        },
       });
       notify('pos.order.addItemSuccess', {
         variant: 'success',
@@ -272,9 +272,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     if (selectedOrderId && currentOrder) {
       if (!canUpdateOrder) return;
       const orderId = selectedOrderId;
-      const task = addItemQueueRef.current.then(() => addItemToLiveOrder(orderId, item));
-      addItemQueueRef.current = task.catch(() => undefined);
-      await task;
+      await enqueueOrderMutation(() => addItemToLiveOrder(orderId, item));
       return;
     }
 
@@ -349,11 +347,26 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
 
   const handleUpdateOrderItemQuantity = async (orderItemId: number, newQuantity: number) => {
     if (!selectedOrderId) return;
-    await patchItemsMutation.mutateAsync({
-      orderId: selectedOrderId,
-      input: {
-        updates: [{ orderItemId, quantity: newQuantity }],
-      },
+    const orderId = selectedOrderId;
+    // Người dùng bấm −/+ trên số lượng đang thấy: giữ đúng mức thay đổi đó và cộng vào số lượng mới
+    // nhất (đơn có thể vừa được cộng dồn bởi một lần chạm món trước trong hàng đợi).
+    const shownQuantity = currentOrder?.items.find((i) => i.id === orderItemId)?.quantity;
+    const delta = shownQuantity === undefined ? null : newQuantity - shownQuantity;
+    await enqueueOrderMutation(async () => {
+      const latest = queryClient
+        .getQueryData<OrderDetailResponse>(posQueryKeys.orderDetail(orderId))
+        ?.items.find((i) => i.id === orderItemId);
+      const quantity =
+        delta === null || !latest ? newQuantity : Math.max(1, latest.quantity + delta);
+      if (latest && quantity === latest.quantity) return;
+      try {
+        await patchItemsMutation.mutateAsync({
+          orderId,
+          input: { updates: [{ orderItemId, quantity }] },
+        });
+      } catch (err) {
+        notifyErr('pos.order.addItemError', err);
+      }
     });
   };
 
@@ -575,6 +588,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         variant: 'success',
       });
     } catch (err) {
+      unmarkClosingLocally(selectedOrderId);
       notifyErr('pos.checkout.error', err);
     }
   };
@@ -695,6 +709,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       setSplitDialogMode(null);
       if (response.isFullCheckout) {
         setSelectedOrderId(null);
+      } else {
+        unmarkClosingLocally(selectedOrderId);
       }
       notify(
         response.isFullCheckout
@@ -711,13 +727,16 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         },
       );
     } catch (err) {
+      unmarkClosingLocally(selectedOrderId);
       notifyErr('pos.split.checkoutError', err);
     }
   };
 
   const handleConfirmTableAction = async (input: TableActionRequest) => {
     if (!selectedOrderId) return;
-    markClosingLocally(selectedOrderId);
+    // Chuyển / hoán đổi bàn giữ nguyên đơn đang mở; chỉ gộp bàn mới đóng đơn này.
+    const closesThisOrder = input.action === TableActionType.MERGE;
+    if (closesThisOrder) markClosingLocally(selectedOrderId);
     try {
       const mergedTargetOrderId =
         input.action === TableActionType.MERGE
@@ -749,6 +768,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         },
       );
     } catch (err) {
+      if (closesThisOrder) unmarkClosingLocally(selectedOrderId);
       notifyErr('pos.tableAction.error', err);
     }
   };
@@ -787,6 +807,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         variant: 'success',
       });
     } catch (err) {
+      unmarkClosingLocally(selectedOrderId);
       notifyErr('pos.order.voidError', err);
     }
   };

@@ -196,10 +196,15 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
   // mỗi lần render lại sẽ tự in thêm một bản (vòng lặp in liên tục).
   const activePrintJobIdRef = React.useRef<string | null>(null);
   activePrintJobIdRef.current = activePrintJob?.id ?? null;
-  const handleSlipReadyToPrint = React.useCallback(() => {
-    const jobId = activePrintJobIdRef.current;
-    if (jobId) executeBrowserPrintAndDequeue(jobId);
-  }, [executeBrowserPrintAndDequeue]);
+  // Callback gắn với ĐÚNG job đang chờ: phiếu cũ (đã bị thay bằng lệnh in mới) có gọi muộn cũng
+  // không in nhầm phiếu mới trước khi ảnh VietQR của phiếu mới tải xong.
+  const activeJobId = activePrintJob?.id ?? null;
+  const handleSlipReadyToPrint = React.useMemo(() => {
+    if (!activeJobId) return undefined;
+    return () => {
+      if (activePrintJobIdRef.current === activeJobId) executeBrowserPrintAndDequeue(activeJobId);
+    };
+  }, [activeJobId, executeBrowserPrintAndDequeue]);
 
   const kickCashDrawerNow = React.useCallback(async (): Promise<PhysicalPrintDispatchResult | null> => {
     const printerConfig = useThermalPrinterConfigStore.getState().config;

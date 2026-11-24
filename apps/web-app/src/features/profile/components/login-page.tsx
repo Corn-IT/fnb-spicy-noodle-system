@@ -101,15 +101,20 @@ export function LoginPage() {
       !pathname.startsWith('//') &&
       pathname !== '/login'
       ? `${pathname}${typeof search === 'string' ? search : ''}${typeof hash === 'string' ? hash : ''}`
-      : resolvePosHomePath();
+      : null;
   }, [location.state]);
+  // Trang mặc định phụ thuộc quyền của tài khoản vừa đăng nhập, nên chỉ tính lúc điều hướng.
+  const resolveDestination = React.useCallback(
+    () => safeDestination ?? resolvePosHomePath(),
+    [safeDestination],
+  );
 
   // Nếu cùng trình duyệt đã có phiên đăng nhập sống và mở lại /login, tự điều hướng về POS để tránh tự đá chính mình.
   React.useEffect(() => {
     if (currentUser && currentAccessToken && !activeAuthNotice) {
-      navigate(safeDestination, { replace: true });
+      navigate(resolveDestination(), { replace: true });
     }
-  }, [currentUser, currentAccessToken, activeAuthNotice, navigate, safeDestination]);
+  }, [currentUser, currentAccessToken, activeAuthNotice, navigate, resolveDestination]);
 
   const executeLogin = async (payload: { username: string; password: string; force?: boolean }) => {
     setFormError(null);
@@ -121,7 +126,7 @@ export function LoginPage() {
         variant: 'success',
         vars: { username: payload.username },
       });
-      navigate(safeDestination, { replace: true });
+      navigate(resolveDestination(), { replace: true });
     } catch (err) {
       if (!payload.force && err instanceof ApiClientError && err.code === ErrorCodes.AUTH_SESSION_CONFLICT_ONLINE) {
         const parsedDetails = ActiveSessionConflictDetailsSchema.safeParse(err.details);

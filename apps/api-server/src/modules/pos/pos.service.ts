@@ -913,6 +913,29 @@ export class PosService {
     });
   }
 
+  /** Khoá so sánh 2 dòng món có thể gộp: cùng món, giá (đã gồm tuỳ chọn), ghi chú và tuỳ chọn. */
+  private orderItemMergeKey(item: {
+    productId: number;
+    unitPrice: Prisma.Decimal | number | string;
+    itemNote?: string | null;
+    modifiersSnapshot: unknown;
+  }): string {
+    const modifiers = Array.isArray(item.modifiersSnapshot) ? item.modifiersSnapshot : [];
+    const normalized = modifiers
+      .map((raw) => {
+        const m = (raw ?? {}) as { groupId?: unknown; modifierId?: unknown; action?: unknown; substituteModifierId?: unknown };
+        return [m.groupId ?? null, m.modifierId ?? null, m.action ?? 'SELECTED', m.substituteModifierId ?? null];
+      })
+      .map((entry) => JSON.stringify(entry))
+      .sort();
+    return JSON.stringify([
+      item.productId,
+      new Prisma.Decimal(item.unitPrice).toFixed(2),
+      (item.itemNote ?? '').trim(),
+      normalized,
+    ]);
+  }
+
   async patchOrderItems(id: number, input: PatchOrderItemsInput, userId?: number) {
     const parsed = this.parseRequest(PatchOrderItemsSchema, input);
     const result = await this.prisma.$transaction(async (tx) => {
@@ -986,10 +1009,41 @@ export class PosService {
       let resolvedAddedItems: Awaited<ReturnType<typeof this.resolveItems>> = [];
       if (parsed.addItems?.length) {
         resolvedAddedItems = await this.resolveItems(tx, parsed.addItems);
-        const aggregate = await tx.orderItem.aggregate({ where: { orderId: id }, _max: { batchNo: true } });
-        await tx.orderItem.createMany({ data: resolvedAddedItems.map((item) => ({
-          orderId: id, ...item, batchNo: (aggregate._max.batchNo ?? 0) + 1, kitchenStatus: 'NEW',
-        })) });
+        // Gọi trùng món (cùng món, tuỳ chọn, ghi chú và giá hiện hành) thì cộng dồn vào dòng CHƯA gửi
+        // bếp do quầy thêm, thay vì tạo dòng mới. Làm trong giao dịch đã khoá đơn nên luôn cộng trên số
+        // lượng mới nhất: nhiều máy cùng chạm cũng không mất món. Món đã in bếp / khách gọi qua QR
+        // đang chờ duyệt vẫn tách dòng để phiếu bếp và cảnh báo QR đúng.
+        const mergeableByKey = new Map<string, { id: number }>();
+        for (const item of order.items ?? []) {
+          const source = (item as { itemSource?: string | null }).itemSource ?? 'POS_COUNTER';
+          if (item.kitchenStatus !== 'NEW' || source !== 'POS_COUNTER' || changedIds.has(item.id)) continue;
+          const key = this.orderItemMergeKey(item);
+          if (!mergeableByKey.has(key)) mergeableByKey.set(key, item);
+        }
+        const itemsToCreate: typeof resolvedAddedItems = [];
+        const pendingByKey = new Map<string, (typeof resolvedAddedItems)[number]>();
+        for (const added of resolvedAddedItems) {
+          const key = this.orderItemMergeKey(added);
+          const existing = mergeableByKey.get(key);
+          if (existing) {
+            await tx.orderItem.update({ where: { id: existing.id }, data: { quantity: { increment: added.quantity } } });
+            continue;
+          }
+          const pending = pendingByKey.get(key);
+          if (pending) {
+            pending.quantity += added.quantity;
+            continue;
+          }
+          const copy = { ...added };
+          pendingByKey.set(key, copy);
+          itemsToCreate.push(copy);
+        }
+        if (itemsToCreate.length > 0) {
+          const aggregate = await tx.orderItem.aggregate({ where: { orderId: id }, _max: { batchNo: true } });
+          await tx.orderItem.createMany({ data: itemsToCreate.map((item) => ({
+            orderId: id, ...item, batchNo: (aggregate._max.batchNo ?? 0) + 1, kitchenStatus: 'NEW',
+          })) });
+        }
       }
 
       const totals = await recomputeOrderTotals(tx, id, order.discountSnapshot ?? null);

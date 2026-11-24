@@ -610,6 +610,59 @@ describe('PosService', () => {
     expect(result).toMatchObject({ totalAmount: 0, requireCancellationSlip: false, kitchenCancellationSlips: [] });
   });
 
+  describe('patchOrderItems addItems — cộng dồn món trùng', () => {
+    const orderWith = (items: Array<Record<string, unknown>>) => ({
+      id: 42, status: 'SERVING', orderType: 'DINE_IN', tableId: 7, orderCode: 'HD-20261124-0042',
+      table: { id: 7, name: 'Bàn 07' },
+      items: items.map((item, index) => ({
+        id: 100 + index, orderId: 42, productId: 11, quantity: 1, unitPrice: new Prisma.Decimal('100.00'),
+        modifiersSnapshot: [], itemNote: null, batchNo: 1, kitchenStatus: 'NEW', itemSource: 'POS_COUNTER', product,
+        ...item,
+      })),
+    });
+
+    const run = async (order: ReturnType<typeof orderWith>, addItems: Array<{ productId: number; quantity: number; itemNote?: string }>) => {
+      const harness = createHarness();
+      harness.tx.order.findUnique.mockResolvedValue(order);
+      harness.tx.orderItem.findMany.mockResolvedValue([]);
+      harness.tx.order.update.mockResolvedValue({ id: 42, totalAmount: new Prisma.Decimal(0) });
+      const service = createPosService(harness);
+      await service.patchOrderItems(42, { addItems });
+      return harness.tx;
+    };
+
+    it('increments the matching NEW counter line inside the locked transaction instead of adding a row', async () => {
+      const tx = await run(orderWith([{}]), [{ productId: 11, quantity: 2 }]);
+      expect(tx.orderItem.update).toHaveBeenCalledWith({ where: { id: 100 }, data: { quantity: { increment: 2 } } });
+      expect(tx.orderItem.createMany).not.toHaveBeenCalled();
+    });
+
+    it('keeps a new line when the same dish was already printed, came from a QR guest, has another note or an old price', async () => {
+      for (const existing of [
+        { kitchenStatus: 'PRINTED' },
+        { itemSource: 'QR_CODE' },
+        { itemNote: 'Ít cay' },
+        { unitPrice: new Prisma.Decimal('90.00') },
+      ]) {
+        const tx = await run(orderWith([existing]), [{ productId: 11, quantity: 1 }]);
+        expect(tx.orderItem.update).not.toHaveBeenCalled();
+        expect(tx.orderItem.createMany).toHaveBeenCalledWith({
+          data: [expect.objectContaining({ productId: 11, quantity: 1, kitchenStatus: 'NEW', batchNo: 1 })],
+        });
+      }
+    });
+
+    it('folds identical dishes sent in one request into a single new line', async () => {
+      const tx = await run(orderWith([]), [
+        { productId: 11, quantity: 1 },
+        { productId: 11, quantity: 2 },
+      ]);
+      expect(tx.orderItem.createMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ productId: 11, quantity: 3 })],
+      });
+    });
+  });
+
   it('should mark a PRINTED item cancelled and return its station cancellation slip', async () => {
     const harness = createHarness();
     harness.tx.order.findUnique.mockResolvedValue({

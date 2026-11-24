@@ -72,4 +72,40 @@ describe('ThermalPrintProvider — phiếu tạm tính chỉ in đúng 1 lần',
 
     expect(printSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('cancels the pending print of a slip replaced by a newer provisional print', async () => {
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      const id = nextFrame++;
+      frames.set(id, cb);
+      return id;
+    });
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      frames.delete(id);
+    });
+    const flushFrames = () =>
+      act(() => {
+        for (let round = 0; round < 4; round += 1) {
+          const pending = [...frames.entries()];
+          frames.clear();
+          pending.forEach(([, cb]) => cb(performance.now()));
+        }
+      });
+
+    render(
+      <ThermalPrintProvider>
+        <PrintProvisionalButton />
+      </ThermalPrintProvider>,
+    );
+
+    const button = screen.getByRole('button', { name: 'In tạm tính' });
+    fireEvent.click(button); // phiếu A: hẹn in sau 2 khung hình
+    fireEvent.click(button); // phiếu B thay thế A trước khi A kịp in
+
+    expect(cancelSpy).toHaveBeenCalled();
+    flushFrames();
+    expect(printSpy).toHaveBeenCalledTimes(1);
+  });
 });

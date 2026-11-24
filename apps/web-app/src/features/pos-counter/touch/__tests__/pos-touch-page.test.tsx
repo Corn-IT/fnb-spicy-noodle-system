@@ -507,4 +507,27 @@ describe('POS cảm ứng (/pos/touch)', () => {
     fireEvent.click(screen.getByTestId('touch-table-card-1'));
     expect(await screen.findByTestId('touch-menu-grid')).toHaveAttribute('data-columns', '3');
   });
+
+  it('still warns when another device pays an order this screen only moved to another table', async () => {
+    let status: OrderDetailResponse['status'] = 'SERVING';
+    mockGetApiWithOrderStatus(() => status);
+    vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/orders/700/table-action') {
+        return { action: 'MOVE', sourceTableId: 7, targetTableId: 1, requireKitchenNoticePrint: false };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
+    const view = renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-table-card-7'));
+    fireEvent.click(await screen.findByTestId('touch-table-action'));
+    fireEvent.click(await screen.findByTestId('target-table-1'));
+    fireEvent.click(screen.getByTestId('confirm-table-action-btn'));
+    await waitFor(() => expect(screen.queryByTestId('table-action-dialog')).not.toBeInTheDocument());
+
+    status = 'PAID';
+    await view.queryClient.invalidateQueries();
+    expect(await screen.findByTestId('touch-table-board')).toBeInTheDocument();
+    await waitFor(() => expect(toastTexts()).toContain('máy khác'));
+  });
 });

@@ -65,15 +65,29 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
   const hasNotifiedRef = React.useRef(false);
   const imgRef = React.useRef<HTMLImageElement | null>(null);
 
+  // Hẹn in sau 2 khung hình để ảnh QR kịp vẽ; huỷ hẹn nếu phiếu bị gỡ (đã có lệnh in khác thay thế).
+  const pendingFramesRef = React.useRef<number[]>([]);
+  React.useEffect(
+    () => () => {
+      if (typeof cancelAnimationFrame === 'function') {
+        pendingFramesRef.current.forEach((frame) => cancelAnimationFrame(frame));
+      }
+      pendingFramesRef.current = [];
+    },
+    [],
+  );
+
   const notifyReadyOnce = React.useCallback(() => {
     if (hasNotifiedRef.current) return;
     hasNotifiedRef.current = true;
     if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
+      const outer = requestAnimationFrame(() => {
+        const inner = requestAnimationFrame(() => {
           onReadyToPrint?.();
         });
+        pendingFramesRef.current.push(inner);
       });
+      pendingFramesRef.current.push(outer);
     } else {
       onReadyToPrint?.();
     }

@@ -56,8 +56,11 @@ export function AppShell() {
 
   const isPosRoute = location.pathname.startsWith('/pos');
   // Màn POS cảm ứng chạy kiểu "trình chiếu": ẩn sidebar, navbar, banner, command palette.
+  // Chỉ chạy kiểu "trình chiếu" khi tài khoản xem được POS; nếu không (màn 403), giữ sidebar/navbar
+  // để người dùng còn đường sang màn khác hoặc đăng xuất.
   const isPosTouchRoute =
-    location.pathname === POS_TOUCH_PATH || location.pathname.startsWith(`${POS_TOUCH_PATH}/`);
+    canReceivePosAlerts &&
+    (location.pathname === POS_TOUCH_PATH || location.pathname.startsWith(`${POS_TOUCH_PATH}/`));
   useDisplayScale(location.pathname);
 
   const globalTableGridQuery = useQuery<PosTableGridResponse | null>({
