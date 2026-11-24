@@ -613,6 +613,8 @@ export class IamService {
         edit: 'Chỉnh sửa',
         manage: 'Quản trị',
         checkout: 'Thanh toán',
+        openCashDrawer: 'Mở két tiền tự do',
+        manualDiscount: 'Giảm giá tay trực tiếp',
         cancel_order: 'Huỷ đơn',
         split_kitchen: 'Tách bếp',
         print_provisional: 'In tạm tính',

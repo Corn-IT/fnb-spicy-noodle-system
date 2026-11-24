@@ -1,5 +1,6 @@
 import {
   type OrderDetailResponse,
+  type PaymentMethod,
   TableActionType,
   type ApplyPosDiscountRequest,
   type CheckoutOrderRequest,
@@ -11,7 +12,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import * as React from 'react';
 
-import { useThermalPrinter } from '@/components/print-slips';
+import { useThermalPrinter, useThermalPrinterConfigStore } from '@/components/print-slips';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { evaluateOrderPendingAlert } from '@/lib/qr-pending-reminder';
 import { getActiveQrReminderConfig } from '@/lib/qr-voice-announcer';
@@ -557,6 +558,16 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     }
   };
 
+  // Thanh toán có liên quan tiền mặt (CASH / SPLIT) khi chọn "Xác nhận & Không in":
+  // tự động bung két theo hành động thanh toán (không phụ thuộc quyền `pos.openCashDrawer`).
+  // Trường hợp có in hoá đơn (`printReceipt = true`), `printOfficialReceipt` đã tự gộp xung mở két.
+  const autoKickCashDrawerForNoPrintCashPayment = (paymentMethod: PaymentMethod) => {
+    if (paymentMethod !== 'CASH' && paymentMethod !== 'SPLIT') return;
+    const printerConfig = useThermalPrinterConfigStore.getState().config;
+    if (printerConfig.driver === 'BROWSER' || !printerConfig.cashDrawerKick) return;
+    void thermalPrinter.kickCashDrawerNow().catch(() => undefined);
+  };
+
   const handleConfirmCheckout = async (payload: CheckoutOrderRequest) => {
     if (!selectedOrderId) return;
     markClosingLocally(selectedOrderId);
@@ -604,6 +615,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
                 : {}),
             })),
         });
+      } else {
+        autoKickCashDrawerForNoPrintCashPayment(payload.paymentMethod);
       }
 
       setCheckoutOpen(false);
@@ -729,6 +742,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
             note: item.note,
           })),
         });
+      } else {
+        autoKickCashDrawerForNoPrintCashPayment(payload.paymentMethod);
       }
 
       setSplitDialogMode(null);
