@@ -13,7 +13,7 @@ import {
   VolumeX,
 } from 'lucide-react';
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { SystemErrorView } from '@/components/error-display';
 import { executeCleanLogout } from '@/components/layout/top-navbar';
@@ -57,6 +57,7 @@ export function PosTouchPage() {
   useScreenWakeLock(!isInTouchShell);
 
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const fullscreen = useFullscreen();
   const [deviceMode, setDeviceMode] = usePosDeviceMode();
@@ -86,6 +87,19 @@ export function PosTouchPage() {
   });
   const { tableGridQuery, gridData, productsQuery, selectedOrderId, draftTarget, draftItems } =
     workspace;
+
+  // Deep-link từ Web Push Notification (`/pos/touch?orderId=42`) -> tự mở đúng đơn đang chờ.
+  const deepLinkOrderIdParam = searchParams.get('orderId');
+  React.useEffect(() => {
+    if (!deepLinkOrderIdParam || !gridData) return;
+    const parsedId = Number(deepLinkOrderIdParam);
+    if (Number.isInteger(parsedId) && parsedId > 0) {
+      workspace.actions.selectOrderById(parsedId);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('orderId');
+    setSearchParams(next, { replace: true });
+  }, [deepLinkOrderIdParam, gridData]);
 
   // Đơn đang mở bị đóng ở máy khác (thu ngân khác thanh toán / huỷ / gộp bàn): báo rõ rồi quay về
   // sơ đồ bàn, tránh để thu ngân đứng trên một hoá đơn đã đóng với các nút bị khoá không lý do.

@@ -85,6 +85,7 @@ import {
   toCalcItems,
 } from './order-totals.helper';
 import { TableTransferService } from './table-transfer.service';
+import { WebPushService } from './web-push.service';
 
 type PricingModifier = {
   id: number;
@@ -185,6 +186,7 @@ export class PosService {
     @Optional() @Inject(AuditLogService) private readonly auditLogService?: AuditLogService,
     @Optional() @Inject(PaymentQrService) private readonly paymentQrService?: PaymentQrService,
     @Optional() @Inject(DiscountsService) private readonly discountsService?: DiscountsService,
+    @Optional() @Inject(WebPushService) private readonly webPushService?: WebPushService,
   ) {}
 
   private get qrService(): PaymentQrService {
@@ -388,6 +390,17 @@ export class PosService {
 
     if (result.kind === 'new') {
       this.gateway.emitQrNewOrder(result.payload);
+      const tableLabel =
+        (result.payload as { tableLabel?: string })?.tableLabel ??
+        result.response.currentTableLabel ??
+        'Bàn mới';
+      void this.webPushService
+        ?.notifyQrNewOrder({
+          orderId: result.response.orderId,
+          orderCode: result.response.orderCode,
+          tableLabel,
+        })
+        .catch(() => undefined);
       const tableId = (result.payload as { tableId?: number | null })?.tableId ?? null;
       if (typeof tableId === 'number') {
         this.gateway.emitTableOrderNotice?.(tableId, {
@@ -401,6 +414,18 @@ export class PosService {
       }
     } else {
       this.gateway.emitQrAddonOrder(result.payload);
+      const tableLabel =
+        (result.payload as { tableLabel?: string })?.tableLabel ??
+        result.response.currentTableLabel ??
+        'Bàn';
+      void this.webPushService
+        ?.notifyQrAddonOrder({
+          orderId: result.response.orderId,
+          orderCode: result.response.orderCode,
+          tableLabel,
+          batchNo: result.response.batchNo,
+        })
+        .catch(() => undefined);
       const tableId = (result.payload as { tableId?: number | null })?.tableId ?? null;
       this.gateway.emitQrOrderNotice?.(result.response.orderId, {
         orderId: result.response.orderId,
