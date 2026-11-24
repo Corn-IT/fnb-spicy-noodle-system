@@ -472,7 +472,7 @@ describe('MenuService', () => {
               maxSelect: 1,
               modifiers: [
                 { id: 501, name: 'Size M', extraPrice: new Prisma.Decimal('0.00'), isDefaultChecked: true },
-                { id: 502, name: 'Size L', extraPrice: new Prisma.Decimal('7000.00'), isDefaultChecked: false },
+                { id: 502, name: 'Size L', extraPrice: new Prisma.Decimal('5000.00'), isDefaultChecked: false },
               ],
             },
           ],
@@ -504,7 +504,7 @@ describe('MenuService', () => {
               modifiers: {
                 create: [
                   expect.objectContaining({ name: 'Size M', extraPrice: new Prisma.Decimal(0), isDefaultChecked: true }),
-                  expect.objectContaining({ name: 'Size L', extraPrice: new Prisma.Decimal(7000) }),
+                  expect.objectContaining({ name: 'Size L', extraPrice: new Prisma.Decimal(5000) }),
                 ],
               },
             }),

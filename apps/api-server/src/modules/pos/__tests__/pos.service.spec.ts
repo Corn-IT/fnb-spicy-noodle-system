@@ -1059,7 +1059,7 @@ describe('PosService', () => {
     );
   });
 
-  it('snapshots Size M (0đ default) and Size L (+7.000đ) and propagates isTakeaway flag on QR addon and kitchen split', async () => {
+  it('snapshots Size M (0đ default) and Size L (+5.000đ) and propagates isTakeaway flag on QR addon and kitchen split', async () => {
     const harness = createHarness();
     harness.tx.product.findMany.mockResolvedValue([{
       id: 77,
@@ -1075,7 +1075,7 @@ describe('PosService', () => {
           maxSelect: 1,
           modifiers: [
             { id: 901, name: 'Size M', extraPrice: new Prisma.Decimal('0.00'), isDefaultChecked: true },
-            { id: 902, name: 'Size L', extraPrice: new Prisma.Decimal('7000.00'), isDefaultChecked: false },
+            { id: 902, name: 'Size L', extraPrice: new Prisma.Decimal('5000.00'), isDefaultChecked: false },
           ],
         },
       ],
@@ -1098,7 +1098,7 @@ describe('PosService', () => {
       totalAmount: new Prisma.Decimal('50000.00'),
     });
     harness.tx.orderItem.aggregate.mockResolvedValue({ _max: { batchNo: 1 } });
-    harness.tx.order.update.mockResolvedValue({ id: 500, totalAmount: new Prisma.Decimal('107000.00') });
+    harness.tx.order.update.mockResolvedValue({ id: 500, totalAmount: new Prisma.Decimal('105000.00') });
 
     const service = createPosService(harness);
     await service.createQrOrder({
@@ -1123,9 +1123,9 @@ describe('PosService', () => {
         expect.objectContaining({
           orderId: 500,
           productId: 77,
-          unitPrice: new Prisma.Decimal('32000.00'),
+          unitPrice: new Prisma.Decimal('30000.00'),
           isTakeaway: true,
-          modifiersSnapshot: [{ groupId: 90, modifierId: 902, name: 'Size L', extraPrice: '7000.00' }],
+          modifiersSnapshot: [{ groupId: 90, modifierId: 902, name: 'Size L', extraPrice: '5000.00' }],
         }),
       ],
     });

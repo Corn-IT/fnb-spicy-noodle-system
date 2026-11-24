@@ -280,7 +280,7 @@ const standardDrinkSizeGroup: SeedModifierGroupDef = {
   maxSelect: 1,
   modifiers: [
     { name: 'Size M', extraPrice: '0.00', isDefaultChecked: true },
-    { name: 'Size L', extraPrice: '7000.00' },
+    { name: 'Size L', extraPrice: '5000.00' },
   ],
 };
 

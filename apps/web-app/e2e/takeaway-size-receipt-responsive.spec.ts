@@ -23,7 +23,7 @@ const DRINK_SIZE_PRODUCT = {
       maxSelect: 1,
       modifiers: [
         { id: 901, name: 'Size M', extraPrice: 0, isDefaultChecked: true, isAvailable: true },
-        { id: 902, name: 'Size L', extraPrice: 7000, isDefaultChecked: false, isAvailable: true },
+        { id: 902, name: 'Size L', extraPrice: 5000, isDefaultChecked: false, isAvailable: true },
       ],
     },
   ],
