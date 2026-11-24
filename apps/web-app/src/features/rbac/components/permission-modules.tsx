@@ -27,6 +27,7 @@ export function buildCashierPresetPermissions(): UserPermissions {
       checkout: true,
       qrSecurity: false,
       manualDiscount: false,
+      openCashDrawer: false,
     },
     menu: {
       view: true,
@@ -63,6 +64,7 @@ export function buildFullStaffPermissions(): UserPermissions {
       checkout: true,
       qrSecurity: true,
       manualDiscount: true,
+      openCashDrawer: true,
     },
     menu: {
       view: true,

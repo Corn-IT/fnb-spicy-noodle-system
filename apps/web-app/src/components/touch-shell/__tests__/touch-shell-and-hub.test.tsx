@@ -14,10 +14,12 @@ import {
   resolveTouchPrefetchDataPath,
   TOUCH_PATHS,
   TOUCH_ROUTE_BY_PATH,
+  TouchCashDrawerButton,
   TouchHubPage,
   TouchShellLayout,
   useTouchShell,
 } from '@/components/touch-shell';
+import * as printSlips from '@/components/print-slips';
 import { apiClient } from '@/lib/api-client';
 import { POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
 import { QueryProvider } from '@/providers/query-provider';
@@ -299,5 +301,82 @@ describe('TouchHubPage', () => {
       expect(useAuthStore.getState().user).toBeNull();
     });
     expect(localStorage.getItem('fnb-ui-preferences')).not.toBeNull();
+  });
+});
+
+describe('TouchCashDrawerButton', () => {
+  afterEach(() => {
+    cleanup();
+    useAuthStore.getState().clearAuth();
+    vi.restoreAllMocks();
+  });
+
+  function mockThermalPrinter(kickMock = vi.fn().mockResolvedValue({ transport: 'RAWBT_WS', bytesSent: 7 })) {
+    vi.spyOn(printSlips, 'useThermalPrinter').mockReturnValue({
+      printQueue: [],
+      activePrintJob: null,
+      lastPhysicalPrintResult: null,
+      lastPhysicalPrintError: null,
+      printKitchenSplit: vi.fn(),
+      printTableTransferNotice: vi.fn(),
+      printKitchenCancelItem: vi.fn(),
+      printProvisionalVietQr: vi.fn(),
+      printOfficialReceipt: vi.fn(),
+      printTableQr: vi.fn(),
+      kickCashDrawerNow: kickMock,
+      clearPrintQueue: vi.fn(),
+    });
+    return kickMock;
+  }
+
+  it('hides the button when user lacks pos.openCashDrawer (even with pos.checkout=true)', () => {
+    useAuthStore.getState().setAuth({
+      accessToken: 'tok',
+      user: createUser({
+        permissions: {
+          pos: { view: true, create: true, update: true, checkout: true, openCashDrawer: false },
+        },
+      }),
+    });
+    mockThermalPrinter();
+
+    render(<TouchCashDrawerButton />);
+    expect(screen.queryByTestId('touch-open-cash-drawer')).not.toBeInTheDocument();
+  });
+
+  it('shows the button and kicks the cash drawer immediately on 1 tap when pos.openCashDrawer=true', async () => {
+    useAuthStore.getState().setAuth({
+      accessToken: 'tok',
+      user: createUser({
+        permissions: {
+          pos: { view: true, openCashDrawer: true },
+        },
+      }),
+    });
+    const kickMock = mockThermalPrinter();
+
+    render(<TouchCashDrawerButton />);
+    const btn = screen.getByTestId('touch-open-cash-drawer');
+    expect(btn).toHaveTextContent('Mở két');
+
+    fireEvent.click(btn);
+    expect(screen.queryByTestId('touch-confirm-dialog')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(kickMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('allows Super Admin to see and kick the cash drawer directly', async () => {
+    useAuthStore.getState().setAuth({
+      accessToken: 'tok',
+      user: createUser({ isSuperAdmin: true, permissions: { pos: { view: true } } }),
+    });
+    const kickMock = mockThermalPrinter();
+
+    render(<TouchCashDrawerButton />);
+    fireEvent.click(screen.getByTestId('touch-open-cash-drawer'));
+    await waitFor(() => {
+      expect(kickMock).toHaveBeenCalledTimes(1);
+    });
   });
 });
