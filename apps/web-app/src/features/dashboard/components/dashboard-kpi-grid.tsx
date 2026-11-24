@@ -11,7 +11,7 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useTouchAwareNavigate } from '@/components/touch-shell';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/utils/cn';
@@ -47,7 +47,7 @@ function renderGrowthPill(growthPercent: number | null) {
 }
 
 export function DashboardKpiGrid({ data }: DashboardKpiGridProps) {
-  const navigate = useNavigate();
+  const navigate = useTouchAwareNavigate();
   const { revenue, cashDrawer, transfer, inventory, openOrders, profit } = data.kpis;
   const isBlindCashier = Boolean(cashDrawer?.blindMode);
 

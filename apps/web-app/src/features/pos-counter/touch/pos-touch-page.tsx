@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { SystemErrorView } from '@/components/error-display';
 import { executeCleanLogout } from '@/components/layout/top-navbar';
+import { TOUCH_PATHS, useTouchShell } from '@/components/touch-shell';
 import { Button } from '@/components/ui/button';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { exitAppFullscreen, useFullscreen } from '@/hooks/use-fullscreen';
@@ -49,8 +50,11 @@ const CLOSED_ORDER_ACTION: Partial<Record<string, string>> = {
  * Dùng chung toàn bộ nghiệp vụ với `/pos` qua `usePosWorkspace`; chỉ khác phần giao diện.
  */
 export function PosTouchPage() {
-  useTouchUiRoot();
-  useScreenWakeLock(true);
+  const { isInTouchShell, setHideBottomNav } = useTouchShell();
+  // Khi chạy độc lập (VD: unit test render trực tiếp không bọc TouchShellLayout),
+  // vẫn tự gắn `data-pos-touch` và giữ wake lock như cũ; khi nằm trong TouchShellLayout, shell quản lý.
+  useTouchUiRoot(!isInTouchShell);
+  useScreenWakeLock(!isInTouchShell);
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -67,6 +71,11 @@ export function PosTouchPage() {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [layoutOpen, setLayoutOpen] = React.useState(false);
   const [layout, setLayout] = useTouchLayoutPrefs();
+
+  React.useEffect(() => {
+    setHideBottomNav(screen === 'order');
+    return () => setHideBottomNav(false);
+  }, [screen, setHideBottomNav]);
 
   const workspace = usePosWorkspace({
     onViewChange: (event) => {
@@ -103,16 +112,16 @@ export function PosTouchPage() {
     }
   }, [screen, selectedOrderId, draftTarget]);
 
-  // Trình duyệt chỉ cho bật toàn màn hình trong một lần chạm: thử ở lần chạm đầu tiên vào màn.
+  // Trình duyệt chỉ cho bật toàn màn hình trong một lần chạm: thử ở lần chạm đầu tiên khi chạy độc lập.
   React.useEffect(() => {
-    if (!fullscreen.isSupported) return;
+    if (isInTouchShell || !fullscreen.isSupported) return;
     const handleFirstTouch = () => {
       void fullscreen.enter();
     };
     window.addEventListener('pointerdown', handleFirstTouch, { once: true, capture: true });
     // Chỉ thử một lần khi vào màn; về sau dùng nút trong menu ⋮.
     return () => window.removeEventListener('pointerdown', handleFirstTouch, { capture: true });
-  }, [fullscreen.isSupported, fullscreen.enter]);
+  }, [isInTouchShell, fullscreen.isSupported, fullscreen.enter]);
 
   const tables = gridData?.tables ?? [];
   const takeaways = gridData?.takeaways ?? [];
@@ -147,7 +156,32 @@ export function PosTouchPage() {
     navigate('/login', { replace: true });
   };
 
+  const handleOpenHub = () => {
+    const goHub = () => {
+      workspace.actions.clearSelection();
+      navigate(TOUCH_PATHS.HUB);
+    };
+    if (!workspace.currentOrder && draftItems.length > 0) {
+      confirm.ask({
+        title: 'Bỏ đơn đang chọn dở để sang Quản lý?',
+        description: `${draftItems.length} món chưa được tạo đơn sẽ bị xoá.`,
+        confirmLabel: 'Bỏ đơn & Mở Quản lý',
+        tone: 'destructive',
+        onConfirm: goHub,
+      });
+      return;
+    }
+    goHub();
+  };
+
   const kioskActions: TouchSheetAction[] = [
+    {
+      key: 'hub',
+      label: 'Trung tâm Quản lý',
+      hint: 'Hoá đơn, Kết ca, Báo hết món, Máy in, Báo cáo...',
+      icon: LayoutGrid,
+      onSelect: handleOpenHub,
+    },
     ...(fullscreen.isSupported
       ? [
           {

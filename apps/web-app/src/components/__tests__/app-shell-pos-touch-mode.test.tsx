@@ -1,11 +1,12 @@
-import { UserPermissionsSchema } from '@fnb/shared';
+import { UserPermissionsSchema, type PosTableGridResponse } from '@fnb/shared';
 import { QueryClient } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { apiClient } from '@/lib/api-client';
+import * as qrVoiceAnnouncer from '@/lib/qr-voice-announcer';
 import { QueryProvider } from '@/providers/query-provider';
 import { useAuthStore } from '@/stores/auth.store';
 
@@ -28,6 +29,11 @@ function renderShellAt(path: string) {
           <Route element={<AppShell />}>
             <Route path="/pos" element={<div data-testid="mock-pos-view" />} />
             <Route path="/pos/touch" element={<div data-testid="mock-pos-touch-view" />} />
+            <Route path="/pos/touch/hub" element={<div data-testid="mock-touch-hub-view" />} />
+            <Route
+              path="/pos/touch/invoices"
+              element={<div data-testid="mock-touch-invoices-view" />}
+            />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -98,5 +104,51 @@ describe('AppShell — chế độ trình chiếu cho /pos/touch', () => {
     renderShellAt('/pos/touch');
     expect(await screen.findByTestId('mock-pos-touch-view')).toBeInTheDocument();
     expect(screen.getByTestId('navbar-right-controls')).toBeInTheDocument();
+  });
+
+  it('hides sidebar and navbar on /pos/touch/hub and /pos/touch/invoices subpages', async () => {
+    renderShellAt('/pos/touch/hub');
+    expect(await screen.findByTestId('mock-touch-hub-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('navbar-right-controls')).not.toBeInTheDocument();
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
+  });
+
+  it('shows overdue QR red banner on /pos/touch/invoices and navigates back to /pos/touch (not desktop /pos)', async () => {
+    vi.spyOn(qrVoiceAnnouncer, 'enqueueQrVoiceAlert').mockResolvedValue(undefined);
+    const sixMinsAgo = new Date(Date.now() - 6 * 60_000).toISOString();
+    const gridPayload: PosTableGridResponse = {
+      tables: [
+        {
+          id: 9,
+          name: 'Bàn 09',
+          status: 'PENDING',
+          activeOrderId: 909,
+          activeOrder: {
+            orderId: 909,
+            orderCode: 'HD-909',
+            orderType: 'DINE_IN',
+            tableId: 9,
+            tableLabel: 'Bàn 09',
+            takeawayNumber: null,
+            status: 'PENDING',
+            totalAmount: 65000,
+            createdAt: sixMinsAgo,
+            pendingQrSince: sixMinsAgo,
+            pendingQrKind: 'NEW',
+          },
+        },
+      ],
+      takeaways: [],
+    };
+    vi.spyOn(apiClient, 'get').mockResolvedValue(gridPayload);
+
+    renderShellAt('/pos/touch/invoices');
+    expect(await screen.findByTestId('mock-touch-invoices-view')).toBeInTheDocument();
+    const banner = await screen.findByTestId('global-overdue-qr-banner');
+    expect(banner).toHaveTextContent('Bàn 09');
+
+    fireEvent.click(banner);
+    expect(await screen.findByTestId('mock-pos-touch-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('global-overdue-qr-banner')).not.toBeInTheDocument();
   });
 });

@@ -10,7 +10,7 @@ import {
   Tag,
 } from 'lucide-react';
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useTouchAwareNavigate } from '@/components/touch-shell';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/utils/cn';
@@ -33,7 +33,7 @@ const STATION_TABS: ReadonlyArray<{ key: StationFilter; label: string }> = [
 ];
 
 export function DashboardInsightsRow({ data }: DashboardInsightsRowProps) {
-  const navigate = useNavigate();
+  const navigate = useTouchAwareNavigate();
   const [stationTab, setStationTab] = React.useState<StationFilter>('ALL');
 
   const canViewProfit = data.meta.scope.canViewProfit;

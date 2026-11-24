@@ -124,7 +124,7 @@ export function InvoiceDualFilterBar({
               const nextTo = toDate && nextFrom && toDate < nextFrom ? nextFrom : toDate;
               onDateRangeChange(nextFrom, nextTo);
             }}
-            className="h-8 min-w-0 flex-1 sm:w-36 text-xs"
+            className="h-8 min-w-0 flex-1 sm:w-36 touch-ui:sm:w-44 text-xs"
           />
           <span className="text-xs text-muted-foreground shrink-0">→</span>
           <Input
@@ -138,7 +138,7 @@ export function InvoiceDualFilterBar({
               const safeTo = fromDate && nextTo && nextTo < fromDate ? fromDate : nextTo;
               onDateRangeChange(fromDate, safeTo);
             }}
-            className="h-8 min-w-0 flex-1 sm:w-36 text-xs"
+            className="h-8 min-w-0 flex-1 sm:w-36 touch-ui:sm:w-44 text-xs"
           />
           <Button
             type="button"
@@ -162,7 +162,7 @@ export function InvoiceDualFilterBar({
           data-testid="invoice-order-type-filter"
           value={orderType}
           onChange={(e) => onOrderTypeChange?.(e.target.value as OrderType | '')}
-          className="h-9 flex-1 sm:flex-none rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          className="h-9 flex-1 sm:flex-none rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring touch-ui:h-12 touch-ui:px-3"
         >
           <option value="">Tất cả hình thức</option>
           <option value="DINE_IN">Tại bàn</option>
@@ -174,7 +174,7 @@ export function InvoiceDualFilterBar({
           data-testid="invoice-payment-filter"
           value={paymentMethod}
           onChange={(e) => onPaymentMethodChange(e.target.value as PaymentMethod | '')}
-          className="h-9 flex-1 sm:flex-none rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          className="h-9 flex-1 sm:flex-none rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring touch-ui:h-12 touch-ui:px-3"
         >
           <option value="">Tất cả phương thức</option>
           <option value={PaymentMethod.CASH}>Tiền mặt</option>
@@ -187,7 +187,7 @@ export function InvoiceDualFilterBar({
           data-testid="invoice-search-field-select"
           value={searchField}
           onChange={(e) => onSearchFieldChange(e.target.value as InvoiceSearchField)}
-          className="h-9 w-full sm:w-auto rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          className="h-9 w-full sm:w-auto rounded-md border border-input bg-background px-2.5 py-1 text-xs sm:text-sm font-medium text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring touch-ui:h-12 touch-ui:px-3"
         >
           <option value="order_code">Mã hoá đơn</option>
           <option value="table">Bàn / Mang về</option>
@@ -196,7 +196,7 @@ export function InvoiceDualFilterBar({
         </select>
 
         <div ref={keywordSearch.containerRef} className="relative flex-1 min-w-[200px] sm:w-56">
-          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground touch-ui:left-3 touch-ui:top-3.5 touch-ui:h-5 touch-ui:w-5" />
           <Input
             data-testid="invoice-keyword-input"
             {...keywordSearch.inputProps}
@@ -209,7 +209,7 @@ export function InvoiceDualFilterBar({
                     ? 'Nhập mã giảm giá (VD: GIAM10)...'
                     : 'Nhập nội dung ghi chú...'
             }
-            className="pl-8 pr-8 w-full h-9 text-xs sm:text-sm"
+            className="pl-8 pr-8 w-full h-9 text-xs sm:text-sm touch-ui:pl-10 touch-ui:pr-11"
           />
           {keywordSearch.draft ? (
             <button
@@ -219,7 +219,7 @@ export function InvoiceDualFilterBar({
               onClick={keywordSearch.clear}
               title="Đặt lại từ khoá tìm kiếm"
               aria-label="Đặt lại từ khoá tìm kiếm"
-              className="absolute right-2 top-2 inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="absolute right-2 top-2 inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-ui:right-1.5 touch-ui:top-1.5 touch-ui:h-9 touch-ui:w-9"
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
