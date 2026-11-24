@@ -187,10 +187,10 @@ export function DisplayScalePanel({
                 className="flex items-center justify-between gap-2 rounded-lg border bg-background px-3 py-2"
               >
                 <div className="min-w-0">
-                  <div className="truncate text-xs sm:text-sm font-semibold text-foreground">
+                  <div className="text-xs sm:text-sm font-semibold leading-snug text-foreground break-words">
                     {label}
                   </div>
-                  <div className="truncate font-mono text-[11px] text-muted-foreground">
+                  <div className="font-mono text-[11px] text-muted-foreground break-all">
                     {navPath}
                   </div>
                 </div>

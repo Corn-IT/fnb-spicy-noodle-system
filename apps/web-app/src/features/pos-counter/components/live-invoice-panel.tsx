@@ -143,10 +143,10 @@ export function LiveInvoicePanel({
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="flex items-center justify-between border-b pb-2.5 sm:pb-3 shrink-0">
             <div className="min-w-0 flex-1 pr-2">
-              <h2 data-testid="invoice-header-label" className="text-base sm:text-lg font-bold truncate">
+              <h2 data-testid="invoice-header-label" className="text-base sm:text-lg font-bold leading-snug break-words">
                 {label}
               </h2>
-              <p className="text-xs text-muted-foreground truncate">
+              <p className="text-xs text-muted-foreground leading-snug break-words">
                 Đang chọn món tạo đơn mới ({draftTarget.orderType === 'DINE_IN' ? 'TẠI BÀN' : 'MANG VỀ'})
               </p>
             </div>
@@ -344,7 +344,7 @@ export function LiveInvoicePanel({
       <div className="space-y-1.5 border-b pb-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h2 data-testid="invoice-header-label" className="text-base sm:text-lg font-bold truncate">
+            <h2 data-testid="invoice-header-label" className="text-base sm:text-lg font-bold leading-snug break-words">
               {resolvedHeaderLabel}
             </h2>
             <Badge
@@ -725,9 +725,9 @@ export function LiveInvoicePanel({
                       {subtotalAmount.toLocaleString('vi-VN')} đ
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400">
-                    <span className="truncate pr-2">Giảm giá ({discountLabel})</span>
-                    <span data-testid="invoice-discount-amount" className="font-bold tabular-nums">
+                  <div className="flex items-start justify-between gap-2 text-emerald-700 dark:text-emerald-400">
+                    <span className="leading-snug break-words">Giảm giá ({discountLabel})</span>
+                    <span data-testid="invoice-discount-amount" className="shrink-0 font-bold tabular-nums">
                       -{discountAmount.toLocaleString('vi-VN')} đ
                     </span>
                   </div>
@@ -859,7 +859,7 @@ export function LiveInvoicePanel({
           </div>
         ) : !canPerformAnyAction ? null : (
           <div className="space-y-2">
-            <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {canTableAction ? (
                 <Button
                   type="button"
@@ -867,10 +867,11 @@ export function LiveInvoicePanel({
                   data-testid="btn-table-action"
                   disabled={!isOrderActive}
                   onClick={onOpenTableAction}
-                  className="h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
+                  className="min-h-11 lg:min-h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
                 >
                   <ArrowLeftRight className="h-4 w-4 shrink-0" />
-                  <span className="truncate">Đổi / Gộp bàn</span>
+                  <span className="sm:hidden">Đổi bàn</span>
+                  <span className="hidden sm:inline">Đổi / Gộp bàn</span>
                 </Button>
               ) : null}
 
@@ -880,14 +881,14 @@ export function LiveInvoicePanel({
                   data-testid="btn-split-kitchen"
                   disabled={isSplitDisabled}
                   onClick={onSplitKitchen}
-                  className="h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm bg-amber-600 font-bold text-white hover:bg-amber-700 disabled:bg-muted disabled:text-muted-foreground disabled:border disabled:border-border disabled:opacity-100 disabled:shadow-none touch-manipulation active:scale-[0.98] shadow-xs"
+                  className="min-h-11 lg:min-h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm bg-amber-600 font-bold text-white hover:bg-amber-700 disabled:bg-muted disabled:text-muted-foreground disabled:border disabled:border-border disabled:opacity-100 disabled:shadow-none touch-manipulation active:scale-[0.98] shadow-xs"
                 >
                   {isSplitPending ? (
                     <Loader2 className="h-4 w-4 animate-spin shrink-0" />
                   ) : (
                     <Printer className="h-4 w-4 shrink-0" />
                   )}
-                  <span className="truncate">Tách bếp</span>
+                  <span>Tách bếp</span>
                 </Button>
               ) : null}
 
@@ -899,10 +900,11 @@ export function LiveInvoicePanel({
                     variant="secondary"
                     data-testid="btn-provisional-bill"
                     disabled={isProvisionalPending || order.status !== 'SERVING'}
-                    className="h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
+                    className="min-h-11 lg:min-h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
                   >
                     <QrCode className="h-4 w-4 shrink-0" />
-                    <span className="truncate">In tạm tính (QR)</span>
+                    <span className="sm:hidden">Tạm tính QR</span>
+                    <span className="hidden sm:inline">In tạm tính (QR)</span>
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
@@ -959,10 +961,10 @@ export function LiveInvoicePanel({
                       type="button"
                       data-testid="btn-checkout"
                       disabled={order.status !== 'SERVING'}
-                      className="h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm bg-emerald-600 font-bold text-white hover:bg-emerald-700 disabled:bg-muted disabled:text-muted-foreground disabled:border disabled:border-border disabled:opacity-100 disabled:shadow-none touch-manipulation active:scale-[0.98] shadow-xs"
+                      className="min-h-11 lg:min-h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm bg-emerald-600 font-bold text-white hover:bg-emerald-700 disabled:bg-muted disabled:text-muted-foreground disabled:border disabled:border-border disabled:opacity-100 disabled:shadow-none touch-manipulation active:scale-[0.98] shadow-xs"
                     >
                       <CreditCard className="h-4 w-4 shrink-0" />
-                      <span className="truncate">Thanh toán</span>
+                      <span>Thanh toán</span>
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent

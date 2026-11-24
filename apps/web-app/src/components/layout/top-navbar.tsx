@@ -1,8 +1,9 @@
 import { StoreAssetKind } from '@fnb/shared';
 import { type QueryClient } from '@tanstack/react-query';
 import { ChevronDown, LogOut, Menu, Moon, Search, Sun, User } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
+import { APP_NAVIGATION_ROUTES } from '@/components/layout/command-palette';
 import { MobileAlertControlButton } from '@/components/layout/mobile-alert-controls';
 import { StoreBrandLogo } from '@/components/store-brand-logo';
 import { Button } from '@/components/ui/button';
@@ -14,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings';
+import { buildStoreAssetUrl, resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
 import { apiClient } from '@/lib/api-client';
 import { stopMobileAudioKeepAlive } from '@/lib/mobile-audio-keepalive';
 import { AUTH_STORAGE_KEY, useAuthStore } from '@/stores/auth.store';
@@ -72,6 +73,19 @@ export function TopNavbar({
   const theme = resolveEffectiveTheme(storedTheme, hasExplicitTheme, settings.defaultTheme);
   const setTheme = useUiPreferencesStore((state) => state.setTheme);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const currentPageLabel = (() => {
+    const matched = APP_NAVIGATION_ROUTES.find(
+      (route) =>
+        location.pathname === route.path ||
+        location.pathname.startsWith(`${route.path}/`),
+    );
+    if (matched) {
+      return resolveNavLabel(matched.path, matched.label, settings.navLabels);
+    }
+    return settings.storeName;
+  })();
 
   const handleToggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
@@ -97,14 +111,14 @@ export function TopNavbar({
     .join('');
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b bg-card/80 px-3 md:px-4 backdrop-blur-md">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b bg-card/80 px-2.5 sm:px-3 md:px-4 backdrop-blur-md">
       <div className="flex min-w-0 items-center gap-2 overflow-hidden">
         {onToggleMobileMenu ? (
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="lg:hidden shrink-0 h-11 w-11 -ml-1.5 text-muted-foreground hover:text-foreground"
+            className="md:hidden shrink-0 h-11 w-11 -ml-1 text-muted-foreground hover:text-foreground"
             onClick={onToggleMobileMenu}
             aria-label="Mở menu điều hướng"
             data-testid="navbar-mobile-menu-trigger"
@@ -112,32 +126,32 @@ export function TopNavbar({
             <Menu className="h-5 w-5" />
           </Button>
         ) : null}
-        <div className="flex min-w-0 items-center gap-2 sm:hidden">
+        <div className="flex min-w-0 items-center gap-2 md:hidden">
           <StoreBrandLogo
             src={logoUrl}
             storeName={settings.storeName}
-            className="h-7 w-7 rounded-md shadow-2xs"
+            className="hidden min-[380px]:flex h-7 w-7 shrink-0 rounded-md shadow-2xs"
             fallbackClassName="text-[10px]"
           />
-          <span className="truncate text-xs sm:text-sm font-bold text-foreground">
-            {settings.storeName}
+          <span className="text-sm font-bold leading-tight text-foreground line-clamp-2 break-words">
+            {currentPageLabel}
           </span>
         </div>
-        <span className="hidden sm:inline-block xl:hidden truncate text-xs sm:text-sm font-semibold text-muted-foreground">
+        <span className="hidden md:inline-block xl:hidden text-sm font-semibold text-muted-foreground">
           {settings.subtitle || 'Quản trị & Bán hàng POS'}
         </span>
-        <span className="hidden xl:inline-block truncate text-sm font-medium text-muted-foreground">
+        <span className="hidden xl:inline-block text-sm font-medium text-muted-foreground">
           {settings.subtitle || 'Hệ thống Quản trị & Bán hàng Thời gian thực'}
         </span>
       </div>
 
       {/* AC-08.3: Góc phải Navbar đúng thứ tự từ trái sang phải:
           [Search Button (Ctrl+K)] -> [Theme Toggle] -> [User Avatar + Name Dropdown] */}
-      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
         <MobileAlertControlButton />
         <div
           data-testid="navbar-right-controls"
-          className="flex shrink-0 items-center gap-2 sm:gap-3"
+          className="flex shrink-0 items-center gap-1.5 sm:gap-2.5"
         >
         {/* 1. Search / Command Palette (Ctrl+K) */}
         <Button
@@ -148,12 +162,12 @@ export function TopNavbar({
           aria-label="Tìm nhanh màn hình"
           title="Tìm nhanh màn hình (Ctrl+K)"
           onClick={onOpenCommandPalette}
-          className="flex items-center gap-1.5 sm:gap-2 min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 px-2 sm:px-3 text-muted-foreground hover:text-foreground whitespace-nowrap"
+          className="hidden md:inline-flex items-center gap-1.5 sm:gap-2 min-h-10 min-w-10 lg:min-h-0 lg:min-w-0 px-2.5 sm:px-3 text-muted-foreground hover:text-foreground whitespace-nowrap"
         >
           <Search className="h-4 w-4 shrink-0" />
-          <span className="hidden md:inline xl:hidden">Tìm màn hình...</span>
+          <span className="hidden lg:inline xl:hidden">Tìm màn hình</span>
           <span className="hidden xl:inline">Tìm nhanh màn hình...</span>
-          <kbd className="pointer-events-none ml-1 hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+          <kbd className="pointer-events-none ml-1 hidden lg:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
             Ctrl+K
           </kbd>
         </Button>
@@ -167,7 +181,7 @@ export function TopNavbar({
           onClick={handleToggleTheme}
           aria-label="Chuyển chế độ Sáng/Tối"
           title={theme === 'dark' ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối'}
-          className="h-11 w-11 lg:h-9 lg:w-9"
+          className="hidden md:inline-flex h-10 w-10 lg:h-9 lg:w-9"
         >
           {theme === 'dark' ? (
             <Sun className="h-4 w-4 text-amber-400" />
@@ -183,7 +197,7 @@ export function TopNavbar({
               type="button"
               data-navbar-item="user-avatar-dropdown"
               aria-label="Tài khoản và cài đặt cá nhân"
-              className="flex min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 items-center justify-center gap-2.5 rounded-full border bg-background py-1 pl-1.5 pr-2.5 sm:pr-3 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
+              className="flex min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 items-center justify-center gap-2 rounded-full border bg-background py-1 pl-1.5 pr-2 sm:pr-3 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
             >
               {resolvePublicAssetUrl(user?.avatarUrl) ? (
                 <img
@@ -212,6 +226,25 @@ export function TopNavbar({
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="md:hidden"
+              onSelect={() => onOpenCommandPalette()}
+            >
+              <Search className="h-4 w-4" />
+              <span>Tìm nhanh màn hình</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="md:hidden"
+              onSelect={() => handleToggleTheme()}
+            >
+              {theme === 'dark' ? (
+                <Sun className="h-4 w-4 text-amber-400" />
+              ) : (
+                <Moon className="h-4 w-4 text-slate-700" />
+              )}
+              <span>{theme === 'dark' ? 'Giao diện Sáng' : 'Giao diện Tối'}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="md:hidden" />
             <DropdownMenuItem onSelect={() => navigate('/profile')}>
               <User className="h-4 w-4" />
               <span>Hồ sơ tài khoản</span>

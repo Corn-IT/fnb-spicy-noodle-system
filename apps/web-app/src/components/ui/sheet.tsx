@@ -38,7 +38,7 @@ export const SheetContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed z-50 flex flex-col gap-4 bg-background p-6 shadow-2xl transition ease-in-out',
+        'fixed z-50 flex flex-col gap-4 bg-background p-4 sm:p-6 shadow-2xl transition ease-in-out',
         side === 'right' && 'inset-y-0 right-0 h-full w-full max-w-lg border-l',
         side === 'left' && 'inset-y-0 left-0 h-full w-full max-w-lg border-r',
         side === 'top' && 'inset-x-0 top-0 border-b',
@@ -49,7 +49,7 @@ export const SheetContent = React.forwardRef<
     >
       {children}
       <DialogPrimitive.Close
-        className="absolute right-4 top-4 inline-flex h-7 w-7 items-center justify-center rounded-md opacity-70 transition-opacity hover:bg-accent hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring touch-ui:right-2 touch-ui:top-2 touch-ui:h-11 touch-ui:w-11"
+        className="absolute right-2.5 top-2.5 sm:right-4 sm:top-4 inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded-md opacity-75 transition-opacity hover:bg-accent hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring touch-ui:right-2 touch-ui:top-2 touch-ui:h-11 touch-ui:w-11"
         aria-label="Đóng ngăn kéo"
       >
         <X className="h-4 w-4" />

@@ -129,8 +129,14 @@ export function useDisplayScale(pathname: string): number {
     if (typeof document === 'undefined') return;
     const zoomValue = String(percent / 100);
     document.documentElement.style.setProperty('--page-zoom', zoomValue);
+    if (percent !== DEFAULT_DISPLAY_SCALE_PERCENT) {
+      document.documentElement.setAttribute('data-page-zoomed', 'true');
+    } else {
+      document.documentElement.removeAttribute('data-page-zoomed');
+    }
     return () => {
       document.documentElement.style.setProperty('--page-zoom', '1');
+      document.documentElement.removeAttribute('data-page-zoomed');
     };
   }, [percent]);
 

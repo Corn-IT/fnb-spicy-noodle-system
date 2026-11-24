@@ -1,6 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:5173';
+const BASE_PORT = (() => {
+  try {
+    return new URL(BASE_URL).port || '5173';
+  } catch {
+    return '5173';
+  }
+})();
 const IS_REAL = process.env.E2E_MODE === 'real';
 
 export default defineConfig({
@@ -31,7 +38,7 @@ export default defineConfig({
     timezoneId: 'Asia/Ho_Chi_Minh',
   },
   webServer: {
-    command: 'pnpm dev --port 5173 --strictPort --host 127.0.0.1',
+    command: `pnpm dev --port ${BASE_PORT} --strictPort --host 127.0.0.1`,
     url: BASE_URL,
     reuseExistingServer: true,
     timeout: 120_000,

@@ -10,7 +10,7 @@ import {
   getAccessibleRoutes,
 } from '@/components/layout/command-palette';
 import { MobileAudioActivationBanner } from '@/components/layout/mobile-alert-controls';
-import { MobileSidebarNav, ResizableSidebar } from '@/components/layout/resizable-sidebar';
+import { MobileSidebarNav, ResizableSidebar, TabletIconRail } from '@/components/layout/resizable-sidebar';
 import { TopNavbar } from '@/components/layout/top-navbar';
 import { clearPendingNavigation, TopProgressBar } from '@/components/loading';
 import {
@@ -254,22 +254,27 @@ export function AppShell() {
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
       <TopProgressBar />
-      {isPosTouchRoute ? null : <ResizableSidebar />}
+      {isPosTouchRoute ? null : (
+        <>
+          <ResizableSidebar />
+          <TabletIconRail onOpenDrawer={() => setMobileMenuOpen(true)} />
+        </>
+      )}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {!isBrowserOnline || isSocketDisconnected ? (
           <div
             role="status"
             data-testid="network-offline-banner"
             className={cn(
-              'flex items-center justify-center gap-2 bg-amber-500/95 px-3 py-1.5 text-center text-xs font-bold text-amber-950 shadow-xs',
-              isPosTouchRoute && 'py-2 text-sm',
+              'pointer-events-none fixed bottom-3 left-1/2 z-50 flex w-max max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center justify-center gap-2 rounded-full border border-amber-600/30 bg-amber-500/95 px-3.5 py-1.5 text-center text-xs font-bold text-amber-950 shadow-lg backdrop-blur-xs',
+              isPosTouchRoute && 'bottom-20 py-2 text-sm',
             )}
           >
             <WifiOff className="h-3.5 w-3.5 shrink-0" />
-            <span>
+            <span className="leading-snug">
               {!isBrowserOnline
-                ? 'Đang mất kết nối mạng Wi-Fi/Internet — Phiên đăng nhập vẫn được giữ nguyên, hệ thống sẽ tự đồng bộ lại ngay khi có mạng.'
-                : 'Kết nối thời gian thực tới máy chủ đang gián đoạn — Hệ thống đang tự động kết nối lại...'}
+                ? 'Đang mất kết nối mạng — Phiên đăng nhập vẫn được giữ nguyên, sẽ tự đồng bộ khi có mạng.'
+                : 'Kết nối thời gian thực đang gián đoạn — Đang tự động kết nối lại...'}
             </span>
           </div>
         ) : null}
@@ -292,7 +297,7 @@ export function AppShell() {
             )}
           >
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 touch-ui:h-5 touch-ui:w-5" />
-            <span className="truncate">
+            <span className="leading-snug break-words">
               Cảnh báo đỏ: {overdueQrItems.map((entry) => entry.tableLabel).join(', ')} chưa xác nhận đơn QR quá hạn — Nhấn để mở quầy POS xử lý ngay
             </span>
           </button>
@@ -315,8 +320,11 @@ export function AppShell() {
           <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
 
           <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-            <SheetContent side="left" className="w-72 p-0 flex flex-col">
-              <MobileSidebarNav onClose={() => setMobileMenuOpen(false)} />
+            <SheetContent side="left" className="w-[min(18rem,calc(100vw-2rem))] p-0 flex flex-col">
+              <MobileSidebarNav
+                onClose={() => setMobileMenuOpen(false)}
+                onOpenCommandPalette={() => setCommandOpen(true)}
+              />
             </SheetContent>
           </Sheet>
         </>

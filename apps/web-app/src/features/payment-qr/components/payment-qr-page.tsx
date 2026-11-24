@@ -737,14 +737,14 @@ export function PaymentQrPage() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1 text-[11px] font-bold uppercase text-emerald-700 dark:text-emerald-300">
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">Mã QR đang ưu tiên in</span>
+              <span>Mã QR đang ưu tiên in</span>
             </div>
             {activePrimaryAccount ? (
               <>
-                <div className="truncate text-sm font-extrabold text-foreground">
+                <div className="text-sm font-extrabold leading-snug text-foreground break-words">
                   #{activePrimaryAccount.priority} {activePrimaryAccount.label}
                 </div>
-                <div className="truncate text-xs font-medium text-muted-foreground">
+                <div className="text-xs font-medium leading-snug text-muted-foreground break-words">
                   {activePrimaryAccount.bankName} • {activePrimaryAccount.accountNo}
                 </div>
               </>
