@@ -161,8 +161,8 @@ test.describe('POS cảm ứng — đơn mang về', () => {
     });
 
     await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
-    await page.getByTestId('touch-tab-takeaway').tap();
-    await page.getByTestId('touch-new-takeaway').tap();
+    // Không còn tab riêng: nút "Mang về mới" luôn có trên thanh trên cùng.
+    await page.getByTestId('touch-header-new-takeaway').tap();
     await expect(page.getByTestId('touch-order-title')).toContainText('Mang về');
 
     const plainProduct = page
@@ -180,5 +180,92 @@ test.describe('POS cảm ứng — đơn mang về', () => {
       tableId: null,
       items: [expect.objectContaining({ quantity: 2 })],
     });
+  });
+});
+
+test.describe('POS cảm ứng — sơ đồ bàn và mang về trên cùng một màn', () => {
+  test.use({ viewport: { width: 1280, height: 720 }, hasTouch: true });
+
+  test('shows big table cards, then the takeaway section below with a jump button', async ({
+    page,
+  }) => {
+    await setupMockApi(page);
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+
+    const tableBoard = page.getByTestId('touch-table-board');
+    const takeawayBoard = page.getByTestId('touch-takeaway-board');
+    await expect(tableBoard).toBeVisible();
+    await expect(page.getByTestId('touch-new-takeaway')).toBeAttached();
+
+    const tableBox = await tableBoard.boundingBox();
+    const takeawayBox = await takeawayBoard.boundingBox();
+    expect(takeawayBox!.y).toBeGreaterThan(tableBox!.y + tableBox!.height - 1);
+
+    const card = await page.getByTestId('touch-table-card-3').boundingBox();
+    expect(card!.height).toBeGreaterThanOrEqual(140);
+    expect(card!.width).toBeGreaterThanOrEqual(180);
+
+    await page.getByTestId('touch-jump-takeaway').tap();
+    await expect(page.getByTestId('touch-new-takeaway')).toBeInViewport();
+  });
+});
+
+test.describe('POS cảm ứng — bố cục số cột theo máy', () => {
+  const columnsOf = (page: import('@playwright/test').Page, testId: string, cardPrefix: string) =>
+    page.getByTestId(testId).evaluate(
+      (grid, prefix) =>
+        new Set(
+          [...grid.querySelectorAll(`[data-testid^="${prefix}"]`)].map((el) =>
+            Math.round(el.getBoundingClientRect().left),
+          ),
+        ).size,
+      cardPrefix,
+    );
+
+  test('auto: 6 tables and 4 dishes per row at 1280×720', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await setupMockApi(page);
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('touch-table-card-3')).toBeVisible();
+    expect(await columnsOf(page, 'touch-table-grid', 'touch-table-card-')).toBe(6);
+
+    await page.getByTestId('touch-table-card-3').tap();
+    await expect(page.getByTestId('touch-menu-grid')).toHaveAttribute('data-columns', '4');
+  });
+
+  test('picking 4 tables / 3 dishes applies instantly and survives a reload', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await setupMockApi(page);
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('touch-kiosk-menu-btn').tap();
+    await page.getByTestId('touch-sheet-action-layout').tap();
+    await page.getByTestId('layout-tables-4').tap();
+    await page.getByTestId('layout-menu-3').tap();
+    await page.keyboard.press('Escape');
+    expect(await columnsOf(page, 'touch-table-grid', 'touch-table-card-')).toBe(4);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('touch-table-card-3')).toBeVisible();
+    expect(await columnsOf(page, 'touch-table-grid', 'touch-table-card-')).toBe(4);
+    await page.getByTestId('touch-table-card-3').tap();
+    await expect(page.getByTestId('touch-menu-grid')).toHaveAttribute('data-columns', '3');
+  });
+
+  test('a choice too wide for the screen is reduced with a notice (5 dishes at 960×540)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 960, height: 540 });
+    await setupMockApi(page);
+    await page.addInitScript(() =>
+      localStorage.setItem('fnb-pos-touch-layout', JSON.stringify({ tableColumns: 'auto', menuColumns: 5 })),
+    );
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('touch-table-card-3').tap();
+    await expect(page.getByTestId('touch-menu-columns-clamped')).toBeVisible();
+    const tileWidth = await page
+      .locator('[data-testid^="touch-product-"]')
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().width);
+    expect(tileWidth).toBeGreaterThanOrEqual(130);
   });
 });
