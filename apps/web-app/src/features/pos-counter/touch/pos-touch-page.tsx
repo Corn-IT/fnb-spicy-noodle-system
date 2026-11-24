@@ -2,12 +2,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   EllipsisVertical,
   Expand,
+  LayoutGrid,
   LogOut,
   MonitorSmartphone,
   RefreshCw,
   Shrink,
   ShoppingBag,
-  Utensils,
+  Plus,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -28,8 +29,10 @@ import { useQrVoiceToggle } from '../hooks/use-qr-voice-toggle';
 import { formatClockTime, useNowTick } from './elapsed-time';
 import { TouchActionSheet, type TouchSheetAction } from './touch-action-sheet';
 import { TouchConfirmDialog, useTouchConfirm } from './touch-confirm-dialog';
+import { useTouchLayoutPrefs } from './touch-layout';
+import { describeColumnChoice, TouchLayoutDialog } from './touch-layout-dialog';
 import { TouchOrderScreen } from './touch-order-screen';
-import { TouchTableBoard, type TouchBoardTab } from './touch-table-board';
+import { TAKEAWAY_SECTION_ID, TouchTableBoard } from './touch-table-board';
 import { TOO_NARROW_QUERY, useMediaQuery } from './use-media-query';
 import { useTouchUiRoot } from './use-touch-ui-root';
 
@@ -59,9 +62,10 @@ export function PosTouchPage() {
   const isTooNarrow = useMediaQuery(TOO_NARROW_QUERY);
 
   const [screen, setScreen] = React.useState<TouchScreen>('tables');
-  const [boardTab, setBoardTab] = React.useState<TouchBoardTab>('tables');
   const [onlyOccupied, setOnlyOccupied] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [layoutOpen, setLayoutOpen] = React.useState(false);
+  const [layout, setLayout] = useTouchLayoutPrefs();
 
   const workspace = usePosWorkspace({
     onViewChange: (event) => {
@@ -113,6 +117,15 @@ export function PosTouchPage() {
   const takeaways = gridData?.takeaways ?? [];
   const availableCount = tables.filter((table) => table.status === 'AVAILABLE').length;
 
+  // Cuộn tức thì (không dùng hiệu ứng mượt): lần chạm đầu tiên còn bật toàn màn hình, việc đổi kích
+  // thước màn hình sẽ huỷ hiệu ứng cuộn mượt giữa chừng. Cuộn lại thêm 1 lần sau khi bố cục ổn định.
+  const scrollToTakeaways = () => {
+    const jump = () =>
+      document.getElementById(TAKEAWAY_SECTION_ID)?.scrollIntoView({ block: 'start' });
+    jump();
+    window.setTimeout(jump, 350);
+  };
+
   const leaveOrderScreen = () => {
     workspace.actions.clearSelection();
     setScreen('tables');
@@ -154,6 +167,13 @@ export function PosTouchPage() {
           },
         ]
       : []),
+    {
+      key: 'layout',
+      label: 'Bố cục hiển thị',
+      hint: `Bàn: ${describeColumnChoice(layout.tableColumns)} · Món: ${describeColumnChoice(layout.menuColumns)}`,
+      icon: LayoutGrid,
+      onSelect: () => setLayoutOpen(true),
+    },
     {
       key: 'device-mode',
       label: 'Luôn mở POS cảm ứng trên máy này',
@@ -249,38 +269,23 @@ export function PosTouchPage() {
           nowMs={nowMs}
           onBack={handleBack}
           trailing={menuButton}
+          menuColumns={layout.menuColumns}
         />
       ) : (
         <>
           <header className="flex h-16 shrink-0 items-center gap-3 border-b bg-card px-3">
-            <div role="tablist" className="flex shrink-0 gap-1.5 rounded-xl bg-muted p-1">
-              <BoardTabButton
-                label="Phòng bàn"
-                icon={<Utensils className="h-5 w-5" />}
-                isActive={boardTab === 'tables'}
-                testId="touch-tab-tables"
-                onSelect={() => setBoardTab('tables')}
-              />
-              <BoardTabButton
-                label={`Mang về (${takeaways.length})`}
-                icon={<ShoppingBag className="h-5 w-5" />}
-                isActive={boardTab === 'takeaway'}
-                testId="touch-tab-takeaway"
-                onSelect={() => setBoardTab('takeaway')}
-              />
-            </div>
             <p
               data-testid="touch-table-summary"
               className="min-w-0 flex-1 truncate text-base font-semibold text-muted-foreground"
             >
+              <span className="mr-2 text-lg font-extrabold text-foreground">Sơ đồ bàn</span>
               Trống{' '}
               <span className="font-extrabold text-foreground tabular-nums">
                 {availableCount}/{tables.length}
               </span>{' '}
               bàn
             </p>
-            {boardTab === 'tables' ? (
-              <button
+            <button
                 type="button"
                 role="switch"
                 aria-checked={onlyOccupied}
@@ -303,6 +308,27 @@ export function PosTouchPage() {
                 </span>
                 Bàn có hoá đơn
               </button>
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="touch-jump-takeaway"
+              onClick={scrollToTakeaways}
+              className="h-12 shrink-0 gap-2 px-3 text-sm font-bold"
+            >
+              <ShoppingBag className="h-5 w-5" />
+              Mang về ({takeaways.length})
+            </Button>
+            {workspace.permissions.canCreateOrder ? (
+              <Button
+                type="button"
+                data-testid="touch-header-new-takeaway"
+                onClick={workspace.actions.startNewTakeaway}
+                className="h-12 shrink-0 gap-1.5 px-3 text-sm font-bold"
+              >
+                <Plus className="h-5 w-5" />
+                <span className="hidden min-[1100px]:inline">Mang về mới</span>
+                <span className="min-[1100px]:hidden">Mới</span>
+              </Button>
             ) : null}
             <Button
               type="button"
@@ -324,7 +350,7 @@ export function PosTouchPage() {
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <TouchTableBoard
-              tab={boardTab}
+              columns={layout.tableColumns}
               tables={tables}
               takeaways={takeaways}
               onlyOccupied={onlyOccupied}
@@ -348,33 +374,12 @@ export function PosTouchPage() {
         testId="touch-kiosk-menu"
       />
       <TouchConfirmDialog request={confirm.request} onClose={confirm.close} />
+      <TouchLayoutDialog
+        open={layoutOpen}
+        onOpenChange={setLayoutOpen}
+        prefs={layout}
+        onChange={setLayout}
+      />
     </div>
-  );
-}
-
-interface BoardTabButtonProps {
-  label: string;
-  icon: React.ReactNode;
-  isActive: boolean;
-  testId: string;
-  onSelect: () => void;
-}
-
-function BoardTabButton({ label, icon, isActive, testId, onSelect }: BoardTabButtonProps) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={isActive}
-      data-testid={testId}
-      onClick={onSelect}
-      className={cn(
-        'flex h-12 items-center gap-2 rounded-lg px-4 text-base font-bold transition-colors',
-        isActive ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground',
-      )}
-    >
-      {icon}
-      {label}
-    </button>
   );
 }

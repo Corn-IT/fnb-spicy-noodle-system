@@ -2,10 +2,10 @@ import { ArrowLeft, Clock3 } from 'lucide-react';
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
-import type { PosMenuSelectedItem } from '../components/pos-menu-types';
 import type { PosWorkspace } from '../hooks/use-pos-workspace';
 import { formatClockTime, formatElapsedSince } from './elapsed-time';
 import { TouchCartPanel } from './touch-cart-panel';
+import type { ColumnChoice } from './touch-layout';
 import { TouchMenuBoard } from './touch-menu-board';
 
 export interface TouchOrderScreenProps {
@@ -13,10 +13,17 @@ export interface TouchOrderScreenProps {
   nowMs: number;
   onBack: () => void;
   trailing?: React.ReactNode;
+  menuColumns?: ColumnChoice;
 }
 
 /** Màn đặt món cảm ứng: thực đơn bên trái, giỏ hàng / hoá đơn bên phải. */
-export function TouchOrderScreen({ workspace, nowMs, onBack, trailing }: TouchOrderScreenProps) {
+export function TouchOrderScreen({
+  workspace,
+  nowMs,
+  onBack,
+  trailing,
+  menuColumns = 'auto',
+}: TouchOrderScreenProps) {
   const { currentOrder, draftItems, products, permissions, summary, actions } = workspace;
 
   const quantityByProductId = React.useMemo(() => {
@@ -40,19 +47,6 @@ export function TouchOrderScreen({ workspace, nowMs, onBack, trailing }: TouchOr
     : permissions.canCreateOrder;
 
   const title = currentOrder?.tableLabel ?? summary.activeLabel;
-
-  // Chạm lặp lại cùng một món (cùng tuỳ chọn & ghi chú) vào giỏ nháp thì cộng dồn số lượng
-  // thay vì tạo thêm dòng mới. Đơn đã tạo thì mỗi lần chạm vẫn gửi thẳng lên hoá đơn như cũ.
-  const handleAddItem = (item: PosMenuSelectedItem) => {
-    if (!currentOrder) {
-      const existingIndex = findMatchingDraftIndex(draftItems, item);
-      if (existingIndex >= 0) {
-        actions.updateDraftQty(existingIndex, item.quantity);
-        return;
-      }
-    }
-    void actions.addItemFromMenu(item);
-  };
 
   return (
     <div data-testid="touch-order-screen" className="flex min-h-0 flex-1 flex-col">
@@ -91,10 +85,11 @@ export function TouchOrderScreen({ workspace, nowMs, onBack, trailing }: TouchOr
 
       <div className="flex min-h-0 flex-1">
         <TouchMenuBoard
+          columns={menuColumns}
           products={products}
           canAddItems={canAddItems}
           quantityByProductId={quantityByProductId}
-          onAddItem={handleAddItem}
+          onAddItem={(item) => void actions.addItemFromMenu(item)}
         />
         <TouchCartPanel workspace={workspace} />
       </div>
@@ -102,18 +97,3 @@ export function TouchOrderScreen({ workspace, nowMs, onBack, trailing }: TouchOr
   );
 }
 
-const draftItemKey = (item: PosMenuSelectedItem) =>
-  JSON.stringify([
-    item.productId,
-    item.unitPrice,
-    item.itemNote ?? '',
-    [...item.modifiers].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
-  ]);
-
-export function findMatchingDraftIndex(
-  draftItems: PosMenuSelectedItem[],
-  item: PosMenuSelectedItem,
-): number {
-  const key = draftItemKey(item);
-  return draftItems.findIndex((candidate) => draftItemKey(candidate) === key);
-}

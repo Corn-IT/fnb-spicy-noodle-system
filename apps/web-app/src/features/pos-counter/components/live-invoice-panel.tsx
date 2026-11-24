@@ -158,6 +158,7 @@ export function LiveInvoicePanel({
               draftItems.map((item, idx) => (
                 <div
                   key={`${item.productId}-${idx}`}
+                  data-testid={`draft-item-${idx}`}
                   className="flex items-center justify-between rounded-lg border p-2.5 text-sm"
                 >
                   <div>

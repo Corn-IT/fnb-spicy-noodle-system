@@ -1,4 +1,5 @@
 import {
+  type OrderDetailResponse,
   TableActionType,
   type ApplyPosDiscountRequest,
   type CheckoutOrderRequest,
@@ -7,6 +8,7 @@ import {
   type SplitCheckoutOrderRequest,
   type TableActionRequest,
 } from '@fnb/shared';
+import { useQueryClient } from '@tanstack/react-query';
 import * as React from 'react';
 
 import { useThermalPrinter } from '@/components/print-slips';
@@ -31,6 +33,7 @@ import {
   useSplitProvisionalBillMutation,
   useTableActionMutation,
   useRemovePosDiscountMutation,
+  posQueryKeys,
 } from '../api/pos.api';
 import type { LiveInvoiceDraftTarget } from '../components/live-invoice-panel';
 import type { PosMenuSelectedItem } from '../components/pos-menu-types';
@@ -38,6 +41,7 @@ import type {
   SplitOrderDialogMode,
   SplitSelectedItemSummary,
 } from '../components/split-order-items-dialog';
+import { findMatchingDraftIndex, findMergeableOrderItem } from '../utils/order-item-merge';
 import { usePosCashierSocket } from './use-pos-cashier-socket';
 
 /**
@@ -224,31 +228,53 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     emitViewChange('draft-started');
   };
 
+  // Các lần chạm thêm món vào hoá đơn được xếp hàng: lần sau chờ lần trước xong (kể cả tải lại đơn)
+  // mới đọc số lượng hiện tại, nên chạm nhanh liên tiếp vẫn cộng đủ và không bao giờ mất món.
+  const queryClient = useQueryClient();
+  const addItemQueueRef = React.useRef<Promise<void>>(Promise.resolve());
+
+  const addItemToLiveOrder = async (orderId: number, item: PosMenuSelectedItem) => {
+    const latestOrder =
+      queryClient.getQueryData<OrderDetailResponse>(posQueryKeys.orderDetail(orderId)) ??
+      (currentOrder?.orderId === orderId ? currentOrder : undefined);
+    const mergeTarget = latestOrder ? findMergeableOrderItem(latestOrder, item) : undefined;
+    try {
+      await patchItemsMutation.mutateAsync({
+        orderId,
+        input: mergeTarget
+          ? {
+              updates: [
+                { orderItemId: mergeTarget.id, quantity: mergeTarget.quantity + item.quantity },
+              ],
+            }
+          : {
+              addItems: [
+                {
+                  productId: item.productId,
+                  quantity: item.quantity,
+                  modifiers: item.modifiers,
+                  ...(item.itemNote ? { itemNote: item.itemNote } : {}),
+                },
+              ],
+            },
+      });
+      notify('pos.order.addItemSuccess', {
+        variant: 'success',
+        vars: { quantity: item.quantity, itemName: item.name },
+        duration: 3000,
+      });
+    } catch (err) {
+      notifyErr('pos.order.addItemError', err);
+    }
+  };
+
   const handleAddItemFromMenu = async (item: PosMenuSelectedItem) => {
     if (selectedOrderId && currentOrder) {
       if (!canUpdateOrder) return;
-      try {
-        await patchItemsMutation.mutateAsync({
-          orderId: selectedOrderId,
-          input: {
-            addItems: [
-              {
-                productId: item.productId,
-                quantity: item.quantity,
-                modifiers: item.modifiers,
-                ...(item.itemNote ? { itemNote: item.itemNote } : {}),
-              },
-            ],
-          },
-        });
-        notify('pos.order.addItemSuccess', {
-          variant: 'success',
-          vars: { quantity: item.quantity, itemName: item.name },
-          duration: 3000,
-        });
-      } catch (err) {
-        notifyErr('pos.order.addItemError', err);
-      }
+      const orderId = selectedOrderId;
+      const task = addItemQueueRef.current.then(() => addItemToLiveOrder(orderId, item));
+      addItemQueueRef.current = task.catch(() => undefined);
+      await task;
       return;
     }
 
@@ -258,7 +284,13 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       setDraftTarget({ orderType: 'TAKEAWAY' });
     }
 
-    setDraftItems((prev) => [...prev, item]);
+    setDraftItems((prev) => {
+      const existingIndex = findMatchingDraftIndex(prev, item);
+      if (existingIndex < 0) return [...prev, item];
+      return prev.map((entry, index) =>
+        index === existingIndex ? { ...entry, quantity: entry.quantity + item.quantity } : entry,
+      );
+    });
   };
 
   const handleUpdateDraftQty = (index: number, delta: number) => {

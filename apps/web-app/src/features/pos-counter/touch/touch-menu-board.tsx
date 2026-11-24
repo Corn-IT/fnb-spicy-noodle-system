@@ -8,10 +8,13 @@ import { ProductOptionsDialog } from '../components/product-options-dialog';
 import type { PosMenuSelectedItem } from '../components/pos-menu-types';
 import { usePosMenuCatalog, type PosCategoryFilter } from '../hooks/use-pos-menu-catalog';
 import { formatCompactPrice } from './elapsed-time';
+import { type ColumnChoice, useGridColumns } from './touch-layout';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
 export interface TouchMenuBoardProps {
+  /** Số món mỗi hàng ('auto' = theo bề ngang cột thực đơn). */
+  columns?: ColumnChoice;
   products: Product[];
   canAddItems: boolean;
   /** Số lượng món đã có trong giỏ / hoá đơn theo productId, hiện trên ô món. */
@@ -30,6 +33,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
 /** Thực đơn cảm ứng: danh mục dọc bên trái, lưới ô món lớn, tìm kiếm lọc ngay khi gõ. */
 export function TouchMenuBoard({
+  columns = 'auto',
   products,
   canAddItems,
   quantityByProductId,
@@ -40,6 +44,7 @@ export function TouchMenuBoard({
   const [searchDraft, setSearchDraft] = React.useState('');
   const query = useDebouncedValue(searchDraft, SEARCH_DEBOUNCE_MS);
   const [modalProduct, setModalProduct] = React.useState<Product | null>(null);
+  const grid = useGridColumns('menu', columns);
 
   const categories = React.useMemo(() => getCategoriesForStation('ALL'), [getCategoriesForStation]);
   // Đang tìm kiếm thì tìm trên toàn thực đơn, không bó trong danh mục đang chọn.
@@ -124,12 +129,23 @@ export function TouchMenuBoard({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+          {grid.clamped ? (
+            <p data-testid="touch-menu-columns-clamped" className="mb-2 text-xs font-medium text-muted-foreground">
+              Cột thực đơn hẹp: tự giảm còn {grid.columns} món mỗi hàng để dễ chạm.
+            </p>
+          ) : null}
+          <div ref={grid.ref}>
           {visibleProducts.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed py-16 text-center text-muted-foreground">
               <p className="text-base font-semibold">Không tìm thấy món phù hợp</p>
             </div>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5 2xl:grid-cols-[repeat(auto-fill,minmax(190px,1fr))]">
+            <div
+              data-testid="touch-menu-grid"
+              data-columns={grid.columns}
+              className="grid gap-2.5"
+              style={grid.style}
+            >
               {visibleProducts.map((product) => {
                 const inCart = quantityByProductId.get(product.id) ?? 0;
                 const hint =
@@ -175,6 +191,7 @@ export function TouchMenuBoard({
               })}
             </div>
           )}
+          </div>
         </div>
       </div>
 

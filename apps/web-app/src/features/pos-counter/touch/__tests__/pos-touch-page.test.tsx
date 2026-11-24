@@ -441,4 +441,70 @@ describe('POS cảm ứng (/pos/touch)', () => {
     await waitFor(() => expect(toastTexts()).toMatch(/thanh toán/i));
     expect(toastTexts()).not.toContain('máy khác');
   });
+
+  it('shows takeaway orders on the same screen below the tables and starts one from the header', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/tables') {
+        return {
+          ...grid,
+          takeaways: [
+            {
+              orderId: 801,
+              orderCode: 'HD-20261124-0801',
+              orderType: 'TAKEAWAY',
+              tableId: null,
+              tableLabel: null,
+              takeawayNumber: 3,
+              status: 'SERVING',
+              totalAmount: 30000,
+              createdAt: minutesAgo(5),
+            },
+          ],
+        };
+      }
+      if (url === '/api/v1/menu/products') return products;
+      return [];
+    });
+    renderTouchPage();
+
+    const takeawayCard = await screen.findByTestId('touch-takeaway-card-801');
+    expect(takeawayCard).toHaveTextContent('Mang về');
+    expect(takeawayCard).toHaveTextContent('#03');
+    expect(screen.getByTestId('touch-table-card-7')).toBeInTheDocument();
+    // Khu mang về nằm sau khu phòng bàn trong cùng một màn, không còn tab chuyển.
+    expect(
+      screen.getByTestId('touch-table-board').compareDocumentPosition(
+        screen.getByTestId('touch-takeaway-board'),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByTestId('touch-jump-takeaway')).toHaveTextContent('Mang về (1)');
+
+    fireEvent.click(screen.getByTestId('touch-header-new-takeaway'));
+    expect(await screen.findByTestId('touch-order-title')).toHaveTextContent('Mang về');
+  });
+
+  it('lets the cashier pick table and menu columns from the ⋮ menu, saved for this device', async () => {
+    mockGetApi();
+    renderTouchPage();
+
+    await screen.findByTestId('touch-table-card-1');
+    expect(screen.getByTestId('touch-table-grid')).toHaveAttribute('data-columns', '6');
+
+    fireEvent.click(screen.getByTestId('touch-kiosk-menu-btn'));
+    fireEvent.click(await screen.findByTestId('touch-sheet-action-layout'));
+    const dialog = await screen.findByTestId('touch-layout-dialog');
+    expect(within(dialog).getByTestId('layout-tables-auto')).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(within(dialog).getByTestId('layout-tables-4'));
+    fireEvent.click(within(dialog).getByTestId('layout-menu-3'));
+    expect(screen.getByTestId('touch-table-grid')).toHaveAttribute('data-columns', '4');
+    expect(JSON.parse(localStorage.getItem('fnb-pos-touch-layout') ?? '{}')).toEqual({
+      tableColumns: 4,
+      menuColumns: 3,
+    });
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    fireEvent.click(screen.getByTestId('touch-table-card-1'));
+    expect(await screen.findByTestId('touch-menu-grid')).toHaveAttribute('data-columns', '3');
+  });
 });
