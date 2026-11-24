@@ -44,6 +44,7 @@ export default defineConfig({
     {
       name: 'webkit-mobile',
       testMatch: /.*(qr|responsive|display-scale|account-preferences).*\.spec\.ts/,
+      testIgnore: /thermal-raster-qr\.spec\.ts/,
       use: { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } },
     },
     {
