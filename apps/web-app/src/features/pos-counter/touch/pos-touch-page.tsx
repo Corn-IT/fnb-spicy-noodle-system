@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Shrink,
   ShoppingBag,
-  Plus,
+  Utensils,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -32,7 +32,7 @@ import { TouchConfirmDialog, useTouchConfirm } from './touch-confirm-dialog';
 import { useTouchLayoutPrefs } from './touch-layout';
 import { describeColumnChoice, TouchLayoutDialog } from './touch-layout-dialog';
 import { TouchOrderScreen } from './touch-order-screen';
-import { TAKEAWAY_SECTION_ID, TouchTableBoard } from './touch-table-board';
+import { TouchTableBoard, type TouchBoardTab } from './touch-table-board';
 import { TOO_NARROW_QUERY, useMediaQuery } from './use-media-query';
 import { useTouchUiRoot } from './use-touch-ui-root';
 
@@ -62,6 +62,7 @@ export function PosTouchPage() {
   const isTooNarrow = useMediaQuery(TOO_NARROW_QUERY);
 
   const [screen, setScreen] = React.useState<TouchScreen>('tables');
+  const [boardTab, setBoardTab] = React.useState<TouchBoardTab>('all');
   const [onlyOccupied, setOnlyOccupied] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [layoutOpen, setLayoutOpen] = React.useState(false);
@@ -116,15 +117,6 @@ export function PosTouchPage() {
   const tables = gridData?.tables ?? [];
   const takeaways = gridData?.takeaways ?? [];
   const availableCount = tables.filter((table) => table.status === 'AVAILABLE').length;
-
-  // Cuộn tức thì (không dùng hiệu ứng mượt): lần chạm đầu tiên còn bật toàn màn hình, việc đổi kích
-  // thước màn hình sẽ huỷ hiệu ứng cuộn mượt giữa chừng. Cuộn lại thêm 1 lần sau khi bố cục ổn định.
-  const scrollToTakeaways = () => {
-    const jump = () =>
-      document.getElementById(TAKEAWAY_SECTION_ID)?.scrollIntoView({ block: 'start' });
-    jump();
-    window.setTimeout(jump, 350);
-  };
 
   const leaveOrderScreen = () => {
     workspace.actions.clearSelection();
@@ -273,25 +265,84 @@ export function PosTouchPage() {
         />
       ) : (
         <>
-          <header className="flex h-16 shrink-0 items-center gap-3 border-b bg-card px-3">
+          <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-card px-2 min-[1100px]:gap-3 min-[1100px]:px-3">
+            <div
+              role="tablist"
+              aria-label="Phân loại sơ đồ bàn"
+              className="flex shrink-0 items-center gap-0.5 rounded-xl bg-muted p-0.5"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={boardTab === 'all'}
+                aria-controls="touch-table-board"
+                data-testid="touch-tab-all"
+                onClick={() => setBoardTab('all')}
+                className={cn(
+                  'flex h-12 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-bold transition-colors min-[1100px]:gap-2 min-[1100px]:px-4 min-[1100px]:text-base',
+                  boardTab === 'all'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                )}
+              >
+                <LayoutGrid className="h-5 w-5" />
+                <span>Tất cả</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={boardTab === 'tables'}
+                aria-controls="touch-table-board"
+                data-testid="touch-tab-tables"
+                onClick={() => setBoardTab('tables')}
+                className={cn(
+                  'flex h-12 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-bold transition-colors min-[1100px]:gap-2 min-[1100px]:px-4 min-[1100px]:text-base',
+                  boardTab === 'tables'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                )}
+              >
+                <Utensils className="h-5 w-5" />
+                <span className="hidden min-[1100px]:inline">Phòng bàn</span>
+                <span className="min-[1100px]:hidden">Bàn</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={boardTab === 'takeaway'}
+                aria-controls="touch-table-board"
+                data-testid="touch-tab-takeaway"
+                onClick={() => setBoardTab('takeaway')}
+                className={cn(
+                  'flex h-12 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-bold transition-colors min-[1100px]:gap-2 min-[1100px]:px-4 min-[1100px]:text-base',
+                  boardTab === 'takeaway'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                )}
+              >
+                <ShoppingBag className="h-5 w-5" />
+                <span>Mang về ({takeaways.length})</span>
+              </button>
+            </div>
             <p
               data-testid="touch-table-summary"
               className="min-w-0 flex-1 truncate text-base font-semibold text-muted-foreground"
             >
-              <span className="mr-2 text-lg font-extrabold text-foreground">Sơ đồ bàn</span>
               Trống{' '}
               <span className="font-extrabold text-foreground tabular-nums">
                 {availableCount}/{tables.length}
               </span>{' '}
               bàn
             </p>
-            <button
+            {boardTab !== 'takeaway' ? (
+              <button
                 type="button"
                 role="switch"
+                aria-label="Bàn có hoá đơn"
                 aria-checked={onlyOccupied}
                 data-testid="touch-only-occupied"
                 onClick={() => setOnlyOccupied((value) => !value)}
-                className="flex h-12 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-bold"
+                className="flex h-12 shrink-0 items-center gap-2 rounded-xl border px-2 text-sm font-bold min-[1100px]:px-3"
               >
                 <span
                   className={cn(
@@ -306,29 +357,9 @@ export function PosTouchPage() {
                     )}
                   />
                 </span>
-                Bàn có hoá đơn
+                <span className="hidden min-[1100px]:inline">Bàn có hoá đơn</span>
+                <span className="min-[1100px]:hidden">Có HĐ</span>
               </button>
-            <Button
-              type="button"
-              variant="outline"
-              data-testid="touch-jump-takeaway"
-              onClick={scrollToTakeaways}
-              className="h-12 shrink-0 gap-2 px-3 text-sm font-bold"
-            >
-              <ShoppingBag className="h-5 w-5" />
-              Mang về ({takeaways.length})
-            </Button>
-            {workspace.permissions.canCreateOrder ? (
-              <Button
-                type="button"
-                data-testid="touch-header-new-takeaway"
-                onClick={workspace.actions.startNewTakeaway}
-                className="h-12 shrink-0 gap-1.5 px-3 text-sm font-bold"
-              >
-                <Plus className="h-5 w-5" />
-                <span className="hidden min-[1100px]:inline">Mang về mới</span>
-                <span className="min-[1100px]:hidden">Mới</span>
-              </Button>
             ) : null}
             <Button
               type="button"
@@ -351,6 +382,7 @@ export function PosTouchPage() {
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <TouchTableBoard
               columns={layout.tableColumns}
+              tab={boardTab}
               tables={tables}
               takeaways={takeaways}
               onlyOccupied={onlyOccupied}
