@@ -1,7 +1,7 @@
 import { type DashboardOverviewResponse, type PaymentMethod } from '@fnb/shared';
 import { BarChart3, Lock, QrCode, Sparkles } from 'lucide-react';
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useTouchAwareNavigate } from '@/components/touch-shell';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/utils/cn';
@@ -32,7 +32,7 @@ function formatCompactAxis(amount: number): string {
 }
 
 export function DashboardChartsRow({ data }: DashboardChartsRowProps) {
-  const navigate = useNavigate();
+  const navigate = useTouchAwareNavigate();
   const [viewMode, setViewMode] = React.useState<SeriesViewMode>('payment');
   const [hoveredKey, setHoveredKey] = React.useState<string | null>(null);
 

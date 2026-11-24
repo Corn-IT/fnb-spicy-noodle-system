@@ -1,7 +1,7 @@
 import { type DashboardOverviewResponse } from '@fnb/shared';
 import { ArrowRight, ChefHat, Flame, Layers, ShoppingBag, Utensils } from 'lucide-react';
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useTouchAwareNavigate } from '@/components/touch-shell';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,7 +35,7 @@ const DEFAULT_STATION_STYLE = {
 };
 
 export function DashboardOperationsRow({ data }: DashboardOperationsRowProps) {
-  const navigate = useNavigate();
+  const navigate = useTouchAwareNavigate();
   const [selectedOrderId, setSelectedOrderId] = React.useState<number | null>(null);
 
   const liveTables = data.liveTables;

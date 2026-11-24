@@ -20,6 +20,10 @@ import {
   useThermalPrinter,
   useThermalPrinterConfigStore,
 } from '@/components/print-slips';
+import {
+  TouchConfirmDialog,
+  useTouchConfirm,
+} from '@/components/touch-shell';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -27,6 +31,8 @@ import { cn } from '@/utils/cn';
 
 export interface PrinterHardwareSettingsPanelProps {
   storeSettings?: PublicStoreSettingsResponse;
+  /** Bật xác nhận 2 bước khi bấm Mở két tiền (dùng cho màn POS cảm ứng để tránh chạm nhầm). */
+  confirmCashDrawerKick?: boolean;
 }
 
 const DRIVER_OPTIONS: ReadonlyArray<{
@@ -72,11 +78,13 @@ const PAPER_WIDTH_OPTIONS: ReadonlyArray<{
 
 export function PrinterHardwareSettingsPanel({
   storeSettings,
+  confirmCashDrawerKick = false,
 }: PrinterHardwareSettingsPanelProps) {
   const config = useThermalPrinterConfigStore((s) => s.config);
   const setDriver = useThermalPrinterConfigStore((s) => s.setDriver);
   const updateConfig = useThermalPrinterConfigStore((s) => s.updateConfig);
   const resetConfig = useThermalPrinterConfigStore((s) => s.resetConfig);
+  const drawerConfirm = useTouchConfirm();
 
   const {
     printOfficialReceipt,
@@ -526,11 +534,25 @@ export function PrinterHardwareSettingsPanel({
             size="sm"
             data-testid="btn-test-cash-drawer-kick"
             disabled={isKickingDrawer}
-            onClick={() => void handleTestCashDrawerKick()}
+            onClick={() => {
+              if (confirmCashDrawerKick) {
+                drawerConfirm.ask({
+                  title: 'Xác nhận mở két đựng tiền?',
+                  description:
+                    'Hệ thống sẽ gửi xung RJ11 mở ngăn kéo tiền mặt ngay lập tức trên máy in quầy này.',
+                  confirmLabel: 'Mở két ngay',
+                  onConfirm: () => {
+                    void handleTestCashDrawerKick();
+                  },
+                });
+                return;
+              }
+              void handleTestCashDrawerKick();
+            }}
             className="gap-1.5 font-semibold"
           >
             <Vault className="h-3.5 w-3.5" />
-            <span>Test bung két tiền (RJ11)</span>
+            <span>{confirmCashDrawerKick ? 'Mở két tiền (RJ11)' : 'Test bung két tiền (RJ11)'}</span>
           </Button>
         </div>
 
@@ -566,6 +588,10 @@ export function PrinterHardwareSettingsPanel({
           )}
           <span>{lastPhysicalPrintError ?? statusNote?.text}</span>
         </div>
+      ) : null}
+
+      {confirmCashDrawerKick ? (
+        <TouchConfirmDialog request={drawerConfirm.request} onClose={drawerConfirm.close} />
       ) : null}
     </div>
   );

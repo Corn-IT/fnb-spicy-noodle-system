@@ -1,7 +1,7 @@
 import { type DashboardOverviewResponse } from '@fnb/shared';
 import { AlertTriangle, ArrowRight, BellRing, Clock, CreditCard, QrCode } from 'lucide-react';
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useTouchAwareNavigate } from '@/components/touch-shell';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,7 @@ interface DashboardAlertsStripProps {
 }
 
 export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
-  const navigate = useNavigate();
+  const navigate = useTouchAwareNavigate();
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
 
   const pendingQrCount = alerts.pendingQrTables.length;
