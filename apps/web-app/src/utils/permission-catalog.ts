@@ -27,6 +27,7 @@ export const RBAC_MODULE_CONFIGS: RbacModuleConfig[] = [
       { key: 'splitKitchen', label: 'Tách bếp' },
       { key: 'tableAction', label: 'Đổi/Gộp bàn' },
       { key: 'checkout', label: 'Thanh toán' },
+      { key: 'openCashDrawer', label: 'Mở két tiền tự do' },
       { key: 'manualDiscount', label: 'Giảm giá tay trực tiếp' },
       { key: 'qrSecurity', label: 'Bảo mật QR' },
     ],

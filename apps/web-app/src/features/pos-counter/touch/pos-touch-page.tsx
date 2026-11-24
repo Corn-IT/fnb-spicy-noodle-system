@@ -17,7 +17,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { SystemErrorView } from '@/components/error-display';
 import { executeCleanLogout } from '@/components/layout/top-navbar';
-import { TOUCH_PATHS, useTouchShell } from '@/components/touch-shell';
+import { TOUCH_PATHS, TouchCashDrawerButton, useTouchShell } from '@/components/touch-shell';
 import { Button } from '@/components/ui/button';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { exitAppFullscreen, useFullscreen } from '@/hooks/use-fullscreen';
@@ -395,6 +395,7 @@ export function PosTouchPage() {
                 <span className="min-[1100px]:hidden">Có HĐ</span>
               </button>
             ) : null}
+            <TouchCashDrawerButton />
             <Button
               type="button"
               variant="outline"

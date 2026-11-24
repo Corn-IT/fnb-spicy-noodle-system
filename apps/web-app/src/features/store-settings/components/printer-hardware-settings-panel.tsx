@@ -33,6 +33,8 @@ export interface PrinterHardwareSettingsPanelProps {
   storeSettings?: PublicStoreSettingsResponse;
   /** Bật xác nhận 2 bước khi bấm Mở két tiền (dùng cho màn POS cảm ứng để tránh chạm nhầm). */
   confirmCashDrawerKick?: boolean;
+  /** Có được phép hiển thị nút mở két tiền thủ công hay không (mặc định true cho /settings). */
+  canKickCashDrawer?: boolean;
 }
 
 const DRIVER_OPTIONS: ReadonlyArray<{
@@ -79,6 +81,7 @@ const PAPER_WIDTH_OPTIONS: ReadonlyArray<{
 export function PrinterHardwareSettingsPanel({
   storeSettings,
   confirmCashDrawerKick = false,
+  canKickCashDrawer = true,
 }: PrinterHardwareSettingsPanelProps) {
   const config = useThermalPrinterConfigStore((s) => s.config);
   const setDriver = useThermalPrinterConfigStore((s) => s.setDriver);
@@ -528,32 +531,34 @@ export function PrinterHardwareSettingsPanel({
             <span>In phiếu kiểm tra kết nối (80mm)</span>
           </Button>
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="btn-test-cash-drawer-kick"
-            disabled={isKickingDrawer}
-            onClick={() => {
-              if (confirmCashDrawerKick) {
-                drawerConfirm.ask({
-                  title: 'Xác nhận mở két đựng tiền?',
-                  description:
-                    'Hệ thống sẽ gửi xung RJ11 mở ngăn kéo tiền mặt ngay lập tức trên máy in quầy này.',
-                  confirmLabel: 'Mở két ngay',
-                  onConfirm: () => {
-                    void handleTestCashDrawerKick();
-                  },
-                });
-                return;
-              }
-              void handleTestCashDrawerKick();
-            }}
-            className="gap-1.5 font-semibold"
-          >
-            <Vault className="h-3.5 w-3.5" />
-            <span>{confirmCashDrawerKick ? 'Mở két tiền (RJ11)' : 'Test bung két tiền (RJ11)'}</span>
-          </Button>
+          {canKickCashDrawer ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="btn-test-cash-drawer-kick"
+              disabled={isKickingDrawer}
+              onClick={() => {
+                if (confirmCashDrawerKick) {
+                  drawerConfirm.ask({
+                    title: 'Xác nhận mở két đựng tiền?',
+                    description:
+                      'Hệ thống sẽ gửi xung RJ11 mở ngăn kéo tiền mặt ngay lập tức trên máy in quầy này.',
+                    confirmLabel: 'Mở két ngay',
+                    onConfirm: () => {
+                      void handleTestCashDrawerKick();
+                    },
+                  });
+                  return;
+                }
+                void handleTestCashDrawerKick();
+              }}
+              className="gap-1.5 font-semibold"
+            >
+              <Vault className="h-3.5 w-3.5" />
+              <span>{confirmCashDrawerKick ? 'Mở két tiền (RJ11)' : 'Test bung két tiền (RJ11)'}</span>
+            </Button>
+          ) : null}
         </div>
 
         {lastPhysicalPrintResult ? (

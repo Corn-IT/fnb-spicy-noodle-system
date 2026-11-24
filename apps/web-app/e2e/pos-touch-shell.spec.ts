@@ -15,6 +15,18 @@ test.describe('POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*
     await expect(page.getByTestId('touch-bottom-nav')).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('data-pos-touch', 'true');
 
+    // Nút "Mở két" nằm ngay bên trái icon loa thông báo trên header tab Bán hàng, bấm 1 chạm mở thẳng (không mở confirm dialog).
+    const drawerBtn = page.getByTestId('touch-open-cash-drawer');
+    const voiceBtn = page.getByTestId('touch-voice-toggle');
+    await expect(drawerBtn).toBeVisible();
+    const drawerBox = await drawerBtn.boundingBox();
+    const voiceBox = await voiceBtn.boundingBox();
+    expect(drawerBox).not.toBeNull();
+    expect(voiceBox).not.toBeNull();
+    expect((drawerBox?.x ?? 0) + (drawerBox?.width ?? 0)).toBeLessThanOrEqual((voiceBox?.x ?? 0) + 1);
+    await drawerBtn.tap();
+    await expect(page.getByTestId('touch-confirm-dialog')).toHaveCount(0);
+
     // Chạm mở bàn → thanh đáy tự ẩn để nhường toàn bộ diện tích cho thực đơn & giỏ hàng.
     await page.getByTestId('touch-table-card-1').tap();
     await expect(page.getByTestId('touch-order-screen')).toBeVisible();
@@ -95,6 +107,38 @@ test.describe('POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*
     await expect(page.getByTestId('touch-confirm-dialog')).toBeVisible();
     await page.getByRole('button', { name: 'Quay lại' }).tap();
     await expect(page.getByTestId('touch-confirm-dialog')).toHaveCount(0);
+  });
+
+  test('hides the header Mở két button when account lacks pos.openCashDrawer permission', async ({
+    page,
+  }) => {
+    await setupMockApi(page);
+    const cashierNoDrawer = {
+      id: 2,
+      employeeId: 2,
+      username: 'thungan',
+      fullName: 'Thu ngân',
+      avatarUrl: null,
+      isSuperAdmin: false,
+      permissions: {
+        pos: { view: true, create: true, update: true, checkout: true, openCashDrawer: false },
+      },
+    };
+    await page.addInitScript((user) => {
+      window.localStorage.setItem('fnb-auth', JSON.stringify({ state: { user }, version: 0 }));
+    }, cashierNoDrawer);
+    await page.route('**/api/v1/auth/refresh', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ accessToken: 'cashier-tok', user: cashierNoDrawer }),
+      });
+    });
+
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('pos-touch-screen')).toBeVisible();
+    await expect(page.getByTestId('touch-voice-toggle')).toBeVisible();
+    await expect(page.getByTestId('touch-open-cash-drawer')).toHaveCount(0);
   });
 
   test('exits to the matching desktop screen from a touch subpage', async ({ page }) => {

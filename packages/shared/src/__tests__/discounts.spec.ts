@@ -400,11 +400,13 @@ describe('@fnb/shared discount contracts & calculator (Story 18)', () => {
     });
   });
 
-  it('tracks discounts RBAC module and pos.manualDiscount permission without POS fallback leaks', () => {
+  it('tracks discounts RBAC module and pos.manualDiscount / pos.openCashDrawer permissions without POS fallback leaks', () => {
     const parsed = contracts.UserPermissionsSchema.parse({
       pos: { view: true, create: true, update: true, checkout: true },
     });
     expect(parsed.pos.manualDiscount).toBe(false);
+    expect(parsed.pos.openCashDrawer).toBe(false);
+    expect(contracts.UserPermissionsSchema.parse({ pos: { openCashDrawer: true } }).pos.openCashDrawer).toBe(true);
     expect(parsed.discounts).toEqual({ view: false, create: false, update: false, delete: false });
   });
 });

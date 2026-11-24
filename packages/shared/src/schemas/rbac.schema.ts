@@ -47,6 +47,7 @@ const PosPermissionsSchema = ModulePermissionsSchema.extend({
   checkout: z.boolean().default(false),
   qrSecurity: z.boolean().default(false),
   manualDiscount: z.boolean().default(false),
+  openCashDrawer: z.boolean().default(false),
 }).default({
   view: false,
   create: false,
@@ -57,6 +58,7 @@ const PosPermissionsSchema = ModulePermissionsSchema.extend({
   checkout: false,
   qrSecurity: false,
   manualDiscount: false,
+  openCashDrawer: false,
 });
 
 const CashflowPermissionsSchema = z.object({
@@ -270,7 +272,7 @@ export type UserPermissions = z.infer<typeof UserPermissionsSchema>;
 
 export const defaultUserPermissions: UserPermissions = {
   dashboard: { view: false, viewProfit: false, export: false },
-  pos: { view: false, create: false, update: false, delete: false, splitKitchen: false, tableAction: false, checkout: false, qrSecurity: false, manualDiscount: false },
+  pos: { view: false, create: false, update: false, delete: false, splitKitchen: false, tableAction: false, checkout: false, qrSecurity: false, manualDiscount: false, openCashDrawer: false },
   menu: { view: false, create: false, update: false, delete: false, manageStations: false, manageCategories: false, import: false, export: false },
   invoices: { view: false, reprint: false, update: false, approve: false, void: false, export: false },
   inventory: { view: false, create: false, update: false, delete: false, export: false },

@@ -6,6 +6,10 @@ export {
 } from './elapsed-time';
 export { TouchBottomNav } from './touch-bottom-nav';
 export {
+  TouchCashDrawerButton,
+  type TouchCashDrawerButtonProps,
+} from './touch-cash-drawer-button';
+export {
   TouchConfirmDialog,
   useTouchConfirm,
   type TouchConfirmDialogProps,

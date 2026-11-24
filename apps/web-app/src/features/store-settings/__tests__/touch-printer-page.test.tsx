@@ -1,7 +1,9 @@
+import { UserPermissionsSchema } from '@fnb/shared';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TouchPrinterPage } from '@/features/store-settings';
+import { useAuthStore } from '@/stores/auth.store';
 
 const mockPrintOfficialReceipt = vi.fn();
 const mockKickCashDrawerNow = vi.fn();
@@ -28,14 +30,28 @@ describe('TouchPrinterPage — Máy in & Két tiền cảm ứng', () => {
       transport: 'RAWBT_WS',
       bytesSent: 7,
     });
+    useAuthStore.getState().setAuth({
+      accessToken: 'tok',
+      user: {
+        id: 2,
+        employeeId: 2,
+        username: 'thungan',
+        fullName: 'Thu ngân',
+        isSuperAdmin: false,
+        permissions: UserPermissionsSchema.parse({
+          pos: { view: true, openCashDrawer: true },
+        }),
+      },
+    });
   });
 
   afterEach(() => {
     cleanup();
+    useAuthStore.getState().clearAuth();
     vi.restoreAllMocks();
   });
 
-  it('requires 2-step confirmation before kicking the cash drawer', async () => {
+  it('requires 2-step confirmation before kicking the cash drawer when user has pos.openCashDrawer', async () => {
     render(<TouchPrinterPage />);
 
     expect(screen.getByTestId('touch-printer-page')).toBeInTheDocument();
@@ -56,5 +72,26 @@ describe('TouchPrinterPage — Máy in & Két tiền cảm ứng', () => {
     await waitFor(() => {
       expect(mockKickCashDrawerNow).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('hides the manual cash drawer button when user lacks pos.openCashDrawer and settings.update', () => {
+    useAuthStore.getState().setAuth({
+      accessToken: 'tok',
+      user: {
+        id: 3,
+        employeeId: 3,
+        username: 'thungan-nodrawer',
+        fullName: 'Thu ngân không mở két',
+        isSuperAdmin: false,
+        permissions: UserPermissionsSchema.parse({
+          pos: { view: true, openCashDrawer: false },
+          settings: { view: false, update: false },
+        }),
+      },
+    });
+
+    render(<TouchPrinterPage />);
+    expect(screen.getByTestId('btn-test-thermal-print')).toBeInTheDocument();
+    expect(screen.queryByTestId('btn-test-cash-drawer-kick')).not.toBeInTheDocument();
   });
 });

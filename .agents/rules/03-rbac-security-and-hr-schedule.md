@@ -32,7 +32,7 @@
 ### Permission Keys & Sub-permissions:
 | Module | Key | Quyền CRUD & Sub-permissions |
 |--------|-----|-----------------------------|
-| Module 0 & 1 (Menu & POS) | `pos` | `view`, `create`, `update`, `delete`, `splitKitchen` (tách bếp), `tableAction` (MOVE/MERGE/SWAP), `checkout` (thanh toán), `manualDiscount` (giảm giá thủ công — strict, KHÔNG fallback) |
+| Module 0 & 1 (Menu & POS) | `pos` | `view`, `create`, `update`, `delete`, `splitKitchen` (tách bếp), `tableAction` (MOVE/MERGE/SWAP), `checkout` (thanh toán), `openCashDrawer` (mở két tiền tự do — strict, KHÔNG fallback), `manualDiscount` (giảm giá thủ công — strict, KHÔNG fallback) |
 | Module 1B (Mã giảm giá) | `discounts` | `view`, `create`, `update`, `delete` |
 | Module 2 (Hoá đơn) | `invoices` | `view`, `reprint` (in lại bill), `void` (huỷ đơn đã PAID — bắt buộc `voidReason` >= 10 ký tự) |
 | Module 3 (Nhập hàng) | `inventory` | `view`, `create`, `update`, `delete` (Thu ngân chỉ được xoá phiếu trong ca hiện tại; ngày cũ yêu cầu Quản lý/Admin) |
