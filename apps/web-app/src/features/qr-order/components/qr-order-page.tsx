@@ -632,6 +632,13 @@ export function QrOrderPage() {
     0,
   );
   const cartCount = reconciledCart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartQtyByProductId = React.useMemo(() => {
+    const map = new Map<number, number>();
+    for (const item of reconciledCart) {
+      map.set(item.productId, (map.get(item.productId) ?? 0) + item.quantity);
+    }
+    return map;
+  }, [reconciledCart]);
 
   const handleRequestGuestGps = React.useCallback(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -1139,7 +1146,7 @@ export function QrOrderPage() {
         ) : null}
       </header>
 
-      <main className="space-y-3 p-4">
+      <main className="space-y-3 p-3 sm:p-4">
         {isTakeaway && activeOrder ? (
           <div
             data-testid="qr-takeaway-active-ticket-card"
@@ -1313,9 +1320,12 @@ export function QrOrderPage() {
           ) : null}
         </div>
 
-        <div className="grid grid-cols-1 gap-3">
+        <div
+          data-testid="qr-product-grid"
+          className="grid grid-cols-2 gap-2 sm:gap-2.5"
+        >
           {filteredProducts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center text-muted-foreground">
+            <div className="col-span-2 flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center text-muted-foreground">
               <p className="text-sm font-semibold">Không tìm thấy món phù hợp</p>
               <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
                 {searchQuery ? (
@@ -1338,48 +1348,79 @@ export function QrOrderPage() {
                 ) : null}
               </div>
             </div>
-          ) : filteredProducts.map((product) => (
-              <div
-                key={product.id}
-                data-testid={`qr-product-card-${product.id}`}
-                onClick={() => handleProductClick(product)}
-                className="flex cursor-pointer items-center justify-between rounded-xl border bg-card p-3.5 shadow-xs transition hover:border-primary/60 active:scale-[0.99]"
-              >
-                <div className="min-w-0 flex-1 space-y-1 pr-2">
-                  {product.categoryName ? (
-                    <span className="inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                      {product.categoryName}
+          ) : filteredProducts.map((product) => {
+              const inCartQty = cartQtyByProductId.get(product.id) ?? 0;
+              const showCategoryBadge =
+                Boolean(product.categoryName) && effectiveCategoryFilter === 'ALL';
+
+              return (
+                <div
+                  key={product.id}
+                  data-testid={`qr-product-card-${product.id}`}
+                  onClick={() => handleProductClick(product)}
+                  className={cn(
+                    'relative flex min-w-0 cursor-pointer flex-col justify-between rounded-xl border bg-card p-2.5 sm:p-3 shadow-xs transition hover:border-primary/60 active:scale-[0.98] touch-manipulation',
+                    inCartQty > 0
+                      ? 'border-primary/60 bg-primary/[0.03] ring-1 ring-primary/20'
+                      : 'border-border/70',
+                  )}
+                >
+                  {inCartQty > 0 ? (
+                    <span
+                      data-testid={`qr-product-cart-qty-${product.id}`}
+                      aria-label={`Đã chọn ${inCartQty}`}
+                      className="absolute -right-1.5 -top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-extrabold text-primary-foreground shadow-sm ring-2 ring-background tabular-nums"
+                    >
+                      {inCartQty}
                     </span>
                   ) : null}
-                  <div className="flex flex-wrap items-baseline gap-1.5">
-                    <p className="font-bold text-foreground text-sm sm:text-base">
+
+                  <div className="min-w-0 space-y-1">
+                    {showCategoryBadge ? (
+                      <span
+                        data-testid={`qr-product-category-badge-${product.id}`}
+                        className="inline-block max-w-full truncate rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                      >
+                        {product.categoryName}
+                      </span>
+                    ) : null}
+                    <p className="font-bold text-foreground text-xs sm:text-sm leading-snug line-clamp-2 break-words">
                       {product.name}
                     </p>
                     {product.subtitle ? (
-                      <span className="text-xs font-medium text-muted-foreground">
+                      <p className="text-[11px] font-medium text-muted-foreground leading-tight line-clamp-2 break-words">
                         ({product.subtitle})
-                      </span>
+                      </p>
+                    ) : null}
+                    {product.modifierGroups.length > 0 ? (
+                      <p
+                        data-testid={`qr-product-modifier-hint-${product.id}`}
+                        className="text-[10px] sm:text-[11px] font-medium text-muted-foreground/85 line-clamp-1 pt-0.5"
+                      >
+                        Tuỳ chọn: {product.modifierGroups.map((g) => g.name).join(', ')}
+                      </p>
                     ) : null}
                   </div>
-                  <p className="text-sm font-extrabold text-price">
-                    {product.price.toLocaleString('vi-VN')} đ
-                  </p>
-                  {product.modifierGroups.length > 0 ? (
-                    <p className="text-xs font-medium text-muted-foreground line-clamp-1">
-                      Tuỳ chọn: {product.modifierGroups.map((g) => g.name).join(', ')}
+
+                  <div className="mt-2.5 flex items-center justify-between gap-1.5 border-t border-border/40 pt-2">
+                    <p className="text-xs sm:text-sm font-extrabold text-price tabular-nums whitespace-nowrap">
+                      {product.price.toLocaleString('vi-VN')} đ
                     </p>
-                  ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleProductClick(product);
+                      }}
+                      className="h-7 sm:h-8 rounded-full bg-primary px-2.5 sm:px-3 text-[11px] sm:text-xs font-bold text-primary-foreground hover:bg-primary/90 shrink-0 touch-manipulation active:scale-95 shadow-xs"
+                    >
+                      <span>Chọn</span>
+                    </Button>
+                  </div>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-10 px-4 rounded-lg bg-primary text-xs sm:text-sm font-bold text-primary-foreground hover:bg-primary/90 shrink-0 touch-manipulation active:scale-[0.98] shadow-xs"
-                >
-                  <Plus className="h-4 w-4 shrink-0" />
-                  <span>Chọn</span>
-                </Button>
-              </div>
-            ))}
+              );
+            })}
         </div>
       </main>
 
