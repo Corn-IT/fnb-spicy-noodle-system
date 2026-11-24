@@ -192,6 +192,9 @@ export class IamService {
         at: now.toISOString(),
       };
       this.posSocketGateway?.emitSessionRevoked(previousSessionId, noticePayload);
+      await this.prisma.pushSubscription
+        ?.deleteMany?.({ where: { userId: user.id, sessionId: previousSessionId } })
+        .catch(() => undefined);
 
       await this.auditLogService?.record({
         module: 'RBAC',
@@ -296,6 +299,14 @@ export class IamService {
     });
 
     if (result.count > 0) {
+      await this.prisma.pushSubscription
+        ?.deleteMany?.({
+          where: {
+            userId: session.userId,
+            ...(session.sessionId ? { sessionId: session.sessionId } : {}),
+          },
+        })
+        .catch(() => undefined);
       if (session.sessionId) {
         this.posSocketGateway?.emitSessionRevoked(session.sessionId, {
           reason: 'LOGGED_OUT',
@@ -359,6 +370,10 @@ export class IamService {
         lastRevokedNotice: notice as Prisma.InputJsonValue,
       },
     });
+
+    await this.prisma.pushSubscription
+      ?.deleteMany?.({ where: { userId: targetUserId } })
+      .catch(() => undefined);
 
     if (existing.activeSessionId) {
       this.posSocketGateway?.emitSessionRevoked(existing.activeSessionId, notice);
@@ -581,10 +596,19 @@ export class IamService {
     });
     if (disabledNotice && existing.activeSessionId) {
       this.posSocketGateway?.emitSessionRevoked(existing.activeSessionId, disabledNotice);
+      await this.prisma.pushSubscription
+        ?.deleteMany?.({ where: { userId: user.id } })
+        .catch(() => undefined);
     } else if (parsedPermissions && user.isActive && existing.activeSessionId) {
+      const nextPerms = UserPermissionsSchema.parse(user.permissions);
+      if (!user.isSuperAdmin && !nextPerms.pos?.view) {
+        await this.prisma.pushSubscription
+          ?.deleteMany?.({ where: { userId: user.id } })
+          .catch(() => undefined);
+      }
       this.posSocketGateway?.emitPermissionsUpdated(
         user.id,
-        UserPermissionsSchema.parse(user.permissions),
+        nextPerms,
       );
     }
     if (actor) {
@@ -718,6 +742,9 @@ export class IamService {
         lastRevokedNotice: notice as Prisma.InputJsonValue,
       },
     });
+    await this.prisma.pushSubscription
+      ?.deleteMany?.({ where: { userId: id } })
+      .catch(() => undefined);
     if (existing.activeSessionId) {
       this.posSocketGateway?.emitSessionRevoked(existing.activeSessionId, notice);
     }

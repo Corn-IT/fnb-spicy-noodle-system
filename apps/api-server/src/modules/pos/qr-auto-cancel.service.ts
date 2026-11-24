@@ -10,10 +10,32 @@ import { AuditLogService } from '../../common/audit/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 import { recomputeOrderTotals } from './order-totals.helper';
+import { WebPushService, type OverdueReminderPushItem } from './web-push.service';
 
 const AUTO_CANCEL_POLL_INTERVAL_MS = 10_000;
 const SYSTEM_CONFIG_CATEGORY = 'SYSTEM_CONFIG';
 const BATCH_SWEEP_LIMIT = 50;
+
+function computeDueBackendReminderStage(
+  sinceMs: number,
+  nowMs: number,
+  config: QrReminderConfig,
+): number {
+  if (!config.reminderEnabled) return 0;
+  const elapsedMs = nowMs - sinceMs;
+  const delayMs = config.reminderDelayMinutes * 60_000;
+  const intervalMs = config.reminderIntervalSeconds * 1000;
+  const autoCancelMs = config.autoCancelEnabled
+    ? config.autoCancelMinutes * 60_000
+    : Number.POSITIVE_INFINITY;
+
+  if (elapsedMs < delayMs || elapsedMs >= autoCancelMs || intervalMs <= 0) {
+    return 0;
+  }
+
+  const rawStage = 1 + Math.floor((elapsedMs - delayMs) / intervalMs);
+  return Math.min(config.maxReminders, rawStage);
+}
 
 function extractReminderConfigTitle(metadata: unknown, isActive: boolean): string | null {
   if (!isActive || typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) {
@@ -37,11 +59,14 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QrAutoCancelService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
   private isSweeping = false;
+  private isSweepingReminders = false;
+  private readonly sentReminderStages = new Map<string, number>();
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(PosSocketGateway) private readonly gateway: PosSocketGateway,
     @Optional() @Inject(AuditLogService) private readonly auditLogService?: AuditLogService,
+    @Optional() @Inject(WebPushService) private readonly webPushService?: WebPushService,
   ) {}
 
   onModuleInit(): void {
@@ -53,6 +78,11 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
       void this.sweepExpiredQrRequests().catch((err) => {
         this.logger.warn(
           `QR auto-cancel sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+      void this.sweepOverdueQrPushReminders().catch((err) => {
+        this.logger.warn(
+          `QR overdue push reminder sweep failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       });
     }, AUTO_CANCEL_POLL_INTERVAL_MS);
@@ -322,5 +352,158 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
     }
 
     return events;
+  }
+
+  /**
+   * Finds unconfirmed QR orders & QR add-on batches that passed `reminderDelayMinutes`
+   * and dispatches Web Push reminders for newly reached stages (so phones with locked
+   * screens or suspended browser tabs still receive overdue alerts).
+   */
+  async sweepOverdueQrPushReminders(now: Date = new Date()): Promise<OverdueReminderPushItem[]> {
+    if (!this.webPushService || this.isSweepingReminders) return [];
+    this.isSweepingReminders = true;
+    try {
+      const config = await this.getReminderConfig();
+      if (!config.reminderEnabled) {
+        this.sentReminderStages.clear();
+        return [];
+      }
+
+      const nowMs = now.getTime();
+      const activeKeys = new Set<string>();
+      const dueEntries: OverdueReminderPushItem[] = [];
+
+      if (typeof this.prisma.order?.findMany === 'function') {
+        const pendingOrders = await this.prisma.order.findMany({
+          where: {
+            status: 'PENDING',
+            orderSource: 'QR_CODE',
+          },
+          select: {
+            id: true,
+            orderCode: true,
+            orderType: true,
+            takeawayNumber: true,
+            createdAt: true,
+            table: { select: { name: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: BATCH_SWEEP_LIMIT,
+        });
+
+        for (const order of pendingOrders) {
+          const sinceIso = order.createdAt.toISOString();
+          const key = `${order.id}:NEW:${sinceIso}`;
+          activeKeys.add(key);
+
+          const dueStage = computeDueBackendReminderStage(order.createdAt.getTime(), nowMs, config);
+          if (dueStage <= 0) continue;
+
+          const sentStage = this.sentReminderStages.get(key) ?? 0;
+          if (dueStage > sentStage) {
+            this.sentReminderStages.set(key, dueStage);
+            const tableLabel =
+              order.table?.name ??
+              (order.orderType === 'TAKEAWAY'
+                ? `Mang về #${String(order.takeawayNumber ?? 0).padStart(2, '0')}`
+                : 'Bàn QR');
+            dueEntries.push({
+              orderId: order.id,
+              orderCode: order.orderCode,
+              tableLabel,
+              kind: 'NEW',
+              elapsedMinutes: Math.max(1, Math.floor((nowMs - order.createdAt.getTime()) / 60_000)),
+            });
+          }
+        }
+      }
+
+      if (typeof this.prisma.orderItem?.findMany === 'function') {
+        const pendingAddonItems = await this.prisma.orderItem.findMany({
+          where: {
+            kitchenStatus: 'NEW',
+            itemSource: 'QR_CODE',
+            batchNo: { gte: 2 },
+            order: { status: 'SERVING' },
+          },
+          select: {
+            orderId: true,
+            createdAt: true,
+            order: {
+              select: {
+                id: true,
+                orderCode: true,
+                orderType: true,
+                takeawayNumber: true,
+                table: { select: { name: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: BATCH_SWEEP_LIMIT * 2,
+        });
+
+        const earliestByOrder = new Map<
+          number,
+          {
+            orderId: number;
+            orderCode: string;
+            tableLabel: string;
+            since: Date;
+          }
+        >();
+
+        for (const item of pendingAddonItems) {
+          if (!earliestByOrder.has(item.orderId)) {
+            const tableLabel =
+              item.order.table?.name ??
+              (item.order.orderType === 'TAKEAWAY'
+                ? `Mang về #${String(item.order.takeawayNumber ?? 0).padStart(2, '0')}`
+                : 'Bàn QR');
+            earliestByOrder.set(item.orderId, {
+              orderId: item.orderId,
+              orderCode: item.order.orderCode,
+              tableLabel,
+              since: item.createdAt,
+            });
+          }
+        }
+
+        for (const entry of earliestByOrder.values()) {
+          const sinceIso = entry.since.toISOString();
+          const key = `${entry.orderId}:ADDON:${sinceIso}`;
+          activeKeys.add(key);
+
+          const dueStage = computeDueBackendReminderStage(entry.since.getTime(), nowMs, config);
+          if (dueStage <= 0) continue;
+
+          const sentStage = this.sentReminderStages.get(key) ?? 0;
+          if (dueStage > sentStage) {
+            this.sentReminderStages.set(key, dueStage);
+            dueEntries.push({
+              orderId: entry.orderId,
+              orderCode: entry.orderCode,
+              tableLabel: entry.tableLabel,
+              kind: 'ADDON',
+              elapsedMinutes: Math.max(1, Math.floor((nowMs - entry.since.getTime()) / 60_000)),
+            });
+          }
+        }
+      }
+
+      for (const existingKey of this.sentReminderStages.keys()) {
+        if (!activeKeys.has(existingKey)) {
+          this.sentReminderStages.delete(existingKey);
+        }
+      }
+
+      if (dueEntries.length > 0) {
+        await this.webPushService.notifyQrOverdueReminder(dueEntries);
+      }
+
+      return dueEntries;
+    } finally {
+      this.isSweepingReminders = false;
+    }
   }
 }

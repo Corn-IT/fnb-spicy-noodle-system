@@ -9,6 +9,7 @@ import {
   CommandPalette,
   getAccessibleRoutes,
 } from '@/components/layout/command-palette';
+import { MobileAudioActivationBanner } from '@/components/layout/mobile-alert-controls';
 import { MobileSidebarNav, ResizableSidebar } from '@/components/layout/resizable-sidebar';
 import { TopNavbar } from '@/components/layout/top-navbar';
 import { clearPendingNavigation, TopProgressBar } from '@/components/loading';
@@ -21,12 +22,13 @@ import {
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { useDisplayScale } from '@/hooks/use-display-scale';
+import { useMobileOrderAlertLifecycle } from '@/hooks/use-mobile-order-alerts';
 import { resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
 import { useSyncAccountPreferencesOnFocus } from '@/hooks/use-sync-account-preferences-on-focus';
 import { apiClient } from '@/lib/api-client';
 import { POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
 import { useQrPendingReminderMonitor } from '@/lib/qr-pending-reminder';
-import { enqueueQrVoiceAlert, unlockQrVoiceAudio } from '@/lib/qr-voice-announcer';
+import { enqueueQrVoiceAlert } from '@/lib/qr-voice-announcer';
 import { startIdleRouteChunkWarmup } from '@/lib/route-prefetch';
 import { usePosSocketContext } from '@/providers/socket-provider';
 import { useAuthStore } from '@/stores/auth.store';
@@ -174,20 +176,20 @@ export function AppShell() {
     }
   }, [location.pathname, settings.navLabels, settings.storeName]);
 
-  // Unlock browser AudioContext on first user interaction in the shift
-  React.useEffect(() => {
-    const handleFirstInteraction = () => {
-      void unlockQrVoiceAudio();
-      window.removeEventListener('pointerdown', handleFirstInteraction);
-      window.removeEventListener('keydown', handleFirstInteraction);
-    };
-    window.addEventListener('pointerdown', handleFirstInteraction, { passive: true });
-    window.addEventListener('keydown', handleFirstInteraction, { passive: true });
-    return () => {
-      window.removeEventListener('pointerdown', handleFirstInteraction);
-      window.removeEventListener('keydown', handleFirstInteraction);
-    };
-  }, []);
+  // Resilient mobile/desktop audio unlock, Layer 2 background keep-alive & Layer 3 Web Push sync
+  useMobileOrderAlertLifecycle({
+    enabled: Boolean(accessToken && canReceivePosAlerts),
+    storeName: settings.storeName,
+    onNavigateToUrl: (url) => {
+      if (isPosTouchRoute) {
+        const queryIdx = url.indexOf('?');
+        const query = queryIdx >= 0 ? url.slice(queryIdx) : '';
+        navigate(`${TOUCH_PATHS.POS}${query}`);
+        return;
+      }
+      navigate(url);
+    },
+  });
 
   // Global QR order voice alert & toast when staff is browsing non-POS screens (including Touch Shell subpages)
   React.useEffect(() => {
@@ -278,6 +280,7 @@ export function AppShell() {
             onToggleMobileMenu={() => setMobileMenuOpen(true)}
           />
         )}
+        <MobileAudioActivationBanner compact={isPosTouchRoute} />
         {!isPosLiveBoardRoute && overdueQrItems.length > 0 ? (
           <button
             type="button"
