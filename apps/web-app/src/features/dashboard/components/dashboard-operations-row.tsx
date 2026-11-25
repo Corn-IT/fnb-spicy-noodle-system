@@ -250,7 +250,7 @@ export function DashboardOperationsRow({ data }: DashboardOperationsRowProps) {
                 <Button
                   size="sm"
                   className="h-7 px-2.5 text-xs"
-                  onClick={() => navigate('/pos')}
+                  onClick={() => navigate(`/pos?orderId=${selectedEntity.order.orderId}`)}
                 >
                   Vào POS xử lý <ArrowRight className="ml-1 h-3 w-3" />
                 </Button>

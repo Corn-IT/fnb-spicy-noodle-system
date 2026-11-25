@@ -108,6 +108,8 @@ let audioUnlockState: QrAudioUnlockState = 'unknown';
 const audioUnlockListeners = new Set<(state: QrAudioUnlockState) => void>();
 const decodedAudioBufferCache = new Map<string, AudioBuffer>();
 const MAX_DECODED_AUDIO_CACHE = 64;
+const BLOCKED_ANNOUNCEMENT_REPLAY_TTL_MS = 90_000;
+let pendingBlockedAnnouncement: { item: QrVoiceAlertItem; blockedAtMs: number } | null = null;
 
 /** Minimal valid 0.05s 8kHz mono PCM silence WAV for unlocking HTMLAudioElement inside a mobile gesture. */
 const SILENT_UNLOCK_WAV_DATA_URI =
@@ -226,6 +228,7 @@ export function resetAudioContextForTesting(): void {
   sharedHtmlAudioElement = null;
   audioUnlockState = 'unknown';
   coreClipsPreloadStarted = false;
+  pendingBlockedAnnouncement = null;
   decodedAudioBufferCache.clear();
 }
 
@@ -316,6 +319,13 @@ export async function unlockQrVoiceAudio(): Promise<boolean> {
 
   if (unlocked) {
     preloadCoreOfflineAudioClips();
+    if (pendingBlockedAnnouncement) {
+      const blocked = pendingBlockedAnnouncement;
+      pendingBlockedAnnouncement = null;
+      if (Date.now() - blocked.blockedAtMs <= BLOCKED_ANNOUNCEMENT_REPLAY_TTL_MS) {
+        void enqueueQrVoiceAlert({ ...blocked.item, forcePlay: true });
+      }
+    }
   }
   return unlocked;
 }
@@ -952,6 +962,7 @@ export class QrVoiceAnnouncer {
         for (const clipSrc of clipSequence) {
           await this.playClipFn(clipSrc, config.rate, config.volume, config.voiceProfile);
         }
+        pendingBlockedAnnouncement = null;
         return;
       } catch {
         // Fallback if offline MP3 fails
@@ -964,6 +975,7 @@ export class QrVoiceAnnouncer {
       const cloudTtsUrl = buildPublicTtsUrl(normalizedSpokenText);
       try {
         await this.playClipFn(cloudTtsUrl, config.rate, config.volume, config.voiceProfile);
+        pendingBlockedAnnouncement = null;
         return;
       } catch {
         // Fallback to offline clips or speech synthesis if offline/unavailable
@@ -976,10 +988,18 @@ export class QrVoiceAnnouncer {
         for (const clipSrc of clipSequence) {
           await this.playClipFn(clipSrc, config.rate, config.volume, config.voiceProfile);
         }
+        pendingBlockedAnnouncement = null;
         return;
       } catch {
         // Fallback if static MP3 fails or is unavailable
       }
+    }
+
+    if (getQrAudioUnlockState() === 'locked') {
+      pendingBlockedAnnouncement = {
+        item: { ...item },
+        blockedAtMs: this.nowFn(),
+      };
     }
 
     await this.speakTtsFn(spokenText, 'vi-VN', config);

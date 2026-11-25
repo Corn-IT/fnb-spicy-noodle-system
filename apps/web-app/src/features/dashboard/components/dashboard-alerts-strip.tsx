@@ -86,7 +86,7 @@ export function DashboardAlertsStrip({ alerts }: DashboardAlertsStripProps) {
               size="sm"
               variant={isOverdue ? 'destructive' : 'outline'}
               className="min-h-10 lg:min-h-8 shrink-0 px-3 text-xs"
-              onClick={() => navigate('/pos')}
+              onClick={() => navigate(`/pos?orderId=${item.orderId}`)}
             >
               Xử lý <ArrowRight className="ml-1 h-3 w-3" />
             </Button>

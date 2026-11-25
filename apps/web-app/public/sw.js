@@ -1,6 +1,7 @@
 /* Service Worker for POS QR Order Web Push Notifications (Layer 3 safety net) */
 
 const PENDING_CHECK_TIMEOUT_MS = 1200;
+const FOREGROUND_AUDIO_ACK_TIMEOUT_MS = 350;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
@@ -107,6 +108,74 @@ async function isOrderStillPending(payload) {
   }
 }
 
+/**
+ * Asks a visible/focused window client whether its Web Audio announcer is unlocked and able
+ * to play the order alert aloud right now. Also delivers the push payload to the page so the
+ * page can immediately trigger voice + toast even if Socket.io is reconnecting.
+ * If no client replies `{ handledByAudio: true }` within 350ms (e.g. phone screen is on
+ * but AudioContext is locked/suspended/interrupted), falls back to showing the OS Push banner.
+ */
+async function notifyAndCheckForegroundAudioHandled(windowClients, payload) {
+  if (!Array.isArray(windowClients) || windowClients.length === 0) {
+    return false;
+  }
+
+  for (const client of windowClients) {
+    try {
+      client.postMessage({
+        type: 'POS_PUSH_SUPPRESSED_FOREGROUND',
+        payload,
+      });
+    } catch {
+      // Ignore postMessage failure
+    }
+  }
+
+  const focusedVisibleClients = windowClients.filter(
+    (client) => client && client.visibilityState === 'visible' && client.focused === true,
+  );
+  if (focusedVisibleClients.length === 0) {
+    return false;
+  }
+
+  if (typeof MessageChannel !== 'function') {
+    return true;
+  }
+
+  const results = await Promise.all(
+    focusedVisibleClients.map(
+      (client) =>
+        new Promise((resolve) => {
+          let settled = false;
+          const finish = (handled) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(Boolean(handled));
+          };
+          const timer = setTimeout(() => finish(false), FOREGROUND_AUDIO_ACK_TIMEOUT_MS);
+          try {
+            const channel = new MessageChannel();
+            channel.port1.onmessage = (msgEvent) => {
+              finish(Boolean(msgEvent && msgEvent.data && msgEvent.data.handledByAudio === true));
+            };
+            client.postMessage(
+              {
+                type: 'POS_PUSH_FOREGROUND_CHECK',
+                payload,
+              },
+              [channel.port2],
+            );
+          } catch {
+            finish(false);
+          }
+        }),
+    ),
+  );
+
+  return results.some(Boolean);
+}
+
 self.addEventListener('push', (event) => {
   const payload = parsePushPayload(event);
 
@@ -118,32 +187,26 @@ self.addEventListener('push', (event) => {
         includeUncontrolled: true,
       });
 
-      // Anti-double-alert: if staff already has an actively focused POS window on screen,
-      // foreground Socket.io voice announcer handles the alert immediately (except TEST_PING).
-      const hasFocusedVisibleClient = windowClients.some(
-        (client) => client.visibilityState === 'visible' && client.focused === true,
-      );
-
-      if (!isTestPing && hasFocusedVisibleClient) {
-        for (const client of windowClients) {
-          try {
-            client.postMessage({
-              type: 'POS_PUSH_SUPPRESSED_FOREGROUND',
-              payload,
-            });
-          } catch {
-            // Ignore postMessage failure
-          }
-        }
-        return;
-      }
-
       // Anti-stale-alert: if FCM/APNs delivered a QR order push after the cashier already
       // approved / printed / paid it, silently skip and close any older banner for that order.
       if (!isTestPing && typeof payload.orderId === 'number') {
         const stillPending = await isOrderStillPending(payload);
         if (!stillPending) {
           await closeOrderNotifications(payload.orderId);
+          return;
+        }
+      }
+
+      // Always forward push payload to any open window client (so if Socket.io is lagging,
+      // the foreground/background tab still plays Web Audio + shows toast immediately!),
+      // and only suppress the OS push banner if a focused visible client confirms its
+      // Web Audio announcer is unlocked and actively handling the alert.
+      if (!isTestPing && windowClients.length > 0) {
+        const handledByForegroundAudio = await notifyAndCheckForegroundAudioHandled(
+          windowClients,
+          payload,
+        );
+        if (handledByForegroundAudio) {
           return;
         }
       }
