@@ -225,6 +225,7 @@ export function resetAudioContextForTesting(): void {
   sharedAudioContext = null;
   sharedHtmlAudioElement = null;
   audioUnlockState = 'unknown';
+  coreClipsPreloadStarted = false;
   decodedAudioBufferCache.clear();
 }
 
@@ -313,6 +314,9 @@ export async function unlockQrVoiceAudio(): Promise<boolean> {
     }
   }
 
+  if (unlocked) {
+    preloadCoreOfflineAudioClips();
+  }
   return unlocked;
 }
 
@@ -529,19 +533,87 @@ export async function playCashierChime(volume = 1): Promise<void> {
   }
 }
 
+const AUDIO_FETCH_TIMEOUT_MS = 1800;
+const CORE_OFFLINE_CLIPS_TO_PRELOAD = [
+  '/audio/vi/ban.mp3',
+  '/audio/vi/co-don-moi.mp3',
+  '/audio/vi/co-don-goi-them.mp3',
+] as const;
+
+let coreClipsPreloadStarted = false;
+
+/**
+ * Warms up the most common static Vietnamese MP3 clips into decoded AudioBuffers
+ * right after audio unlock so fallback or offline playback starts in < 30ms.
+ */
+export function preloadCoreOfflineAudioClips(): void {
+  if (coreClipsPreloadStarted) return;
+  if (typeof window === 'undefined' || typeof fetch !== 'function') return;
+  if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent ?? '')) return;
+
+  const ctx = getSharedAudioContext();
+  if (!ctx || (ctx.state as string) !== 'running' || typeof ctx.decodeAudioData !== 'function') {
+    return;
+  }
+
+  coreClipsPreloadStarted = true;
+  for (const src of CORE_OFFLINE_CLIPS_TO_PRELOAD) {
+    if (decodedAudioBufferCache.has(src)) continue;
+    void fetch(src)
+      .then((res) => (res.ok ? res.arrayBuffer() : null))
+      .then((buf) => (buf ? ctx.decodeAudioData(buf.slice(0)) : null))
+      .then((decoded) => {
+        if (decoded && decodedAudioBufferCache.size < MAX_DECODED_AUDIO_CACHE) {
+          decodedAudioBufferCache.set(src, decoded);
+        }
+      })
+      .catch(() => undefined);
+  }
+}
+
+type WebAudioPlayOutcome =
+  | { status: 'played' }
+  | { status: 'fallback_html_audio' }
+  | { status: 'network_failed'; reason: string };
+
+async function fetchAudioBufferWithTimeout(src: string, timeoutMs = AUDIO_FETCH_TIMEOUT_MS): Promise<ArrayBuffer> {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller
+    ? window.setTimeout(() => {
+        controller.abort();
+      }, timeoutMs)
+    : null;
+  try {
+    const res = await fetch(src, controller ? { signal: controller.signal } : undefined);
+    if (!res.ok) {
+      throw new Error(`Audio fetch HTTP ${res.status}: ${src}`);
+    }
+    return await res.arrayBuffer();
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Audio fetch timeout (${timeoutMs}ms): ${src}`);
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  } finally {
+    if (timer !== null) {
+      window.clearTimeout(timer);
+    }
+  }
+}
+
 async function playAudioClipViaWebAudio(
   src: string,
   rate: number,
   volume: number,
   detuneCents: number,
-): Promise<boolean> {
+): Promise<WebAudioPlayOutcome> {
   const ctx = getSharedAudioContext();
   if (
     !ctx ||
     typeof ctx.decodeAudioData !== 'function' ||
     typeof ctx.createBufferSource !== 'function'
   ) {
-    return false;
+    return { status: 'fallback_html_audio' };
   }
 
   try {
@@ -551,14 +623,20 @@ async function playAudioClipViaWebAudio(
     }
     if ((ctx.state as string) !== 'running') {
       setAudioUnlockState('locked');
-      return false;
+      return { status: 'fallback_html_audio' };
     }
 
     let audioBuffer = decodedAudioBufferCache.get(src);
     if (!audioBuffer) {
-      const res = await fetch(src);
-      if (!res.ok) return false;
-      const arrayBuffer = await res.arrayBuffer();
+      let arrayBuffer: ArrayBuffer;
+      try {
+        arrayBuffer = await fetchAudioBufferWithTimeout(src);
+      } catch (fetchErr) {
+        return {
+          status: 'network_failed',
+          reason: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+        };
+      }
       audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
       if (decodedAudioBufferCache.size >= MAX_DECODED_AUDIO_CACHE) {
         const oldestKey = decodedAudioBufferCache.keys().next().value;
@@ -567,7 +645,7 @@ async function playAudioClipViaWebAudio(
       decodedAudioBufferCache.set(src, audioBuffer);
     }
 
-    return await new Promise<boolean>((resolve) => {
+    await new Promise<void>((resolve) => {
       const source = ctx.createBufferSource();
       const gainNode = ctx.createGain();
       source.buffer = audioBuffer;
@@ -587,22 +665,23 @@ async function playAudioClipViaWebAudio(
       const timer = window.setTimeout(() => {
         if (settled) return;
         settled = true;
-        resolve(true);
+        resolve();
       }, Math.max(2500, Math.min(12_000, durationMs)));
 
       source.onended = () => {
         if (settled) return;
         settled = true;
         window.clearTimeout(timer);
-        resolve(true);
+        resolve();
       };
       source.start(0);
     });
+    return { status: 'played' };
   } catch (err) {
     if (isAutoplayBlockedError(err)) {
       setAudioUnlockState('locked');
     }
-    return false;
+    return { status: 'fallback_html_audio' };
   }
 }
 
@@ -624,8 +703,13 @@ export async function defaultPlayAudioClip(
   // autoplay policies on async Socket.io events once the AudioContext has been unlocked,
   // and GainNode volume works reliably on iOS Safari (where HTMLAudioElement.volume is read-only).
   const detuneCents = getVoiceProfileDetuneCents(voiceProfile);
-  const playedViaWebAudio = await playAudioClipViaWebAudio(src, rate, volume, detuneCents);
-  if (playedViaWebAudio) return;
+  const webAudioOutcome = await playAudioClipViaWebAudio(src, rate, volume, detuneCents);
+  if (webAudioOutcome.status === 'played') return;
+  // Do NOT waste 6.5s retrying a broken HTTP 5xx/timed-out Cloud TTS URL in HTMLAudioElement —
+  // reject immediately so QrVoiceAnnouncer falls back to offline /audio/vi/*.mp3 clips in < 50ms!
+  if (webAudioOutcome.status === 'network_failed') {
+    throw new Error(webAudioOutcome.reason);
+  }
 
   return new Promise<void>((resolve, reject) => {
     const audio = getSharedHtmlAudioElement() ?? new window.Audio();

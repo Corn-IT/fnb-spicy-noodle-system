@@ -82,7 +82,7 @@ export class PosController {
 
       try {
         const upstream = await fetch(ttsUrl.toString(), {
-          signal: AbortSignal.timeout(4000),
+          signal: AbortSignal.timeout(2000),
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
           },
@@ -108,6 +108,27 @@ export class PosController {
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(audioBuffer);
+  }
+
+  /**
+   * Lightweight 1-bit status check called by Service Worker (sw.js) when a Web Push
+   * notification arrives after a delay (e.g. Android Doze / iOS Low Power) so phones
+   * never ring for an order the cashier has already approved / printed / paid.
+   * Exposes zero sensitive order details — only `{ stillPending: boolean }`.
+   */
+  @Get('public/orders/qr-pending-check')
+  async checkQrOrderPending(
+    @Query('orderId') rawOrderId?: string,
+    @Query('kind') rawKind?: string,
+    @Query('batchNo') rawBatchNo?: string,
+  ) {
+    const orderId = Number(rawOrderId);
+    const batchNo = rawBatchNo !== undefined ? Number(rawBatchNo) : undefined;
+    return this.posService.checkQrOrderStillPending({
+      orderId: Number.isSafeInteger(orderId) && orderId > 0 ? orderId : 0,
+      kind: rawKind,
+      batchNo: batchNo !== undefined && Number.isSafeInteger(batchNo) && batchNo > 0 ? batchNo : undefined,
+    });
   }
 
   @Post('public/orders/qr')

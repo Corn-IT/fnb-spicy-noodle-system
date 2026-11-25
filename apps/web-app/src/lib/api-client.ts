@@ -150,6 +150,30 @@ async function attemptTokenRefresh(): Promise<string | null> {
   return refreshPromise;
 }
 
+export async function refreshAccessToken(): Promise<string | null> {
+  return attemptTokenRefresh();
+}
+
+export function getJwtExpirationMs(token: string | null | undefined): number | null {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const decoded =
+      typeof window !== 'undefined' && typeof window.atob === 'function'
+        ? window.atob(padded)
+        : Buffer.from(padded, 'base64').toString('utf8');
+    const payload = JSON.parse(decoded) as { exp?: unknown };
+    return typeof payload.exp === 'number' && Number.isFinite(payload.exp)
+      ? payload.exp * 1000
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function bootstrapAuthSession(): Promise<string | null> {
   const state = useAuthStore.getState();
   if (state.accessToken) return state.accessToken;

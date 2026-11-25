@@ -14,10 +14,12 @@ import {
 import type { Request } from 'express';
 import {
   RegisterWebPushSubscriptionSchema,
+  SendTestWebPushSchema,
   UnregisterWebPushSubscriptionSchema,
   WebPushVapidKeyResponseSchema,
   type AuthPrincipal,
   type RegisterWebPushSubscriptionInput,
+  type SendTestWebPushInput,
   type UnregisterWebPushSubscriptionInput,
 } from '@fnb/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -71,5 +73,16 @@ export class PosPushController {
     body: UnregisterWebPushSubscriptionInput,
   ) {
     return this.webPushService.unregisterSubscription(user, body);
+  }
+
+  @Post('test')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('pos', 'view')
+  async sendTestPush(
+    @CurrentUser() user: AuthPrincipal,
+    @Body(new ZodValidationPipe(SendTestWebPushSchema))
+    body: SendTestWebPushInput,
+  ) {
+    return this.webPushService.sendTestPushToUser(user, body.delaySeconds);
   }
 }

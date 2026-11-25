@@ -1,6 +1,8 @@
 import {
+  SendTestWebPushResponseSchema,
   WebPushSubscriptionStatusResponseSchema,
   WebPushVapidKeyResponseSchema,
+  type SendTestWebPushResponse,
 } from '@fnb/shared';
 import { apiClient } from '@/lib/api-client';
 import { isIosDevice, isStandalonePwa } from '@/lib/mobile-audio-keepalive';
@@ -229,4 +231,9 @@ export async function syncExistingPushSubscriptionWithSession(): Promise<boolean
   } catch {
     return false;
   }
+}
+
+export async function sendTestWebPush(delaySeconds = 5): Promise<SendTestWebPushResponse> {
+  const raw = await apiClient.post<unknown>('/api/v1/pos/push/test', { delaySeconds });
+  return SendTestWebPushResponseSchema.parse(raw);
 }

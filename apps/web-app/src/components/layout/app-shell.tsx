@@ -60,6 +60,7 @@ export function AppShell() {
     typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
   );
   const [isSocketDisconnected, setIsSocketDisconnected] = React.useState<boolean>(false);
+  const [isResyncingAfterWake, setIsResyncingAfterWake] = React.useState<boolean>(false);
 
   // Chỉ màn bán hàng POS trực tiếp (`/pos` và `/pos/touch`) có `usePosWorkspace` nghe socket QR.
   // Các màn con trong Touch Shell (`/pos/touch/hub`, `/pos/touch/invoices`...) vẫn cần AppShell
@@ -89,10 +90,42 @@ export function AppShell() {
     refetchInterval: false,
   });
 
+  // Pause client-side overdue reminders while offline, socket disconnected, or resyncing after
+  // phone wake-up so stale cached PENDING tables never trigger false reminders for already-printed orders.
+  const canEvaluateOverdueReminders = Boolean(
+    accessToken &&
+      canReceivePosAlerts &&
+      isBrowserOnline &&
+      !isSocketDisconnected &&
+      !globalTableGridQuery.isFetching &&
+      !isResyncingAfterWake,
+  );
+
   const overdueQrItems = useQrPendingReminderMonitor(
     globalTableGridQuery.data,
-    Boolean(accessToken && canReceivePosAlerts),
+    canEvaluateOverdueReminders,
   );
+
+  // When phone wakes up from lock screen / background tab, force-refetch live table grid
+  // before re-enabling client-side overdue reminders.
+  React.useEffect(() => {
+    if (!accessToken || !canReceivePosAlerts || typeof document === 'undefined') return;
+    let active = true;
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      setIsResyncingAfterWake(true);
+      void queryClient
+        .refetchQueries({ queryKey: POS_TABLE_GRID_QUERY_KEY })
+        .finally(() => {
+          if (active) setIsResyncingAfterWake(false);
+        });
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      active = false;
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [accessToken, canReceivePosAlerts, queryClient]);
 
   // Track browser online/offline state and auto-resync queries upon recovery
   React.useEffect(() => {

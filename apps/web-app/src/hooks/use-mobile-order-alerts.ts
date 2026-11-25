@@ -25,17 +25,20 @@ import {
 import {
   getCurrentBrowserPushSubscription,
   getWebPushSupportInfo,
+  sendTestWebPush,
   subscribeDeviceToWebPush,
   syncExistingPushSubscriptionWithSession,
   unsubscribeDeviceFromWebPush,
   type WebPushSupportInfo,
 } from '@/lib/web-push-client';
+import { usePosSocketContext } from '@/providers/socket-provider';
 
 export interface MobileOrderAlertsState {
   voiceEnabled: boolean;
   toggleVoice: () => void;
   audioUnlockState: QrAudioUnlockState;
   needsAudioTap: boolean;
+  socketConnected: boolean;
   isMobile: boolean;
   isIos: boolean;
   isStandalone: boolean;
@@ -46,8 +49,10 @@ export interface MobileOrderAlertsState {
   pushSupport: WebPushSupportInfo;
   pushSubscribed: boolean;
   pushBusy: boolean;
+  pushTestBusy: boolean;
   pushMessage: string | null;
   togglePush: () => Promise<void>;
+  sendTestPush: (delaySeconds?: number) => Promise<void>;
 }
 
 const PUSH_SUBSCRIPTION_SYNC_EVENT = 'fnb:web-push-subscription-changed';
@@ -71,6 +76,7 @@ export function useMobileOrderAlerts(options?: {
   const storeName = options?.storeName;
 
   const { voiceEnabled, toggleVoice } = useQrVoiceToggle();
+  const { isConnected: socketConnected } = usePosSocketContext();
   const [audioUnlockState, setAudioUnlockState] = React.useState<QrAudioUnlockState>(() =>
     getQrAudioUnlockState(),
   );
@@ -85,6 +91,7 @@ export function useMobileOrderAlerts(options?: {
   );
   const [pushSubscribed, setPushSubscribed] = React.useState<boolean>(false);
   const [pushBusy, setPushBusy] = React.useState<boolean>(false);
+  const [pushTestBusy, setPushTestBusy] = React.useState<boolean>(false);
   const [pushMessage, setPushMessage] = React.useState<string | null>(null);
 
   const isMobile = isLikelyMobileDevice();
@@ -197,6 +204,31 @@ export function useMobileOrderAlerts(options?: {
     }
   }, [pushBusy, pushSubscribed]);
 
+  const sendTestPush = React.useCallback(
+    async (delaySeconds = 5) => {
+      if (pushTestBusy || !pushSubscribed) return;
+      setPushTestBusy(true);
+      setPushMessage(null);
+      try {
+        const res = await sendTestWebPush(delaySeconds);
+        if (res.scheduled) {
+          setPushMessage(
+            `Đã hẹn gửi thử — hãy khoá màn hình, thông báo đẩy sẽ tới sau ${res.delaySeconds} giây!`,
+          );
+        } else {
+          setPushMessage('Phiên đăng nhập chưa có đăng ký Push hợp lệ. Hãy tắt và bật lại Push.');
+        }
+      } catch (err) {
+        setPushMessage(
+          err instanceof Error ? err.message : 'Không thể gửi thử thông báo đẩy lúc này.',
+        );
+      } finally {
+        setPushTestBusy(false);
+      }
+    },
+    [pushTestBusy, pushSubscribed],
+  );
+
   // Show the 1-tap activation bar whenever voice is ON and:
   // - Audio was explicitly blocked/interrupted ('locked') on any device, OR
   // - We are on a mobile device and the user has not unlocked audio yet ('unknown' / 'locked')
@@ -210,6 +242,7 @@ export function useMobileOrderAlerts(options?: {
     toggleVoice,
     audioUnlockState,
     needsAudioTap,
+    socketConnected,
     isMobile,
     isIos,
     isStandalone,
@@ -220,8 +253,10 @@ export function useMobileOrderAlerts(options?: {
     pushSupport,
     pushSubscribed,
     pushBusy,
+    pushTestBusy,
     pushMessage,
     togglePush,
+    sendTestPush,
   };
 }
 

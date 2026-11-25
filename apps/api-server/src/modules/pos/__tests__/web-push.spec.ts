@@ -305,6 +305,8 @@ describe('WebPushService', () => {
     expect(liveReq).toBeDefined();
     expect(liveReq!.headers['Content-Encoding']).toBe('aes128gcm');
     expect(liveReq!.headers.Urgency).toBe('high');
+    expect(liveReq!.headers.TTL).toBe('90');
+    expect(liveReq!.headers.Topic).toBe('qr-new-42');
     expect(liveReq!.headers.Authorization).toMatch(/^vapid t=.+, k=.+$/);
 
     const decrypted = JSON.parse(
@@ -622,6 +624,26 @@ describe('PosPushController HTTP integration (RBAC 401/403 & Zod validation)', (
     expect(subRes.status).toBe(200);
     expect(await subRes.json()).toEqual({ subscribed: true, activeCount: 1 });
 
+    // Self-test Push endpoint: rejects invalid delay (>15s) with 422 and schedules valid test push (200)
+    const badTestRes = await fetch(`${baseUrl}/api/v1/pos/push/test`, {
+      method: 'POST',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delaySeconds: 99 }),
+    });
+    expect(badTestRes.status).toBe(422);
+
+    const testPushRes = await fetch(`${baseUrl}/api/v1/pos/push/test`, {
+      method: 'POST',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delaySeconds: 5 }),
+    });
+    expect(testPushRes.status).toBe(200);
+    expect(await testPushRes.json()).toEqual({
+      scheduled: true,
+      delaySeconds: 5,
+      activeSubscriptions: 1,
+    });
+
     // Unregister endpoint
     const delRes = await fetch(`${baseUrl}/api/v1/pos/push/subscriptions`, {
       method: 'DELETE',
@@ -762,5 +784,50 @@ describe('End-to-end wiring: PosService QR order & IamService session revocation
     expect(deletePushCalls[1]).toEqual({
       where: { userId: 10 },
     });
+  });
+
+  it('should accurately report stillPending=true for unconfirmed QR orders/addons and false after kitchen print/approval', async () => {
+    const orderMap = new Map<number, { id: number; status: string; orderSource: string }>([
+      [1, { id: 1, status: 'PENDING', orderSource: 'QR_CODE' }],
+      [2, { id: 2, status: 'SERVING', orderSource: 'QR_CODE' }],
+      [3, { id: 3, status: 'PAID', orderSource: 'QR_CODE' }],
+    ]);
+    let hasUnprintedAddonForOrder2 = true;
+    const prisma = {
+      order: {
+        findUnique: vi.fn(async ({ where }: { where: { id: number } }) => orderMap.get(where.id) ?? null),
+      },
+      orderItem: {
+        findFirst: vi.fn(async ({ where }: { where: { orderId: number } }) =>
+          where.orderId === 2 && hasUnprintedAddonForOrder2 ? { id: 500 } : null,
+        ),
+      },
+    };
+    const posService = new PosService(
+      prisma as never,
+      {} as never,
+      undefined as never,
+      {} as never,
+      {} as never,
+    );
+
+    expect(await posService.checkQrOrderStillPending({ orderId: 1, kind: 'QR_NEW' })).toEqual({
+      stillPending: true,
+    });
+    expect(await posService.checkQrOrderStillPending({ orderId: 2, kind: 'QR_NEW' })).toEqual({
+      stillPending: false,
+    });
+    expect(await posService.checkQrOrderStillPending({ orderId: 3, kind: 'QR_NEW' })).toEqual({
+      stillPending: false,
+    });
+    expect(
+      await posService.checkQrOrderStillPending({ orderId: 2, kind: 'QR_ADDON', batchNo: 2 }),
+    ).toEqual({ stillPending: true });
+
+    // Once kitchen slip is printed for batch 2 -> stillPending flips to false!
+    hasUnprintedAddonForOrder2 = false;
+    expect(
+      await posService.checkQrOrderStillPending({ orderId: 2, kind: 'QR_ADDON', batchNo: 2 }),
+    ).toEqual({ stillPending: false });
   });
 });

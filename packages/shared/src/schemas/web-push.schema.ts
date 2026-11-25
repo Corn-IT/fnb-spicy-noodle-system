@@ -6,6 +6,7 @@ export const WebPushNotificationKind = {
   QR_NEW: 'QR_NEW',
   QR_ADDON: 'QR_ADDON',
   QR_OVERDUE_REMINDER: 'QR_OVERDUE_REMINDER',
+  TEST_PING: 'TEST_PING',
 } as const;
 export type WebPushNotificationKind =
   (typeof WebPushNotificationKind)[keyof typeof WebPushNotificationKind];
@@ -13,6 +14,7 @@ export const WebPushNotificationKindSchema = z.enum([
   'QR_NEW',
   'QR_ADDON',
   'QR_OVERDUE_REMINDER',
+  'TEST_PING',
 ]);
 
 export const WebPushSubscriptionKeysSchema = z.object({
@@ -68,3 +70,20 @@ export const WebPushNotificationPayloadSchema = z.object({
   timestamp: z.string(),
 });
 export type WebPushNotificationPayload = z.infer<typeof WebPushNotificationPayloadSchema>;
+
+export const SendTestWebPushSchema = z.object({
+  delaySeconds: z.number().int().min(0).max(15).default(5),
+});
+export type SendTestWebPushInput = z.infer<typeof SendTestWebPushSchema>;
+
+export const SendTestWebPushResponseSchema = z.object({
+  scheduled: z.boolean(),
+  delaySeconds: z.number().int().min(0).max(15),
+  activeSubscriptions: z.number().int().min(0),
+});
+export type SendTestWebPushResponse = z.infer<typeof SendTestWebPushResponseSchema>;
+
+export const QrPendingCheckResponseSchema = z.object({
+  stillPending: z.boolean(),
+});
+export type QrPendingCheckResponse = z.infer<typeof QrPendingCheckResponseSchema>;
