@@ -3,6 +3,11 @@ import * as React from 'react';
 import { create } from 'zustand';
 
 import { cn } from '@/utils/cn';
+export {
+  isEventFromToastViewport,
+  isToastTarget,
+  TOAST_VIEWPORT_SELECTOR,
+} from '@/utils/toast-target';
 
 export type ToastVariant = 'default' | 'destructive' | 'success' | 'warning' | 'info';
 
@@ -112,6 +117,7 @@ export function Toaster() {
   return (
     <div
       aria-live="polite"
+      data-toast-viewport="true"
       data-testid="toast-viewport-top-right"
       className="pointer-events-none fixed left-3 right-3 top-14 z-[100] flex flex-col gap-2 sm:left-auto sm:right-4 sm:top-16 sm:w-full sm:max-w-sm touch-ui:bottom-3 touch-ui:left-3 touch-ui:right-auto touch-ui:top-auto touch-ui:max-w-sm touch-ui:flex-col-reverse"
     >

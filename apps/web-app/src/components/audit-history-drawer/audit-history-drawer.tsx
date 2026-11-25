@@ -10,6 +10,7 @@ import * as React from 'react';
 
 import { AuditTimelineSkeleton } from '@/components/loading';
 import { Badge } from '@/components/ui/badge';
+import { isToastTarget } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -255,6 +256,7 @@ export function AuditHistoryDrawer({
   React.useEffect(() => {
     if (!dropdownOpen) return;
     const handleOutside = (event: MouseEvent) => {
+      if (isToastTarget(event.target)) return;
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setDropdownOpen(false);
       }
