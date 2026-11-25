@@ -1,13 +1,1 @@
-[
-  {
-    "page": "/login",
-    "viewport": "tablet-1180 (1180x820)",
-    "violations": [
-      {
-        "rule": "TOUCH_TARGET_TOO_SMALL",
-        "selector": "[data-testid=\"toggle-login-password\"]",
-        "detail": "28x28px (< 40x40)"
-      }
-    ]
-  }
-]
+[]
