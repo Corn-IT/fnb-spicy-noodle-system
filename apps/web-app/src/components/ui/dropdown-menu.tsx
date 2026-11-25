@@ -1,6 +1,7 @@
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
 import * as React from 'react';
 
+import { isEventFromToastViewport } from '@/components/ui/toast';
 import { cn } from '@/utils/cn';
 
 export const DropdownMenu = DropdownMenuPrimitive.Root;
@@ -11,7 +12,7 @@ export const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
 export const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
+>(({ className, sideOffset = 4, onPointerDownOutside, onInteractOutside, ...props }, ref) => (
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.Content
       ref={ref}
@@ -20,6 +21,20 @@ export const DropdownMenuContent = React.forwardRef<
         'z-50 min-w-[10rem] overflow-hidden rounded-lg border bg-popover p-1 text-popover-foreground shadow-md',
         className,
       )}
+      onPointerDownOutside={(event) => {
+        if (isEventFromToastViewport(event)) {
+          event.preventDefault();
+          return;
+        }
+        onPointerDownOutside?.(event);
+      }}
+      onInteractOutside={(event) => {
+        if (isEventFromToastViewport(event)) {
+          event.preventDefault();
+          return;
+        }
+        onInteractOutside?.(event);
+      }}
       {...props}
     />
   </DropdownMenuPrimitive.Portal>

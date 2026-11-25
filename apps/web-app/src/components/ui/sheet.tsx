@@ -2,6 +2,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import * as React from 'react';
 
+import { isEventFromToastViewport } from '@/components/ui/toast';
 import { cn } from '@/utils/cn';
 
 export const Sheet = DialogPrimitive.Root;
@@ -32,21 +33,46 @@ export interface SheetContentProps
 export const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   SheetContentProps
->(({ side = 'right', className, children, ...props }, ref) => (
-  <SheetPortal>
-    <SheetOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        'fixed z-50 flex flex-col gap-4 bg-background p-4 sm:p-6 shadow-2xl transition ease-in-out',
-        side === 'right' && 'inset-y-0 right-0 h-full w-full max-w-lg border-l',
-        side === 'left' && 'inset-y-0 left-0 h-full w-full max-w-lg border-r',
-        side === 'top' && 'inset-x-0 top-0 border-b',
-        side === 'bottom' && 'inset-x-0 bottom-0 border-t',
-        className,
-      )}
-      {...props}
-    >
+>(
+  (
+    {
+      side = 'right',
+      className,
+      children,
+      onPointerDownOutside,
+      onInteractOutside,
+      ...props
+    },
+    ref,
+  ) => (
+    <SheetPortal>
+      <SheetOverlay />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          'fixed z-50 flex flex-col gap-4 bg-background p-4 sm:p-6 shadow-2xl transition ease-in-out',
+          side === 'right' && 'inset-y-0 right-0 h-full w-full max-w-lg border-l',
+          side === 'left' && 'inset-y-0 left-0 h-full w-full max-w-lg border-r',
+          side === 'top' && 'inset-x-0 top-0 border-b',
+          side === 'bottom' && 'inset-x-0 bottom-0 border-t',
+          className,
+        )}
+        onPointerDownOutside={(event) => {
+          if (isEventFromToastViewport(event)) {
+            event.preventDefault();
+            return;
+          }
+          onPointerDownOutside?.(event);
+        }}
+        onInteractOutside={(event) => {
+          if (isEventFromToastViewport(event)) {
+            event.preventDefault();
+            return;
+          }
+          onInteractOutside?.(event);
+        }}
+        {...props}
+      >
       {children}
       <DialogPrimitive.Close
         className="absolute right-2.5 top-2.5 sm:right-4 sm:top-4 inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded-md opacity-75 transition-opacity hover:bg-accent hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring touch-ui:right-2 touch-ui:top-2 touch-ui:h-11 touch-ui:w-11"
@@ -54,9 +80,10 @@ export const SheetContent = React.forwardRef<
       >
         <X className="h-4 w-4" />
       </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </SheetPortal>
-));
+      </DialogPrimitive.Content>
+    </SheetPortal>
+  ),
+);
 SheetContent.displayName = DialogPrimitive.Content.displayName;
 
 export function SheetHeader({

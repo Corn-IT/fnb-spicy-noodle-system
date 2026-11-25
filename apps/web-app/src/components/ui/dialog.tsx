@@ -2,6 +2,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import * as React from 'react';
 
+import { isEventFromToastViewport } from '@/components/ui/toast';
 import { cn } from '@/utils/cn';
 
 export const Dialog = DialogPrimitive.Root;
@@ -33,17 +34,43 @@ export interface DialogContentProps
 export const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, closeLabel, hideCloseButton = false, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        'fixed left-1/2 top-1/2 z-50 grid grid-cols-1 max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-lg touch-ui:min-w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 gap-3.5 sm:gap-4 overflow-x-hidden overflow-y-auto rounded-xl border bg-background p-3.5 sm:p-6 shadow-xl',
-        className,
-      )}
-      {...props}
-    >
+>(
+  (
+    {
+      className,
+      children,
+      closeLabel,
+      hideCloseButton = false,
+      onPointerDownOutside,
+      onInteractOutside,
+      ...props
+    },
+    ref,
+  ) => (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          'fixed left-1/2 top-1/2 z-50 grid grid-cols-1 max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-lg touch-ui:min-w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 gap-3.5 sm:gap-4 overflow-x-hidden overflow-y-auto rounded-xl border bg-background p-3.5 sm:p-6 shadow-xl',
+          className,
+        )}
+        onPointerDownOutside={(event) => {
+          if (isEventFromToastViewport(event)) {
+            event.preventDefault();
+            return;
+          }
+          onPointerDownOutside?.(event);
+        }}
+        onInteractOutside={(event) => {
+          if (isEventFromToastViewport(event)) {
+            event.preventDefault();
+            return;
+          }
+          onInteractOutside?.(event);
+        }}
+        {...props}
+      >
       {children}
       {!hideCloseButton ? (
         <DialogPrimitive.Close
@@ -58,9 +85,10 @@ export const DialogContent = React.forwardRef<
           {closeLabel ? <span>{closeLabel}</span> : <X className="h-4 w-4" />}
         </DialogPrimitive.Close>
       ) : null}
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  ),
+);
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 export function DialogHeader({
