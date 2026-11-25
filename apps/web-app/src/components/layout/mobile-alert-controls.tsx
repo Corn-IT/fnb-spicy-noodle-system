@@ -4,10 +4,13 @@ import {
   BellRing,
   CheckCircle2,
   Radio,
+  Send,
   Share,
   Smartphone,
   Volume2,
   VolumeX,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -93,6 +96,7 @@ export function MobileAlertControlButton({ className }: { className?: string }) 
     toggleVoice,
     audioUnlockState,
     needsAudioTap,
+    socketConnected,
     isIos,
     isStandalone,
     keepAliveEnabled,
@@ -102,8 +106,10 @@ export function MobileAlertControlButton({ className }: { className?: string }) 
     pushSupport,
     pushSubscribed,
     pushBusy,
+    pushTestBusy,
     pushMessage,
     togglePush,
+    sendTestPush,
   } = useMobileOrderAlerts({
     enabled: canReceivePosAlerts,
     storeName: settings.storeName,
@@ -177,6 +183,27 @@ export function MobileAlertControlButton({ className }: { className?: string }) 
         </DropdownMenuLabel>
 
         <DropdownMenuSeparator className="my-1" />
+
+        {/* Live realtime Socket.io status pill */}
+        <div
+          data-testid="mobile-alerts-socket-status"
+          className={cn(
+            'flex items-center justify-between rounded-md px-2.5 py-1.5 text-[11px] font-semibold',
+            socketConnected
+              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+              : 'bg-amber-500/15 text-amber-800 dark:text-amber-200',
+          )}
+        >
+          <span className="flex items-center gap-1.5">
+            {socketConnected ? (
+              <Wifi className="h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <WifiOff className="h-3.5 w-3.5 shrink-0 animate-pulse" />
+            )}
+            <span>Kết nối thời gian thực (Socket)</span>
+          </span>
+          <span>{socketConnected ? 'Đang kết nối' : 'Đang nối lại...'}</span>
+        </div>
 
         {/* Layer 1: Foreground Web Audio */}
         <div className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
@@ -306,13 +333,31 @@ export function MobileAlertControlButton({ className }: { className?: string }) 
           </div>
 
           {pushSubscribed ? (
-            <p
-              data-testid="mobile-alerts-push-active"
-              className="flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400"
-            >
-              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              <span>Đã kết nối Push cho phiên đăng nhập này (tự ẩn khi đang mở màn hình web).</span>
-            </p>
+            <div className="space-y-1.5">
+              <p
+                data-testid="mobile-alerts-push-active"
+                className="flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                <span>Đã kết nối Push cho phiên đăng nhập này (tự ẩn khi đang mở màn hình web).</span>
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="mobile-alerts-push-test-btn"
+                disabled={pushTestBusy}
+                onClick={() => {
+                  void sendTestPush(5);
+                }}
+                className="h-7 w-full gap-1.5 text-[11px] font-semibold"
+              >
+                <Send className="h-3 w-3" />
+                <span>
+                  {pushTestBusy ? 'Đang hẹn gửi thử...' : 'Gửi thử Push (sau 5s để kịp khoá máy)'}
+                </span>
+              </Button>
+            </div>
           ) : null}
 
           {pushSupport.needsIosInstall || (isIos && !isStandalone) ? (
