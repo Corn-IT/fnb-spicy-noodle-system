@@ -295,9 +295,32 @@ describe('Mobile 3-Layer Order Alert System', () => {
       expect(createObjectURLSpy).toHaveBeenCalledTimes(1);
       expect(mockAudio.loop).toBe(true);
       expect(mockAudio.muted).toBe(false);
+      expect(mockAudio.volume).toBeGreaterThanOrEqual(0.03);
       expect(mediaSession.playbackState).toBe('playing');
 
-      stopMobileAudioKeepAlive();
+      // Verify non-zero faint PCM samples (avoids browser silence-detector freeze)
+      const wav = buildSilentKeepAliveWavBytes(1, 8000);
+      expect(wav[45]).toBe(0x82);
+      expect(wav[46]).toBe(0x7e);
+
+      // Simulate OS/browser pausing the keep-alive stream unexpectedly -> auto-resumes after 800ms
+      vi.useFakeTimers();
+      try {
+        mockAudio.play.mockClear();
+        mockAudio.paused = true;
+        mockAudio.onpause?.();
+        await vi.advanceTimersByTimeAsync(900);
+        expect(mockAudio.play).toHaveBeenCalledTimes(1);
+
+        // Explicit stopMobileAudioKeepAlive() must NOT auto-resume
+        mockAudio.play.mockClear();
+        stopMobileAudioKeepAlive();
+        await vi.advanceTimersByTimeAsync(900);
+        expect(mockAudio.play).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+
       expect(mockAudio.pause).toHaveBeenCalled();
       expect(releaseWakeLock).toHaveBeenCalled();
       expect(mediaSession.playbackState).toBe('none');

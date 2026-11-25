@@ -296,6 +296,13 @@ export function MobileAlertControlButton({ className }: { className?: string }) 
                 : 'Sẽ tự kích hoạt sau lần chạm màn hình tiếp theo.'}
             </p>
           ) : null}
+          <p
+            data-testid="mobile-alerts-placement-tip"
+            className="text-[11px] text-muted-foreground"
+          >
+            Nên cắm sạc và để màn hình sáng khi đặt điện thoại cố định tại quầy. Khi tab bị hệ điều hành
+            ngủ đông hoặc bị vuốt tắt, chỉ còn thông báo đẩy.
+          </p>
         </div>
 
         {/* Layer 3: Web Push Notification */}
