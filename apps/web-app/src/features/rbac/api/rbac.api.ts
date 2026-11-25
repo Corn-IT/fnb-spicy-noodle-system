@@ -3,6 +3,7 @@ import {
   type CreateUserInput,
   type ResetUserPasswordInput,
   type UpdatePermissionsInput,
+  type UpdateUserAccountInput,
   type UserAdminRecord,
   type UserListResponse,
   type UserSessionHistoryResponse,
@@ -58,6 +59,22 @@ export function useCreateUserMutation() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['users'] });
       void queryClient.invalidateQueries({ queryKey: ['rbac-employee-candidates'] });
+    },
+  });
+}
+
+export function useUpdateUserAccountMutation(userId: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: UpdateUserAccountInput) =>
+      apiClient.put<UserRecord>(`/api/v1/users/${userId}`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['users'] });
+      void queryClient.invalidateQueries({ queryKey: ['rbac-employee-candidates'] });
+      void queryClient.invalidateQueries({ queryKey: ['employees'] });
+      void queryClient.invalidateQueries({ queryKey: ['user-session-history'] });
+      void queryClient.invalidateQueries({ queryKey: ['audit-logs', 'RBAC'] });
     },
   });
 }

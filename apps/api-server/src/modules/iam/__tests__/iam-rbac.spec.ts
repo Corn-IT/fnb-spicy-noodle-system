@@ -787,3 +787,190 @@ describe('IAM and MDM controller access boundaries', () => {
     expect(Reflect.getMetadata(AUTHORIZATION_METADATA, MdmController.prototype.disable)).toEqual({ module: 'mdm', action: 'delete' });
   });
 });
+
+describe('IamService.updateUserAccount', () => {
+  const actor = {
+    id: 1,
+    employeeId: 1,
+    username: 'superadmin',
+    isSuperAdmin: true,
+    permissions: {} as never,
+  };
+
+  const makeExistingUser = (overrides: Record<string, unknown> = {}) => ({
+    id: 2,
+    employeeId: 10,
+    username: 'thungan01',
+    isSuperAdmin: false,
+    roleLabel: null,
+    permissions,
+    uiPreferences: {},
+    isActive: true,
+    activeSessionId: 'sess-active-1',
+    activeSessionIp: '192.168.1.50',
+    activeSessionDevice: 'macOS · Chrome',
+    activeSessionAt: new Date('2026-11-25T08:00:00.000Z'),
+    employee: {
+      id: 10,
+      fullName: 'Nguyễn Văn A',
+      shortName: 'V.A',
+      avatarUrl: null,
+      isDeleted: false,
+      position: { id: 3, name: 'Thu Ngân Quầy' },
+      specialty: { id: 2, name: 'Thu Ngân' },
+    },
+    ...overrides,
+  });
+
+  it('should reassign employee, update username/roleLabel, revoke active session, and record audit changes', async () => {
+    const existing = makeExistingUser();
+    const updated = makeExistingUser({
+      employeeId: 15,
+      username: 'thungan02',
+      roleLabel: 'Quản lý chỉ xem',
+      activeSessionId: null,
+      employee: {
+        id: 15,
+        fullName: 'Trần Thị B',
+        shortName: 'T.B',
+        avatarUrl: null,
+        isDeleted: false,
+        position: { id: 2, name: 'Quản Lý Cửa Hàng' },
+        specialty: { id: 1, name: 'Quản Lý' },
+      },
+    });
+    const prisma = withTransaction({
+      user: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce(existing)
+          .mockResolvedValueOnce(null),
+        update: vi.fn().mockResolvedValue(updated),
+      },
+      employee: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 15,
+          fullName: 'Trần Thị B',
+          isDeleted: false,
+          user: null,
+        }),
+      },
+      pushSubscription: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    });
+    const auditLogService = { record: vi.fn().mockResolvedValue(undefined) };
+    const posSocketGateway = {
+      emitSessionRevoked: vi.fn(),
+      isSessionOnline: vi.fn().mockReturnValue(false),
+    };
+    const service = new IamService(
+      prisma as never,
+      {} as never,
+      { get: vi.fn() } as never,
+      auditLogService as never,
+      posSocketGateway as never,
+    );
+
+    const result = await service.updateUserAccount(
+      2,
+      { employeeId: 15, username: 'thungan02', roleLabel: 'Quản lý chỉ xem' },
+      actor,
+    );
+
+    expect(result.employee.id).toBe(15);
+    expect(result.username).toBe('thungan02');
+    expect(result.roleLabel).toBe('Quản lý chỉ xem');
+    expect(posSocketGateway.emitSessionRevoked).toHaveBeenCalledWith(
+      'sess-active-1',
+      expect.objectContaining({ reason: 'ADMIN_REVOKED' }),
+    );
+    expect(prisma.pushSubscription.deleteMany).toHaveBeenCalledWith({ where: { userId: 2 } });
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        module: 'RBAC',
+        action: 'Cập nhật tài khoản',
+        metadata: expect.objectContaining({
+          changes: expect.arrayContaining([
+            { field: 'Nhân sự liên kết', from: 'Nguyễn Văn A', to: 'Trần Thị B' },
+            { field: 'Tên đăng nhập', from: 'thungan01', to: 'thungan02' },
+            { field: 'Vai trò', from: 'Thu Ngân Quầy', to: 'Quản lý chỉ xem' },
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it('should reject editing a Super Admin account with 403 Forbidden', async () => {
+    const prisma = withTransaction({
+      user: {
+        findUnique: vi.fn().mockResolvedValue(makeExistingUser({ id: 1, isSuperAdmin: true })),
+      },
+    });
+    const service = new IamService(prisma as never, {} as never, { get: vi.fn() } as never);
+
+    await expect(
+      service.updateUserAccount(1, { roleLabel: 'Hack' }, actor),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: { code: 'RBAC_SUPER_ADMIN_REQUIRED' },
+    });
+  });
+
+  it('should reject reassigning to an employee who already has an account (409) or is deleted (404)', async () => {
+    const prismaConflict = withTransaction({
+      user: { findUnique: vi.fn().mockResolvedValue(makeExistingUser()) },
+      employee: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 20,
+          fullName: 'Đã Có TK',
+          isDeleted: false,
+          user: { id: 99 },
+        }),
+      },
+    });
+    const serviceConflict = new IamService(prismaConflict as never, {} as never, { get: vi.fn() } as never);
+    await expect(
+      serviceConflict.updateUserAccount(2, { employeeId: 20 }, actor),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'HR_EMPLOYEE_ACCOUNT_EXISTS' },
+    });
+
+    const prismaDeleted = withTransaction({
+      user: { findUnique: vi.fn().mockResolvedValue(makeExistingUser()) },
+      employee: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 21,
+          fullName: 'Đã Nghỉ',
+          isDeleted: true,
+          user: null,
+        }),
+      },
+    });
+    const serviceDeleted = new IamService(prismaDeleted as never, {} as never, { get: vi.fn() } as never);
+    await expect(
+      serviceDeleted.updateUserAccount(2, { employeeId: 21 }, actor),
+    ).rejects.toMatchObject({
+      status: 404,
+      response: { code: 'HR_EMPLOYEE_DELETED' },
+    });
+  });
+
+  it('should reject duplicate username with 409 HR_USERNAME_TAKEN', async () => {
+    const prisma = withTransaction({
+      user: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce(makeExistingUser())
+          .mockResolvedValueOnce({ id: 99 }),
+      },
+    });
+    const service = new IamService(prisma as never, {} as never, { get: vi.fn() } as never);
+
+    await expect(
+      service.updateUserAccount(2, { username: 'existing_user' }, actor),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'HR_USERNAME_TAKEN' },
+    });
+  });
+});

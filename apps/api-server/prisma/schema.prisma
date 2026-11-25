@@ -60,6 +60,7 @@ model User {
   username      String                 @unique(map: "users_username_key") @db.VarChar(64)
   passwordHash  String                 @map("password_hash") @db.Text
   isSuperAdmin  Boolean                @default(false) @map("is_super_admin")
+  roleLabel     String?                @map("role_label") @db.VarChar(64)
   permissions   Json                   @default("{}") @db.JsonB
   uiPreferences Json                   @default("{}") @map("ui_preferences") @db.JsonB
   isActive      Boolean                @default(true) @map("is_active")

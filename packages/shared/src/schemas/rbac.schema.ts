@@ -107,6 +107,7 @@ const UserAdminEmployeeSchema = z.object({
   fullName: z.string().min(1),
   shortName: z.string().min(1),
   avatarUrl: z.string().nullable(),
+  isDeleted: z.boolean().optional(),
   position: z.object({ id: IdSchema, name: z.string() }).nullable(),
   specialty: z.object({ id: IdSchema, name: z.string() }).nullable(),
 });
@@ -369,7 +370,27 @@ const AuthEmployeeSchema = z.object({
   specialty: z.object({ id: IdSchema, name: z.string() }).nullable(),
 });
 
+export const RoleLabelSchema = z
+  .string()
+  .trim()
+  .max(64, 'Nhãn vai trò tối đa 64 ký tự')
+  .transform((value) => (value.length > 0 ? value : null));
+
+export function resolveUserRoleDisplay(input: {
+  isSuperAdmin?: boolean | null;
+  roleLabel?: string | null;
+  positionName?: string | null;
+}): string {
+  if (input.isSuperAdmin) return 'Super Admin';
+  const custom = input.roleLabel?.trim();
+  if (custom) return custom;
+  const position = input.positionName?.trim();
+  if (position) return position;
+  return 'Nhân viên';
+}
+
 export const AuthUserSchema = AuthPrincipalSchema.extend({
+  roleLabel: z.string().trim().max(64).nullable().default(null),
   employee: AuthEmployeeSchema,
   uiPreferences: UiPreferencesSchema,
 });
@@ -406,9 +427,30 @@ export const CreateUserSchema = z.object({
   employeeId: IdSchema,
   username: z.string().trim().min(3).max(64),
   password: z.string().min(6).max(128),
+  roleLabel: RoleLabelSchema.nullable().optional(),
   permissions: UserPermissionsSchema.default(defaultUserPermissions),
 }).strict();
 export type CreateUserInput = z.infer<typeof CreateUserSchema>;
+
+export const UpdateUserAccountSchema = z.object({
+  employeeId: IdSchema.optional(),
+  username: z
+    .string()
+    .trim()
+    .min(3, 'Tên đăng nhập phải có ít nhất 3 ký tự')
+    .max(64, 'Tên đăng nhập tối đa 64 ký tự')
+    .optional(),
+  roleLabel: RoleLabelSchema.nullable().optional(),
+  isActive: z.boolean().optional(),
+}).strict().refine(
+  (input) =>
+    input.employeeId !== undefined ||
+    input.username !== undefined ||
+    input.roleLabel !== undefined ||
+    input.isActive !== undefined,
+  { message: 'Phải cung cấp ít nhất một thông tin tài khoản cần cập nhật' },
+);
+export type UpdateUserAccountInput = z.infer<typeof UpdateUserAccountSchema>;
 
 export const UpdatePermissionsSchema = z.object({
   permissions: UserPermissionsSchema.optional(),

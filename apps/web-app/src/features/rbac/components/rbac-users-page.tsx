@@ -1,6 +1,8 @@
+import { resolveUserRoleDisplay } from '@fnb/shared';
 import { type ColumnDef } from '@tanstack/react-table';
-import { History, LogOut, Plus, Settings, ShieldAlert } from 'lucide-react';
+import { History, LogOut, Plus, Shield, ShieldAlert, UserCog } from 'lucide-react';
 import * as React from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 import {
   AuditHistoryButton,
@@ -29,6 +31,7 @@ import {
   useRevokeUserSessionMutation,
   useUsersQuery,
 } from '../api/rbac.api';
+import { AccountDetailsDrawer } from './account-details-drawer';
 import { CreateUserDialog } from './create-user-dialog';
 import { PermissionsDrawer } from './permissions-drawer';
 import { UserSessionHistoryDialog } from './user-session-history-dialog';
@@ -37,18 +40,30 @@ export function RbacUsersPage() {
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.isSuperAdmin ?? false;
   const { notify, resolveErrorMessage } = useAppMessages();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialKeyword = searchParams.get('keyword') ?? '';
 
   const [page, setPage] = React.useState(1);
   const [limit, setLimit] = React.useState(50);
-  const [keyword, setKeyword] = React.useState('');
-  const [selectedUser, setSelectedUser] = React.useState<UserRecord | null>(null);
-  const [drawerOpen, setDrawerOpen] = React.useState(false);
+  const [keyword, setKeyword] = React.useState(initialKeyword);
+  const [selectedPermissionsUser, setSelectedPermissionsUser] = React.useState<UserRecord | null>(null);
+  const [permissionsDrawerOpen, setPermissionsDrawerOpen] = React.useState(false);
+  const [selectedAccountUser, setSelectedAccountUser] = React.useState<UserRecord | null>(null);
+  const [accountDrawerOpen, setAccountDrawerOpen] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [sessionHistoryUser, setSessionHistoryUser] = React.useState<UserRecord | null>(null);
   const [sessionAuditOpen, setSessionAuditOpen] = React.useState(false);
   const [sessionAuditKeyword, setSessionAuditKeyword] = React.useState('');
   const [revokeTarget, setRevokeTarget] = React.useState<UserRecord | null>(null);
   const [revokeError, setRevokeError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const paramKeyword = searchParams.get('keyword') ?? '';
+    if (paramKeyword && paramKeyword !== keyword) {
+      setKeyword(paramKeyword);
+      setPage(1);
+    }
+  }, [searchParams]);
 
   const revokeSessionMutation = useRevokeUserSessionMutation();
 
@@ -77,9 +92,14 @@ export function RbacUsersPage() {
   const usersQuery = useUsersQuery({ page, limit, keyword: keyword || undefined });
   const { data, isLoading } = usersQuery;
 
-  const handleOpenDrawer = (user: UserRecord) => {
-    setSelectedUser(user);
-    setDrawerOpen(true);
+  const handleOpenPermissionsDrawer = (user: UserRecord) => {
+    setSelectedPermissionsUser(user);
+    setPermissionsDrawerOpen(true);
+  };
+
+  const handleOpenAccountDrawer = (user: UserRecord) => {
+    setSelectedAccountUser(user);
+    setAccountDrawerOpen(true);
   };
 
   const columns = React.useMemo<ColumnDef<UserRecord, unknown>[]>(
@@ -108,22 +128,34 @@ export function RbacUsersPage() {
       {
         id: 'role',
         header: 'Vai trò',
-        size: 160,
-        cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            {row.original.isSuperAdmin ? (
-              <Badge
-                data-testid={`super-admin-badge-${row.original.id}`}
-                variant="default"
-                className="bg-amber-500 text-white"
-              >
-                Super Admin
-              </Badge>
-            ) : (
-              <Badge variant="secondary">Nhân viên</Badge>
-            )}
-          </div>
-        ),
+        size: 180,
+        cell: ({ row }) => {
+          const roleDisplay = resolveUserRoleDisplay({
+            isSuperAdmin: row.original.isSuperAdmin,
+            roleLabel: row.original.roleLabel,
+            positionName: row.original.employee?.position?.name,
+          });
+          return (
+            <div className="flex items-center gap-2">
+              {row.original.isSuperAdmin ? (
+                <Badge
+                  data-testid={`super-admin-badge-${row.original.id}`}
+                  variant="default"
+                  className="bg-amber-500 text-white"
+                >
+                  Super Admin
+                </Badge>
+              ) : (
+                <Badge
+                  variant="secondary"
+                  data-testid={`user-role-badge-${row.original.id}`}
+                >
+                  {roleDisplay}
+                </Badge>
+              )}
+            </div>
+          );
+        },
       },
       {
         id: 'status',
@@ -187,24 +219,38 @@ export function RbacUsersPage() {
       {
         id: 'actions',
         header: 'Thao tác',
-        size: isSuperAdmin ? 124 : 76,
+        size: isSuperAdmin ? 160 : 96,
         enableResizing: false,
         cell: ({ row }) => {
           const canRevoke = Boolean(isSuperAdmin && row.original.session?.isActiveSession);
           return (
             <div className="flex items-center gap-1 whitespace-nowrap">
-              <Tooltip content="Phân quyền & chi tiết tài khoản">
+              <Tooltip content="Chi tiết tài khoản">
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  title="Phân quyền & chi tiết tài khoản"
+                  title="Chi tiết tài khoản"
+                  aria-label="Chi tiết tài khoản"
+                  className="h-8 w-8 p-0 active:scale-95 transition-transform"
+                  data-testid={`open-account-details-btn-${row.original.id}`}
+                  onClick={() => handleOpenAccountDrawer(row.original)}
+                >
+                  <UserCog className="h-4 w-4" />
+                </Button>
+              </Tooltip>
+              <Tooltip content="Phân quyền">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  title="Phân quyền"
                   aria-label="Phân quyền tài khoản"
                   className="h-8 w-8 p-0 active:scale-95 transition-transform"
                   data-testid={`open-permissions-btn-${row.original.id}`}
-                  onClick={() => handleOpenDrawer(row.original)}
+                  onClick={() => handleOpenPermissionsDrawer(row.original)}
                 >
-                  <Settings className="h-4 w-4" />
+                  <Shield className="h-4 w-4" />
                 </Button>
               </Tooltip>
               {isSuperAdmin ? (
@@ -293,9 +339,21 @@ export function RbacUsersPage() {
         isFetching={usersQuery.isFetching}
         isPlaceholderData={usersQuery.isPlaceholderData}
         emptyMessage="Không tìm thấy tài khoản nào."
-        searchPlaceholder="Tìm kiếm tài khoản..."
+        searchPlaceholder="Tìm kiếm tài khoản, nhân sự, vai trò..."
         searchValue={keyword}
-        onSearchChange={setKeyword}
+        onSearchChange={(nextKeyword) => {
+          setKeyword(nextKeyword);
+          setPage(1);
+          if (searchParams.has('keyword')) {
+            const nextParams = new URLSearchParams(searchParams);
+            if (nextKeyword.trim()) {
+              nextParams.set('keyword', nextKeyword);
+            } else {
+              nextParams.delete('keyword');
+            }
+            setSearchParams(nextParams, { replace: true });
+          }
+        }}
         pagination={{
           page,
           limit,
@@ -306,10 +364,24 @@ export function RbacUsersPage() {
         }}
       />
 
+      <AccountDetailsDrawer
+        open={accountDrawerOpen}
+        onOpenChange={setAccountDrawerOpen}
+        user={
+          selectedAccountUser
+            ? (data?.items.find((item) => item.id === selectedAccountUser.id) ?? selectedAccountUser)
+            : null
+        }
+      />
+
       <PermissionsDrawer
-        open={drawerOpen}
-        onOpenChange={setDrawerOpen}
-        user={selectedUser}
+        open={permissionsDrawerOpen}
+        onOpenChange={setPermissionsDrawerOpen}
+        user={
+          selectedPermissionsUser
+            ? (data?.items.find((item) => item.id === selectedPermissionsUser.id) ?? selectedPermissionsUser)
+            : null
+        }
       />
 
       <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} />

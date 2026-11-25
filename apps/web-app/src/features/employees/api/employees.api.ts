@@ -32,7 +32,13 @@ export interface EmployeeRecord {
   createdAt: string;
   position: { id: number; name: string } | null;
   specialty: { id: number; name: string } | null;
-  user: { id: number; username: string; isActive: boolean; isSuperAdmin?: boolean } | null;
+  user: {
+    id: number;
+    username: string;
+    isActive: boolean;
+    isSuperAdmin?: boolean;
+    roleLabel?: string | null;
+  } | null;
 }
 
 export interface EmployeeListResponse {

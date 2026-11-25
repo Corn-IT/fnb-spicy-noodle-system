@@ -33,7 +33,7 @@ import { generateShortName } from './short-name.util';
 const employeeRelations = {
   position: true,
   specialty: true,
-  user: { select: { id: true, username: true, isActive: true, isSuperAdmin: true } },
+  user: { select: { id: true, username: true, isActive: true, isSuperAdmin: true, roleLabel: true } },
 } satisfies Prisma.EmployeeInclude;
 
 type EmployeeRecord = Prisma.EmployeeGetPayload<{ include: typeof employeeRelations }>;
@@ -149,6 +149,7 @@ export class EmployeesService {
               employeeId: created.id,
               username: employeeInput.account.username,
               passwordHash,
+              roleLabel: employeeInput.account.roleLabel?.trim() || null,
               permissions: employeeInput.account.permissions as Prisma.InputJsonObject,
             },
           });

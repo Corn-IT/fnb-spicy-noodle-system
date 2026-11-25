@@ -905,7 +905,7 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
       });
 
       // Table search input must stay marked as non-autofill searchbox
-      const searchInput = screen.getByPlaceholderText('Tìm kiếm tài khoản...') as HTMLInputElement;
+      const searchInput = screen.getByPlaceholderText('Tìm kiếm tài khoản, nhân sự, vai trò...') as HTMLInputElement;
       expect(searchInput).toHaveAttribute('type', 'search');
       expect(searchInput).toHaveAttribute('autocomplete', 'off');
       expect(searchInput.value).toBe('');
@@ -917,19 +917,9 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
         expect(screen.getByTestId('permissions-drawer')).toBeInTheDocument();
       });
 
-      // Reset-password fields must be isolated in an explicit <form> with new-password
-      // so Chrome password manager never autofills the table search input
-      const resetSection = screen.getByTestId('reset-password-section');
-      expect(resetSection.tagName).toBe('FORM');
-      expect(resetSection).toHaveAttribute('autocomplete', 'off');
-      expect(screen.getByTestId('reset-password-input')).toHaveAttribute(
-        'autocomplete',
-        'new-password',
-      );
-      expect(screen.getByTestId('reset-password-confirm-input')).toHaveAttribute(
-        'autocomplete',
-        'new-password',
-      );
+      // Quick preset bar & module select-all should be visible in expanded PermissionsDrawer
+      expect(screen.getByTestId('preset-cashier-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('perm-select-all-pos')).toBeInTheDocument();
 
       // Checkboxes should NOT be disabled for regular user
       const invoicesApproveCheckbox = screen.getByTestId('perm-checkbox-invoices-approve');
@@ -945,7 +935,6 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
 
       // invoices.void must remain locked (SuperAdminOnly on backend)
       expect(screen.getByTestId('perm-checkbox-invoices-void')).toBeDisabled();
-      expect(screen.getByTestId('user-active-checkbox')).not.toBeDisabled();
 
       // Save button should be visible
       const saveBtn = screen.getByTestId('save-permissions-btn');
@@ -962,6 +951,88 @@ describe('Story 12 — HR (Module 5), Schedule (Module 6), Master Data (Module 7
             }),
           }),
         );
+      });
+    });
+
+    it('should open AccountDetailsDrawer to edit employee, username, roleLabel, status, and reset password', async () => {
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: superAdminUser,
+      });
+
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/employees') {
+          return {
+            items: [
+              {
+                id: 30,
+                fullName: 'Lê Văn Mới',
+                isDeleted: false,
+                position: { id: 3, name: 'Thu Ngân Quầy' },
+                user: null,
+              },
+            ],
+          };
+        }
+        return mockUsersResponse;
+      });
+      const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValue({
+        ...mockUsersResponse.items[1],
+        employeeId: 30,
+        username: 'cashier02',
+        roleLabel: 'Thu ngân ca tối',
+        isActive: true,
+      });
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      render(
+        <QueryProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/rbac?keyword=cashier01']} future={routerFutureFlags}>
+            <RbacUsersPage />
+          </MemoryRouter>
+        </QueryProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('cashier01')).toBeInTheDocument();
+      });
+
+      const searchInput = screen.getByPlaceholderText('Tìm kiếm tài khoản, nhân sự, vai trò...') as HTMLInputElement;
+      expect(searchInput.value).toBe('cashier01');
+
+      fireEvent.click(screen.getByTestId('open-account-details-btn-2'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('account-details-drawer')).toBeInTheDocument();
+      });
+
+      const resetSection = screen.getByTestId('reset-password-section');
+      expect(resetSection.tagName).toBe('FORM');
+      expect(resetSection).toHaveAttribute('autocomplete', 'off');
+      expect(screen.getByTestId('reset-password-input')).toHaveAttribute('autocomplete', 'new-password');
+
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: /Lê Văn Mới/ })).toBeInTheDocument();
+      });
+      fireEvent.change(screen.getByTestId('account-employee-select'), { target: { value: '30' } });
+      expect(screen.getByTestId('employee-reassign-warning')).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId('account-username-input'), { target: { value: 'cashier02' } });
+      fireEvent.change(screen.getByTestId('account-role-label-input'), { target: { value: 'Thu ngân ca tối' } });
+      fireEvent.click(screen.getByTestId('user-active-checkbox'));
+
+      fireEvent.click(screen.getByTestId('save-account-details-btn'));
+
+      await waitFor(() => {
+        expect(putSpy).toHaveBeenCalledWith('/api/v1/users/2', {
+          employeeId: 30,
+          username: 'cashier02',
+          roleLabel: 'Thu ngân ca tối',
+          isActive: true,
+        });
       });
     });
 
