@@ -71,9 +71,14 @@ describe('Responsive Mobile & Tablet UI primitives', () => {
     expect(screen.getByText('146.000 đ')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
 
+    const amountValueCell = screen.getByText('146.000 đ');
+    expect(amountValueCell).toHaveClass('items-end', 'text-right');
+
     fireEvent.click(screen.getByTestId('base-table-view-toggle'));
 
-    expect(screen.getByRole('table')).toBeInTheDocument();
+    const table = screen.getByRole('table');
+    expect(table).toBeInTheDocument();
+    expect(table.parentElement).not.toHaveClass('touch-pan-x');
     expect(screen.queryByTestId('base-table-mobile-cards')).not.toBeInTheDocument();
   });
 
