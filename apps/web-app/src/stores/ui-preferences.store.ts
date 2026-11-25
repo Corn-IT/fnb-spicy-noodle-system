@@ -45,6 +45,7 @@ export interface UiPreferencesState {
   setUserNavOrder: (order: string[]) => void;
   setUserNavGroupOrder: (order: string[]) => void;
   setTheme: (theme: ThemeMode) => void;
+  resetThemeToStoreDefault: () => void;
   toggleTheme: () => void;
   setSidebarWidth: (width: number) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
@@ -111,6 +112,7 @@ export const useUiPreferencesStore = create<UiPreferencesState>()(
       setUserNavOrder: (order) => set({ userNavOrder: order }),
       setUserNavGroupOrder: (order) => set({ userNavGroupOrder: order }),
       setTheme: (theme) => set({ theme, hasExplicitTheme: true }),
+      resetThemeToStoreDefault: () => set({ hasExplicitTheme: false }),
       toggleTheme: () => set({ theme: get().theme === 'dark' ? 'light' : 'dark', hasExplicitTheme: true }),
       setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),

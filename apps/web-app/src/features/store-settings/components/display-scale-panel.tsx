@@ -82,7 +82,7 @@ export function DisplayScalePanel({
             <span>Cỡ chữ & Tỉ lệ hiển thị màn hình</span>
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Phóng to hoặc thu nhỏ vùng nội dung (80%–150%) theo từng màn hình và pop-up mở từ màn hình đó. Thanh menu bên trái và thanh trên giữ nguyên 100%.
+            Phóng to hoặc thu nhỏ vùng nội dung mặc định toàn quán (80%–150%) theo từng màn hình và pop-up mở từ màn hình đó. Thanh menu bên trái và thanh trên giữ nguyên 100%. Tài khoản nào đã tự chỉnh tỉ lệ riêng trong <strong>Hồ sơ → Cá nhân của tôi</strong> sẽ giữ nguyên mức cá nhân của họ.
           </p>
         </div>
         <Button

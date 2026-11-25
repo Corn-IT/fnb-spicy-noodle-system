@@ -286,9 +286,9 @@ export function NavCustomizationPanel({
     <div className="min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5 shadow-xs">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Sắp xếp thứ tự hiển thị và tuỳ chỉnh Tiêu đề gom (tối đa 40 ký tự), Tên menu (tối đa 40
+          Sắp xếp thứ tự hiển thị mặc định toàn quán và tuỳ chỉnh Tiêu đề gom (tối đa 40 ký tự), Tên menu (tối đa 40
           ký tự), Tiêu đề trang (H1, tối đa 80 ký tự) và Mô tả trang (Subtitle, tối đa 200 ký tự).
-          Thứ tự tại đây đồng bộ trực tiếp với thanh bên (Sidebar) và tìm nhanh Ctrl+K.
+          Tên menu & tiêu đề trang áp dụng cho mọi tài khoản; riêng thứ tự nhóm/menu sẽ tôn trọng sắp xếp cá nhân nếu nhân viên đã tự tuỳ chỉnh trong <strong>Hồ sơ → Cá nhân của tôi</strong>.
         </p>
 
         <Button

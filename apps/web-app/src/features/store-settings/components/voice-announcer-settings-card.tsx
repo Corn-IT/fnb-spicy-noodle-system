@@ -295,6 +295,7 @@ export function VoiceAnnouncerSettingsCard({
             variant="outline"
             size="sm"
             data-testid="voice-settings-device-toggle-btn"
+            title="Chỉ bật/tắt loa cho tài khoản đang đăng nhập (lưu theo tài khoản cá nhân, không ảnh hưởng tài khoản khác)"
             onClick={() => {
               const next = !deviceVoiceEnabled;
               setQrVoiceAlertEnabled(next);
@@ -309,7 +310,7 @@ export function VoiceAnnouncerSettingsCard({
             ) : (
               <VolumeX className="h-3.5 w-3.5 text-muted-foreground" />
             )}
-            <span>{deviceVoiceEnabled ? 'Loa máy này: Đang Bật' : 'Loa máy này: Đang Tắt'}</span>
+            <span>{deviceVoiceEnabled ? 'Loa tài khoản này: Đang Bật' : 'Loa tài khoản này: Đang Tắt'}</span>
           </Button>
 
           <Button
