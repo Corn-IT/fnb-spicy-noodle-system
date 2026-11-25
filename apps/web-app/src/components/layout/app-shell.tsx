@@ -172,15 +172,52 @@ export function AppShell() {
   );
 
   // When phone wakes up from lock screen / background tab, force-refetch live table grid
-  // before re-enabling client-side overdue reminders.
+  // before re-enabling client-side overdue reminders, then read ONE catch-up announcement
+  // covering every order that is STILL waiting for confirmation (including overdue ones).
+  const knownPendingQrKeysRef = React.useRef<Set<string> | null>(null);
+  const hiddenAtMsRef = React.useRef<number | null>(null);
   React.useEffect(() => {
     if (!accessToken || !canReceivePosAlerts || typeof document === 'undefined') return;
     let active = true;
+    const WAKE_CATCH_UP_MIN_HIDDEN_MS = 20_000;
     const handleVisibility = () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible') {
+        if (hiddenAtMsRef.current === null) hiddenAtMsRef.current = Date.now();
+        return;
+      }
+      const hiddenMs = hiddenAtMsRef.current === null ? 0 : Date.now() - hiddenAtMsRef.current;
+      hiddenAtMsRef.current = null;
       setIsResyncingAfterWake(true);
       void queryClient
         .refetchQueries({ queryKey: POS_TABLE_GRID_QUERY_KEY })
+        .then(() => {
+          if (!active) return;
+          const grid = queryClient.getQueryData<PosTableGridResponse | null>(
+            POS_TABLE_GRID_QUERY_KEY,
+          );
+          const pending = collectPendingQrItems(grid);
+          // Mark everything currently pending as known so the diff detector never repeats it.
+          knownPendingQrKeysRef.current = new Set(pending.map((item) => item.key));
+          if (hiddenMs < WAKE_CATCH_UP_MIN_HIDDEN_MS || pending.length === 0) return;
+          if (pending.length === 1) {
+            const only = pending[0]!;
+            void enqueueQrVoiceAlert({
+              tableLabel: only.tableLabel,
+              kind: only.kind,
+              orderCode: only.orderCode,
+            });
+          } else {
+            void enqueueQrVoiceAlert({
+              tableLabel: pending.map((item) => item.tableLabel).join(', '),
+              kind: pending[0]!.kind,
+              isReminder: true,
+              reminderTables: pending.map((item) => ({
+                tableLabel: item.tableLabel,
+                kind: item.kind,
+              })),
+            });
+          }
+        })
         .finally(() => {
           if (active) setIsResyncingAfterWake(false);
         });
@@ -328,7 +365,6 @@ export function AppShell() {
   // Diff-based fallback detector: if a new pending QR order or addon appears in `globalTableGridQuery.data`
   // (via background poll, tab focus refetch, or reconnect) that was missed by Socket.io, alert immediately at t=0
   // instead of waiting 5 minutes for the overdue reminder!
-  const knownPendingQrKeysRef = React.useRef<Set<string> | null>(null);
   React.useEffect(() => {
     if (!canReceivePosAlerts || !globalTableGridQuery.data) return;
     const currentItems = collectPendingQrItems(globalTableGridQuery.data);
@@ -339,19 +375,35 @@ export function AppShell() {
       return;
     }
 
-    const nowMs = Date.now();
-    for (const item of currentItems) {
-      if (!knownPendingQrKeysRef.current.has(item.key)) {
-        // Only fire initial alert for genuinely fresh orders (< 4.5 minutes old) so we don't collide with 5m overdue reminder
-        if (nowMs - item.sinceMs < 4.5 * 60_000) {
-          dispatchUnifiedQrOrderAlert({
-            kind: item.kind,
-            tableLabel: item.tableLabel,
-            orderId: item.orderId,
-            invalidateGrid: false,
-          });
-        }
-      }
+    // Only orders that are STILL pending in the freshly fetched grid can appear here, so anything the
+    // cashier already confirmed / printed / voided while the app was asleep is never announced.
+    const freshItems = currentItems.filter(
+      (item) => !knownPendingQrKeysRef.current!.has(item.key),
+    );
+    if (freshItems.length >= 2) {
+      // Catch-up after wake-up: read ONE grouped sentence instead of replaying every order.
+      void enqueueQrVoiceAlert({
+        tableLabel: freshItems.map((item) => item.tableLabel).join(', '),
+        kind: freshItems[0]!.kind,
+        isReminder: true,
+        reminderTables: freshItems.map((item) => ({
+          tableLabel: item.tableLabel,
+          kind: item.kind,
+        })),
+      });
+      notifyRef.current('pos.socket.newQrOrder', {
+        variant: 'warning',
+        vars: { tableLabel: freshItems.map((item) => item.tableLabel).join(', ') },
+        duration: 6000,
+      });
+    } else if (freshItems.length === 1) {
+      const item = freshItems[0]!;
+      dispatchUnifiedQrOrderAlert({
+        kind: item.kind,
+        tableLabel: item.tableLabel,
+        orderId: item.orderId,
+        invalidateGrid: false,
+      });
     }
     knownPendingQrKeysRef.current = currentKeySet;
   }, [canReceivePosAlerts, globalTableGridQuery.data, dispatchUnifiedQrOrderAlert]);
@@ -370,6 +422,14 @@ export function AppShell() {
       navigate(url);
     },
     onForegroundPushOrderAlert: (pushPayload) => {
+      // A frozen background tab receives its queued push messages all at once when the user returns.
+      // Anything older than 20s is stale: the grid refetch + grouped catch-up above already covers
+      // orders that are still pending, and orders handled meanwhile must stay silent.
+      const pushedAtMs = pushPayload.timestamp ? Date.parse(pushPayload.timestamp) : Number.NaN;
+      if (!Number.isFinite(pushedAtMs) || Date.now() - pushedAtMs > 20_000) {
+        void queryClient.invalidateQueries({ queryKey: POS_TABLE_GRID_QUERY_KEY });
+        return;
+      }
       if (pushPayload.kind === 'QR_NEW') {
         dispatchUnifiedQrOrderAlert({
           kind: 'NEW',

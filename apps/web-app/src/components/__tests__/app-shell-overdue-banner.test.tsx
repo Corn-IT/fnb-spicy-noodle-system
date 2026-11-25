@@ -262,6 +262,7 @@ describe('AppShell global QR overdue warning banner & reminder monitor', () => {
               kind: 'QR_NEW',
               orderId: 808,
               tableLabel: 'Bàn 08',
+              timestamp: new Date().toISOString(),
             },
           },
         } as unknown as MessageEvent);
@@ -272,8 +273,196 @@ describe('AppShell global QR overdue warning banner & reminder monitor', () => {
       tableLabel: 'Bàn 08',
       kind: 'NEW',
     });
+
+    // 4. STALE queued push (frozen tab resumed minutes later) must stay silent
+    enqueueSpy.mockClear();
+    act(() => {
+      for (const listener of swListeners) {
+        listener({
+          data: {
+            type: 'POS_PUSH_SUPPRESSED_FOREGROUND',
+            payload: {
+              kind: 'QR_NEW',
+              orderId: 909,
+              tableLabel: 'Bàn 09',
+              timestamp: new Date(Date.now() - 5 * 60_000).toISOString(),
+            },
+          },
+        } as unknown as MessageEvent);
+      }
+    });
+    expect(enqueueSpy).not.toHaveBeenCalled();
     expect(
       useToastStore.getState().toasts.some((t) => /Bàn 08/i.test(`${t.title} ${t.description ?? ''}`)),
     ).toBe(true);
+  });
+
+  it('on wake-up after >=20s hidden: stays silent if all orders were handled, reads single order for 1 pending, reads ONE grouped announcement for >=2 pending (including overdue), and stays silent if hidden <20s', async () => {
+    activeMockSocket = new FakeShellSocket();
+    const enqueueSpy = vi
+      .spyOn(qrVoiceAnnouncer, 'enqueueQrVoiceAlert')
+      .mockResolvedValue(undefined);
+
+    let currentGrid: PosTableGridResponse = { tables: [], takeaways: [] };
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/tables') return currentGrid;
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    let fakeNow = Date.parse('2026-11-25T12:00:00.000Z');
+    const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
+
+    const setVisibility = (state: 'visible' | 'hidden') => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: state,
+      });
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    };
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/pos']} future={routerFutureFlags}>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route path="/pos" element={<div data-testid="mock-pos-view">POS</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryProvider>,
+    );
+
+    expect(await screen.findByTestId('mock-pos-view')).toBeInTheDocument();
+    enqueueSpy.mockClear();
+
+    // Case 1: Tab hidden for 3 minutes, orders were already confirmed/printed -> grid has 0 pending -> MUST stay silent
+    setVisibility('hidden');
+    fakeNow += 3 * 60_000;
+    currentGrid = { tables: [], takeaways: [] };
+    setVisibility('visible');
+    await waitFor(() => {
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/pos/tables');
+    });
+    expect(enqueueSpy).not.toHaveBeenCalled();
+
+    // Case 2: Tab hidden for only 10s (< 20s) with 1 pending -> wake catch-up skipped (live socket handles it)
+    const freshIso = new Date(fakeNow - 5_000).toISOString();
+    currentGrid = {
+      tables: [
+        {
+          id: 4,
+          name: 'Bàn 04',
+          status: 'PENDING',
+          activeOrderId: 401,
+          activeOrder: {
+            orderId: 401,
+            orderCode: 'HD-401',
+            orderType: 'DINE_IN',
+            tableId: 4,
+            tableLabel: 'Bàn 04',
+            takeawayNumber: null,
+            status: 'PENDING',
+            totalAmount: 55000,
+            createdAt: freshIso,
+            pendingQrSince: freshIso,
+            pendingQrKind: 'NEW',
+          },
+        },
+      ],
+      takeaways: [],
+    };
+    setVisibility('hidden');
+    fakeNow += 10_000;
+    setVisibility('visible');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(enqueueSpy).not.toHaveBeenCalled();
+
+    // Case 3: Tab hidden for 25s (>= 20s) with 1 pending -> reads single order announcement
+    setVisibility('hidden');
+    fakeNow += 25_000;
+    setVisibility('visible');
+    await waitFor(() => {
+      expect(enqueueSpy).toHaveBeenCalledWith({
+        tableLabel: 'Bàn 04',
+        kind: 'NEW',
+        orderCode: 'HD-401',
+      });
+    });
+
+    // Case 4: Tab hidden for 6 minutes with 2 pending orders (1 fresh + 1 overdue >5m) -> reads ONE grouped announcement covering both
+    enqueueSpy.mockClear();
+    const overdueIso = new Date(fakeNow - 6 * 60_000).toISOString();
+    const recentIso = new Date(fakeNow - 60_000).toISOString();
+    currentGrid = {
+      tables: [
+        {
+          id: 5,
+          name: 'Bàn 05',
+          status: 'PENDING',
+          activeOrderId: 501,
+          activeOrder: {
+            orderId: 501,
+            orderCode: 'HD-501',
+            orderType: 'DINE_IN',
+            tableId: 5,
+            tableLabel: 'Bàn 05',
+            takeawayNumber: null,
+            status: 'PENDING',
+            totalAmount: 65000,
+            createdAt: overdueIso,
+            pendingQrSince: overdueIso,
+            pendingQrKind: 'NEW',
+          },
+        },
+        {
+          id: 8,
+          name: 'Bàn 08',
+          status: 'OCCUPIED',
+          activeOrderId: 801,
+          activeOrder: {
+            orderId: 801,
+            orderCode: 'HD-801',
+            orderType: 'DINE_IN',
+            tableId: 8,
+            tableLabel: 'Bàn 08',
+            takeawayNumber: null,
+            status: 'SERVING',
+            totalAmount: 90000,
+            createdAt: overdueIso,
+            hasUnprintedAddon: true,
+            unprintedAddonBatchNo: 2,
+            pendingQrSince: recentIso,
+            pendingQrKind: 'ADDON',
+          },
+        },
+      ],
+      takeaways: [],
+    };
+    setVisibility('hidden');
+    fakeNow += 6 * 60_000;
+    setVisibility('visible');
+    await waitFor(() => {
+      expect(enqueueSpy).toHaveBeenCalledWith({
+        tableLabel: 'Bàn 05, Bàn 08',
+        kind: 'NEW',
+        isReminder: true,
+        reminderTables: [
+          { tableLabel: 'Bàn 05', kind: 'NEW' },
+          { tableLabel: 'Bàn 08', kind: 'ADDON' },
+        ],
+      });
+    });
+
+    dateNowSpy.mockRestore();
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
   });
 });
