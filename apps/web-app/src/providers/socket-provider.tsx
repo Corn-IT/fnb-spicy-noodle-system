@@ -199,6 +199,8 @@ export function SocketProvider({ children }: SocketProviderProps) {
       void queryClient.invalidateQueries({ queryKey: ['store-settings'] });
       void queryClient.invalidateQueries({ queryKey: ['store-messages'] });
       void queryClient.invalidateQueries({ queryKey: ['audit-logs', 'SETTINGS'] });
+      // Mark admin form cache stale for next visit without silently clobbering an active open form's expectedUpdatedAt (409 guard).
+      void queryClient.invalidateQueries({ queryKey: ['admin-store-settings'], refetchType: 'none' });
     };
 
     const handleSessionRevoked = (raw: unknown) => {

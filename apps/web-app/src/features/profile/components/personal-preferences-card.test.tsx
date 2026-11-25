@@ -40,6 +40,9 @@ describe('PersonalPreferencesCard', () => {
       },
     });
     useUiPreferencesStore.setState({
+      theme: 'light',
+      hasExplicitTheme: false,
+      sidebarWidth: 260,
       userDisplayScale: { perPath: {} },
       userNavOrder: [],
       userNavGroupOrder: [],
@@ -199,6 +202,67 @@ describe('PersonalPreferencesCard', () => {
     await waitFor(
       () => expect(screen.getByRole('status')).toHaveTextContent('Không lưu được lên máy chủ'),
       { timeout: 2000 },
+    );
+  });
+
+  it('switches personal theme and resets back to store default', async () => {
+    renderCard();
+    const themeSelect = screen.getByTestId('personal-theme-select') as HTMLSelectElement;
+    expect(themeSelect.value).toBe('system');
+
+    fireEvent.change(themeSelect, { target: { value: 'dark' } });
+    expect(useUiPreferencesStore.getState().theme).toBe('dark');
+    expect(useUiPreferencesStore.getState().hasExplicitTheme).toBe(true);
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/api/v1/profile/ui-prefs', { theme: 'dark' }),
+    );
+
+    fireEvent.change(themeSelect, { target: { value: 'system' } });
+    expect(useUiPreferencesStore.getState().hasExplicitTheme).toBe(false);
+    await waitFor(() =>
+      expect(patch).toHaveBeenLastCalledWith('/api/v1/profile/ui-prefs', { theme: 'system' }),
+    );
+  });
+
+  it('resets all personal overrides back to store defaults in one click', async () => {
+    useUiPreferencesStore.setState({
+      theme: 'dark',
+      hasExplicitTheme: true,
+      sidebarWidth: 320,
+      sidebarCollapsed: true,
+      userDisplayScale: { globalPercent: 125, perPath: { '/pos': 130 } },
+      userNavOrder: ['/menu', '/pos'],
+      userNavGroupOrder: ['finance', 'sales'],
+      userVoiceAlertEnabled: false,
+    });
+
+    renderCard();
+    const resetAllBtn = screen.getByTestId('personal-preferences-reset-all');
+    expect(resetAllBtn).not.toBeDisabled();
+
+    fireEvent.click(resetAllBtn);
+
+    const state = useUiPreferencesStore.getState();
+    expect(state.hasExplicitTheme).toBe(false);
+    expect(state.sidebarWidth).toBe(260);
+    expect(state.sidebarCollapsed).toBe(false);
+    expect(state.userDisplayScale).toEqual({ perPath: {} });
+    expect(state.userNavOrder).toEqual([]);
+    expect(state.userNavGroupOrder).toEqual([]);
+    expect(state.userVoiceAlertEnabled).toBe(true);
+    expect(isQrVoiceAlertEnabled()).toBe(true);
+    expect(resetAllBtn).toBeDisabled();
+
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/api/v1/profile/ui-prefs', {
+        theme: 'system',
+        displayScale: { perPath: {} },
+        navOrder: [],
+        navGroupOrder: [],
+        sidebarCollapsed: false,
+        sidebarWidth: 260,
+        voiceAlertEnabled: true,
+      }),
     );
   });
 });
