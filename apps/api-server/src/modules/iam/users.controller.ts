@@ -5,12 +5,14 @@ import {
   UserListQuerySchema,
   UserSessionHistoryQuerySchema,
   UpdatePermissionsSchema,
+  UpdateUserAccountSchema,
   type AuthPrincipal,
   type CreateUserInput,
   type ResetUserPasswordInput,
   type UserListQuery,
   type UserSessionHistoryQuery,
   type UpdatePermissionsInput,
+  type UpdateUserAccountInput,
 } from '@fnb/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -57,6 +59,16 @@ export class UsersController {
     @CurrentUser() actor: AuthPrincipal,
   ) {
     return this.iamService.createUser(body, actor);
+  }
+
+  @Put(':id')
+  @SuperAdminOnly()
+  updateAccount(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(new ZodValidationPipe(UpdateUserAccountSchema)) body: UpdateUserAccountInput,
+    @CurrentUser() actor: AuthPrincipal,
+  ) {
+    return this.iamService.updateUserAccount(id, body, actor);
   }
 
   @Put(':id/permissions')

@@ -101,6 +101,7 @@ describe('IAM and MDM HTTP integration', () => {
     refreshAccessToken: vi.fn(async () => loginResult),
     listUsers: vi.fn(async () => ({ page: 1, limit: 50, total: 1, items: [adminUser] })),
     createUser: vi.fn(async () => adminUser),
+    updateUserAccount: vi.fn(async () => adminUser),
     updateUserPermissions: vi.fn(async () => adminUser),
     getProfile: vi.fn(async () => profile),
     updateProfile: vi.fn(async () => profile),
@@ -317,6 +318,28 @@ describe('IAM and MDM HTTP integration', () => {
     });
     expect(updateResponse.status).toBe(200);
     await expect(updateResponse.json()).resolves.toEqual(adminUser);
+
+    const updateAccountResponse = await fetch(`${baseUrl}/api/v1/users/4`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ roleLabel: 'Thu ngân ca tối', username: 'cashier02' }),
+    });
+    expect(updateAccountResponse.status).toBe(200);
+    await expect(updateAccountResponse.json()).resolves.toEqual(adminUser);
+
+    const nonSuperAdminUpdateAccount = await fetch(`${baseUrl}/api/v1/users/4`, {
+      method: 'PUT',
+      headers: { authorization: 'Bearer rbacviewer', 'content-type': 'application/json' },
+      body: JSON.stringify({ roleLabel: 'Không được phép' }),
+    });
+    expect(nonSuperAdminUpdateAccount.status).toBe(403);
+
+    const unauthUpdateAccount = await fetch(`${baseUrl}/api/v1/users/4`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ roleLabel: 'No auth' }),
+    });
+    expect(unauthUpdateAccount.status).toBe(401);
 
     const historyResponse = await fetch(`${baseUrl}/api/v1/users/4/session-history?limit=5`, { headers });
     expect(historyResponse.status).toBe(200);

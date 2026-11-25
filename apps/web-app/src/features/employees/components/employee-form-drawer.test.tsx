@@ -1,9 +1,11 @@
 import { defaultUserPermissions, MdmCategory, type MdmItem } from '@fnb/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/stores/auth.store';
 
+import { type EmployeeRecord } from '../api/employees.api';
 import { EmployeeFormDrawer } from './employee-form-drawer';
 
 const { createMutateAsyncMock, updateMutateAsyncMock } = vi.hoisted(() => ({
@@ -140,5 +142,122 @@ describe('EmployeeFormDrawer', () => {
     await waitFor(() => {
       expect(screen.getByTestId('employee-form-error')).toHaveTextContent('Số CCCD đã được sử dụng');
     });
+  });
+
+  const sampleEmployeeWithAccount: EmployeeRecord = {
+    id: 10,
+    fullName: 'Nguyễn Thu Ngân',
+    shortName: 'T.Ngân',
+    dob: '1999-05-12',
+    phone: '0901234567',
+    address: 'Hà Nội',
+    citizenId: '012345678901',
+    citizenIdIssuedPlace: 'Cục CSQLHC',
+    positionId: 1,
+    specialtyId: 2,
+    startDate: '2025-01-01',
+    bankName: 'VCB',
+    bankAccountNo: '12345678',
+    bankAccountName: 'NGUYEN THU NGAN',
+    avatarUrl: null,
+    attachmentUrls: [],
+    note: null,
+    isDeleted: false,
+    deletedAt: null,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    position: { id: 1, name: 'Thu Ngân Quầy' },
+    specialty: { id: 2, name: 'Thu Ngân' },
+    user: {
+      id: 4,
+      username: 'thungan01',
+      isActive: true,
+      isSuperAdmin: false,
+      roleLabel: 'Thu ngân ca tối',
+    },
+  };
+
+  it('displays linked account info in view mode (and unlinked state when employee has no user)', () => {
+    const { rerender } = render(
+      <EmployeeFormDrawer
+        open
+        onOpenChange={() => undefined}
+        mode="view"
+        employee={sampleEmployeeWithAccount}
+        positions={samplePositions}
+        specialties={sampleSpecialties}
+      />,
+    );
+
+    expect(screen.getByTestId('emp-linked-account-username')).toHaveTextContent('@thungan01');
+    expect(screen.getByTestId('emp-linked-account-role')).toHaveTextContent('Thu ngân ca tối');
+    expect(screen.getByTestId('emp-linked-account-status')).toHaveTextContent('Hoạt động');
+    expect(screen.queryByTestId('emp-open-rbac-btn')).toBeNull();
+
+    rerender(
+      <EmployeeFormDrawer
+        open
+        onOpenChange={() => undefined}
+        mode="view"
+        employee={{ ...sampleEmployeeWithAccount, user: null }}
+        positions={samplePositions}
+        specialties={sampleSpecialties}
+      />,
+    );
+    expect(screen.getByTestId('emp-linked-account-username')).toHaveTextContent(
+      'Chưa được gán tài khoản đăng nhập',
+    );
+  });
+
+  it('locks linked account field with tooltip in edit mode and navigates to /rbac when permitted', () => {
+    useAuthStore.getState().setAuth({
+      accessToken: 'token',
+      user: {
+        id: 2,
+        employeeId: 2,
+        username: 'manager',
+        fullName: 'Quản Lý',
+        isSuperAdmin: false,
+        permissions: {
+          ...defaultUserPermissions,
+          rbac: { ...defaultUserPermissions.rbac, view: true },
+        },
+      },
+    });
+
+    function LocationSpy() {
+      const loc = useLocation();
+      return <div data-testid="current-route">{`${loc.pathname}${loc.search}`}</div>;
+    }
+
+    const onOpenChange = vi.fn();
+    render(
+      <MemoryRouter initialEntries={['/employees']}>
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <LocationSpy />
+                <EmployeeFormDrawer
+                  open
+                  onOpenChange={onOpenChange}
+                  mode="edit"
+                  employee={sampleEmployeeWithAccount}
+                  positions={samplePositions}
+                  specialties={sampleSpecialties}
+                />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const card = screen.getByTestId('emp-linked-account-card');
+    expect(card).toHaveAttribute('title', expect.stringContaining('Phân quyền Hệ thống'));
+
+    fireEvent.click(screen.getByTestId('emp-open-rbac-btn'));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(screen.getByTestId('current-route')).toHaveTextContent('/rbac?keyword=thungan01');
   });
 });

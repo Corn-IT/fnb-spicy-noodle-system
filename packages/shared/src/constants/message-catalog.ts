@@ -2200,6 +2200,23 @@ export const MESSAGE_CATALOG: readonly MessageCatalogItem[] = [
     variables: ['username'],
   }),
   defineMessage({
+    key: 'rbac.account.updateSuccess',
+    module: 'RBAC',
+    kind: 'toast',
+    label: 'Cập nhật chi tiết tài khoản thành công',
+    defaultTitle: 'Đã cập nhật thông tin tài khoản @{username}',
+    variables: ['username'],
+  }),
+  defineMessage({
+    key: 'rbac.account.updateError',
+    module: 'RBAC',
+    kind: 'toast',
+    label: 'Cập nhật chi tiết tài khoản thất bại',
+    defaultTitle: 'Không thể cập nhật thông tin tài khoản',
+    defaultDescription: '{reason}',
+    variables: ['reason'],
+  }),
+  defineMessage({
     key: 'rbac.permissions.updateSuccess',
     module: 'RBAC',
     kind: 'toast',
