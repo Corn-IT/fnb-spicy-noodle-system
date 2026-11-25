@@ -7,6 +7,8 @@ export const ESC_POS_COMMANDS = {
   CASH_DRAWER_KICK: new Uint8Array([0x1b, 0x70, 0x00, 0x32, 0xfa]),
   /** GS L 0 0 — Reset hardware left margin to 0 dots */
   RESET_LEFT_MARGIN: new Uint8Array([0x1d, 0x4c, 0x00, 0x00]),
+  /** ESC a 0 — Force left justification so RawBT / printer never centers GS v 0 rasters */
+  ALIGN_LEFT: new Uint8Array([0x1b, 0x61, 0x00]),
   /** ESC d 4 — Legacy constant kept for reference; encoder only feeds when feedLinesBeforeCut > 0 */
   FEED_BEFORE_CUT: new Uint8Array([0x1b, 0x64, 0x04]),
   /** GS V 66 0 — Feed to cutter and partial auto-cut (standard ESC/POS auto-cutter) */
@@ -32,9 +34,10 @@ export interface ThermalPrintAreaMetrics {
 
 /**
  * Computes printable dot widths for ESC/POS raster rendering at 203 DPI (8 dots/mm).
- * Because `GS L` shifts the left origin rightward by `leftMarginDots`, the raster width
- * is reduced so `leftMarginDots + rasterWidthDots <= paperWidthDots`, preventing
- * right-edge clipping when left/right margins are configured.
+ * Always keeps `rasterWidthDots` at the full `paperWidthDots` (576 or 384) and embeds
+ * both `leftMarginDots` and `rightMarginDots` as explicit white pixels inside the canvas.
+ * That way drivers such as RawBT USB never auto-scale or re-center narrower `GS v 0` bitmaps
+ * and hardware `GS L` quirks cannot shift or clip the right edge.
  */
 export function computeThermalPrintArea(
   paperWidthDots: ThermalPaperWidthDots = 576,
@@ -43,15 +46,14 @@ export function computeThermalPrintArea(
 ): ThermalPrintAreaMetrics {
   const clampedLeftMm = Number.isFinite(leftMarginMm) ? Math.max(0, Math.min(8, leftMarginMm)) : 0;
   const clampedRightMm = Number.isFinite(rightMarginMm) ? Math.max(0, Math.min(8, rightMarginMm)) : 0;
+  const rasterWidthDots = Math.max(64, Math.floor(paperWidthDots / 8) * 8);
   const leftMarginDots = Math.round(clampedLeftMm * 8);
   const rightMarginDots = Math.round(clampedRightMm * 8);
 
-  const maxRasterWidthDots = Math.max(64, Math.floor((paperWidthDots - leftMarginDots) / 8) * 8);
   const contentWidthDots = Math.min(
-    maxRasterWidthDots,
-    Math.max(64, paperWidthDots - leftMarginDots - rightMarginDots),
+    rasterWidthDots,
+    Math.max(64, rasterWidthDots - leftMarginDots - rightMarginDots),
   );
-  const rasterWidthDots = Math.min(maxRasterWidthDots, Math.ceil(contentWidthDots / 8) * 8);
 
   return {
     leftMarginDots,
@@ -487,8 +489,9 @@ function layoutAndDrawLines(
   contentWidth: number,
   baseDots: number,
   draw: boolean,
+  offsetX = 0,
 ): number {
-  const paddingX = 0;
+  const paddingX = offsetX;
   const rightEdgeX = paddingX + contentWidth;
   const centerX = paddingX + contentWidth / 2;
   let cursorY = 4;
@@ -706,11 +709,16 @@ export async function renderTicketPageToMonochrome(
   widthDots: ThermalPaperWidthDots | number = 576,
   luminanceThreshold = 165,
   contentWidthDots?: number,
+  leftMarginDots = 0,
 ): Promise<{ monoBytes: Uint8Array; widthDots: number; heightDots: number }> {
   const safeRasterWidth = Math.max(64, Math.floor(widthDots / 8) * 8);
   const safeContentWidth = Math.min(
     safeRasterWidth,
     Math.max(64, Math.round(contentWidthDots ?? safeRasterWidth)),
+  );
+  const safeOffsetX = Math.max(
+    0,
+    Math.min(safeRasterWidth - safeContentWidth, Math.round(leftMarginDots)),
   );
   const visualLines = extractTicketVisualLines(ticketEl);
   const rawPt = Number(ticketEl.getAttribute('data-font-size-pt'));
@@ -732,7 +740,7 @@ export async function renderTicketPageToMonochrome(
       // Pass 1: measure exact height
       const measuredHeight = Math.max(
         32,
-        layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, false),
+        layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, false, safeOffsetX),
       );
       canvas.height = measuredHeight;
 
@@ -742,7 +750,7 @@ export async function renderTicketPageToMonochrome(
       ctx.textBaseline = 'top';
 
       // Pass 2: draw onto sized canvas
-      layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, true);
+      layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, true, safeOffsetX);
 
       let imageData: ImageData;
       try {
@@ -799,9 +807,8 @@ export async function encodeThermalContainerToEscPos(
   const luminanceThreshold = options.luminanceThreshold ?? 165;
   const leftMarginMm = options.leftMarginMm ?? 0;
   const rightMarginMm = options.rightMarginMm ?? 0;
-  const leftMarginCmd = buildLeftMarginCommand(leftMarginMm);
   const feedCmd = buildFeedLinesCommand(options.feedLinesBeforeCut ?? 0);
-  const { rasterWidthDots, contentWidthDots } = computeThermalPrintArea(
+  const { leftMarginDots, rasterWidthDots, contentWidthDots } = computeThermalPrintArea(
     paperWidthDots,
     leftMarginMm,
     rightMarginMm,
@@ -811,7 +818,11 @@ export async function encodeThermalContainerToEscPos(
   const ticketElements: HTMLElement[] =
     ticketNodeList.length > 0 ? Array.from(ticketNodeList) : [containerEl];
 
-  const chunks: Uint8Array[] = [ESC_POS_COMMANDS.INIT, leftMarginCmd];
+  const chunks: Uint8Array[] = [
+    ESC_POS_COMMANDS.INIT,
+    ESC_POS_COMMANDS.RESET_LEFT_MARGIN,
+    ESC_POS_COMMANDS.ALIGN_LEFT,
+  ];
 
   if (options.kickCashDrawer) {
     chunks.push(ESC_POS_COMMANDS.CASH_DRAWER_KICK);
@@ -824,6 +835,7 @@ export async function encodeThermalContainerToEscPos(
         rasterWidthDots,
         luminanceThreshold,
         contentWidthDots,
+        leftMarginDots,
       );
     const rasterBands = encodeMonochromeRasterBands(
       monoBytes,
