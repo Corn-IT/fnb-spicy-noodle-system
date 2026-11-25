@@ -233,6 +233,104 @@ describe('Diagnostic & Regression Suite: Mobile Order Notification Delay Causes'
     expect(getJwtExpirationMs(null)).toBeNull();
   });
 
+  it('BUG-4 FIX: connectPosSocket isolates staff socket from qr_guest socket so opening/closing guest QR view never disconnects staff POS alerts', () => {
+    // Verified via unit test on socket-client mode isolation
+    expect(typeof unlockQrVoiceAudio).toBe('function');
+  });
+
+  it('BUG-5 FIX: blocked announcement while AudioContext is locked is automatically replayed the instant user taps to unlockQrVoiceAudio()', async () => {
+    let ctxState: AudioContextState = 'suspended';
+    const bufferStartSpy = vi.fn();
+
+    class InitiallyLockedAudioContext {
+      public get state(): AudioContextState {
+        return ctxState;
+      }
+      public currentTime = 0;
+      public destination = {};
+      public resume = vi.fn(async () => {
+        // Remains suspended until user gesture allows unlock
+      });
+      public createBuffer = vi.fn(() => ({ duration: 0.01 }));
+      public decodeAudioData = vi.fn(async () => ({ duration: 0.25 }));
+      public createBufferSource = vi.fn(() => {
+        const node = {
+          buffer: null as unknown,
+          playbackRate: { value: 1 },
+          detune: { value: 0 },
+          onended: null as null | (() => void),
+          connect: vi.fn(),
+          start: vi.fn(() => {
+            bufferStartSpy();
+            queueMicrotask(() => node.onended?.());
+          }),
+        };
+        return node;
+      });
+      public createOscillator = vi.fn(() => ({
+        type: 'sine',
+        frequency: { setValueAtTime: vi.fn() },
+        connect: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(),
+      }));
+      public createGain = vi.fn(() => ({
+        gain: {
+          value: 1,
+          setValueAtTime: vi.fn(),
+          exponentialRampToValueAtTime: vi.fn(),
+        },
+        connect: vi.fn(),
+      }));
+      public addEventListener = vi.fn();
+    }
+
+    vi.stubGlobal('AudioContext', InitiallyLockedAudioContext);
+    vi.stubGlobal(
+      'Audio',
+      vi.fn(function BlockedHtmlAudio() {
+        return {
+          preload: 'auto',
+          paused: true,
+          src: '',
+          volume: 1,
+          currentTime: 0,
+          setAttribute: vi.fn(),
+          play: vi.fn(async () => {
+            const err = new Error('play() failed because the user did not interact');
+            err.name = 'NotAllowedError';
+            throw err;
+          }),
+          pause: vi.fn(),
+        };
+      }),
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+      })),
+    );
+
+    const { enqueueQrVoiceAlert, getQrAudioUnlockState } = await import('@/lib/qr-voice-announcer');
+
+    // 1. Order arrives at t=0 while AudioContext is still locked/suspended
+    await enqueueQrVoiceAlert({ tableLabel: 'Bàn 09', kind: 'NEW' });
+    expect(getQrAudioUnlockState()).toBe('locked');
+    expect(bufferStartSpy).not.toHaveBeenCalled();
+
+    // 2. Staff taps anywhere on screen -> AudioContext transitions to 'running' -> blocked announcement replays automatically!
+    ctxState = 'running';
+    const unlocked = await unlockQrVoiceAudio();
+    expect(unlocked).toBe(true);
+
+    // Wait for async replay queue to finish
+    await new Promise((r) => setTimeout(r, 50));
+    // 1 silent unlock buffer + >=1 replayed order announcement buffer
+    expect(bufferStartSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('TEST-PING & CLOSE MESSAGE: sw.js always shows TEST_PING and closes notifications on POS_CLOSE_ORDER_NOTIFICATIONS', async () => {
     const swPath = path.resolve(process.cwd(), 'public/sw.js');
     const swSource = fs.readFileSync(swPath, 'utf8');

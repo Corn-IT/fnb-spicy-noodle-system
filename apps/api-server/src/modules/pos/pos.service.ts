@@ -467,7 +467,10 @@ export class PosService {
     }
 
     const checkAddonPending = async (): Promise<boolean> => {
-      if (order.status !== 'SERVING' || typeof this.prisma.orderItem?.findFirst !== 'function') {
+      if (
+        !['PENDING', 'SERVING'].includes(order.status) ||
+        typeof this.prisma.orderItem?.findFirst !== 'function'
+      ) {
         return false;
       }
       const unprintedAddon = await this.prisma.orderItem.findFirst({

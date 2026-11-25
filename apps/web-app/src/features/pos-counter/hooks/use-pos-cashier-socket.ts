@@ -6,6 +6,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import * as React from 'react';
 
+import { shouldEmitDeduplicatedOrderAlert } from '@/components/layout/app-shell';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { enqueueQrVoiceAlert } from '@/lib/qr-voice-announcer';
 import { usePosSocketContext } from '@/providers/socket-provider';
@@ -48,12 +49,15 @@ export function usePosCashierSocket(options?: UsePosCashierSocketOptions) {
     const handleQrNew = (raw: unknown) => {
       const payload = raw as QrOrderSocketPayload;
       const tableLabel = payload?.tableLabel ?? 'Bàn';
-      void enqueueQrVoiceAlert({ tableLabel, kind: 'NEW' });
-      notifyRef.current('pos.socket.newQrOrder', {
-        variant: 'warning',
-        vars: { tableLabel },
-        duration: 6000,
-      });
+      const dedupKey = `NEW:${tableLabel.trim().toLowerCase()}:1`;
+      if (shouldEmitDeduplicatedOrderAlert(dedupKey)) {
+        void enqueueQrVoiceAlert({ tableLabel, kind: 'NEW' });
+        notifyRef.current('pos.socket.newQrOrder', {
+          variant: 'warning',
+          vars: { tableLabel },
+          duration: 6000,
+        });
+      }
       void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
       if (payload?.orderId) {
         void queryClient.invalidateQueries({
@@ -65,7 +69,6 @@ export function usePosCashierSocket(options?: UsePosCashierSocketOptions) {
     const handleQrAddon = (raw: unknown) => {
       const payload = raw as QrOrderSocketPayload;
       const tableLabel = payload?.tableLabel ?? 'Bàn';
-      void enqueueQrVoiceAlert({ tableLabel, kind: 'ADDON' });
       const batchNo = payload?.batchNo ?? 2;
       if (payload?.orderId && batchNo >= 2) {
         setAddonBadgesByOrderId((prev) => ({
@@ -73,11 +76,15 @@ export function usePosCashierSocket(options?: UsePosCashierSocketOptions) {
           [payload.orderId!]: batchNo,
         }));
       }
-      notifyRef.current('pos.socket.qrAppendItems', {
-        variant: 'info',
-        vars: { tableLabel, batchNo },
-        duration: 6000,
-      });
+      const dedupKey = `ADDON:${tableLabel.trim().toLowerCase()}:${batchNo}`;
+      if (shouldEmitDeduplicatedOrderAlert(dedupKey)) {
+        void enqueueQrVoiceAlert({ tableLabel, kind: 'ADDON' });
+        notifyRef.current('pos.socket.qrAppendItems', {
+          variant: 'info',
+          vars: { tableLabel, batchNo },
+          duration: 6000,
+        });
+      }
       void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
       if (payload?.orderId) {
         void queryClient.invalidateQueries({

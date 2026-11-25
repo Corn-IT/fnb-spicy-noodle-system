@@ -16,12 +16,18 @@ export type SocketAuthMode =
       guestSessionToken?: string | null;
     };
 
-let activeSocket: Socket | null = null;
+let activeStaffSocket: Socket | null = null;
+let activeGuestSocket: Socket | null = null;
 
 export function connectPosSocket(authConfig: SocketAuthMode): Socket {
-  if (activeSocket) {
-    activeSocket.disconnect();
-    activeSocket = null;
+  if (authConfig.mode === 'staff') {
+    if (activeStaffSocket) {
+      activeStaffSocket.disconnect();
+      activeStaffSocket = null;
+    }
+  } else if (activeGuestSocket) {
+    activeGuestSocket.disconnect();
+    activeGuestSocket = null;
   }
 
   const baseUrl = env.VITE_SOCKET_URL.replace(/\/+$/, '');
@@ -45,7 +51,7 @@ export function connectPosSocket(authConfig: SocketAuthMode): Socket {
             : {}),
         };
 
-  activeSocket = io(namespaceUrl, {
+  const instance = io(namespaceUrl, {
     auth: authOption,
     transports: ['websocket', 'polling'],
     reconnection: true,
@@ -55,16 +61,42 @@ export function connectPosSocket(authConfig: SocketAuthMode): Socket {
     timeout: 10_000,
   });
 
-  return activeSocket;
+  if (authConfig.mode === 'staff') {
+    activeStaffSocket = instance;
+  } else {
+    activeGuestSocket = instance;
+  }
+
+  return instance;
 }
 
-export function getPosSocket(): Socket | null {
-  return activeSocket;
+export function getPosSocket(mode?: 'staff' | 'qr_guest'): Socket | null {
+  if (mode === 'staff') return activeStaffSocket;
+  if (mode === 'qr_guest') return activeGuestSocket;
+  return activeStaffSocket ?? activeGuestSocket;
 }
 
-export function disconnectPosSocket(): void {
-  if (activeSocket) {
-    activeSocket.disconnect();
-    activeSocket = null;
+export function disconnectPosSocket(mode?: 'staff' | 'qr_guest'): void {
+  if (mode === 'staff') {
+    if (activeStaffSocket) {
+      activeStaffSocket.disconnect();
+      activeStaffSocket = null;
+    }
+    return;
+  }
+  if (mode === 'qr_guest') {
+    if (activeGuestSocket) {
+      activeGuestSocket.disconnect();
+      activeGuestSocket = null;
+    }
+    return;
+  }
+  if (activeStaffSocket) {
+    activeStaffSocket.disconnect();
+    activeStaffSocket = null;
+  }
+  if (activeGuestSocket) {
+    activeGuestSocket.disconnect();
+    activeGuestSocket = null;
   }
 }

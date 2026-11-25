@@ -792,15 +792,18 @@ describe('End-to-end wiring: PosService QR order & IamService session revocation
       [2, { id: 2, status: 'SERVING', orderSource: 'QR_CODE' }],
       [3, { id: 3, status: 'PAID', orderSource: 'QR_CODE' }],
     ]);
+    let hasUnprintedAddonForOrder1 = true;
     let hasUnprintedAddonForOrder2 = true;
     const prisma = {
       order: {
         findUnique: vi.fn(async ({ where }: { where: { id: number } }) => orderMap.get(where.id) ?? null),
       },
       orderItem: {
-        findFirst: vi.fn(async ({ where }: { where: { orderId: number } }) =>
-          where.orderId === 2 && hasUnprintedAddonForOrder2 ? { id: 500 } : null,
-        ),
+        findFirst: vi.fn(async ({ where }: { where: { orderId: number } }) => {
+          if (where.orderId === 1 && hasUnprintedAddonForOrder1) return { id: 499 };
+          if (where.orderId === 2 && hasUnprintedAddonForOrder2) return { id: 500 };
+          return null;
+        }),
       },
     };
     const posService = new PosService(
@@ -813,6 +816,18 @@ describe('End-to-end wiring: PosService QR order & IamService session revocation
 
     expect(await posService.checkQrOrderStillPending({ orderId: 1, kind: 'QR_NEW' })).toEqual({
       stillPending: true,
+    });
+    // Addon batch 2 sent while initial order is still PENDING must also report stillPending: true!
+    expect(
+      await posService.checkQrOrderStillPending({ orderId: 1, kind: 'QR_ADDON', batchNo: 2 }),
+    ).toEqual({
+      stillPending: true,
+    });
+    hasUnprintedAddonForOrder1 = false;
+    expect(
+      await posService.checkQrOrderStillPending({ orderId: 1, kind: 'QR_ADDON', batchNo: 2 }),
+    ).toEqual({
+      stillPending: false,
     });
     expect(await posService.checkQrOrderStillPending({ orderId: 2, kind: 'QR_NEW' })).toEqual({
       stillPending: false,

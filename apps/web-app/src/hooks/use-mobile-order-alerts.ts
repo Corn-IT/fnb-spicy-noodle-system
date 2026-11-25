@@ -17,6 +17,7 @@ import {
 } from '@/lib/mobile-audio-keepalive';
 import {
   getQrAudioUnlockState,
+  isQrVoiceAlertEnabled,
   playCashierChime,
   subscribeQrAudioUnlockState,
   unlockQrVoiceAudio,
@@ -269,14 +270,29 @@ export function useMobileOrderAlerts(options?: {
  * - Silently re-syncing granted Web Push subscriptions to the active session
  * - Navigating when user taps a Web Push notification from lock screen
  */
+export interface SwForegroundPushPayload {
+  kind?: string;
+  title?: string;
+  body?: string;
+  tag?: string;
+  url?: string;
+  orderId?: number;
+  tableLabel?: string;
+  batchNo?: number;
+  timestamp?: string;
+}
+
 export function useMobileOrderAlertLifecycle(options: {
   enabled: boolean;
   storeName?: string;
   onNavigateToUrl?: (url: string) => void;
+  onForegroundPushOrderAlert?: (payload: SwForegroundPushPayload) => void;
 }): void {
-  const { enabled, storeName, onNavigateToUrl } = options;
+  const { enabled, storeName, onNavigateToUrl, onForegroundPushOrderAlert } = options;
   const navigateRef = React.useRef(onNavigateToUrl);
   navigateRef.current = onNavigateToUrl;
+  const foregroundPushAlertRef = React.useRef(onForegroundPushOrderAlert);
+  foregroundPushAlertRef.current = onForegroundPushOrderAlert;
 
   const [voiceEnabled, setVoiceEnabled] = React.useState<boolean>(() => false);
   const { voiceEnabled: liveVoice } = useQrVoiceToggle();
@@ -347,9 +363,30 @@ export function useMobileOrderAlertLifecycle(options: {
 
     if (!('serviceWorker' in navigator)) return;
     const handleSwMessage = (event: MessageEvent) => {
-      const data = event.data as { type?: string; url?: string } | null;
+      const data = event.data as {
+        type?: string;
+        url?: string;
+        payload?: SwForegroundPushPayload;
+      } | null;
       if (data?.type === 'POS_NOTIFICATION_CLICK' && typeof data.url === 'string') {
         navigateRef.current?.(data.url);
+        return;
+      }
+      if (data?.type === 'POS_PUSH_FOREGROUND_CHECK') {
+        const audioReady =
+          isQrVoiceAlertEnabled() && getQrAudioUnlockState() === 'unlocked';
+        const replyPort = event.ports?.[0];
+        if (replyPort && typeof replyPort.postMessage === 'function') {
+          try {
+            replyPort.postMessage({ handledByAudio: audioReady });
+          } catch {
+            // Ignore MessageChannel reply error
+          }
+        }
+        return;
+      }
+      if (data?.type === 'POS_PUSH_SUPPRESSED_FOREGROUND' && data.payload) {
+        foregroundPushAlertRef.current?.(data.payload);
       }
     };
 

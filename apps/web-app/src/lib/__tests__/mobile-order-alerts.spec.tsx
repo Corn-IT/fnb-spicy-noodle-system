@@ -332,22 +332,35 @@ describe('Mobile 3-Layer Order Alert System', () => {
         },
       };
 
-      vm.runInNewContext(swSource, { self: swSelf, Date, JSON, console });
+      vm.runInNewContext(swSource, {
+        self: swSelf,
+        MessageChannel,
+        setTimeout,
+        clearTimeout,
+        Date,
+        JSON,
+        console,
+      });
       return { listeners, showNotification, openWindow };
     }
 
-    it('suppresses OS push notification when staff is actively focused on the web app (anti-double-alert)', async () => {
-      const focusedClient = {
+    it('suppresses OS push notification when staff is actively focused AND confirms Web Audio is unlocked (anti-double-alert), but displays OS push when foreground AudioContext is locked', async () => {
+      // Case A: Focused visible client replies `{ handledByAudio: true }` via MessageChannel -> suppress OS push
+      const focusedUnlockedClient = {
         url: 'https://pos.example.com/pos',
         visibilityState: 'visible',
         focused: true,
-        postMessage: vi.fn(),
+        postMessage: vi.fn((msg: { type?: string }, transfer?: Array<{ postMessage: (d: unknown) => void }>) => {
+          if (msg?.type === 'POS_PUSH_FOREGROUND_CHECK' && transfer?.[0]) {
+            transfer[0].postMessage({ handledByAudio: true });
+          }
+        }),
         focus: vi.fn(async () => undefined),
       };
-      const { listeners, showNotification } = loadServiceWorkerHarness([focusedClient]);
+      const harnessA = loadServiceWorkerHarness([focusedUnlockedClient]);
 
-      let pending: Promise<unknown> = Promise.resolve();
-      listeners.get('push')!({
+      let pendingA: Promise<unknown> = Promise.resolve();
+      harnessA.listeners.get('push')!({
         data: {
           json: () => ({
             kind: 'QR_NEW',
@@ -358,14 +371,50 @@ describe('Mobile 3-Layer Order Alert System', () => {
           }),
         },
         waitUntil: (p: Promise<unknown>) => {
-          pending = p;
+          pendingA = p;
         },
       });
-      await pending;
+      await pendingA;
 
-      expect(showNotification).not.toHaveBeenCalled();
-      expect(focusedClient.postMessage).toHaveBeenCalledWith(
+      expect(harnessA.showNotification).not.toHaveBeenCalled();
+      expect(focusedUnlockedClient.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'POS_PUSH_SUPPRESSED_FOREGROUND' }),
+      );
+
+      // Case B: Focused visible mobile client has locked/suspended AudioContext (`handledByAudio: false`) -> MUST still display OS push notification at t=0!
+      const focusedLockedAudioClient = {
+        url: 'https://pos.example.com/pos',
+        visibilityState: 'visible',
+        focused: true,
+        postMessage: vi.fn((msg: { type?: string }, transfer?: Array<{ postMessage: (d: unknown) => void }>) => {
+          if (msg?.type === 'POS_PUSH_FOREGROUND_CHECK' && transfer?.[0]) {
+            transfer[0].postMessage({ handledByAudio: false });
+          }
+        }),
+        focus: vi.fn(async () => undefined),
+      };
+      const harnessB = loadServiceWorkerHarness([focusedLockedAudioClient]);
+
+      let pendingB: Promise<unknown> = Promise.resolve();
+      harnessB.listeners.get('push')!({
+        data: {
+          json: () => ({
+            kind: 'QR_NEW',
+            title: 'Đơn QR mới · Bàn 06',
+            body: 'Bàn 06 vừa gửi đơn mới',
+            tag: 'qr-new-6',
+            url: '/pos?orderId=6',
+          }),
+        },
+        waitUntil: (p: Promise<unknown>) => {
+          pendingB = p;
+        },
+      });
+      await pendingB;
+
+      expect(harnessB.showNotification).toHaveBeenCalledWith(
+        'Đơn QR mới · Bàn 06',
+        expect.objectContaining({ tag: 'qr-new-6' }),
       );
     });
 
