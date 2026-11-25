@@ -108,7 +108,7 @@ let audioUnlockState: QrAudioUnlockState = 'unknown';
 const audioUnlockListeners = new Set<(state: QrAudioUnlockState) => void>();
 const decodedAudioBufferCache = new Map<string, AudioBuffer>();
 const MAX_DECODED_AUDIO_CACHE = 64;
-const BLOCKED_ANNOUNCEMENT_REPLAY_TTL_MS = 90_000;
+const BLOCKED_ANNOUNCEMENT_REPLAY_TTL_MS = 30_000;
 let pendingBlockedAnnouncement: { item: QrVoiceAlertItem; blockedAtMs: number } | null = null;
 
 /** Minimal valid 0.05s 8kHz mono PCM silence WAV for unlocking HTMLAudioElement inside a mobile gesture. */

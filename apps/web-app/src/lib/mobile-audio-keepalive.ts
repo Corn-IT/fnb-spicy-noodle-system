@@ -22,6 +22,7 @@ type NavigatorWithWakeLock = Navigator & {
 let keepAliveAudioElement: HTMLAudioElement | null = null;
 let keepAliveBlobUrl: string | null = null;
 let wakeLockSentinel: WakeLockSentinelLike | null = null;
+let keepAliveWanted = false;
 let runtimeState: MobileKeepAliveRuntimeState = {
   active: false,
   wakeLockActive: false,
@@ -166,6 +167,11 @@ export function buildSilentKeepAliveWavBytes(durationSeconds = 1, sampleRate = 8
 
   const bytes = new Uint8Array(buffer);
   bytes.fill(0x80, 44);
+  // Faint +/-2 LSB alternating samples (inaudible) so the browser's silence detector still treats
+  // the stream as "playing audio" and does not freeze the background tab after a few minutes.
+  for (let i = 1; i < dataSize; i += 1) {
+    bytes[44 + i] = i % 2 === 0 ? 0x7e : 0x82;
+  }
   return bytes;
 }
 
@@ -257,6 +263,7 @@ export async function startMobileAudioKeepAlive(storeName?: string): Promise<boo
 
   const wavUrl = getKeepAliveWavUrl();
   if (!wavUrl) return false;
+  keepAliveWanted = true;
 
   if (!keepAliveAudioElement) {
     const audio = new window.Audio(wavUrl);
@@ -264,7 +271,7 @@ export async function startMobileAudioKeepAlive(storeName?: string): Promise<boo
     audio.preload = 'auto';
     // Must stay unmuted with tiny positive volume so iOS/Android treats it as an active audio session
     audio.muted = false;
-    audio.volume = 0.01;
+    audio.volume = 0.03;
     if ('playsInline' in audio) {
       (audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
     }
@@ -275,6 +282,15 @@ export async function startMobileAudioKeepAlive(storeName?: string): Promise<boo
     audio.onpause = () => {
       if (keepAliveAudioElement === audio && audio.paused) {
         setRuntimeState({ active: false });
+        // OS / browser paused our silent stream (audio focus loss, brief interruption):
+        // try to resume it automatically while the user still wants background alerts.
+        if (keepAliveWanted) {
+          setTimeout(() => {
+            if (keepAliveWanted && keepAliveAudioElement === audio && audio.paused) {
+              void audio.play().catch(() => undefined);
+            }
+          }, 800);
+        }
       }
     };
     audio.onplay = () => {
@@ -303,6 +319,7 @@ export async function startMobileAudioKeepAlive(storeName?: string): Promise<boo
 }
 
 export function stopMobileAudioKeepAlive(): void {
+  keepAliveWanted = false;
   if (keepAliveAudioElement) {
     try {
       keepAliveAudioElement.pause();
