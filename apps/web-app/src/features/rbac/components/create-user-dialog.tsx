@@ -37,6 +37,7 @@ export function CreateUserDialog({ open, onOpenChange }: CreateUserDialogProps) 
   const [employeeId, setEmployeeId] = React.useState<string>('');
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [roleLabel, setRoleLabel] = React.useState('');
   const [permissions, setPermissions] = React.useState<UserPermissions>(
     buildCashierPresetPermissions,
   );
@@ -47,6 +48,7 @@ export function CreateUserDialog({ open, onOpenChange }: CreateUserDialogProps) 
       setEmployeeId('');
       setUsername('');
       setPassword('');
+      setRoleLabel('');
       setPermissions(buildCashierPresetPermissions());
       setFormError(null);
     }
@@ -95,6 +97,7 @@ export function CreateUserDialog({ open, onOpenChange }: CreateUserDialogProps) 
         employeeId: parsedEmployeeId,
         username: cleanUsername,
         password,
+        roleLabel: roleLabel.trim() || null,
         permissions,
       });
       notify('rbac.user.createSuccess', {
@@ -186,6 +189,25 @@ export function CreateUserDialog({ open, onOpenChange }: CreateUserDialogProps) 
                   autoComplete="new-password"
                 />
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="create-user-role-label" className="text-xs font-semibold">
+                Nhãn vai trò hiển thị (tuỳ chọn)
+              </label>
+              <Input
+                id="create-user-role-label"
+                data-testid="create-user-role-label-input"
+                value={roleLabel}
+                maxLength={64}
+                onChange={(e) => setRoleLabel(e.target.value)}
+                placeholder={`Mặc định theo chức vụ: ${
+                  candidates.find((c) => String(c.id) === employeeId)?.position?.name ?? 'Nhân viên'
+                }`}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Để trống sẽ tự động hiển thị theo Chức vụ của nhân viên từ Master Data.
+              </p>
             </div>
 
             <div className="space-y-2 border-t pt-3">

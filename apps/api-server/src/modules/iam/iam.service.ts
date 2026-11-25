@@ -39,7 +39,9 @@ import {
   type RevokedSessionNotice,
   type UiPreferences,
   type UpdatePermissionsInput,
+  type UpdateUserAccountInput,
   type UploadAvatarInput,
+  resolveUserRoleDisplay,
   type UserListQuery,
   type UserAdminRecord,
   type UserListResponse,
@@ -470,15 +472,19 @@ export class IamService {
     const { page, limit, keyword } = parsed.data;
     let where: Prisma.UserWhereInput = {};
     if (keyword) {
-      const [matchedUserIds, matchedEmpIds] = await Promise.all([
-        queryMatchingIdsBySearchNorm(this.prisma, 'users', ['username'], keyword),
+      const [matchedUserIds, matchedEmpIds, matchedPositionIds] = await Promise.all([
+        queryMatchingIdsBySearchNorm(this.prisma, 'users', ['username', 'role_label'], keyword),
         queryMatchingIdsBySearchNorm(this.prisma, 'employees', ['full_name', 'short_name'], keyword),
+        queryMatchingIdsBySearchNorm(this.prisma, 'master_data', ['name'], keyword),
       ]);
-      if (matchedUserIds !== null || matchedEmpIds !== null) {
+      if (matchedUserIds !== null || matchedEmpIds !== null || matchedPositionIds !== null) {
         where = {
           OR: [
             ...(matchedUserIds ? [{ id: { in: matchedUserIds } }] : []),
             ...(matchedEmpIds ? [{ employeeId: { in: matchedEmpIds } }] : []),
+            ...(matchedPositionIds
+              ? [{ employee: { is: { positionId: { in: matchedPositionIds } } } }]
+              : []),
           ],
         };
       } else {
@@ -486,8 +492,10 @@ export class IamService {
         where = {
           OR: variants.flatMap((v) => [
             { username: { contains: v, mode: 'insensitive' as const } },
+            { roleLabel: { contains: v, mode: 'insensitive' as const } },
             { employee: { is: { fullName: { contains: v, mode: 'insensitive' as const } } } },
             { employee: { is: { shortName: { contains: v, mode: 'insensitive' as const } } } },
+            { employee: { is: { position: { is: { name: { contains: v, mode: 'insensitive' as const } } } } } },
           ]),
         };
       }
@@ -518,12 +526,14 @@ export class IamService {
     }
 
     const passwordHash = await bcrypt.hash(input.password, 10);
+    const normalizedRoleLabel = input.roleLabel?.trim() || null;
     try {
       const user = await this.prisma.user.create({
         data: {
           employeeId: input.employeeId,
           username: input.username,
           passwordHash,
+          roleLabel: normalizedRoleLabel,
           permissions: UserPermissionsSchema.parse(input.permissions) as Prisma.InputJsonObject,
         },
         include: { employee: { include: { position: true, specialty: true } } },
@@ -547,6 +557,201 @@ export class IamService {
       }
       throw error;
     }
+  }
+
+  async updateUserAccount(
+    id: number,
+    input: UpdateUserAccountInput,
+    actor?: AuthPrincipal,
+  ): Promise<UserAdminRecord> {
+    const runTx = async (tx: Prisma.TransactionClient | PrismaService) => {
+      const existing = await tx.user.findUnique({
+        where: { id },
+        include: { employee: { include: { position: true, specialty: true } } },
+      });
+      if (!existing) throw new NotFoundException('Không tìm thấy tài khoản');
+      if (existing.isSuperAdmin) {
+        throw new ForbiddenException({
+          code: ErrorCodes.RBAC_SUPER_ADMIN_REQUIRED,
+          message: 'Không thể thay đổi thông tin hoặc khoá tài khoản Super Admin',
+        });
+      }
+
+      const data: Prisma.UserUncheckedUpdateInput = {};
+
+      if (input.employeeId !== undefined && input.employeeId !== existing.employeeId) {
+        const targetEmployee = await tx.employee.findUnique({
+          where: { id: input.employeeId },
+          select: { id: true, fullName: true, isDeleted: true, user: { select: { id: true } } },
+        });
+        if (!targetEmployee || targetEmployee.isDeleted) {
+          throw new NotFoundException({
+            code: ErrorCodes.HR_EMPLOYEE_DELETED,
+            message: 'Không tìm thấy nhân viên đang hoạt động',
+          });
+        }
+        if (targetEmployee.user && targetEmployee.user.id !== id) {
+          throw new ConflictException({
+            code: ErrorCodes.HR_EMPLOYEE_ACCOUNT_EXISTS,
+            message: 'Nhân viên đã có tài khoản đăng nhập',
+          });
+        }
+        data.employeeId = input.employeeId;
+      }
+
+      if (input.username !== undefined && input.username !== existing.username) {
+        const taken = await tx.user.findUnique({
+          where: { username: input.username },
+          select: { id: true },
+        });
+        if (taken && taken.id !== id) {
+          throw this.usernameTaken();
+        }
+        data.username = input.username;
+      }
+
+      if (input.roleLabel !== undefined) {
+        data.roleLabel = input.roleLabel?.trim() || null;
+      }
+
+      const identityChanged =
+        (data.employeeId !== undefined && data.employeeId !== existing.employeeId) ||
+        (data.username !== undefined && data.username !== existing.username);
+
+      let revokedNotice: RevokedSessionNotice | null = null;
+      if (input.isActive !== undefined) {
+        data.isActive = input.isActive;
+        if (input.isActive === false) {
+          revokedNotice = {
+            reason: 'ACCOUNT_DISABLED',
+            at: new Date().toISOString(),
+          };
+          data.activeSessionId = null;
+          data.lastRevokedNotice = revokedNotice as Prisma.InputJsonValue;
+        }
+      }
+
+      if (!revokedNotice && identityChanged && existing.activeSessionId) {
+        revokedNotice = {
+          reason: 'ADMIN_REVOKED',
+          at: new Date().toISOString(),
+        };
+        data.activeSessionId = null;
+        data.lastRevokedNotice = revokedNotice as Prisma.InputJsonValue;
+      }
+
+      const updated = await tx.user.update({
+        where: { id },
+        data,
+        include: { employee: { include: { position: true, specialty: true } } },
+      });
+
+      return { existing, updated, revokedNotice };
+    };
+
+    let result: {
+      existing: UserWithEmployee;
+      updated: UserWithEmployee;
+      revokedNotice: RevokedSessionNotice | null;
+    };
+    try {
+      result =
+        typeof this.prisma.$transaction === 'function'
+          ? await this.prisma.$transaction((tx) => runTx(tx))
+          : await runTx(this.prisma);
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        const target = error.meta?.target;
+        if (Array.isArray(target) && target.includes('username')) throw this.usernameTaken();
+        throw new ConflictException({
+          code: ErrorCodes.HR_EMPLOYEE_ACCOUNT_EXISTS,
+          message: 'Nhân viên đã có tài khoản đăng nhập',
+        });
+      }
+      throw error;
+    }
+
+    const { existing, updated, revokedNotice } = result;
+    if (revokedNotice && existing.activeSessionId) {
+      this.posSocketGateway?.emitSessionRevoked(existing.activeSessionId, revokedNotice);
+      await this.prisma.pushSubscription
+        ?.deleteMany?.({ where: { userId: updated.id } })
+        .catch(() => undefined);
+    }
+
+    if (actor) {
+      const changes: Array<{ field: string; from: string; to: string }> = [];
+      if (existing.employeeId !== updated.employeeId) {
+        changes.push({
+          field: 'Nhân sự liên kết',
+          from: existing.employee.fullName,
+          to: updated.employee.fullName,
+        });
+      }
+      if (existing.username !== updated.username) {
+        changes.push({
+          field: 'Tên đăng nhập',
+          from: existing.username,
+          to: updated.username,
+        });
+      }
+      const prevRoleDisplay = resolveUserRoleDisplay({
+        isSuperAdmin: existing.isSuperAdmin,
+        roleLabel: existing.roleLabel,
+        positionName: existing.employee.position?.name,
+      });
+      const nextRoleDisplay = resolveUserRoleDisplay({
+        isSuperAdmin: updated.isSuperAdmin,
+        roleLabel: updated.roleLabel,
+        positionName: updated.employee.position?.name,
+      });
+      if ((existing.roleLabel ?? null) !== (updated.roleLabel ?? null) || prevRoleDisplay !== nextRoleDisplay) {
+        changes.push({
+          field: 'Vai trò',
+          from: prevRoleDisplay,
+          to: nextRoleDisplay,
+        });
+      }
+      if (existing.isActive !== updated.isActive) {
+        changes.push({
+          field: 'Trạng thái tài khoản',
+          from: existing.isActive ? 'Đang hoạt động' : 'Đã khoá',
+          to: updated.isActive ? 'Đang hoạt động' : 'Đã khoá',
+        });
+      }
+
+      const isStatusOnly =
+        input.isActive !== undefined &&
+        input.employeeId === undefined &&
+        input.username === undefined &&
+        input.roleLabel === undefined;
+
+      await this.auditLogService?.record({
+        module: 'RBAC',
+        action: isStatusOnly ? 'Khoá / Mở tài khoản' : 'Cập nhật tài khoản',
+        detail: `${updated.employee.fullName} (${updated.username})`,
+        message: isStatusOnly
+          ? updated.isActive
+            ? 'mở khoá tài khoản đăng nhập'
+            : 'khoá tài khoản đăng nhập'
+          : 'cập nhật thông tin tài khoản đăng nhập',
+        actor: actor.id,
+        metadata: {
+          targetUserId: id,
+          targetUsername: updated.username,
+          isActive: updated.isActive,
+          ...(revokedNotice && existing.activeSessionId
+            ? {
+                revokedIp: existing.activeSessionIp ?? null,
+                revokedDevice: existing.activeSessionDevice ?? null,
+              }
+            : {}),
+          ...(changes.length > 0 ? { changes } : {}),
+        },
+      });
+    }
+
+    return this.toUserAdmin(updated);
   }
 
   async updateUserPermissions(id: number, input: UpdatePermissionsInput, actor?: AuthPrincipal): Promise<UserAdminRecord> {
@@ -1119,6 +1324,7 @@ export class IamService {
       employeeId: user.employeeId,
       username: user.username,
       isSuperAdmin: user.isSuperAdmin,
+      roleLabel: user.roleLabel ?? null,
       permissions: user.permissions,
       uiPreferences: this.toUiPreferences(user.uiPreferences),
       employee: {
@@ -1197,7 +1403,11 @@ export class IamService {
     return UserAdminRecordSchema.parse({
       ...authUser,
       isActive: user.isActive,
-      employee: { id: user.employee.id, ...authUser.employee },
+      employee: {
+        id: user.employee.id,
+        isDeleted: user.employee.isDeleted,
+        ...authUser.employee,
+      },
       session: this.buildSessionStatus(user),
     });
   }

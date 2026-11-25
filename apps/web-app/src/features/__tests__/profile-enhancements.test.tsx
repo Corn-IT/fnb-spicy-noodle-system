@@ -8,7 +8,7 @@ import { useToastStore } from '@/components/ui/toast';
 import { ProfilePage, type JoinedUserProfile } from '@/features/profile';
 import { LoginPage } from '@/features/profile/components/login-page';
 import { CreateUserDialog } from '@/features/rbac/components/create-user-dialog';
-import { PermissionsDrawer } from '@/features/rbac/components/permissions-drawer';
+import { AccountDetailsDrawer } from '@/features/rbac/components/account-details-drawer';
 import { apiClient } from '@/lib/api-client';
 import { QueryProvider } from '@/providers/query-provider';
 import { useAuthStore } from '@/stores/auth.store';
@@ -102,7 +102,7 @@ describe('Profile Enhancements: Password Eye Toggle, Avatar Crop/Upload, Session
 
     const { unmount: unmountDrawer } = render(
       <QueryProvider client={new QueryClient()}>
-        <PermissionsDrawer
+        <AccountDetailsDrawer
           open
           onOpenChange={vi.fn()}
           user={{
@@ -110,6 +110,7 @@ describe('Profile Enhancements: Password Eye Toggle, Avatar Crop/Upload, Session
             employeeId: 12,
             username: 'cashier01',
             isSuperAdmin: false,
+            roleLabel: null,
             isActive: true,
             permissions: UserPermissionsSchema.parse({}),
             uiPreferences: { theme: 'light', sidebarWidth: 260, columnWidths: {}, displayScale: { perPath: {} }, navOrder: [], navGroupOrder: [], sidebarCollapsed: false },

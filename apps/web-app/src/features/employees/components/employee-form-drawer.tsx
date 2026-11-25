@@ -1,11 +1,15 @@
-import { defaultUserPermissions, type MdmItem } from '@fnb/shared';
+import { defaultUserPermissions, resolveUserRoleDisplay, type MdmItem } from '@fnb/shared';
+import { ExternalLink, Lock, ShieldCheck } from 'lucide-react';
 import * as React from 'react';
+import { useInRouterContext, useNavigate } from 'react-router-dom';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { useAuthStore } from '@/stores/auth.store';
 
@@ -96,7 +100,10 @@ export function EmployeeFormDrawer({
   specialties,
 }: EmployeeFormDrawerProps) {
   const { notify, resolveErrorMessage } = useAppMessages();
-  const isSuperAdmin = Boolean(useAuthStore((s) => s.user?.isSuperAdmin));
+  const currentUser = useAuthStore((s) => s.user);
+  const isSuperAdmin = Boolean(currentUser?.isSuperAdmin);
+  const canViewRbac = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions.rbac.view);
+  const inRouter = useInRouterContext();
   const [form, setForm] = React.useState<FormState>(() => buildInitial(employee));
   const [formError, setFormError] = React.useState<string | null>(null);
   const createMutation = useCreateEmployeeMutation();
@@ -294,6 +301,16 @@ export function EmployeeFormDrawer({
             <Input data-testid="emp-note" value={form.note} readOnly={isReadonly} onChange={(e) => update('note', e.target.value)} />
           </FieldRow>
 
+          {!isCreate && employee ? (
+            <LinkedAccountSection
+              employee={employee}
+              mode={mode}
+              canViewRbac={canViewRbac}
+              inRouter={inRouter}
+              onCloseDrawer={() => onOpenChange(false)}
+            />
+          ) : null}
+
           {isCreate && isSuperAdmin ? (
             <div className="mt-2 rounded-lg border p-3">
               <div className="flex items-center gap-2">
@@ -370,6 +387,137 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
     <div className="flex flex-col gap-1">
       <label className="text-xs font-medium text-muted-foreground">{label}</label>
       {children}
+    </div>
+  );
+}
+
+const EDIT_ACCOUNT_LOCKED_TOOLTIP =
+  'Không thể chỉnh sửa tài khoản tại đây. Vui lòng chuyển sang mục Phân quyền Hệ thống để gán hoặc cập nhật tài khoản.';
+
+function RbacQuickJumpButton({
+  keyword,
+  onAfterNavigate,
+}: {
+  keyword: string;
+  onAfterNavigate: () => void;
+}) {
+  const navigate = useNavigate();
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      data-testid="emp-open-rbac-btn"
+      className="h-7 px-2.5 text-xs font-semibold gap-1.5"
+      onClick={() => {
+        onAfterNavigate();
+        navigate(`/rbac?keyword=${encodeURIComponent(keyword)}`);
+      }}
+    >
+      <span>Mở Phân quyền Hệ thống</span>
+      <ExternalLink className="h-3 w-3 shrink-0" />
+    </Button>
+  );
+}
+
+function LinkedAccountSection({
+  employee,
+  mode,
+  canViewRbac,
+  inRouter,
+  onCloseDrawer,
+}: {
+  employee: EmployeeRecord;
+  mode: 'create' | 'edit' | 'view';
+  canViewRbac: boolean;
+  inRouter: boolean;
+  onCloseDrawer: () => void;
+}) {
+  const linkedUser = employee.user;
+  const isEditMode = mode === 'edit';
+  const roleDisplay = linkedUser
+    ? resolveUserRoleDisplay({
+        isSuperAdmin: linkedUser.isSuperAdmin,
+        roleLabel: linkedUser.roleLabel,
+        positionName: employee.position?.name,
+      })
+    : null;
+
+  const accountFieldCard = (
+    <div
+      data-testid="emp-linked-account-card"
+      title={isEditMode ? EDIT_ACCOUNT_LOCKED_TOOLTIP : undefined}
+      className={
+        isEditMode
+          ? 'rounded-lg border bg-muted/40 p-3 opacity-90 cursor-not-allowed select-none'
+          : 'rounded-lg border bg-muted/25 p-3'
+      }
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {isEditMode ? (
+            <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          ) : (
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-accent-text" aria-hidden="true" />
+          )}
+          <span className="text-sm font-semibold text-foreground truncate" data-testid="emp-linked-account-username">
+            {linkedUser ? `@${linkedUser.username}` : 'Chưa được gán tài khoản đăng nhập'}
+          </span>
+        </div>
+
+        {linkedUser ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {linkedUser.isSuperAdmin ? (
+              <Badge
+                variant="default"
+                className="bg-amber-500 text-white text-[11px]"
+                data-testid="emp-linked-account-role"
+              >
+                Super Admin
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="text-[11px]" data-testid="emp-linked-account-role">
+                {roleDisplay}
+              </Badge>
+            )}
+            <Badge
+              variant={linkedUser.isActive ? 'success' : 'secondary'}
+              className="text-[11px]"
+              data-testid="emp-linked-account-status"
+            >
+              {linkedUser.isActive ? 'Hoạt động' : 'Vô hiệu'}
+            </Badge>
+          </div>
+        ) : null}
+      </div>
+
+      {isEditMode ? (
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          Trường chỉ đọc — quản lý gán hoặc thay đổi tài khoản tại mục Phân quyền Hệ thống.
+        </p>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <div className="mt-1 flex flex-col gap-1.5" data-testid="emp-linked-account-section">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="text-xs font-medium text-muted-foreground">
+          Tài khoản hệ thống (Liên kết 1-1)
+        </label>
+        {isEditMode && canViewRbac && inRouter ? (
+          <RbacQuickJumpButton
+            keyword={linkedUser?.username ?? employee.fullName}
+            onAfterNavigate={onCloseDrawer}
+          />
+        ) : null}
+      </div>
+
+      {isEditMode ? (
+        <Tooltip content={EDIT_ACCOUNT_LOCKED_TOOLTIP}>{accountFieldCard}</Tooltip>
+      ) : (
+        accountFieldCard
+      )}
     </div>
   );
 }
