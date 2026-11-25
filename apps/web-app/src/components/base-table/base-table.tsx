@@ -425,12 +425,12 @@ export function BaseTable<TData>({
                       return (
                         <div
                           key={cell.id}
-                          className="flex flex-wrap items-start justify-between gap-x-3 gap-y-0.5 text-xs"
+                          className="flex items-start justify-between gap-x-3 gap-y-1 text-xs"
                         >
-                          <span className="shrink-0 font-medium text-muted-foreground">
+                          <span className="shrink-0 pt-0.5 font-medium text-muted-foreground">
                             {headerLabel}
                           </span>
-                          <div className="min-w-0 flex-1 text-right text-foreground break-words [&_.truncate]:whitespace-normal [&_.truncate]:overflow-visible [&_.truncate]:text-clip">
+                          <div className="flex min-w-0 flex-1 flex-col items-end text-right text-foreground break-words [&_.truncate]:whitespace-normal [&_.truncate]:overflow-visible [&_.truncate]:text-clip [&_.flex]:justify-end [&_.inline-flex]:justify-end">
                             {flexRender(cell.column.columnDef.cell, cell.getContext())}
                           </div>
                         </div>
@@ -470,7 +470,7 @@ export function BaseTable<TData>({
           ) : null}
           <div
             data-scroll-intended="true"
-            className="w-full overflow-x-auto overscroll-x-contain touch-pan-x"
+            className="w-full overflow-x-auto overscroll-x-contain"
           >
             <table
               ref={tableRef}
