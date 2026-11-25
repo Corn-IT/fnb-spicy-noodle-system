@@ -61,7 +61,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
   // the latest accessToken from useAuthStore via `getToken`.
   React.useEffect(() => {
     if (!hasStaffSession) {
-      disconnectPosSocket();
+      disconnectPosSocket('staff');
       setSocket(null);
       setIsConnected(false);
       return;
@@ -80,7 +80,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
     setIsConnected(Boolean(instance.connected));
 
     return () => {
-      disconnectPosSocket();
+      disconnectPosSocket('staff');
       setIsConnected(false);
     };
   }, [hasStaffSession, userId]);
@@ -302,13 +302,11 @@ export function SocketProvider({ children }: SocketProviderProps) {
 
   const connectGuestSocket = React.useCallback(
     (qrToken: string, orderId?: number | string | null) => {
-      const instance = connectPosSocket({
+      return connectPosSocket({
         mode: 'qr_guest',
         qrToken,
         orderId,
       });
-      setSocket(instance);
-      return instance;
     },
     [],
   );

@@ -298,8 +298,12 @@ const DESKTOP_TO_TOUCH_PATH = new Map<string, TouchPath>([
  */
 export function resolveTouchAwarePath(path: string, isInTouchShell: boolean): string {
   if (!isInTouchShell) return path;
-  const normalized = stripTrailingSlash(path);
-  return DESKTOP_TO_TOUCH_PATH.get(normalized) ?? path;
+  const queryIdx = path.indexOf('?');
+  const rawPathname = queryIdx >= 0 ? path.slice(0, queryIdx) : path;
+  const query = queryIdx >= 0 ? path.slice(queryIdx) : '';
+  const normalized = stripTrailingSlash(rawPathname);
+  const mapped = DESKTOP_TO_TOUCH_PATH.get(normalized);
+  return mapped ? `${mapped}${query}` : path;
 }
 
 export function canUserAccessTouchRoute(

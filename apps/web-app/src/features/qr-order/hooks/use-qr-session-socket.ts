@@ -965,7 +965,7 @@ export function useQrSessionSocket(
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       }
-      disconnectPosSocket();
+      disconnectPosSocket('qr_guest');
     };
   }, [
     qrToken,

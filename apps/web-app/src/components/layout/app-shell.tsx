@@ -27,9 +27,13 @@ import { resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
 import { useSyncAccountPreferencesOnFocus } from '@/hooks/use-sync-account-preferences-on-focus';
 import { apiClient } from '@/lib/api-client';
 import { POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
-import { useQrPendingReminderMonitor } from '@/lib/qr-pending-reminder';
+import {
+  useQrPendingReminderMonitor,
+  collectPendingQrItems,
+} from '@/lib/qr-pending-reminder';
 import { enqueueQrVoiceAlert } from '@/lib/qr-voice-announcer';
 import { startIdleRouteChunkWarmup } from '@/lib/route-prefetch';
+import { getCurrentBrowserPushSubscription } from '@/lib/web-push-client';
 import { usePosSocketContext } from '@/providers/socket-provider';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/utils/cn';
@@ -38,6 +42,67 @@ interface QrSocketAlertPayload {
   orderId?: number;
   tableLabel?: string;
   batchNo?: number;
+}
+
+const RECENT_ORDER_ALERT_DEDUP_MS = 10_000;
+const recentOrderAlertSeen = new Map<string, number>();
+
+export function resetAppShellOrderAlertDedupForTesting(): void {
+  recentOrderAlertSeen.clear();
+}
+
+export function shouldEmitDeduplicatedOrderAlert(dedupKey: string): boolean {
+  const now = Date.now();
+  const last = recentOrderAlertSeen.get(dedupKey);
+  if (last !== undefined && now - last < RECENT_ORDER_ALERT_DEDUP_MS) {
+    return false;
+  }
+  recentOrderAlertSeen.set(dedupKey, now);
+  if (recentOrderAlertSeen.size > 100) {
+    for (const [k, ts] of recentOrderAlertSeen.entries()) {
+      if (now - ts >= RECENT_ORDER_ALERT_DEDUP_MS) {
+        recentOrderAlertSeen.delete(k);
+      }
+    }
+  }
+  return true;
+}
+
+function triggerBackgroundTabBrowserNotification(params: {
+  title: string;
+  body: string;
+  tag: string;
+}): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const isBackgroundOrUnfocused =
+    document.visibilityState === 'hidden' ||
+    (typeof document.hasFocus === 'function' && !document.hasFocus());
+  if (!isBackgroundOrUnfocused) return;
+  if (!('Notification' in window) || window.Notification.permission !== 'granted') return;
+
+  // Skip if Web Push subscription is already active (Service Worker push handles background alerts)
+  void getCurrentBrowserPushSubscription()
+    .then((sub) => {
+      if (sub) return;
+      try {
+        const n = new window.Notification(params.title, {
+          body: params.body,
+          tag: params.tag,
+          icon: '/images/logo-icon-square.png',
+        });
+        n.onclick = () => {
+          try {
+            window.focus();
+            n.close();
+          } catch {
+            // Ignore focus error
+          }
+        };
+      } catch {
+        // Ignore browsers that disallow direct Notification constructor
+      }
+    })
+    .catch(() => undefined);
 }
 
 export function AppShell() {
@@ -87,7 +152,7 @@ export function AppShell() {
     enabled: Boolean(accessToken && canReceivePosAlerts),
     retry: false,
     staleTime: 10_000,
-    refetchInterval: false,
+    refetchInterval: isSocketDisconnected ? 12_000 : 25_000,
   });
 
   // Pause client-side overdue reminders while offline, socket disconnected, or resyncing after
@@ -209,6 +274,88 @@ export function AppShell() {
     }
   }, [location.pathname, settings.navLabels, settings.storeName]);
 
+  const dispatchUnifiedQrOrderAlert = React.useCallback(
+    (params: {
+      kind: 'NEW' | 'ADDON';
+      tableLabel?: string;
+      orderId?: number;
+      batchNo?: number;
+      invalidateGrid?: boolean;
+    }) => {
+      const tableLabel = params.tableLabel?.trim() || 'Bàn';
+      const batchNo = params.batchNo ?? 2;
+      const dedupKey = `${params.kind}:${tableLabel.toLowerCase()}:${params.kind === 'ADDON' ? batchNo : 1}`;
+
+      void enqueueQrVoiceAlert({
+        tableLabel,
+        kind: params.kind,
+        ...(params.kind === 'ADDON' ? { batchNo } : {}),
+      });
+
+      if (shouldEmitDeduplicatedOrderAlert(dedupKey)) {
+        if (params.kind === 'NEW') {
+          notifyRef.current('pos.socket.newQrOrder', {
+            variant: 'warning',
+            vars: { tableLabel },
+            duration: 6000,
+          });
+          triggerBackgroundTabBrowserNotification({
+            title: `Đơn QR mới · ${tableLabel}`,
+            body: `${tableLabel} vừa gửi đơn QR mới. Chạm để mở quầy POS xác nhận.`,
+            tag: `pos-tab-qr-new-${params.orderId ?? tableLabel}`,
+          });
+        } else {
+          notifyRef.current('pos.socket.qrAppendItems', {
+            variant: 'info',
+            vars: { tableLabel, batchNo },
+            duration: 6000,
+          });
+          triggerBackgroundTabBrowserNotification({
+            title: `Gọi thêm món · ${tableLabel}`,
+            body: `${tableLabel} vừa gọi thêm lượt ${batchNo}. Chạm để xem ngay.`,
+            tag: `pos-tab-qr-addon-${params.orderId ?? tableLabel}-${batchNo}`,
+          });
+        }
+      }
+
+      if (params.invalidateGrid !== false) {
+        void queryClient.invalidateQueries({ queryKey: POS_TABLE_GRID_QUERY_KEY });
+      }
+    },
+    [queryClient],
+  );
+
+  // Diff-based fallback detector: if a new pending QR order or addon appears in `globalTableGridQuery.data`
+  // (via background poll, tab focus refetch, or reconnect) that was missed by Socket.io, alert immediately at t=0
+  // instead of waiting 5 minutes for the overdue reminder!
+  const knownPendingQrKeysRef = React.useRef<Set<string> | null>(null);
+  React.useEffect(() => {
+    if (!canReceivePosAlerts || !globalTableGridQuery.data) return;
+    const currentItems = collectPendingQrItems(globalTableGridQuery.data);
+    const currentKeySet = new Set(currentItems.map((item) => item.key));
+
+    if (knownPendingQrKeysRef.current === null) {
+      knownPendingQrKeysRef.current = currentKeySet;
+      return;
+    }
+
+    const nowMs = Date.now();
+    for (const item of currentItems) {
+      if (!knownPendingQrKeysRef.current.has(item.key)) {
+        // Only fire initial alert for genuinely fresh orders (< 4.5 minutes old) so we don't collide with 5m overdue reminder
+        if (nowMs - item.sinceMs < 4.5 * 60_000) {
+          dispatchUnifiedQrOrderAlert({
+            kind: item.kind,
+            tableLabel: item.tableLabel,
+            orderId: item.orderId,
+            invalidateGrid: false,
+          });
+        }
+      }
+    }
+    knownPendingQrKeysRef.current = currentKeySet;
+  }, [canReceivePosAlerts, globalTableGridQuery.data, dispatchUnifiedQrOrderAlert]);
+
   // Resilient mobile/desktop audio unlock, Layer 2 background keep-alive & Layer 3 Web Push sync
   useMobileOrderAlertLifecycle({
     enabled: Boolean(accessToken && canReceivePosAlerts),
@@ -222,35 +369,46 @@ export function AppShell() {
       }
       navigate(url);
     },
+    onForegroundPushOrderAlert: (pushPayload) => {
+      if (pushPayload.kind === 'QR_NEW') {
+        dispatchUnifiedQrOrderAlert({
+          kind: 'NEW',
+          tableLabel: pushPayload.tableLabel,
+          orderId: pushPayload.orderId,
+        });
+      } else if (pushPayload.kind === 'QR_ADDON') {
+        dispatchUnifiedQrOrderAlert({
+          kind: 'ADDON',
+          tableLabel: pushPayload.tableLabel,
+          orderId: pushPayload.orderId,
+          batchNo: pushPayload.batchNo,
+        });
+      }
+    },
   });
 
-  // Global QR order voice alert & toast when staff is browsing non-POS screens (including Touch Shell subpages)
+  // Always-mounted global QR order voice alert & toast across ALL routes (including /pos, /pos/touch, and all other modules).
+  // When on /pos or /pos/touch, usePosCashierSocket also runs; deduplication ensures zero double-toasts or double-voice.
   React.useEffect(() => {
-    if (!socket || !canReceivePosAlerts || isPosLiveBoardRoute) return;
+    if (!socket || !canReceivePosAlerts) return;
 
     const handleGlobalQrNew = (raw: unknown) => {
       const payload = raw as QrSocketAlertPayload;
-      const tableLabel = payload?.tableLabel ?? 'Bàn';
-      void enqueueQrVoiceAlert({ tableLabel, kind: 'NEW' });
-      notifyRef.current('pos.socket.newQrOrder', {
-        variant: 'warning',
-        vars: { tableLabel },
-        duration: 6000,
+      dispatchUnifiedQrOrderAlert({
+        kind: 'NEW',
+        tableLabel: payload?.tableLabel ?? 'Bàn',
+        orderId: payload?.orderId,
       });
-      void queryClient.invalidateQueries({ queryKey: POS_TABLE_GRID_QUERY_KEY });
     };
 
     const handleGlobalQrAddon = (raw: unknown) => {
       const payload = raw as QrSocketAlertPayload;
-      const tableLabel = payload?.tableLabel ?? 'Bàn';
-      const batchNo = payload?.batchNo ?? 2;
-      void enqueueQrVoiceAlert({ tableLabel, kind: 'ADDON' });
-      notifyRef.current('pos.socket.qrAppendItems', {
-        variant: 'info',
-        vars: { tableLabel, batchNo },
-        duration: 6000,
+      dispatchUnifiedQrOrderAlert({
+        kind: 'ADDON',
+        tableLabel: payload?.tableLabel ?? 'Bàn',
+        orderId: payload?.orderId,
+        batchNo: payload?.batchNo ?? 2,
       });
-      void queryClient.invalidateQueries({ queryKey: POS_TABLE_GRID_QUERY_KEY });
     };
 
     const handleGlobalGridSync = () => {
@@ -259,7 +417,7 @@ export function AppShell() {
 
     const handleGlobalQrAutoCancelled = (raw: unknown) => {
       const parsed = QrAutoCancelledPayloadSchema.safeParse(raw);
-      if (parsed.success) {
+      if (parsed.success && !isPosLiveBoardRoute) {
         notifyRef.current('pos.socket.qrAutoCancelled', {
           variant: 'warning',
           vars: {
@@ -282,7 +440,7 @@ export function AppShell() {
       socket.off(SocketEvents.TABLE_GRID_SYNC, handleGlobalGridSync);
       socket.off(SocketEvents.ORDER_QR_AUTO_CANCELLED, handleGlobalQrAutoCancelled);
     };
-  }, [socket, canReceivePosAlerts, isPosLiveBoardRoute, queryClient]);
+  }, [socket, canReceivePosAlerts, isPosLiveBoardRoute, queryClient, dispatchUnifiedQrOrderAlert]);
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
@@ -323,7 +481,11 @@ export function AppShell() {
           <button
             type="button"
             data-testid="global-overdue-qr-banner"
-            onClick={() => navigate(isPosTouchRoute ? TOUCH_PATHS.POS : '/pos')}
+            onClick={() => {
+              const firstOrderId = overdueQrItems[0]?.orderId;
+              const base = isPosTouchRoute ? TOUCH_PATHS.POS : '/pos';
+              navigate(firstOrderId ? `${base}?orderId=${firstOrderId}` : base);
+            }}
             className={cn(
               'flex w-full items-center justify-center gap-2 bg-red-600 px-3 py-1.5 text-center text-xs font-bold text-white shadow-xs transition-colors hover:bg-red-700 animate-pulse',
               isPosTouchRoute && 'min-h-12 py-2.5 text-sm',
