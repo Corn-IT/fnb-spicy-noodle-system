@@ -443,7 +443,7 @@ export function AppShell() {
   }, [socket, canReceivePosAlerts, isPosLiveBoardRoute, queryClient, dispatchUnifiedQrOrderAlert]);
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
+    <div className="fixed inset-0 flex h-dvh w-full overflow-hidden overscroll-none bg-background text-foreground">
       <TopProgressBar />
       {isPosTouchRoute ? null : (
         <>
@@ -504,7 +504,7 @@ export function AppShell() {
             isPosTouchRoute ? 'p-0' : 'p-2.5 sm:p-4 md:p-5',
             isPosLiveBoardRoute || isPosTouchRoute
               ? 'overflow-hidden'
-              : 'overflow-y-auto overflow-x-hidden',
+              : 'overflow-y-auto overflow-x-hidden overscroll-y-contain pb-8 sm:pb-6',
           )}
         >
           <Outlet />

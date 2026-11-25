@@ -546,7 +546,7 @@ export function MasterDataPage() {
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
         <div
           data-scroll-intended="true"
-          className="w-full overflow-x-auto overscroll-contain touch-pan-x pb-1 -mb-1"
+          className="w-full overflow-x-auto overscroll-x-contain pb-1 -mb-1"
         >
           <TabsList data-testid="mdm-tab-list" className="inline-flex h-auto w-auto min-w-full sm:min-w-0 justify-start sm:justify-center p-1">
             {TAB_CATEGORIES.map((tab) => (

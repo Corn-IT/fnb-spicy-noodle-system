@@ -169,7 +169,7 @@ export function StoreAssetsPanel({
                 ) : null}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="relative flex flex-wrap items-center gap-2 pt-1">
                 <input
                   ref={(el) => {
                     inputRefs.current[slot.kind] = el;

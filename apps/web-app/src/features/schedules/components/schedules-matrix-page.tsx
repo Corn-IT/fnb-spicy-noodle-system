@@ -440,7 +440,7 @@ export function SchedulesMatrixPage() {
         <div
           data-scroll-intended="true"
           className={cn(
-            'relative overflow-x-auto rounded-xl border bg-card shadow-sm touch-pan-x transition-opacity duration-150',
+            'relative overflow-x-auto rounded-xl border bg-card shadow-sm transition-opacity duration-150',
             (scheduleQuery.isFetching || scheduleQuery.isPlaceholderData) && 'opacity-65',
             scheduleQuery.isPlaceholderData && 'pointer-events-none',
           )}
