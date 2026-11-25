@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
   RegisterWebPushSubscriptionSchema,
+  SendTestWebPushResponseSchema,
   UnregisterWebPushSubscriptionSchema,
   UserPermissionsSchema,
   WEB_PUSH_VAPID_NORMALIZED_NAME,
@@ -10,6 +11,7 @@ import {
   WebPushSubscriptionStatusResponseSchema,
   type AuthPrincipal,
   type RegisterWebPushSubscriptionInput,
+  type SendTestWebPushResponse,
   type WebPushNotificationPayload,
   type WebPushSubscriptionStatusResponse,
 } from '@fnb/shared';
@@ -24,7 +26,9 @@ import {
 const SYSTEM_CONFIG_CATEGORY = 'SYSTEM_CONFIG';
 const DEFAULT_VAPID_SUBJECT = 'mailto:pos-alerts@fnb-pos.local';
 const PUSH_REQUEST_TIMEOUT_MS = 8000;
-const DEFAULT_PUSH_TTL_SECONDS = 300;
+const QR_ORDER_PUSH_TTL_SECONDS = 90;
+const QR_REMINDER_PUSH_TTL_SECONDS = 120;
+const TEST_PUSH_TTL_SECONDS = 60;
 
 export type WebPushFetchFn = typeof fetch;
 
@@ -275,7 +279,10 @@ export class WebPushService {
       tableLabel: input.tableLabel,
       timestamp: new Date().toISOString(),
     });
-    return this.sendToEligiblePosStaff(payload);
+    return this.sendToEligiblePosStaff(payload, {
+      ttlSeconds: QR_ORDER_PUSH_TTL_SECONDS,
+      topic: `qr-new-${input.orderId}`,
+    });
   }
 
   async notifyQrAddonOrder(input: {
@@ -296,7 +303,10 @@ export class WebPushService {
       batchNo: batch,
       timestamp: new Date().toISOString(),
     });
-    return this.sendToEligiblePosStaff(payload);
+    return this.sendToEligiblePosStaff(payload, {
+      ttlSeconds: QR_ORDER_PUSH_TTL_SECONDS,
+      topic: `qr-addon-${input.orderId}-${batch}`,
+    });
   }
 
   async notifyQrOverdueReminder(entries: OverdueReminderPushItem[]): Promise<WebPushSendSummary> {
@@ -330,19 +340,80 @@ export class WebPushService {
             timestamp: new Date().toISOString(),
           });
 
-    return this.sendToEligiblePosStaff(payload);
+    return this.sendToEligiblePosStaff(payload, {
+      ttlSeconds: QR_REMINDER_PUSH_TTL_SECONDS,
+      topic: payload.tag,
+    });
+  }
+
+  /**
+   * Sends a self-test Web Push notification ONLY to the caller's active session subscription(s)
+   * after an optional delay (default 5s so staff can lock their phone screen and test real delivery).
+   */
+  async sendTestPushToUser(
+    principal: AuthPrincipal,
+    delaySeconds = 5,
+  ): Promise<SendTestWebPushResponse> {
+    const safeDelay = Math.max(0, Math.min(15, Math.round(delaySeconds)));
+    const status = await this.getSubscriptionStatus(principal);
+    if (status.activeCount === 0) {
+      return SendTestWebPushResponseSchema.parse({
+        scheduled: false,
+        delaySeconds: safeDelay,
+        activeSubscriptions: 0,
+      });
+    }
+
+    const dispatch = async () => {
+      const payload = WebPushNotificationPayloadSchema.parse({
+        kind: WebPushNotificationKind.TEST_PING,
+        title: 'Kiểm tra báo đơn POS thành công',
+        body: `Thông báo đẩy hoạt động bình thường trên thiết bị của ${principal.username}.`,
+        tag: `pos-push-test-${principal.id}`,
+        url: '/pos',
+        timestamp: new Date().toISOString(),
+      });
+      await this.sendToEligiblePosStaff(payload, {
+        ttlSeconds: TEST_PUSH_TTL_SECONDS,
+        urgency: 'high',
+        topic: `pos-push-test-${principal.id}`,
+        onlyUserId: principal.id,
+      });
+    };
+
+    if (safeDelay === 0) {
+      await dispatch();
+    } else {
+      const timer = setTimeout(() => {
+        void dispatch().catch(() => undefined);
+      }, safeDelay * 1000);
+      timer.unref?.();
+    }
+
+    return SendTestWebPushResponseSchema.parse({
+      scheduled: true,
+      delaySeconds: safeDelay,
+      activeSubscriptions: status.activeCount,
+    });
   }
 
   async sendToEligiblePosStaff(
     rawPayload: WebPushNotificationPayload,
-    options?: { ttlSeconds?: number; urgency?: 'very-low' | 'low' | 'normal' | 'high' },
+    options?: {
+      ttlSeconds?: number;
+      urgency?: 'very-low' | 'low' | 'normal' | 'high';
+      topic?: string;
+      onlyUserId?: number;
+    },
   ): Promise<WebPushSendSummary> {
     if (typeof this.prisma.pushSubscription?.findMany !== 'function') {
       return { attempted: 0, delivered: 0, pruned: 0, failed: 0 };
     }
 
+    const startedAt = Date.now();
     const payload = WebPushNotificationPayloadSchema.parse(rawPayload);
     const subscriptions = await this.prisma.pushSubscription.findMany({
+      ...(options?.onlyUserId ? { where: { userId: options.onlyUserId } } : {}),
       include: {
         user: {
           select: {
@@ -388,8 +459,9 @@ export class WebPushService {
 
     const vapid = await this.getVapidConfig();
     const serializedPayload = JSON.stringify(payload);
-    const ttl = options?.ttlSeconds ?? DEFAULT_PUSH_TTL_SECONDS;
+    const ttl = options?.ttlSeconds ?? QR_ORDER_PUSH_TTL_SECONDS;
     const urgency = options?.urgency ?? 'high';
+    const topic = (options?.topic ?? payload.tag).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
 
     let delivered = 0;
     let pruned = staleIds.length;
@@ -421,6 +493,7 @@ export class WebPushService {
               'Content-Length': String(encrypted.body.length),
               TTL: String(ttl),
               Urgency: urgency,
+              ...(topic ? { Topic: topic } : {}),
             },
             body: new Uint8Array(encrypted.body),
             signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS),
@@ -462,6 +535,13 @@ export class WebPushService {
           data: { lastNotifiedAt: new Date() },
         })
         .catch(() => undefined);
+    }
+
+    const durationMs = Date.now() - startedAt;
+    if (durationMs >= 2000 || failed > 0) {
+      this.logger.log(
+        `Web Push batch (${payload.kind}): attempted=${eligible.length}, delivered=${delivered}, pruned=${pruned}, failed=${failed}, durationMs=${durationMs}`,
+      );
     }
 
     return {

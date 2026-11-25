@@ -9,21 +9,39 @@ import * as React from 'react';
 import { type Socket } from 'socket.io-client';
 
 import { toast } from '@/components/ui/toast';
+import { getJwtExpirationMs, refreshAccessToken } from '@/lib/api-client';
 import { connectPosSocket, disconnectPosSocket, type SocketAuthMode } from '@/lib/socket-client';
 import { type AuthNoticeReason, useAuthStore } from '@/stores/auth.store';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 
 interface SocketContextValue {
   socket: Socket | null;
+  isConnected: boolean;
   connectGuestSocket: (qrToken: string, orderId?: number | string | null) => Socket;
 }
 
 const SocketContext = React.createContext<SocketContextValue>({
   socket: null,
+  isConnected: false,
   connectGuestSocket: () => {
     throw new Error('SocketProvider chưa được khởi tạo');
   },
 });
+
+const PROACTIVE_REFRESH_BUFFER_MS = 90_000;
+const MIN_REACTIVE_REFRESH_INTERVAL_MS = 3_000;
+
+function notifyServiceWorkerOrderHandled(orderId: number): void {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  try {
+    navigator.serviceWorker.controller?.postMessage({
+      type: 'POS_CLOSE_ORDER_NOTIFICATIONS',
+      orderId,
+    });
+  } catch {
+    // Ignore SW message failures
+  }
+}
 
 export interface SocketProviderProps {
   children: React.ReactNode;
@@ -31,27 +49,128 @@ export interface SocketProviderProps {
 
 export function SocketProvider({ children }: SocketProviderProps) {
   const accessToken = useAuthStore((state) => state.accessToken);
+  const userId = useAuthStore((state) => state.user?.id ?? null);
+  const hasStaffSession = Boolean(accessToken && userId);
   const queryClient = useQueryClient();
   const [socket, setSocket] = React.useState<Socket | null>(null);
+  const [isConnected, setIsConnected] = React.useState<boolean>(false);
+  const lastReactiveRefreshAtRef = React.useRef<number>(0);
 
+  // Establish ONE persistent staff socket per authenticated user session.
+  // Rotating accessToken does NOT tear down the live socket; reconnects dynamically pull
+  // the latest accessToken from useAuthStore via `getToken`.
   React.useEffect(() => {
-    if (!accessToken) {
+    if (!hasStaffSession) {
       disconnectPosSocket();
       setSocket(null);
+      setIsConnected(false);
       return;
     }
 
+    const initialToken = useAuthStore.getState().accessToken;
+    if (!initialToken) return;
+
     const authConfig: SocketAuthMode = {
       mode: 'staff',
-      token: accessToken,
+      token: initialToken,
+      getToken: () => useAuthStore.getState().accessToken,
     };
     const instance = connectPosSocket(authConfig);
     setSocket(instance);
+    setIsConnected(Boolean(instance.connected));
 
     return () => {
       disconnectPosSocket();
+      setIsConnected(false);
     };
-  }, [accessToken]);
+  }, [hasStaffSession, userId]);
+
+  // Proactive JWT access token refresh ~90s before expiry so mobile Socket.io never hits
+  // expired-token Unauthorized loops on long shifts or overnight sessions.
+  React.useEffect(() => {
+    if (!accessToken || !userId || typeof window === 'undefined') return;
+
+    const expMs = getJwtExpirationMs(accessToken);
+    if (!expMs) return;
+
+    const delayMs = Math.max(5_000, expMs - Date.now() - PROACTIVE_REFRESH_BUFFER_MS);
+    const timer = window.setTimeout(() => {
+      void refreshAccessToken();
+    }, delayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [accessToken, userId]);
+
+  // Reactive auth recovery on connect_error + immediate wake-up recovery on visibility/online
+  React.useEffect(() => {
+    if (!socket) {
+      setIsConnected(false);
+      return;
+    }
+
+    const handleConnect = () => {
+      setIsConnected(true);
+    };
+    const handleDisconnect = () => {
+      setIsConnected(false);
+    };
+    const handleConnectError = (err: Error) => {
+      setIsConnected(false);
+      if (!useAuthStore.getState().user) return;
+      const now = Date.now();
+      const token = useAuthStore.getState().accessToken;
+      const expMs = getJwtExpirationMs(token);
+      const isTokenExpiredOrNear = expMs !== null && expMs - now <= PROACTIVE_REFRESH_BUFFER_MS;
+      const isAuthFailure = /unauthorized|jwt|expired|token/i.test(err?.message ?? '');
+
+      if ((isAuthFailure || isTokenExpiredOrNear) && now - lastReactiveRefreshAtRef.current >= MIN_REACTIVE_REFRESH_INTERVAL_MS) {
+        lastReactiveRefreshAtRef.current = now;
+        void refreshAccessToken().then((freshToken) => {
+          if (freshToken && !socket.connected) {
+            socket.connect();
+          }
+        });
+      }
+    };
+
+    const recoverConnection = () => {
+      if (!useAuthStore.getState().user) return;
+      const token = useAuthStore.getState().accessToken;
+      const expMs = getJwtExpirationMs(token);
+      const needsRefresh = !token || (expMs !== null && expMs - Date.now() <= PROACTIVE_REFRESH_BUFFER_MS);
+
+      if (needsRefresh) {
+        lastReactiveRefreshAtRef.current = Date.now();
+        void refreshAccessToken().then((freshToken) => {
+          if (freshToken && !socket.connected) {
+            socket.connect();
+          }
+        });
+      } else if (!socket.connected) {
+        socket.connect();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        recoverConnection();
+      }
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('connect_error', handleConnectError);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', recoverConnection);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', recoverConnection);
+    };
+  }, [socket]);
 
   React.useEffect(() => {
     if (!socket) return;
@@ -148,6 +267,19 @@ export function SocketProvider({ children }: SocketProviderProps) {
       useUiPreferencesStore.getState().hydrateFromServer(parsed.data.uiPreferences);
     };
 
+    const handleTableGridSync = (raw: unknown) => {
+      const payload = (raw ?? {}) as { orderId?: number; status?: string };
+      if (
+        typeof payload.orderId === 'number' &&
+        (payload.status === 'SERVING' ||
+          payload.status === 'PAID' ||
+          payload.status === 'AVAILABLE' ||
+          payload.status === 'VOIDED')
+      ) {
+        notifyServiceWorkerOrderHandled(payload.orderId);
+      }
+    };
+
     socket.on(SocketEvents.MENU_UPDATED, handleMenuUpdated);
     socket.on(SocketEvents.SCHEDULE_UPDATED, handleScheduleUpdated);
     socket.on(SocketEvents.PAYROLL_UPDATED, handlePayrollUpdated);
@@ -155,6 +287,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
     socket.on(SocketEvents.SESSION_REVOKED, handleSessionRevoked);
     socket.on(SocketEvents.PERMISSIONS_UPDATED, handlePermissionsUpdated);
     socket.on(SocketEvents.ACCOUNT_PREFERENCES_UPDATED, handleAccountPreferencesUpdated);
+    socket.on(SocketEvents.TABLE_GRID_SYNC, handleTableGridSync);
     return () => {
       socket.off(SocketEvents.MENU_UPDATED, handleMenuUpdated);
       socket.off(SocketEvents.SCHEDULE_UPDATED, handleScheduleUpdated);
@@ -163,6 +296,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
       socket.off(SocketEvents.SESSION_REVOKED, handleSessionRevoked);
       socket.off(SocketEvents.PERMISSIONS_UPDATED, handlePermissionsUpdated);
       socket.off(SocketEvents.ACCOUNT_PREFERENCES_UPDATED, handleAccountPreferencesUpdated);
+      socket.off(SocketEvents.TABLE_GRID_SYNC, handleTableGridSync);
     };
   }, [socket, queryClient]);
 
@@ -180,8 +314,8 @@ export function SocketProvider({ children }: SocketProviderProps) {
   );
 
   const value = React.useMemo(
-    () => ({ socket, connectGuestSocket }),
-    [socket, connectGuestSocket],
+    () => ({ socket, isConnected, connectGuestSocket }),
+    [socket, isConnected, connectGuestSocket],
   );
 
   return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>;

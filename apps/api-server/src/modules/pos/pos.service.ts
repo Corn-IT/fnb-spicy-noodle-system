@@ -439,6 +439,60 @@ export class PosService {
     return result.response;
   }
 
+  async checkQrOrderStillPending(input: {
+    orderId: number;
+    kind?: string;
+    batchNo?: number;
+  }): Promise<{ stillPending: boolean }> {
+    if (!Number.isSafeInteger(input.orderId) || input.orderId <= 0) {
+      return { stillPending: true };
+    }
+    if (typeof this.prisma.order?.findUnique !== 'function') {
+      return { stillPending: true };
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: input.orderId },
+      select: { id: true, status: true, orderSource: true },
+    });
+    if (!order) {
+      return { stillPending: false };
+    }
+
+    const normalizedKind = (input.kind ?? 'QR_NEW').trim().toUpperCase();
+    const isNewPending = order.status === 'PENDING' && order.orderSource === 'QR_CODE';
+
+    if (normalizedKind === 'QR_NEW' || normalizedKind === 'NEW') {
+      return { stillPending: isNewPending };
+    }
+
+    const checkAddonPending = async (): Promise<boolean> => {
+      if (order.status !== 'SERVING' || typeof this.prisma.orderItem?.findFirst !== 'function') {
+        return false;
+      }
+      const unprintedAddon = await this.prisma.orderItem.findFirst({
+        where: {
+          orderId: order.id,
+          kitchenStatus: 'NEW',
+          itemSource: 'QR_CODE',
+          batchNo: { gte: input.batchNo ?? 2 },
+        },
+        select: { id: true },
+      });
+      return Boolean(unprintedAddon);
+    };
+
+    if (normalizedKind === 'QR_ADDON' || normalizedKind === 'ADDON') {
+      return { stillPending: await checkAddonPending() };
+    }
+
+    // QR_OVERDUE_REMINDER or unknown kind: pending if either initial QR order or QR addon awaits confirmation
+    if (isNewPending) {
+      return { stillPending: true };
+    }
+    return { stillPending: await checkAddonPending() };
+  }
+
   async getTableGrid() {
     const [tables, takeaways, takeawayQrToken] = await Promise.all([
       this.prisma.diningTable.findMany({

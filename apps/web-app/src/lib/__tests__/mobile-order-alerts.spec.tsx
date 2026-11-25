@@ -195,10 +195,14 @@ describe('Mobile 3-Layer Order Alert System', () => {
       vi.stubGlobal('fetch', fetchSpy);
 
       await unlockQrVoiceAudio();
+      // Let background preloadCoreOfflineAudioClips() microtasks settle before measuring /05.mp3 caching
+      await new Promise((resolve) => setTimeout(resolve, 0));
       audioCtorSpy.mockClear();
+      fetchSpy.mockClear();
+      MobileMockAudioContext.instances[0]!.decodeAudioData.mockClear();
 
-      await defaultPlayAudioClip('/audio/vi/ban.mp3', 1, 0.9, 'vi-female-standard');
-      await defaultPlayAudioClip('/audio/vi/ban.mp3', 1, 0.9, 'vi-female-standard');
+      await defaultPlayAudioClip('/audio/vi/05.mp3', 1, 0.9, 'vi-female-standard');
+      await defaultPlayAudioClip('/audio/vi/05.mp3', 1, 0.9, 'vi-female-standard');
 
       // Played via Web Audio API without spawning any new HTMLAudioElement!
       expect(audioCtorSpy).not.toHaveBeenCalled();
@@ -514,6 +518,7 @@ describe('Mobile 3-Layer Order Alert System', () => {
       await waitFor(() => {
         expect(screen.getByTestId('mobile-alerts-push-active')).toBeInTheDocument();
       });
+      expect(screen.getByTestId('mobile-alerts-socket-status')).toBeInTheDocument();
       expect(getSpy).toHaveBeenCalledWith('/api/v1/pos/push/vapid-public-key');
       expect(postSpy).toHaveBeenCalledWith(
         '/api/v1/pos/push/subscriptions',
@@ -522,6 +527,14 @@ describe('Mobile 3-Layer Order Alert System', () => {
           deviceLabel: 'Điện thoại Android',
         }),
       );
+
+      // Verify 5s self-test Push button calls POST /api/v1/pos/push/test
+      postSpy.mockResolvedValueOnce({ scheduled: true, delaySeconds: 5, activeSubscriptions: 1 });
+      fireEvent.click(screen.getByTestId('mobile-alerts-push-test-btn'));
+      await waitFor(() => {
+        expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/push/test', { delaySeconds: 5 });
+      });
+      expect(screen.getByTestId('mobile-alerts-push-message')).toHaveTextContent(/5 giây/i);
     });
   });
 });

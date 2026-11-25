@@ -7,6 +7,7 @@ export type SocketAuthMode =
   | {
       mode: 'staff';
       token: string;
+      getToken?: () => string | null;
     }
   | {
       mode: 'qr_guest';
@@ -28,9 +29,12 @@ export function connectPosSocket(authConfig: SocketAuthMode): Socket {
     ? baseUrl
     : `${baseUrl}${SocketNamespace}`;
 
-  const authPayload =
+  const authOption =
     authConfig.mode === 'staff'
-      ? { token: authConfig.token }
+      ? (cb: (data: Record<string, unknown>) => void) => {
+          const latestToken = authConfig.getToken?.() ?? authConfig.token;
+          cb({ token: latestToken });
+        }
       : {
           qrToken: authConfig.qrToken,
           ...(authConfig.orderId !== undefined && authConfig.orderId !== null
@@ -42,10 +46,13 @@ export function connectPosSocket(authConfig: SocketAuthMode): Socket {
         };
 
   activeSocket = io(namespaceUrl, {
-    auth: authPayload,
+    auth: authOption,
     transports: ['websocket', 'polling'],
     reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
+    timeout: 10_000,
   });
 
   return activeSocket;
