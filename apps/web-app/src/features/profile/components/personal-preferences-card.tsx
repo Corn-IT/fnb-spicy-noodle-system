@@ -90,12 +90,18 @@ function ReorderList({ ariaLabel, items, moveLabelPrefix, onMove, tone = 'route'
 export function PersonalPreferencesCard() {
   const user = useAuthStore((state) => state.user);
   const { settings } = useStoreSettings();
+  const storedTheme = useUiPreferencesStore((state) => state.theme);
+  const hasExplicitTheme = useUiPreferencesStore((state) => state.hasExplicitTheme);
+  const setTheme = useUiPreferencesStore((state) => state.setTheme);
+  const resetThemeToStoreDefault = useUiPreferencesStore((state) => state.resetThemeToStoreDefault);
   const userDisplayScale = useUiPreferencesStore((state) => state.userDisplayScale);
   const userNavOrder = useUiPreferencesStore((state) => state.userNavOrder);
   const userNavGroupOrder = useUiPreferencesStore((state) => state.userNavGroupOrder);
   const setUserDisplayScale = useUiPreferencesStore((state) => state.setUserDisplayScale);
   const setUserNavOrder = useUiPreferencesStore((state) => state.setUserNavOrder);
   const setUserNavGroupOrder = useUiPreferencesStore((state) => state.setUserNavGroupOrder);
+  const sidebarWidth = useUiPreferencesStore((state) => state.sidebarWidth);
+  const setSidebarWidth = useUiPreferencesStore((state) => state.setSidebarWidth);
   const sidebarCollapsed = useUiPreferencesStore((state) => state.sidebarCollapsed);
   const setSidebarCollapsed = useUiPreferencesStore((state) => state.setSidebarCollapsed);
   const userVoiceAlertEnabled = useUiPreferencesStore((state) => state.userVoiceAlertEnabled);
@@ -220,21 +226,95 @@ export function PersonalPreferencesCard() {
     userDisplayScale.globalPercent !== undefined ||
     Object.keys(userDisplayScale.perPath).length > 0;
   const hasMenuOverride = userNavOrder.length > 0 || userNavGroupOrder.length > 0;
+  const hasAnyOverride =
+    hasExplicitTheme ||
+    hasScaleOverride ||
+    hasMenuOverride ||
+    sidebarCollapsed ||
+    sidebarWidth !== 260 ||
+    userVoiceAlertEnabled === false;
+
+  const personalThemeValue: 'system' | 'light' | 'dark' = hasExplicitTheme ? storedTheme : 'system';
+
+  const handleThemeChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const next = event.target.value as 'system' | 'light' | 'dark';
+    if (next === 'system') {
+      resetThemeToStoreDefault();
+    } else {
+      setTheme(next);
+    }
+    void persist({ theme: next });
+  };
+
+  const handleResetAll = () => {
+    resetThemeToStoreDefault();
+    setUserDisplayScale({ perPath: {} });
+    setUserNavOrder([]);
+    setUserNavGroupOrder([]);
+    setSidebarCollapsed(false);
+    setSidebarWidth(260);
+    setUserVoiceAlertEnabled(true);
+    setQrVoiceAlertEnabled(true);
+    void persist({
+      theme: 'system',
+      displayScale: { perPath: {} },
+      navOrder: [],
+      navGroupOrder: [],
+      sidebarCollapsed: false,
+      sidebarWidth: 260,
+      voiceAlertEnabled: true,
+    });
+  };
 
   return (
     <section
       data-testid="profile-personal-preferences-card"
       className="min-w-0 space-y-5 rounded-xl border bg-card p-4 shadow-sm sm:p-6"
     >
-      <div>
-        <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-          <SlidersHorizontal className="h-4 w-4 text-accent-text" />
-          Cá nhân của tôi
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Chỉ áp dụng khi bạn đăng nhập, không ảnh hưởng tài khoản khác. Nếu để mặc định thì dùng
-          thiết lập chung của cửa hàng.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+            <SlidersHorizontal className="h-4 w-4 text-accent-text" />
+            Cá nhân của tôi
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Chỉ áp dụng khi bạn đăng nhập, không ảnh hưởng tài khoản khác. Nếu để mặc định thì dùng
+            thiết lập chung của cửa hàng.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!hasAnyOverride}
+          onClick={handleResetAll}
+          data-testid="personal-preferences-reset-all"
+          className="shrink-0"
+        >
+          <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+          Đặt lại tất cả về mặc định
+        </Button>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label htmlFor="personal-theme" className="text-sm font-medium">
+            Giao diện Sáng / Tối
+          </label>
+          <select
+            id="personal-theme"
+            data-testid="personal-theme-select"
+            value={personalThemeValue}
+            onChange={handleThemeChange}
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+          >
+            <option value="system">
+              Theo mặc định cửa hàng ({settings.defaultTheme === 'dark' ? 'Tối' : 'Sáng'})
+            </option>
+            <option value="light">Luôn Sáng (Light)</option>
+            <option value="dark">Luôn Tối (Dark)</option>
+          </select>
+        </div>
       </div>
 
       <div className="space-y-2">
