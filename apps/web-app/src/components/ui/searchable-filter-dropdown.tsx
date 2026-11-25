@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Search, X } from 'lucide-react';
 import * as React from 'react';
 
+import { isToastTarget } from '@/components/ui/toast';
 import { cn } from '@/utils/cn';
 import { matchesVietnameseQuery } from '@/utils/search';
 
@@ -58,6 +59,7 @@ export function SearchableFilterDropdown({
   React.useEffect(() => {
     if (!open) return;
     const handleOutside = (event: Event) => {
+      if (isToastTarget(event.target)) return;
       const target = event.target as Node | null;
       if (containerRef.current && target && !containerRef.current.contains(target)) {
         closeDropdown();

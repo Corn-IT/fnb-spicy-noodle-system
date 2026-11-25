@@ -3,6 +3,7 @@ import { Check, PlusCircle, Search } from 'lucide-react';
 import * as React from 'react';
 
 import { Input } from '@/components/ui/input';
+import { isToastTarget } from '@/utils/toast-target';
 import { useMdmLookupQuery } from '@/features/inventory/api/inventory.api';
 import { cn } from '@/utils/cn';
 import { matchesVietnameseQuery } from '@/utils/search';
@@ -38,6 +39,7 @@ export function IngredientMdmCombobox({
   React.useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: MouseEvent) => {
+      if (isToastTarget(event.target)) return;
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setOpen(false);
       }

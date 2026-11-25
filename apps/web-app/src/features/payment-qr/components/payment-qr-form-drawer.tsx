@@ -10,6 +10,7 @@ import * as React from 'react';
 import { createPortal } from 'react-dom';
 
 import { buildVietQrFallbackSvgDataUrl, buildVietQrImageUrl } from '@/components/print-slips';
+import { isToastTarget } from '@/utils/toast-target';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -145,6 +146,7 @@ export function PaymentQrFormDrawer({
     updateBankMenuCoords();
 
     const handleOutside = (event: PointerEvent) => {
+      if (isToastTarget(event.target)) return;
       const target = event.target as Node | null;
       if (
         target &&
