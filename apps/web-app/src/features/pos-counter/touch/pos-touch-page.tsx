@@ -82,6 +82,8 @@ export function PosTouchPage() {
     onViewChange: (event) => {
       if (event === 'draft-started' || event === 'order-opened') {
         setScreen('order');
+      } else if (event === 'draft-target-picker' || event === 'draft-parked') {
+        setScreen('tables');
       }
     },
   });
@@ -146,11 +148,20 @@ export function PosTouchPage() {
     setScreen('tables');
   };
 
+  const draftDiscardDescription = () => {
+    if (workspace.activeDraftId) {
+      return workspace.draftIsDirty
+        ? 'Các thay đổi chưa lưu sẽ bị bỏ; phiên bản giỏ tạm đã lưu vẫn còn trong danh sách.'
+        : 'Giỏ tạm đã lưu vẫn còn trong danh sách để mở lại sau.';
+    }
+    return `${draftItems.length} món chưa được tạo đơn sẽ bị xoá khỏi giỏ đang chọn.`;
+  };
+
   const handleBack = () => {
     if (!workspace.currentOrder && draftItems.length > 0) {
       confirm.ask({
         title: 'Bỏ đơn đang chọn dở?',
-        description: `${draftItems.length} món chưa được tạo đơn sẽ bị xoá.`,
+        description: draftDiscardDescription(),
         confirmLabel: 'Bỏ đơn',
         tone: 'destructive',
         onConfirm: leaveOrderScreen,
@@ -178,7 +189,7 @@ export function PosTouchPage() {
     if (!workspace.currentOrder && draftItems.length > 0) {
       confirm.ask({
         title: 'Bỏ đơn đang chọn dở để sang Quản lý?',
-        description: `${draftItems.length} món chưa được tạo đơn sẽ bị xoá.`,
+        description: draftDiscardDescription(),
         confirmLabel: 'Bỏ đơn & Mở Quản lý',
         tone: 'destructive',
         onConfirm: goHub,
@@ -434,13 +445,19 @@ export function PosTouchPage() {
               tab={boardTab}
               tables={tables}
               takeaways={takeaways}
+              drafts={workspace.parkedDrafts}
+              activeDraftId={workspace.activeDraftId}
               onlyOccupied={onlyOccupied}
               nowMs={nowMs}
               canCreateOrder={workspace.permissions.canCreateOrder}
+              canDeleteDraft={workspace.permissions.canDeleteOrder}
               addonBadgesByOrderId={workspace.addonBadgesByOrderId}
               onSelectTable={workspace.actions.selectTable}
               onSelectTakeaway={workspace.actions.selectTakeawayOrder}
               onStartNewTakeaway={workspace.actions.startNewTakeaway}
+              onStartUntargetedDraft={workspace.actions.startUntargetedDraft}
+              onResumeDraft={workspace.actions.resumeDraft}
+              onDeleteDraft={workspace.actions.deleteDraft}
             />
           </div>
         </>

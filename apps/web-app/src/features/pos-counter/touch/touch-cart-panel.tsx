@@ -98,11 +98,29 @@ function DraftCart({ workspace, askConfirm }: { workspace: PosWorkspace; askConf
       </div>
       <div className="shrink-0 space-y-3 border-t p-3">
         <TotalRow amount={total} />
+        {draftItems.length > 0 ? (
+          <Button type="button" variant="outline" className="w-full" onClick={actions.chooseDraftTarget}>
+            {draftTarget?.orderType === null || (draftTarget?.orderType === 'DINE_IN' && draftTarget.tableId === null)
+              ? 'Gán bàn hoặc chọn Mang về'
+              : 'Đổi bàn hoặc chọn Mang về'}
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="touch-save-draft"
+          disabled={!permissions.canSaveDraft || draftItems.length === 0 || pending.isSavingDraft}
+          onClick={() => void actions.saveDraft()}
+          className={cn('w-full font-bold', isShortScreen ? 'h-11 text-sm' : 'h-12 text-base')}
+        >
+          {pending.isSavingDraft ? 'Đang lưu giỏ tạm...' : 'Lưu giỏ tạm'}
+        </Button>
         <Button
           type="button"
           data-testid="touch-submit-draft"
           disabled={
             !permissions.canCreateOrder || draftItems.length === 0 || pending.isSubmittingDraft
+            || !draftTarget || draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)
           }
           onClick={() => void actions.submitDraftOrder()}
           className={cn(
@@ -213,7 +231,7 @@ function LiveOrderCart({
       ? [
           {
             key: 'table-action',
-            label: 'Đổi / Gộp / Hoán đổi bàn',
+            label: order.orderType === 'TAKEAWAY' ? 'Gán bàn' : 'Đổi / Gộp / Hoán đổi bàn',
             icon: ArrowLeftRight,
             disabled: tableActionDisabled,
             onSelect: () => dialogs.setTableActionOpen(true),
@@ -540,7 +558,7 @@ function LiveOrderCart({
                   className="h-14 flex-col gap-0.5 px-1 text-xs font-bold"
                 >
                   <ArrowLeftRight className="h-5 w-5" />
-                  Đổi/Gộp bàn
+                  {order.orderType === 'TAKEAWAY' ? 'Gán bàn' : 'Đổi/Gộp bàn'}
                 </Button>
                 <Button
                   type="button"

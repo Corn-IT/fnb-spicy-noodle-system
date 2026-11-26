@@ -140,24 +140,51 @@ test.describe('POS cảm ứng — đơn mang về', () => {
 
   test('creates a TAKEAWAY order with tableId null from the All tab tile', async ({ page }) => {
     await setupMockApi(page);
-    let createdBody: unknown = null;
-    await page.route('**/api/v1/pos/orders', async (route) => {
-      if (route.request().method() !== 'POST') return route.fallback();
-      createdBody = route.request().postDataJSON();
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          orderId: 909,
-          orderCode: 'HD-20261123-0909',
-          orderType: 'TAKEAWAY',
-          tableId: null,
-          takeawayNumber: 1,
-          tableLabel: 'Mang về #01',
-          status: 'SERVING',
-          totalAmount: 45000,
-        }),
-      });
+    let draftBody: Record<string, unknown> | null = null;
+    let submitBody: Record<string, unknown> | null = null;
+    await page.route('**/api/v1/pos/drafts**', async (route) => {
+      const url = new URL(route.request().url());
+      if (route.request().method() === 'POST' && url.pathname === '/api/v1/pos/drafts') {
+        draftBody = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ...draftBody,
+            id: 'draft-909',
+            revision: 1,
+            tableName: null,
+            createdAt: '2026-11-23T06:00:00.000Z',
+            updatedAt: '2026-11-23T06:00:00.000Z',
+          }),
+        });
+        return;
+      }
+      if (route.request().method() === 'POST' && url.pathname === '/api/v1/pos/drafts/draft-909/submit') {
+        submitBody = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            draftId: 'draft-909',
+            idempotentReplay: false,
+            order: {
+              orderId: 909,
+              orderCode: 'HD-20261123-0909',
+              orderType: 'TAKEAWAY',
+              tableId: null,
+              takeawayNumber: 1,
+              tableLabel: 'Mang về #01',
+              status: 'SERVING',
+              subtotalAmount: 45000,
+              discountAmount: 0,
+              totalAmount: 45000,
+            },
+          }),
+        });
+        return;
+      }
+      return route.fallback();
     });
 
     await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
@@ -173,11 +200,15 @@ test.describe('POS cảm ứng — đơn mang về', () => {
     await expect(page.locator('[data-testid^="touch-draft-item-"]')).toHaveCount(1);
 
     await page.getByTestId('touch-submit-draft').tap();
-    await expect.poll(() => createdBody).not.toBeNull();
-    expect(createdBody).toMatchObject({
+    await expect.poll(() => draftBody).not.toBeNull();
+    expect(draftBody).toMatchObject({
       orderType: 'TAKEAWAY',
       tableId: null,
       items: [expect.objectContaining({ quantity: 2 })],
+    });
+    await expect.poll(() => submitBody).toMatchObject({
+      expectedRevision: 1,
+      idempotencyKey: expect.any(String),
     });
   });
 

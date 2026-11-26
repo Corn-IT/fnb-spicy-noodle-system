@@ -1,4 +1,4 @@
-import { type PosOrderSummary, type PosTableGridResponse } from '@fnb/shared';
+import { type PosDraftResponse, type PosOrderSummary, type PosTableGridResponse } from '@fnb/shared';
 import {
   AlertTriangle,
   BellRing,
@@ -20,6 +20,7 @@ import { cn } from '@/utils/cn';
 import { useQrVoiceToggle } from '../hooks/use-qr-voice-toggle';
 import { QrSecurityConfigDialog } from './qr-security-config-dialog';
 import { TableManageDialog } from './table-manage-dialog';
+import { PosDraftsPanel } from './pos-drafts-panel';
 
 export interface TableGridPanelProps {
   tables: PosTableGridResponse['tables'];
@@ -27,13 +28,19 @@ export interface TableGridPanelProps {
   takeawayQrToken?: string;
   selectedOrderId: number | null;
   draftTarget:
-    | { orderType: 'DINE_IN'; tableId: number; tableName: string }
+    | { orderType: 'DINE_IN'; tableId: number | null; tableName?: string }
     | { orderType: 'TAKEAWAY' }
+    | { orderType: null }
     | null;
+  drafts: PosDraftResponse[];
+  activeDraftId: string | null;
   addonBadgesByOrderId: Record<number, number>;
   onSelectTable: (table: PosTableGridResponse['tables'][number]) => void;
   onSelectTakeawayOrder: (order: PosOrderSummary) => void;
   onStartNewTakeaway: () => void;
+  onStartUntargetedDraft: () => void;
+  onResumeDraft: (draft: PosDraftResponse) => void;
+  onDeleteDraft: (draft: PosDraftResponse) => void;
 }
 
 export function TableGridPanel({
@@ -42,13 +49,19 @@ export function TableGridPanel({
   takeawayQrToken,
   selectedOrderId,
   draftTarget,
+  drafts,
+  activeDraftId,
   addonBadgesByOrderId,
   onSelectTable,
   onSelectTakeawayOrder,
   onStartNewTakeaway,
+  onStartUntargetedDraft,
+  onResumeDraft,
+  onDeleteDraft,
 }: TableGridPanelProps) {
   const user = useAuthStore((s) => s.user);
   const canCreateOrder = Boolean(user?.isSuperAdmin || user?.permissions.pos.create);
+  const canDeleteDraft = Boolean(user?.isSuperAdmin || user?.permissions.pos.delete);
   const canManageTables = Boolean(user?.isSuperAdmin || user?.permissions.pos.update);
   const canManageQrSecurity = Boolean(user?.isSuperAdmin || user?.permissions.pos.qrSecurity);
   const [tableManageOpen, setTableManageOpen] = React.useState(false);
@@ -341,15 +354,26 @@ export function TableGridPanel({
             <span>Đơn Mang về Đang Phục vụ ({takeaways.length})</span>
           </h3>
           {canCreateOrder ? (
-            <Button
-              type="button"
-              data-testid="create-takeaway-btn"
-              onClick={onStartNewTakeaway}
-              className="h-8 sm:h-9 px-3 text-xs sm:text-sm bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.98] gap-1.5 shadow-xs shrink-0"
-            >
-              <ShoppingBag className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-              <span>TẠO ĐƠN MANG VỀ</span>
-            </Button>
+            <div className="flex flex-wrap gap-1.5">
+              <Button
+                type="button"
+                data-testid="create-untargeted-draft-btn"
+                onClick={onStartUntargetedDraft}
+                variant="outline"
+                className="h-8 sm:h-9 px-3 text-xs sm:text-sm font-bold gap-1.5 shrink-0"
+              >
+                Giỏ chưa gán bàn
+              </Button>
+              <Button
+                type="button"
+                data-testid="create-takeaway-btn"
+                onClick={onStartNewTakeaway}
+                className="h-8 sm:h-9 px-3 text-xs sm:text-sm bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.98] gap-1.5 shadow-xs shrink-0"
+              >
+                <ShoppingBag className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                <span>TẠO ĐƠN MANG VỀ</span>
+              </Button>
+            </div>
           ) : null}
         </div>
 
@@ -375,6 +399,12 @@ export function TableGridPanel({
                 <div className="mt-1 sm:mt-1.5 text-[11px] sm:text-xs font-semibold text-indigo-600 dark:text-indigo-300">
                   Đang chọn món
                 </div>
+              </div>
+            ) : null}
+            {draftTarget?.orderType === null ? (
+              <div data-testid="untargeted-draft-card" className="relative flex min-h-[64px] sm:min-h-[70px] flex-col justify-between overflow-hidden rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-500/15 p-2.5 sm:p-3 text-left ring-4 ring-primary/50">
+                <span className="text-xs sm:text-sm font-bold text-indigo-700 dark:text-indigo-300">Giỏ chưa gán bàn</span>
+                <span className="mt-1 text-[11px] sm:text-xs font-semibold text-indigo-600 dark:text-indigo-300">Đang chọn món</span>
               </div>
             ) : null}
 
@@ -454,6 +484,14 @@ export function TableGridPanel({
           </div>
         )}
       </div>
+
+      <PosDraftsPanel
+        drafts={drafts}
+        activeDraftId={activeDraftId}
+        canDelete={canDeleteDraft}
+        onResume={onResumeDraft}
+        onDelete={onDeleteDraft}
+      />
 
       <TableManageDialog
         open={tableManageOpen}

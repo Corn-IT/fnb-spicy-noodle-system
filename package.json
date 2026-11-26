@@ -10,6 +10,7 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
+    "e2e": "pnpm --filter @fnb/web-app e2e",
     "db:migrate": "pnpm --filter @fnb/api-server db:migrate",
     "db:seed": "pnpm --filter @fnb/api-server db:seed",
     "db:setup": "pnpm --filter @fnb/api-server db:setup"

@@ -253,3 +253,16 @@
 | SEC-08 | SQLi / NoSQLi ở ô tìm kiếm, bộ lọc, query params, URL params | PASS | — | Probe `' OR '1'='1`, `"; DROP TABLE orders;--`, `{"$ne":null}` trên `/employees`, `/invoices`, `/menu`, `/mdm/lookup` đều trả `200 OK` an toàn (Prisma parameterized) |
 | SEC-09 | Giới hạn kích thước payload (body JSON lớn, upload ảnh quá lớn / sai MIME / giả mạo extension) | PASS | — | Body JSON `2MB` trên `/public/orders/qr` trả `413`; SVG MIME bị chặn `422`; file `.txt` đổi tên / vượt dung lượng bị từ chối ở M6 & M16 (`413`/`422`) |
 | SEC-10 | Rate Limit (`login`, `public/orders/qr`, `public/tts`) & Concurrency (double submit, 2 thu ngân checkout/table-action/split-kitchen đồng thời trên cùng đơn) | FAIL→FIXED | `rate-limit.guard.ts:125-161,299-308`; `live-invoice-panel.tsx:283,288,491,690,720,745` | Attempt 9 `/auth/login` → `429` (`Retry-After: 300`); attempt 7 `/public/orders/qr` → `429` (`Retry-After: 60`); 65 req `/public/tts` < 300/min; Concurrency live `2x createQrOrder` `Promise.all` (`Bàn 04` gộp 1 đơn), `2` tab thu ngân bắn song song `POST /checkout` (`1` thành công, `1` trả `409`), cộng thêm **Hotfix M10-2** khoá UI trên tab còn lại khi đơn chuyển `PAID` |
+
+## 7. POS Drafts & Takeaway Conversion — Đã chạy kiểm tra tập trung
+
+Các kết quả PASS trong bảng lịch sử ở trên được ghi trước thay đổi này. Trong phiên triển khai, toàn bộ Vitest (`pnpm -r test`) và các luồng POS tập trung đã chạy đạt. Lần chạy full `pnpm e2e` đầu tiên có 71 PASS, 5 SKIP, 9 FAIL; một FAIL là test Touch cũ còn gọi API tạo order trực tiếp sau khi flow chuyển sang draft, đã được sửa và file Touch chạy lại đạt 15/15. Các FAIL còn lại gồm thermal-raster và một số kiểm tra responsive/account trên WebKit. Full suite chưa chạy lại sau khi sửa test Touch, nên trạng thái toàn suite chưa được xác nhận sạch.
+
+| Hạng mục | Coverage mới | File | Trạng thái hiện tại |
+|----------|--------------|------|--------------------|
+| Shared draft cart Desktop + Touch: giỏ chưa gán bàn → lưu → resume → chọn bàn trống → submit một lần; không gọi endpoint tạo order riêng từ client | E2E flow & request assertions | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — 2 Desktop, 1 Touch |
+| Xoá giỏ tạm đã lưu khỏi danh sách POS | E2E | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — Desktop |
+| POS Touch chuyển sang flow tạo draft rồi submit | E2E regression | `apps/web-app/e2e/pos-touch.spec.ts` | PASS — 15/15; kết hợp với `pos-drafts.spec.ts` chạy lại đạt 18/18 |
+| Revision conflict, occupied target preserves draft, submit/replay idempotency | Service | `apps/api-server/src/modules/pos/__tests__/pos-drafts.spec.ts` | PASS — included in `pnpm -r test` |
+| Vietnam-day sequence boundaries and atomic persistent allocation | Helper | `apps/api-server/src/modules/pos/__tests__/takeaway-sequence.spec.ts` | PASS — included in `pnpm -r test` |
+| MOVE/MERGE TAKEAWAY items no longer print `[MANG VỀ]`; transfer note remains on future kitchen ticket | Service and kitchen split | `apps/api-server/src/modules/pos/__tests__/table-transfer.spec.ts`, `apps/api-server/src/modules/pos/__tests__/kitchen-split.spec.ts` | PASS — included in `pnpm -r test` |

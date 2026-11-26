@@ -9,6 +9,7 @@ export const SocketEvents = {
   QR_ORDER_NOTICE: 'qr:order_notice',
   TABLE_QR_ROTATED: 'table:qr_rotated',
   TABLE_GRID_SYNC: 'table:grid_sync',
+  POS_DRAFTS_UPDATED: 'pos:drafts_updated',
   MENU_UPDATED: 'menu:updated',
   SCHEDULE_UPDATED: 'schedule:updated',
   PAYROLL_UPDATED: 'payroll:updated',

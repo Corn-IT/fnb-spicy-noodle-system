@@ -408,6 +408,31 @@ export const MESSAGE_CATALOG: readonly MessageCatalogItem[] = [
     variables: ['reason'],
   }),
   defineMessage({
+    key: 'pos.draft.saved', module: 'POS', kind: 'toast', label: 'Lưu giỏ bán hàng tạm',
+    defaultTitle: 'Đã lưu giỏ tạm để mở trên thiết bị khác',
+    defaultDescription: '{itemCount} món', variables: ['itemCount'],
+  }),
+  defineMessage({
+    key: 'pos.draft.saveError', module: 'POS', kind: 'toast', label: 'Lỗi lưu giỏ bán hàng tạm',
+    defaultTitle: 'Không thể lưu giỏ tạm', defaultDescription: '{reason}', variables: ['reason'],
+  }),
+  defineMessage({
+    key: 'pos.draft.saveBeforeSwitch', module: 'POS', kind: 'toast', label: 'Nhắc lưu giỏ trước khi đổi đơn',
+    defaultTitle: 'Hãy lưu giỏ hiện tại trước khi mở đơn khác',
+  }),
+  defineMessage({
+    key: 'pos.draft.assignTarget', module: 'POS', kind: 'toast', label: 'Yêu cầu gán bàn trước khi tạo đơn',
+    defaultTitle: 'Hãy gán bàn hoặc chọn Mang về trước khi tạo đơn',
+  }),
+  defineMessage({
+    key: 'pos.draft.deleted', module: 'POS', kind: 'toast', label: 'Xoá giỏ tạm',
+    defaultTitle: 'Đã xoá giỏ tạm',
+  }),
+  defineMessage({
+    key: 'pos.draft.deleteError', module: 'POS', kind: 'toast', label: 'Lỗi xoá giỏ tạm',
+    defaultTitle: 'Không thể xoá giỏ tạm', defaultDescription: '{reason}', variables: ['reason'],
+  }),
+  defineMessage({
     key: 'pos.order.approveQrSuccess',
     module: 'POS',
     kind: 'toast',
@@ -2484,6 +2509,16 @@ export const MESSAGE_CATALOG: readonly MessageCatalogItem[] = [
     kind: 'error',
     label: 'Xung đột cập nhật sơ đồ bàn (POS_CONCURRENT_MODIFICATION)',
     defaultTitle: 'Đơn hoặc bàn vừa thay đổi bởi nhân viên khác, vui lòng tải lại sơ đồ bàn',
+  }),
+  defineMessage({
+    key: `error.${ErrorCodes.POS_DRAFT_CONCURRENT_MODIFICATION}`,
+    module: 'SYSTEM_ERROR', kind: 'error', label: 'Giỏ nháp vừa được sửa ở thiết bị khác',
+    defaultTitle: 'Giỏ nháp đã thay đổi ở thiết bị khác; hãy tải lại trước khi tiếp tục',
+  }),
+  defineMessage({
+    key: `error.${ErrorCodes.POS_DRAFT_ALREADY_SUBMITTED}`,
+    module: 'SYSTEM_ERROR', kind: 'error', label: 'Giỏ nháp đã được gửi',
+    defaultTitle: 'Giỏ nháp này đã được tạo thành đơn',
   }),
   defineMessage({
     key: `error.${ErrorCodes.CASHFLOW_ALREADY_SETTLED}`,

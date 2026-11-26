@@ -40,6 +40,8 @@ Khi bấm Đăng xuất, thực hiện **ĐÚNG** thứ tự:
 ### 4.1. POS Desktop Split-View (`/pos`)
 - Trái: Sơ đồ bàn (`AVAILABLE` / `PENDING` / `OCCUPIED`) + khu Mang về (`MV-#`) và Thực đơn 3 tầng động (Cấp cay, Size M/L, Auto-Check, Đổi món chính, Topping, cờ `Gói mang về` từng món).
 - Phải: `LiveInvoicePanel` theo từng lượt gọi (`batch_no`), áp/gỡ giảm giá, `[Tách đơn]`, `[In lại bếp]`, `[Chuyển/Gộp/Đổi bàn/Mang về]`, `[In tạm tính / Tạm tính tách đơn]`, `[Thanh toán / Tách thanh toán]`. Khi đơn không còn `PENDING`/`SERVING`, bắt buộc khoá/ẩn toàn bộ nút thao tác ghi.
+- Giỏ chưa gửi có thể bắt đầu từ bàn, từ Mang về hoặc chưa gán bàn; phải có mục riêng để lưu/resume/xoá giỏ đã lưu trên mọi máy POS. Draft hiển thị giá hiện tại để tham khảo nhưng backend chỉ chốt giá mới nhất lúc tạo đơn. Trước khi gửi phải chọn bàn vật lý còn trống hoặc Mang về. Draft không chiếm trạng thái bàn hay xuất hiện trong danh sách đơn/QR khách. Khi TAKEAWAY được MOVE/MERGE vào bàn, các món chuyển phải có `is_takeaway = false` để phiếu bếp không còn nhãn `[MANG VỀ]`.
+- Với đơn TAKEAWAY đang mở, thao tác bàn trên invoice gọi nhãn **`Gán bàn`** và mở picker MOVE hiện có; tiếp tục dùng kiểm tra bàn trống và flow in thông báo đổi bàn đã có.
 
 ### 4.2. POS Cảm ứng Toàn màn hình kiểu iPOS (`/pos/touch/*` — Stories 20 & 21)
 - Kích hoạt chế độ kiosk (`data-pos-touch="true"`, Tailwind variant `touch-ui:`, Screen Wake Lock), ẩn Sidebar/Navbar của `AppShell`.
@@ -47,6 +49,7 @@ Khi bấm Đăng xuất, thực hiện **ĐÚNG** thứ tự:
   - `Tất cả` *(mặc định)*: Ô `+ Đơn mang về mới` → các thẻ `Mang về #NN` → các thẻ `Bàn 01..N`.
   - `Phòng bàn`: Chỉ lưới bàn vật lý.
   - `Mang về`: Ô `+ Đơn mang về mới` + đơn mang về đang phục vụ.
+- Các tab sơ đồ cũng hiển thị giỏ chưa gán bàn và danh sách giỏ tạm đã lưu; chọn giỏ để resume rồi bấm bàn trống hoặc `+ Đơn mang về mới` để gán đích. Draft dùng cùng state hook với Desktop và không tạo `orders` trước khi bấm gửi.
 - **TouchShellLayout & Thanh đáy 4 nút (`Bán hàng · Hoá đơn · Kết ca · Quản lý`):** Tự động ẩn khi ở màn gọi món/tính tiền (`TouchOrderScreen`).
 - **Trung tâm Quản lý (`/pos/touch/hub`) & 2 màn cảm ứng chuyên biệt:**
   - `/pos/touch/stock-status`: Báo hết món & topping 1 chạm (`menu` permission).

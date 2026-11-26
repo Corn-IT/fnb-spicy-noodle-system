@@ -10,6 +10,7 @@ import type { ErrorCode, KitchenStation, TableActionRequest, TableActionResponse
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 import { recomputeOrderTotals } from './order-totals.helper';
+import { allocateTakeawayNumber } from './takeaway-sequence.helper';
 
 const activeStatuses = ['PENDING', 'SERVING'];
 
@@ -98,9 +99,7 @@ export class TableTransferService {
           throw this.conflict(ErrorCodes.POS_ORDER_NOT_ACTIVE, 'Chỉ có thể chuyển đơn tại bàn sang Mang về');
         }
         const now = new Date();
-        const businessDay = this.businessDay(now);
-        await this.lockOrderSequence(tx, businessDay.key);
-        const takeawayNumber = await this.nextTakeawayNumber(tx, businessDay);
+        const takeawayNumber = await allocateTakeawayNumber(tx, now);
         const toLabel = `Mang về #${String(takeawayNumber).padStart(2, '0')}`;
         const logEntry = {
           action: parsed.action,
@@ -190,7 +189,7 @@ export class TableTransferService {
           if (typeof (tx.orderItem as { updateMany?: unknown })?.updateMany === 'function') {
             await tx.orderItem.updateMany({
               where: { orderId: source.id },
-              data: { isTakeaway: true },
+              data: { isTakeaway: false },
             });
           }
           await tx.order.update({
@@ -230,7 +229,7 @@ export class TableTransferService {
           where: { orderId: source.id },
           data: {
             orderId: targetOrder.id,
-            ...(source.orderType === 'TAKEAWAY' ? { isTakeaway: true } : {}),
+            ...(source.orderType === 'TAKEAWAY' ? { isTakeaway: false } : {}),
           },
         });
         const canRecomputeItems = typeof (tx.orderItem as { findMany?: unknown })?.findMany === 'function';
@@ -429,30 +428,6 @@ export class TableTransferService {
     const ids = [...new Set(tableIds.filter((id): id is number => id !== null))].sort((left, right) => left - right);
     if (ids.length === 0) return;
     await tx.$queryRaw`SELECT id FROM dining_tables WHERE id IN (${Prisma.join(ids)}) ORDER BY id ASC FOR UPDATE`;
-  }
-
-  private businessDay(now: Date): { key: string; start: Date; end: Date } {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(now);
-    const part = (type: string) => parts.find((value) => value.type === type)?.value ?? '';
-    const key = `${part('year')}${part('month')}${part('day')}`;
-    const start = new Date(`${part('year')}-${part('month')}-${part('day')}T00:00:00.000+07:00`);
-    return { key, start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
-  }
-
-  private async lockOrderSequence(tx: Prisma.TransactionClient, businessDate: string): Promise<void> {
-    if (typeof (tx as { $executeRaw?: unknown }).$executeRaw !== 'function') return;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fnb-pos-order-sequence:${businessDate}`}))`;
-  }
-
-  private async nextTakeawayNumber(tx: Prisma.TransactionClient, day: { start: Date; end: Date }): Promise<number> {
-    if (typeof (tx.order as { aggregate?: unknown })?.aggregate !== 'function') return 1;
-    const aggregate = await tx.order.aggregate({
-      where: { orderType: 'TAKEAWAY', createdAt: { gte: day.start, lt: day.end } },
-      _max: { takeawayNumber: true },
-    });
-    return (aggregate._max.takeawayNumber ?? 0) + 1;
   }
 
   private printedStations(items: Array<{

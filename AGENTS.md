@@ -8,7 +8,7 @@
 
 - **Tên:** Hệ thống POS & Quản trị Vận hành cho Quán Mì Cay
 - **Quy mô:** 20–30 bàn, 3+ khu vực bếp (mở rộng động `BEP_*`), 200–600 đơn/ngày, 1–2 developer
-- **Kiến trúc:** Modular Monolith trong Turborepo Monorepo (18 bảng Prisma / 15 NestJS modules / 16 Frontend features / 14 nhóm quyền RBAC)
+- **Kiến trúc:** Modular Monolith trong Turborepo Monorepo (20 bảng Prisma / 15 NestJS modules / 16 Frontend features / 14 nhóm quyền RBAC)
 - **Ngôn ngữ:** 100% TypeScript end-to-end (Frontend + Backend + Shared)
 
 ## 2. CẤU TRÚC MONOREPO
@@ -20,7 +20,7 @@ fnb-spicy-noodle-system/
 ├── docs/
 │   ├── HUONG_DAN_SU_DUNG_VA_GIAI_PHAP.md
 │   ├── bmad/                          # PRD, RBAC & MDM Matrix, Edge Cases
-│   ├── architecture/                  # Verified ERD (18 bảng), State Machines, Sequences, Audit Report
+│   ├── architecture/                  # Verified ERD (20 bảng), State Machines, Sequences, Audit Report
 │   ├── stories/                       # 21 Story files (story-01 .. story-21)
 │   └── qa/                            # E2E & Realtime QA reports/ledgers
 ├── apps/
@@ -144,3 +144,11 @@ Mọi cột liên quan đến tiền (`price`, `subtotal_amount`, `discount_amou
 - `.agents/rules/05-testing-strategy.md`
 - `.agents/rules/06-error-handling-and-logging.md`
 - `.agents/rules/07-deployment-and-git.md`
+
+## 9. BMAD Runtime & Skill Version (MUST)
+
+- `.agents/skills/bmad-build/` và `bmad-build-auto/` là source được quản lý trong repo; giữ chúng tương thích với renderer trong BMAD Core. **NEVER** dùng bản skill tạm ở ngoài repo để lách lỗi parser.
+- BMAD cần `uv`; Skills CLI cần Node.js `>=22.20.0`. Đây là yêu cầu cho tooling, **không** nâng phiên bản Node dùng cho ứng dụng nếu chưa có yêu cầu riêng.
+- Khi user đã yêu cầu triển khai và thiếu `_bmad/scripts/render_skill.py`, agent **MUST** chạy quy trình `bmad setup` ở phạm vi project rồi render lại; không hỏi user xác nhận setup lần nữa. **NEVER** tự viết hoặc chép tay runtime vào `_bmad/`.
+- Khi renderer báo cú pháp skill cũ như `{{.variable}}`, cập nhật skill project và module record từ cùng nguồn BMAD bằng `npx skills update -p -y`, chạy lại `bmad setup`, rồi render lại skill trong repo. Giữ nguyên các skill retired cho tới khi user duyệt xóa.
+- Version hóa `.agents/skills/bmad/`, các `bmod-*/`, skill đã cập nhật và `skills-lock.json`; `_bmad/` cùng `_bmad-output/` tiếp tục là runtime/artifact local bị ignore.

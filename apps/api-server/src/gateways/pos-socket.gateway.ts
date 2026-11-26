@@ -6,6 +6,7 @@ import {
   type PermissionsUpdatedSocketPayload,
   type QrAutoCancelledPayload,
   type QrOrderNoticePayload,
+  type PosDraftInvalidationPayload,
   QrOrderNoticePayloadSchema,
   QrTableRotatedPayloadSchema,
   QrTokenSchema,
@@ -171,6 +172,10 @@ export class PosSocketGateway
   emitQrNewOrder(payload: unknown): void {
     this.server.to(SocketRooms.POS_CASHIER).emit(SocketEvents.ORDER_QR_NEW, payload);
     this.emitTableGridSync(payload);
+  }
+
+  emitPosDraftsUpdated(payload: PosDraftInvalidationPayload): void {
+    this.server?.to(SocketRooms.POS_CASHIER).emit(SocketEvents.POS_DRAFTS_UPDATED, payload);
   }
 
   emitQrAddonOrder(payload: unknown): void {

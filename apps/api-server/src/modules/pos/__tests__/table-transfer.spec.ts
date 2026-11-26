@@ -8,9 +8,12 @@ const targetTable = { id: 7, name: 'Bàn 07', status: 'AVAILABLE', activeOrderId
 
 function createHarness() {
   const lockSql: string[] = [];
+  let takeawaySequence = 0;
   const tx = {
     $queryRaw: vi.fn(async (strings: TemplateStringsArray) => {
-      lockSql.push(strings.raw.join(''));
+      const sql = strings.raw.join('');
+      lockSql.push(sql);
+      if (sql.includes('INSERT INTO takeaway_sequences')) return [{ takeawayNumber: ++takeawaySequence }];
       return [];
     }),
     order: {
@@ -123,7 +126,7 @@ describe('TableTransferService', () => {
     expect(harness.tx.order.update).not.toHaveBeenCalled();
   });
 
-  it('should merge a takeaway order into an occupied table and mark its items as takeaway', async () => {
+  it('should merge a takeaway order into an occupied table and clear generated takeaway item labels', async () => {
     const harness = createHarness();
     const source = {
       id: 42,
@@ -162,7 +165,7 @@ describe('TableTransferService', () => {
 
     expect(harness.tx.orderItem.updateMany).toHaveBeenCalledWith({
       where: { orderId: 42 },
-      data: { orderId: 99, isTakeaway: true },
+      data: { orderId: 99, isTakeaway: false },
     });
     expect(result).toMatchObject({
       action: 'MERGE',
@@ -362,7 +365,7 @@ describe('TableTransferService', () => {
     expect(failure.getResponse()).toMatchObject({ code: 'POS_ORDER_NOT_ACTIVE' });
   });
 
-  it('should convert a takeaway order to a dine-in order at an available table and mark its items as takeaway', async () => {
+  it('should assign a takeaway order to a dine-in table and clear generated takeaway item labels', async () => {
     const harness = createHarness();
     harness.tx.order.findUnique
       .mockResolvedValueOnce({ id: 42, orderType: 'TAKEAWAY', tableId: null, takeawayNumber: 3 })
@@ -385,7 +388,7 @@ describe('TableTransferService', () => {
 
     expect(harness.tx.orderItem.updateMany).toHaveBeenCalledWith({
       where: { orderId: 42 },
-      data: { isTakeaway: true },
+      data: { isTakeaway: false },
     });
     expect(harness.tx.order.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 42 },

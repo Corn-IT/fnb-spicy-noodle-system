@@ -1,4 +1,4 @@
-import type { PosOrderSummary, PosTableGridResponse } from '@fnb/shared';
+import type { PosDraftResponse, PosOrderSummary, PosTableGridResponse } from '@fnb/shared';
 import { BellRing, Clock3, Plus, ShoppingBag } from 'lucide-react';
 import * as React from 'react';
 
@@ -10,6 +10,7 @@ import { getActiveQrReminderConfig } from '@/lib/qr-voice-announcer';
 import { cn } from '@/utils/cn';
 import { formatElapsedSince } from './elapsed-time';
 import { type ColumnChoice, useGridColumns } from './touch-layout';
+import { PosDraftsPanel } from '../components/pos-drafts-panel';
 
 type PosTable = PosTableGridResponse['tables'][number];
 
@@ -21,13 +22,19 @@ export interface TouchTableBoardProps {
   columns?: ColumnChoice;
   tables: PosTable[];
   takeaways: PosOrderSummary[];
+  drafts: PosDraftResponse[];
+  activeDraftId: string | null;
   onlyOccupied: boolean;
   nowMs: number;
   canCreateOrder: boolean;
+  canDeleteDraft: boolean;
   addonBadgesByOrderId: Record<number, number>;
   onSelectTable: (table: PosTable) => void;
   onSelectTakeaway: (order: PosOrderSummary) => void;
   onStartNewTakeaway: () => void;
+  onStartUntargetedDraft: () => void;
+  onResumeDraft: (draft: PosDraftResponse) => void;
+  onDeleteDraft: (draft: PosDraftResponse) => void;
 }
 
 const formatMoney = (amount: number) => `${amount.toLocaleString('vi-VN')}`;
@@ -71,13 +78,19 @@ export function TouchTableBoard({
   columns = 'auto',
   tables,
   takeaways,
+  drafts,
+  activeDraftId,
   onlyOccupied,
   nowMs,
   canCreateOrder,
+  canDeleteDraft,
   addonBadgesByOrderId,
   onSelectTable,
   onSelectTakeaway,
   onStartNewTakeaway,
+  onStartUntargetedDraft,
+  onResumeDraft,
+  onDeleteDraft,
 }: TouchTableBoardProps) {
   const reminderConfig = getActiveQrReminderConfig();
   const grid = useGridColumns('tables', columns);
@@ -99,6 +112,20 @@ export function TouchTableBoard({
       >
         <Plus className="h-10 w-10" />
         <span className="text-lg font-bold">Đơn mang về mới</span>
+      </button>
+    ) : null;
+
+  const renderUntargetedDraftTile = () =>
+    canCreateOrder ? (
+      <button
+        key="untargeted-draft"
+        type="button"
+        data-testid="touch-new-untargeted-draft"
+        onClick={onStartUntargetedDraft}
+        className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-indigo-500/60 bg-indigo-500/5 p-3 text-indigo-700 transition-transform active:scale-[0.97] dark:text-indigo-300"
+      >
+        <Plus className="h-10 w-10" />
+        <span className="text-lg font-bold">Giỏ chưa gán bàn</span>
       </button>
     ) : null;
 
@@ -186,9 +213,10 @@ export function TouchTableBoard({
     tab === 'tables'
       ? visibleTables.map(renderTableCard)
       : tab === 'takeaway'
-        ? [renderNewTakeawayTile(), ...sortedTakeaways.map(renderTakeawayCard)]
+        ? [renderNewTakeawayTile(), renderUntargetedDraftTile(), ...sortedTakeaways.map(renderTakeawayCard)]
         : [
             renderNewTakeawayTile(),
+            renderUntargetedDraftTile(),
             ...sortedTakeaways.map(renderTakeawayCard),
             ...visibleTables.map(renderTableCard),
           ];
@@ -229,6 +257,13 @@ export function TouchTableBoard({
       >
         {boardCards}
       </div>
+      <PosDraftsPanel
+        drafts={drafts}
+        activeDraftId={activeDraftId}
+        canDelete={canDeleteDraft}
+        onResume={onResumeDraft}
+        onDelete={onDeleteDraft}
+      />
       {emptyMessage ? (
         <p className="py-6 text-center text-base font-semibold text-muted-foreground">
           {emptyMessage}

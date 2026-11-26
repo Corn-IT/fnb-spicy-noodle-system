@@ -180,6 +180,7 @@ const servingOrder: OrderDetailResponse = {
 function mockGetApi(tableGrid: PosTableGridResponse = grid) {
   return vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/api/v1/pos/tables') return tableGrid;
+    if (url === '/api/v1/pos/drafts') return { drafts: [] };
     if (url === '/api/v1/menu/products') return products;
     if (url === '/api/v1/pos/orders/700') return servingOrder;
     return [];
@@ -209,6 +210,7 @@ function renderTouchPage() {
 function mockGetApiWithOrderStatus(getStatus: () => OrderDetailResponse['status']) {
   return vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/api/v1/pos/tables') return grid;
+    if (url === '/api/v1/pos/drafts') return { drafts: [] };
     if (url === '/api/v1/menu/products') return products;
     if (url === '/api/v1/pos/orders/700') return { ...servingOrder, status: getStatus() };
     return [];
@@ -278,17 +280,31 @@ describe('POS cảm ứng (/pos/touch)', () => {
 
   it('taps an empty table, adds items through the option dialog and creates a DINE_IN order', async () => {
     mockGetApi();
-    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => {
-      if (url === '/api/v1/pos/orders') {
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string, body?: unknown) => {
+      if (url === '/api/v1/pos/drafts') {
         return {
-          orderId: 701,
-          orderCode: 'HD-20261123-0021',
-          orderType: 'DINE_IN',
-          tableId: 1,
-          takeawayNumber: null,
-          tableLabel: 'Bàn 01',
-          status: 'SERVING',
-          totalAmount: 115000,
+          ...(body as Record<string, unknown>),
+          id: 'draft-701',
+          revision: 1,
+          tableName: 'Bàn 01',
+          createdAt: '2026-11-23T08:15:00.000Z',
+          updatedAt: '2026-11-23T08:15:00.000Z',
+        };
+      }
+      if (url === '/api/v1/pos/drafts/draft-701/submit') {
+        return {
+          draftId: 'draft-701',
+          idempotentReplay: false,
+          order: {
+            orderId: 701,
+            orderCode: 'HD-20261123-0021',
+            orderType: 'DINE_IN',
+            tableId: 1,
+            takeawayNumber: null,
+            tableLabel: 'Bàn 01',
+            status: 'SERVING',
+            totalAmount: 115000,
+          },
         };
       }
       throw new Error(`Unexpected POST ${url}`);
@@ -316,7 +332,7 @@ describe('POS cảm ứng (/pos/touch)', () => {
     fireEvent.click(screen.getByTestId('touch-submit-draft'));
     await waitFor(() => {
       expect(postSpy).toHaveBeenCalledWith(
-        '/api/v1/pos/orders',
+        '/api/v1/pos/drafts',
         expect.objectContaining({
           orderType: 'DINE_IN',
           tableId: 1,
@@ -329,6 +345,10 @@ describe('POS cảm ứng (/pos/touch)', () => {
             }),
           ],
         }),
+      );
+      expect(postSpy).toHaveBeenCalledWith(
+        '/api/v1/pos/drafts/draft-701/submit',
+        expect.objectContaining({ expectedRevision: 1, idempotencyKey: expect.any(String) }),
       );
     });
   });
@@ -491,6 +511,7 @@ describe('POS cảm ứng (/pos/touch)', () => {
     expect(screen.getByTestId('touch-table-card-7')).toBeInTheDocument();
     expect(Array.from(screen.getByTestId('touch-table-grid').children).map((child) => child.getAttribute('data-testid'))).toEqual([
       'touch-new-takeaway',
+      'touch-new-untargeted-draft',
       'touch-takeaway-card-801',
       'touch-takeaway-card-802',
       'touch-table-card-1',

@@ -69,5 +69,26 @@ hotfix/<description> ← branch từ main, merge lại main + develop
 
 ## 5. MUST / NEVER Commit
 
-- **MUST commit:** `docker-compose.yml`, `Dockerfile.caddy`, `apps/api-server/Dockerfile`, `Caddyfile`, `.env.example`, `.env.production.example`, `prisma/schema.prisma`, `prisma/migrations/`, `pnpm-lock.yaml`.
+- **MUST commit:** `docker-compose.yml`, `Dockerfile.caddy`, `apps/api-server/Dockerfile`, `Caddyfile`, `.env.example`, `.env.production.example`, `prisma/schema.prisma`, `prisma/migrations/`, `pnpm-lock.yaml`, BMAD project skills/module records and `skills-lock.json`.
 - **NEVER commit:** `.env`, `.env.production`, `certs/*`, `node_modules/`, `dist/`, `coverage/`.
+
+## 6. BMAD Skills & Project Runtime
+
+- Version the project BMAD entry skills, module records and `skills-lock.json`; keep `bmad-build` / `bmad-build-auto` on the same BMAD Method release as the `bmad` / Core Tools runtime.
+- BMAD setup scripts require `uv`. The Skills CLI currently requires Node.js `>=22.20.0`; use that for skill management without changing the Node runtime used by the POS app.
+- Initial project installation (run with Node.js `>=22.20.0`):
+
+```bash
+npx skills add bmad-code-org/BMAD-METHOD/skills/core-tools --skill bmad bmod-core-tools -a codex -y
+npx skills add bmad-code-org/BMAD-METHOD/skills/method --skill bmad-build bmad-build-auto bmod-method -a codex -y
+```
+
+- Then run the `bmad` skill's `bmad setup` flow to generate or repair `_bmad/`. If an implementation request is already authorized, setup is part of that work; do not pause to ask permission. **NEVER** hand-write `_bmad/scripts` or bypass a parser error with a temporary skill copy.
+- If `render_skill.py` reports old template syntax, update the project skills with `npx skills update -p -y`, run `bmad setup`, then render the project-local skill again. Preserve retired skills until the user authorizes removal.
+- `_bmad/` and `_bmad-output/` are generated local runtime and planning artifacts; keep them ignored. Commit the skill sources and lock so another developer can reproduce setup.
+
+If the app shell has Node.js older than 22.20.0, run the CLI with an isolated newer runtime instead of changing the app toolchain:
+
+```bash
+npx --yes --package=node@22.20.0 --package=skills@1.9.0 -c 'skills update -p -y'
+```
