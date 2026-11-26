@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  Bookmark,
   EllipsisVertical,
   Expand,
   LayoutGrid,
@@ -82,8 +83,12 @@ export function PosTouchPage() {
     onViewChange: (event) => {
       if (event === 'draft-started' || event === 'order-opened') {
         setScreen('order');
-      } else if (event === 'draft-target-picker' || event === 'draft-parked') {
+      } else if (event === 'draft-target-picker') {
         setScreen('tables');
+        setBoardTab('all');
+      } else if (event === 'draft-parked') {
+        setScreen('tables');
+        setBoardTab('drafts');
       }
     },
   });
@@ -382,18 +387,53 @@ export function PosTouchPage() {
                 <ShoppingBag className="h-5 w-5" />
                 <span>Mang về ({takeaways.length})</span>
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={boardTab === 'drafts'}
+                aria-controls="touch-table-board"
+                data-testid="touch-tab-drafts"
+                onClick={() => setBoardTab('drafts')}
+                className={cn(
+                  'flex h-12 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-bold transition-colors min-[1100px]:gap-2 min-[1100px]:px-4 min-[1100px]:text-base',
+                  boardTab === 'drafts'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                )}
+              >
+                <Bookmark className="h-5 w-5" />
+                <span>
+                  Lưu tạm{workspace.draftsQuery.data !== undefined ? ` (${workspace.parkedDrafts.length})` : ''}
+                </span>
+              </button>
             </div>
             <p
               data-testid="touch-table-summary"
-              className="min-w-0 flex-1 truncate text-base font-semibold text-muted-foreground"
+              className="hidden min-w-0 flex-1 truncate text-base font-semibold text-muted-foreground min-[900px]:block"
             >
-              Trống{' '}
-              <span className="font-extrabold text-foreground tabular-nums">
-                {availableCount}/{tables.length}
-              </span>{' '}
-              bàn
+              {boardTab === 'drafts' && workspace.draftsQuery.isPending ? (
+                'Đang tải giỏ tạm'
+              ) : boardTab === 'drafts' && workspace.draftsQuery.isError && workspace.draftsQuery.data === undefined ? (
+                'Không tải được giỏ tạm'
+              ) : boardTab === 'drafts' ? (
+                <>
+                  Đã lưu{' '}
+                  <span className="font-extrabold text-foreground tabular-nums">
+                    {workspace.parkedDrafts.length}
+                  </span>{' '}
+                  giỏ tạm
+                </>
+              ) : (
+                <>
+                  Trống{' '}
+                  <span className="font-extrabold text-foreground tabular-nums">
+                    {availableCount}/{tables.length}
+                  </span>{' '}
+                  bàn
+                </>
+              )}
             </p>
-            {boardTab !== 'takeaway' ? (
+            {boardTab !== 'takeaway' && boardTab !== 'drafts' ? (
               <button
                 type="button"
                 role="switch"
@@ -420,7 +460,7 @@ export function PosTouchPage() {
                 <span className="min-[1100px]:hidden">Có HĐ</span>
               </button>
             ) : null}
-            <TouchCashDrawerButton />
+            <TouchCashDrawerButton className="max-[899px]:px-3 max-[899px]:[&>span]:hidden" />
             <Button
               type="button"
               variant="outline"
@@ -433,7 +473,7 @@ export function PosTouchPage() {
             >
               {voiceEnabled ? <Volume2 className="h-6 w-6" /> : <VolumeX className="h-6 w-6" />}
             </Button>
-            <span className="shrink-0 text-xl font-extrabold tabular-nums">
+            <span className="hidden shrink-0 text-xl font-extrabold tabular-nums min-[900px]:inline">
               {formatClockTime(new Date(nowMs).toISOString())}
             </span>
             {menuButton}
@@ -446,6 +486,9 @@ export function PosTouchPage() {
               tables={tables}
               takeaways={takeaways}
               drafts={workspace.parkedDrafts}
+              draftsLoaded={workspace.draftsQuery.data !== undefined}
+              draftsLoading={workspace.draftsQuery.isPending}
+              draftsError={workspace.draftsQuery.isError && workspace.draftsQuery.data === undefined}
               activeDraftId={workspace.activeDraftId}
               onlyOccupied={onlyOccupied}
               nowMs={nowMs}
@@ -458,6 +501,7 @@ export function PosTouchPage() {
               onStartUntargetedDraft={workspace.actions.startUntargetedDraft}
               onResumeDraft={workspace.actions.resumeDraft}
               onDeleteDraft={workspace.actions.deleteDraft}
+              onRetryDrafts={() => void workspace.draftsQuery.refetch()}
             />
           </div>
         </>

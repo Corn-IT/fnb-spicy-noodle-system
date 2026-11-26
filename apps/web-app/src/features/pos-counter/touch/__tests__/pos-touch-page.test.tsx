@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import {
   UserPermissionsSchema,
   type OrderDetailResponse,
+  type PosDraftResponse,
   type PosTableGridResponse,
   type PublicMenuResponse,
 } from '@fnb/shared';
@@ -132,6 +133,18 @@ const boardGridWithTakeaways: PosTableGridResponse = {
   takeaways: [takeaway02, takeaway01],
 };
 
+const parkedDraft: PosDraftResponse = {
+  id: 'draft-701',
+  revision: 2,
+  orderType: 'DINE_IN',
+  tableId: 1,
+  tableName: 'Bàn 01',
+  items: [{ productId: 102, quantity: 1, modifiers: [] }],
+  note: null,
+  createdAt: '2026-11-23T08:15:00.000Z',
+  updatedAt: '2026-11-23T08:15:00.000Z',
+};
+
 const servingOrder: OrderDetailResponse = {
   orderId: 700,
   orderCode: 'HD-20261123-0020',
@@ -177,10 +190,13 @@ const servingOrder: OrderDetailResponse = {
   ],
 };
 
-function mockGetApi(tableGrid: PosTableGridResponse = grid) {
+function mockGetApi(
+  tableGrid: PosTableGridResponse = grid,
+  drafts: PosDraftResponse[] | (() => PosDraftResponse[]) = [],
+) {
   return vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/api/v1/pos/tables') return tableGrid;
-    if (url === '/api/v1/pos/drafts') return { drafts: [] };
+    if (url === '/api/v1/pos/drafts') return { drafts: typeof drafts === 'function' ? drafts() : drafts };
     if (url === '/api/v1/menu/products') return products;
     if (url === '/api/v1/pos/orders/700') return servingOrder;
     return [];
@@ -517,6 +533,103 @@ describe('POS cảm ứng (/pos/touch)', () => {
       'touch-table-card-1',
       'touch-table-card-7',
     ]);
+  });
+
+  it('shows saved carts in their own tab and resumes the selected draft', async () => {
+    mockGetApi(grid, [parkedDraft]);
+    renderTouchPage();
+
+    expect(screen.queryByTestId('pos-parked-drafts')).not.toBeInTheDocument();
+    const draftsTab = await screen.findByTestId('touch-tab-drafts');
+    await waitFor(() => expect(draftsTab).toHaveTextContent('Lưu tạm (1)'));
+    fireEvent.click(draftsTab);
+
+    expect(screen.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'drafts');
+    expect(screen.queryByTestId('touch-table-card-1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pos-parked-drafts')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('pos-resume-draft-draft-701'));
+
+    expect(await screen.findByTestId('touch-order-screen')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-order-title')).toHaveTextContent('Bàn 01');
+  });
+
+  it('waits for saved carts before showing the empty state', async () => {
+    let resolveDrafts!: (value: { drafts: PosDraftResponse[] }) => void;
+    const pendingDrafts = new Promise<{ drafts: PosDraftResponse[] }>((resolve) => {
+      resolveDrafts = resolve;
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/tables') return grid;
+      if (url === '/api/v1/pos/drafts') return pendingDrafts;
+      if (url === '/api/v1/menu/products') return products;
+      return [];
+    });
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-tab-drafts'));
+    expect(screen.getByTestId('touch-drafts-loading')).toHaveTextContent('Đang tải giỏ tạm');
+    expect(screen.queryByTestId('touch-drafts-empty-state')).not.toBeInTheDocument();
+
+    resolveDrafts({ drafts: [] });
+    expect(await screen.findByTestId('touch-drafts-empty-state')).toHaveTextContent('Chưa có giỏ tạm');
+  });
+
+  it('shows a retry action when saved carts fail to load', async () => {
+    let attempts = 0;
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/tables') return grid;
+      if (url === '/api/v1/pos/drafts') {
+        attempts += 1;
+        if (attempts === 1) throw new Error('network unavailable');
+        return { drafts: [] };
+      }
+      if (url === '/api/v1/menu/products') return products;
+      return [];
+    });
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-tab-drafts'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Thử lại' }));
+
+    expect(await screen.findByTestId('touch-drafts-empty-state')).toHaveTextContent('Chưa có giỏ tạm');
+    expect(attempts).toBe(2);
+  });
+
+  it('shows an empty state in Lưu tạm and switches to it after saving a cart', async () => {
+    let savedDrafts: PosDraftResponse[] = [];
+    mockGetApi(grid, () => savedDrafts);
+    vi.spyOn(apiClient, 'post').mockImplementation(async (url: string, body?: unknown) => {
+      if (url !== '/api/v1/pos/drafts') throw new Error(`Unexpected POST ${url}`);
+      const now = new Date().toISOString();
+      const draft: PosDraftResponse = {
+        ...(body as Omit<PosDraftResponse, 'id' | 'revision' | 'tableName' | 'createdAt' | 'updatedAt'>),
+        id: 'draft-702',
+        revision: 1,
+        tableName: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      savedDrafts = [draft];
+      return draft;
+    });
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-tab-drafts'));
+    expect(screen.getByTestId('touch-drafts-empty-state')).toHaveTextContent('Chưa có giỏ tạm');
+    fireEvent.click(screen.getByTestId('touch-tab-all'));
+    fireEvent.click(screen.getByTestId('touch-new-untargeted-draft'));
+    fireEvent.click(await screen.findByTestId('touch-product-102'));
+    fireEvent.click(screen.getByTestId('touch-save-draft'));
+
+    await waitFor(() => expect(screen.getByTestId('touch-tab-drafts')).toHaveAttribute('aria-selected', 'true'));
+    expect(await screen.findByTestId('pos-resume-draft-draft-702')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('pos-resume-draft-draft-702'));
+    await screen.findByTestId('touch-order-screen');
+    fireEvent.click(screen.getByRole('button', { name: 'Gán bàn hoặc chọn Mang về' }));
+
+    expect(await screen.findByTestId('touch-table-board')).toHaveAttribute('data-tab', 'all');
+    expect(await screen.findByTestId('touch-table-card-1')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-new-takeaway')).toBeInTheDocument();
   });
 
   it('omits the new takeaway tile without create permission and starts with the first takeaway', async () => {

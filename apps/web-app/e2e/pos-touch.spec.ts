@@ -327,6 +327,8 @@ test.describe('POS cảm ứng — các tab của sơ đồ bàn', () => {
     await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
 
     for (const viewport of [
+      { width: 768, height: 1024 },
+      { width: 820, height: 1180 },
       { width: 960, height: 540 },
       { width: 1024, height: 600 },
       { width: 1280, height: 720 },
@@ -351,11 +353,23 @@ test.describe('POS cảm ứng — các tab của sơ đồ bàn', () => {
     }
 
     await page.setViewportSize({ width: 960, height: 540 });
+    await page.getByTestId('touch-tab-all').tap();
     await expect(page.getByTestId('touch-tab-tables')).toContainText('Bàn');
     await expect(page.getByTestId('touch-only-occupied')).toHaveAttribute(
       'aria-label',
       'Bàn có hoá đơn',
     );
+  });
+
+  test('opens the saved-drafts tab at the minimum supported width', async ({ page }) => {
+    await setupMockApi(page);
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+
+    await page.getByTestId('touch-tab-drafts').tap();
+    await expect(page.getByTestId('touch-tab-drafts')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'drafts');
+    await expect(page.getByTestId('touch-kiosk-menu-btn')).toBeInViewport();
   });
 });
 

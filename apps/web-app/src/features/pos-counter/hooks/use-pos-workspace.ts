@@ -1120,6 +1120,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     gridData,
     productsQuery,
     products,
+    draftsQuery,
     parkedDrafts,
     activeDraftId: activeSavedDraft?.id ?? null,
     currentOrder: currentOrder ?? null,
