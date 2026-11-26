@@ -115,10 +115,10 @@ describe('POS parked drafts', () => {
     expect(harness.auditLog.record).toHaveBeenCalled();
   });
 
-  it('preserves the draft when the selected table is no longer available', async () => {
+  it('preserves the draft when a QR order takes the selected table before submit', async () => {
     const harness = createHarness();
     harness.tx.posDraft.findUnique.mockResolvedValue(storedDraft);
-    harness.tx.diningTable.findUnique.mockResolvedValue({ id: 7, name: 'Bàn 07', status: 'OCCUPIED', activeOrderId: 99 });
+    harness.tx.diningTable.findUnique.mockResolvedValue({ id: 7, name: 'Bàn 07', status: 'PENDING', activeOrderId: 99 });
 
     const error = await harness.service.submitPosDraft('draft-1', {
       expectedRevision: 2, idempotencyKey: 'draft-submit-key-123456',
