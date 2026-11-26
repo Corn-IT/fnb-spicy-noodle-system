@@ -2,7 +2,7 @@
 
 - **Thời điểm hoàn tất:** 2026-11-18
 - **Phạm vi:** Toàn site · Toàn module (`M0 → M17`) · `P0` 6 mẫu phiếu in nhiệt 80mm · Ma trận Responsive (`6 viewports × Light/Dark`, quét live đủ cả 15 routes trên `1024×768`, `768×1024`, `390×844`, `375×667`) · Ma trận Phân quyền Vai trò × Route (`superadmin`, `admin`, `adminview`, `thungan`, `qr_guest` + tài khoản mới `qa_e2e_c`) · 4 Luồng Xương Sống (`Flow A–D` chạy live hậu-hotfix) · Audit Bảo mật & Độ chịu lỗi (`SEC-01..10`) · Kiểm tra chéo 10 Hard Invariants.
-- **Nguồn sự thật độ phủ:** [e2e-coverage-ledger.md](file:///c:/Users/ngomi/OneDrive/Documents/POS%20FnB/docs/qa/e2e-coverage-ledger.md) (`173/173` mục đạt `PASS` hoặc `FAIL→FIXED`, `0` mục `TODO`, `0` `TODO-trace`).
+- **Nguồn sự thật độ phủ:** [e2e-coverage-ledger.md](./e2e-coverage-ledger.md) (`173/173` mục đạt `PASS` hoặc `FAIL→FIXED`, `0` mục `TODO`, `0` `TODO-trace`).
 
 ---
 

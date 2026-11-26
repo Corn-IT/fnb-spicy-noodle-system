@@ -1,6 +1,7 @@
 # Kế hoạch Triển khai Chi tiết: POS Touch Shell & Trung tâm Quản lý Cảm ứng (Kiểu iPOS)
 
-> **Mã tài liệu đề xuất:** `STORY-21` (`docs/stories/story-21-pos-touch-shell-and-hub.md`)
+> **Mã tài liệu:** `STORY-21` (`docs/stories/story-21-pos-touch-shell-and-hub.md`)
+> **Trạng thái:** Đã triển khai (Completed — Giai đoạn 1)
 > **Phạm vi:** 100% Frontend (`apps/web-app/`). **Không** thay đổi Backend, Prisma Schema hay `@fnb/shared`.
 > **Tuân thủ bắt buộc:** `AGENTS.md` (đặc biệt Hard Invariants 1, 8, 9), `.agents/rules/00-architecture-and-monorepo.md`, `03-rbac-security-and-hr-schedule.md`, `04-frontend-ux-table-and-print.md`, `05-testing-strategy.md`, `07-deployment-and-git.md`.
 
@@ -70,7 +71,7 @@ flowchart TD
 | `/pos/touch/profile` | Hồ sơ & Đổi mật khẩu | `ProfilePage` (tái sử dụng) | Authenticated (mọi user) | `/profile` |
 
 > [!IMPORTANT]
-> **Rủi ro nghiệp vụ đã phát hiện & cách xử lý bắt buộc trong [app-shell.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/components/layout/app-shell.tsx):**
+> **Rủi ro nghiệp vụ đã phát hiện & cách xử lý bắt buộc trong [app-shell.tsx](../../apps/web-app/src/components/layout/app-shell.tsx):**
 > Hiện dòng 57 đang viết `const isPosRoute = location.pathname.startsWith('/pos')` để tắt Global QR Voice Alert & Overdue QR Banner (vì tưởng `usePosWorkspace` đang chạy). Khi có các route con `/pos/touch/hub`, `/pos/touch/invoices`…, **PHẢI tách thành 2 biến riêng**:
 > - `isPosTouchShellRoute`: khớp `/pos/touch` hoặc `/pos/touch/*` (khi `canReceivePosAlerts === true`) → dùng để ẩn Sidebar/Navbar/CommandPalette và bỏ padding `main`.
 > - `isPosLiveBoardRoute`: **CHỈ** khớp chính xác `/pos` hoặc `/pos/touch` → dùng để điều khiển Global QR Voice Alert và Red Overdue Banner.
@@ -84,7 +85,7 @@ Không có bất kỳ import chéo nào giữa các thư mục `apps/web-app/src
 - **2 màn chuyên biệt** đặt đúng feature sở hữu API của nó:
   - `TouchStockStatusPage` → `apps/web-app/src/features/menu/components/touch-stock-status-page.tsx` (export qua `features/menu/index.ts`).
   - `TouchPrinterPage` → `apps/web-app/src/features/store-settings/components/touch-printer-page.tsx` (export qua `features/store-settings/index.ts`).
-- Việc kết nối các page vào `/pos/touch/*` thực hiện duy nhất qua `React.lazy()` trong [router.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/router.tsx) & [route-prefetch.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/lib/route-prefetch.ts).
+- Việc kết nối các page vào `/pos/touch/*` thực hiện duy nhất qua `React.lazy()` trong [router.tsx](../../apps/web-app/src/router.tsx) & [route-prefetch.ts](../../apps/web-app/src/lib/route-prefetch.ts).
 
 ---
 
@@ -182,18 +183,18 @@ Bố cục cuộn dọc mượt (`overflow-y-auto overscroll-contain`), không t
 3. Cập nhật `PrinterHardwareSettingsPanel` thêm tùy chọn xác nhận 2 bước cho nút mở két, tạo `apps/web-app/src/features/store-settings/components/touch-printer-page.tsx` và export trong `features/store-settings/index.ts`.
 
 ### Bước 4: Tích hợp `AppShell`, `router.tsx`, `route-prefetch.ts`, `PosTouchPage`, và `BaseTable`
-1. Cập nhật [app-shell.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/components/layout/app-shell.tsx):
+1. Cập nhật [app-shell.tsx](../../apps/web-app/src/components/layout/app-shell.tsx):
    - Tách `isPosTouchShellRoute` vs `isPosLiveBoardRoute`.
    - Banner QR quá hạn điều hướng về `/pos/touch` khi đang ở trong Touch Shell.
    - Cập nhật `document.title` cho các route `/pos/touch/*`.
-2. Cập nhật [router.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/router.tsx) & [route-prefetch.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/lib/route-prefetch.ts):
+2. Cập nhật [router.tsx](../../apps/web-app/src/router.tsx) & [route-prefetch.ts](../../apps/web-app/src/lib/route-prefetch.ts):
    - Khai báo route cha `path: 'pos/touch'` bọc bởi `RbacRouteGuard module="pos"` + `TouchShellLayout`, với `index` là `LazyPosTouchPage` và 12 route con được bọc `RbacRouteGuard` tương ứng từng module.
    - Map prefetch cho `/pos/touch/*`.
-3. Cập nhật [pos-touch-page.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/features/pos-counter/touch/pos-touch-page.tsx):
+3. Cập nhật [pos-touch-page.tsx](../../apps/web-app/src/features/pos-counter/touch/pos-touch-page.tsx):
    - Dùng `useTouchShell()` để ẩn thanh đáy khi `screen === 'order'`.
    - Loại bỏ phần trùng lặp đã nâng lên `TouchShellLayout` (giữ fallback an toàn nếu component được render độc lập trong unit test!).
    - Thêm phím tắt `"Trung tâm Quản lý"` trong menu `⋮`.
-4. Nâng cấp `touch-ui:` CSS trên [base-table.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/components/base-table/base-table.tsx) và [page-header.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/components/layout/page-header.tsx).
+4. Nâng cấp `touch-ui:` CSS trên [base-table.tsx](../../apps/web-app/src/components/base-table/base-table.tsx) và [page-header.tsx](../../apps/web-app/src/components/layout/page-header.tsx).
 
 ---
 

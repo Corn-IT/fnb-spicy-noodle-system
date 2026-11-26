@@ -1,342 +1,127 @@
+---
+trigger: model_decision
+description: Prisma database schema, PostgreSQL data types, transactions, SELECT FOR UPDATE locking, and concurrency rules for FnB API.
+---
+
 # 01 — Cơ sở Dữ liệu & Xử lý Đồng thời (Database & Concurrency Rules)
 
-> Áp dụng cho: Codex (Phase 2, 4B), Antigravity (Phase 3).
+> Áp dụng cho: Mọi Agent thao tác trên Prisma Schema, Migrations, Services và SQL Transactions. Đồng bộ 100% với `apps/api-server/prisma/schema.prisma` (18 bảng, 16 migrations) và `docs/architecture/01-verified-erd.mmd`.
 
 ---
 
-## 1. Kiểu Dữ liệu Bắt buộc
+## 1. Kiểu Dữ liệu Bắt buộc (Hard Invariant 10)
 
-- Mọi cột tiền tệ (`price`, `total_amount`, `subtotal_amount`, `discount_amount`, `value`, `max_discount_amount`, `min_order_amount`, `total_cost`, `opening_budget`, `cash_amount`, `transfer_amount`, `unit_price`, `extra_price`, `total_cash_sales`, `total_transfer_sales`, `total_cash_imports`, `expected_cash_in_drawer`, `actual_counted_cash`, `discrepancy_amount`) **MUST** dùng `NUMERIC(12, 2)` trong PostgreSQL và `Decimal` (`@db.Decimal(12, 2)`) trong Prisma.
+- Mọi cột tiền tệ (`price`, `extra_price`, `unit_price`, `subtotal_amount`, `discount_amount`, `total_amount`, `cash_amount`, `transfer_amount`, `daily_limit`, `monthly_limit`, `yearly_limit`, `value`, `max_discount_amount`, `min_order_amount`, `total_cost`, `opening_budget`, `total_cash_sales`, `total_transfer_sales`, `total_cash_imports`, `expected_cash_in_drawer`, `actual_counted_cash`, `discrepancy_amount`) **MUST** dùng `NUMERIC(12, 2)` trong PostgreSQL và `Decimal` (`@db.Decimal(12, 2)`) trong Prisma.
 - **FORBIDDEN**: `FLOAT`, `DOUBLE`, `REAL`, hoặc `Int` cho tiền tệ.
-- Timestamps **MUST** dùng `TIMESTAMP WITH TIME ZONE` (Prisma: `DateTime @db.Timestamptz`).
-- JSONB cho: `modifiers_snapshot`, `discount_snapshot`, `active_weekdays`, `permissions`, `ui_preferences`, `table_transfer_logs`, `metadata`, `attachment_urls`, `denominations_detail`, `employee_ids`.
+- Timestamps **MUST** dùng `TIMESTAMPTZ(6)` (`DateTime @db.Timestamptz(6)`).
+- JSONB cho: `metadata`, `attachment_urls`, `permissions`, `ui_preferences`, `last_revoked_notice`, `discount_snapshot`, `active_weekdays`, `table_transfer_logs`, `pending_payment_edit`, `modifiers_snapshot`, `denominations_detail`, `employee_ids`.
 
-## 2. Schema — Các Bảng Vật lý Chuẩn (Đồng bộ `01-verified-erd.mmd` & các Story mở rộng)
+---
 
-### `master_data`
+## 2. Schema — 18 Bảng Vật lý Chuẩn (`schema.prisma`)
+
+### 2.1. `master_data`
 | Cột | Kiểu | Ràng buộc |
 |-----|------|-----------|
-| id | SERIAL | PK |
-| category | VARCHAR | NOT NULL: `'POSITION'`, `'SPECIALTY'`, `'INGREDIENT'`, `'UNIT'`, `'SUPPLIER'` |
-| name | VARCHAR | NOT NULL (Title Case) |
-| normalized_name | VARCHAR | NOT NULL, Composite UNIQUE `(category, normalized_name)` |
-| metadata | JSONB | DEFAULT `'{}'`: `{ default_unit, last_price }` |
-| is_active | BOOLEAN | NOT NULL DEFAULT TRUE |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+| `id` | SERIAL | PK |
+| `category` | VARCHAR(32) | NOT NULL: `POSITION`, `SPECIALTY`, `INGREDIENT`, `UNIT`, `SUPPLIER`, `MENU_CATEGORY`, `KITCHEN_STATION`, và nhóm nội bộ `SYSTEM_CONFIG` |
+| `name` | VARCHAR(255) | NOT NULL (Title Case) |
+| `normalized_name` | VARCHAR(255) | NOT NULL, Composite UNIQUE `uq_mdm_category_normalized (category, normalized_name)` |
+| `metadata` | JSONB | DEFAULT `'{}'` (`default_unit`, `last_price`, `station`, `storeSettings`, assets, payroll/budget/QR security/VAPID config...) |
+| `is_active` | BOOLEAN | NOT NULL DEFAULT TRUE |
+| `created_at` | TIMESTAMPTZ(6) | NOT NULL DEFAULT NOW() |
 
-### `employees`
+### 2.2. `employees`
 | Cột | Kiểu | Ràng buộc |
 |-----|------|-----------|
-| id | SERIAL | PK |
-| full_name | VARCHAR | NOT NULL |
-| short_name | VARCHAR | NOT NULL (`V.Anh` hoặc `N.V.Anh (#12)` khi trùng) |
-| dob | DATE | |
-| phone | VARCHAR | |
-| address | TEXT | Địa chỉ nơi ở (Đồng bộ Module 5 & 9) |
-| citizen_id | VARCHAR | UNIQUE (Số CCCD) |
-| citizen_id_issued_place | VARCHAR | Nơi cấp CCCD |
-| position_id | INT | FK → master_data (`category = 'POSITION'`) |
-| specialty_id | INT | FK → master_data (`category = 'SPECIALTY'`) |
-| start_date | DATE | Ngày bắt đầu vào làm |
-| bank_name | VARCHAR | Tên ngân hàng nhận lương |
-| bank_account_no | VARCHAR | Số tài khoản ngân hàng |
-| bank_account_name | VARCHAR | Tên chủ tài khoản ngân hàng |
-| avatar_url | VARCHAR | URL ảnh đại diện (Cloudflare R2) |
-| attachment_urls | JSONB | DEFAULT `'[]'`: Danh sách file hợp đồng / CCCD |
-| note | TEXT | Ghi chú nhân sự (Cột số 6 trên BaseTable Module 5) |
-| is_deleted | BOOLEAN | NOT NULL DEFAULT FALSE |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+| `id` | SERIAL | PK |
+| `full_name` | VARCHAR(255) | NOT NULL |
+| `short_name` | VARCHAR(64) | NOT NULL (`V.Anh` hoặc `N.V.Anh (#12)` khi trùng) |
+| `dob`, `phone`, `address` | DATE / VARCHAR(32) / TEXT | Nullable |
+| `citizen_id`, `citizen_id_issued_place` | VARCHAR(32) UNIQUE / VARCHAR(255) | Nullable |
+| `position_id`, `specialty_id` | INT | Nullable FK → `master_data(id)` `ON DELETE RESTRICT` |
+| `start_date` | DATE | Nullable |
+| `bank_name`, `bank_account_no`, `bank_account_name` | VARCHAR | Nullable |
+| `avatar_url` | VARCHAR(2048) | Nullable (`/api/v1/public/avatars/:employeeId` hoặc URL) |
+| `attachment_urls` | JSONB | DEFAULT `'[]'` |
+| `note` | TEXT | Nullable |
+| `is_deleted`, `deleted_at` | BOOLEAN / TIMESTAMPTZ(6) | Soft delete / ngưng hoạt động |
+| `created_at` | TIMESTAMPTZ(6) | NOT NULL DEFAULT NOW() |
 
-### `users`
+### 2.3. `users`
 | Cột | Kiểu | Ràng buộc |
 |-----|------|-----------|
-| id | SERIAL | PK |
-| employee_id | INT | NOT NULL FK → employees, **UNIQUE** (Strict 1-1) |
-| username | VARCHAR | NOT NULL UNIQUE |
-| password_hash | TEXT | NOT NULL (Bcrypt cost=10, min 6 chars) |
-| is_super_admin | BOOLEAN | NOT NULL DEFAULT FALSE |
-| permissions | JSONB | NOT NULL DEFAULT `'{}'`: `{ module: { view, create, update, delete, ...sub } }` |
-| ui_preferences | JSONB | NOT NULL DEFAULT `'{}'`: `{ theme, column_widths, sidebar_width }` |
-| is_active | BOOLEAN | NOT NULL DEFAULT TRUE |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+| `id` | SERIAL | PK |
+| `employee_id` | INT | NOT NULL **UNIQUE** FK → `employees(id)` (`ON DELETE RESTRICT`, Strict 1-1) |
+| `username` | VARCHAR(64) | NOT NULL UNIQUE |
+| `password_hash` | TEXT | NOT NULL (Bcrypt cost=10, min 6 chars) |
+| `is_super_admin` | BOOLEAN | NOT NULL DEFAULT FALSE |
+| `role_label` | VARCHAR(64) | Nullable (nhãn vai trò hiển thị tuỳ chỉnh) |
+| `permissions` | JSONB | NOT NULL DEFAULT `'{}'` (14 nhóm quyền) |
+| `ui_preferences` | JSONB | NOT NULL DEFAULT `'{}'` (`theme`, `sidebarWidth`, `columnWidths`, `displayScale`, `navOrder`, `navGroupOrder`, `sidebarCollapsed`, `voiceAlertEnabled`) |
+| `is_active` | BOOLEAN | NOT NULL DEFAULT TRUE |
+| `active_session_id`, `active_session_ip`, `active_session_device`, `active_session_agent`, `active_session_at` | VARCHAR / TIMESTAMPTZ(6) | Single-Session tracking |
+| `last_revoked_notice` | JSONB | Nullable (`{ reason, at }`) |
+| `created_at` | TIMESTAMPTZ(6) | NOT NULL DEFAULT NOW() |
 
-### `dining_tables`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK (Chỉ lưu bàn vật lý `Bàn 01`..`Bàn 30`, **FORBIDDEN** tạo bàn `"Mang về"`) |
-| name | VARCHAR | NOT NULL UNIQUE: `'Bàn 01'`..`'Bàn 30'` |
-| qr_token | VARCHAR | NOT NULL UNIQUE (Chuỗi bảo mật 64 ký tự / UUIDv4) |
-| status | VARCHAR | NOT NULL DEFAULT `'AVAILABLE'`: `'AVAILABLE'`, `'PENDING'`, `'OCCUPIED'` |
-| active_order_id | INT | Nullable FK → orders(id), con trỏ phiên đơn đang mở |
+### 2.4. `dining_tables`
+- `id`, `name` (UNIQUE, chỉ bàn vật lý `Bàn 01`..`Bàn N`, **FORBIDDEN** tạo bàn `"Mang về"`), `qr_token` (UNIQUE, short token), `status` (`AVAILABLE | PENDING | OCCUPIED`), `active_order_id` (Nullable FK → `orders(id)` `ON DELETE SET NULL`).
 
-### `products`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| name | VARCHAR | NOT NULL |
-| price | NUMERIC(12,2) | NOT NULL >= 0 |
-| station | VARCHAR | NOT NULL: `'BEP_NAU'`, `'BEP_CHIEN'`, `'PHA_CHE'`, `'COMBO'` |
-| is_available | BOOLEAN | NOT NULL DEFAULT TRUE |
-| image_url | VARCHAR | Nullable |
-| sort_order | INT | NOT NULL DEFAULT 0 |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+### 2.5. `products`, `combo_items`, `modifier_groups`, `modifiers`
+- `products`: `id`, `name`, `subtitle` (`VARCHAR(255)`), `category_id` (FK → `master_data` `ON DELETE SET NULL`), `price` (`DECIMAL(12,2)`), `station` (`BEP_NAU | BEP_CHIEN | PHA_CHE | COMBO | BEP_*`), `is_available`, `image_url`, `sort_order`, `created_at`.
+- `combo_items`: composite PK `(parent_product_id, child_product_id)`, `quantity > 0`, CHECK `parent_product_id <> child_product_id`.
+- `modifier_groups`: `id`, `product_id` (`ON DELETE CASCADE`), `name`, `is_required`, `max_select`, `is_auto_select`, `allow_substitution`.
+- `modifiers`: `id`, `group_id` (`ON DELETE CASCADE`), `name`, `extra_price` (`DECIMAL(12,2)`), `is_default_checked`, `is_available`, `default_substitute_name`.
 
-### `combo_items`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| parent_product_id | INT | PK, FK → products(id) (`station = 'COMBO'`) |
-| child_product_id | INT | PK, FK → products(id) (`station IN ('BEP_NAU', 'BEP_CHIEN', 'PHA_CHE')`) |
-| quantity | INT | NOT NULL DEFAULT 1 (> 0) |
+### 2.6. `payment_accounts`
+- `id`, `label`, `bank_code`, `account_no`, `account_name`, `priority`, `is_active`, `daily_limit`, `monthly_limit`, `yearly_limit` (`DECIMAL(12,2)` nullable > 0), `created_at`, `updated_at`.
+- UNIQUE `(bank_code, account_no)`; Index `(is_active, priority)`. *(Lưu ý: KHÔNG có cột `bank_name` trong DB — tên ngân hàng ánh xạ từ `packages/shared/src/constants/vietqr-banks.ts` theo `bank_code`.)*
 
-### `modifier_groups`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| product_id | INT | NOT NULL FK → products(id) ON DELETE CASCADE |
-| name | VARCHAR | NOT NULL: `'Cấp độ cay'`, `'Thêm Topping'` |
-| is_required | BOOLEAN | NOT NULL DEFAULT FALSE (True cho Cấp độ cay 0–7) |
-| max_select | INT | NOT NULL DEFAULT 1 (`1` = Radio, `>1` = Checkbox multi-select) |
+### 2.7. `discounts` & `discount_targets`
+- `discounts`: `id`, `code` (UNIQUE), `name`, `value_type` (`PERCENT | FIXED`), `value` (`DECIMAL(12,2)`), `max_discount_amount`, `scope` (`ORDER | CATEGORY | PRODUCT`), `min_order_amount`, `starts_at`, `ends_at`, `active_weekdays` (`JSONB`), `time_window_start`, `time_window_end`, `usage_limit`, `used_count`, `is_active`, `is_archived`, `created_by` (FK → `users`), `created_at`, `updated_at`.
+- `discount_targets`: `id`, `discount_id` (`ON DELETE CASCADE`), `category_id` (FK → `master_data`), `product_id` (FK → `products`), CHECK chỉ 1 trong 2 khác NULL (`chk_discount_target_one`).
 
-### `modifiers`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| group_id | INT | NOT NULL FK → modifier_groups(id) ON DELETE CASCADE |
-| name | VARCHAR | NOT NULL: `'Cấp độ 0'`..`'Cấp độ 7'`, `'Thêm Bò viên'` |
-| extra_price | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 |
+### 2.8. `orders` & `order_items`
+- `orders`: `id`, `order_code` (UNIQUE `HD-YYYYMMDD-NNNN`), `order_type` (`DINE_IN | TAKEAWAY`), `order_source` (`QR_CODE | POS_COUNTER`), `table_id`, `takeaway_number`, `status` (`PENDING | SERVING | PAID | MERGED | VOIDED`), `payment_method` (`CASH | TRANSFER | SPLIT`), `payment_account_id` (FK → `payment_accounts`), `cash_amount`, `transfer_amount`, `subtotal_amount`, `discount_amount`, `discount_id` (FK → `discounts`), `discount_snapshot`, `total_amount`, `merged_into_order_id`, `table_transfer_logs`, `cashier_id`, `note`, `void_reason`, `pending_payment_edit` (`JSONB`), `created_at`, `paid_at`.
+- `order_items`: `id`, `order_id` (`ON DELETE CASCADE`), `product_id` (`ON DELETE RESTRICT`), `quantity > 0`, `unit_price` (`DECIMAL(12,2)`), `modifiers_snapshot`, `item_note`, `batch_no`, `item_source` (`POS_COUNTER | QR_CODE`), `kitchen_status` (`NEW | PRINTED | CANCELLED`), `is_takeaway` (`BOOLEAN DEFAULT FALSE`), `created_at`.
 
-### `orders`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| order_code | VARCHAR | NOT NULL UNIQUE, format `'HD-YYYYMMDD-NNNN'` |
-| order_type | VARCHAR | NOT NULL: `'DINE_IN'`, `'TAKEAWAY'` |
-| order_source | VARCHAR | NOT NULL: `'QR_CODE'`, `'POS_COUNTER'` |
-| table_id | INT | Nullable FK → dining_tables(id), **MUST BE NULL if TAKEAWAY** |
-| takeaway_number | INT | Nullable, **MUST BE NULL if DINE_IN**, tự tăng từ 1 và reset hàng ngày |
-| status | VARCHAR | NOT NULL: `'PENDING'`, `'SERVING'`, `'PAID'`, `'MERGED'`, `'VOIDED'` |
-| payment_method | VARCHAR | Nullable: `'CASH'`, `'TRANSFER'`, `'SPLIT'` |
-| cash_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 |
-| transfer_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 |
-| subtotal_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 (Tổng tiền món trước giảm giá) |
-| discount_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 (Tiền giảm giá làm tròn xuống bội 1.000đ) |
-| discount_id | INT | Nullable FK → discounts(id) (`NULL` nếu không giảm hoặc giảm tay) |
-| discount_snapshot | JSONB | Nullable: `{ kind, code, name, valueType, value, maxDiscountAmount, scope, targetCategoryIds, targetProductIds, minOrderAmount, appliedAt, appliedBy, reason? }` |
-| total_amount | NUMERIC(12,2) | NOT NULL DEFAULT 0.00 (Tiền phải trả sau giảm = `subtotal_amount - discount_amount`) |
-| merged_into_order_id | INT | Nullable FK → orders(id) (self-ref khi `status = 'MERGED'`) |
-| table_transfer_logs | JSONB | NOT NULL DEFAULT `'[]'`: Array of `{ action, fromTable, toTable, timestamp, reason }` |
-| cashier_id | INT | Nullable FK → users(id) |
-| note | TEXT | Nullable: Ghi chú chung của đơn hàng |
-| void_reason | TEXT | Nullable: Lý do huỷ đơn (Bắt buộc >= 10 ký tự khi `status = 'VOIDED'`) |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
-| paid_at | TIMESTAMPTZ | Nullable: Thời điểm chốt thanh toán (`status = 'PAID'`) |
+### 2.9. `inventory_imports`, `cash_drawer_settlements`, `work_schedules`
+- `inventory_imports`: `id`, `ingredient_mdm_id`, `supplier_mdm_id`, `supplier_name_snapshot`, `item_name_snapshot`, `unit_name`, `unit_price` (`DECIMAL(12,2)`), `quantity` (`DECIMAL(10,2)`), `total_cost` (`DECIMAL(12,2)`), `payment_source` (`CASH_DRAWER | EXTERNAL`), `import_date`, `note`, `created_by`, `is_deleted`, `deleted_at`, `created_at`.
+- `cash_drawer_settlements`: `id`, `settlement_date`, `shift_name` (UNIQUE `uq_settlement_date_shift`), `opening_budget`, `total_cash_sales`, `total_transfer_sales`, `total_cash_imports`, `expected_cash_in_drawer`, `actual_counted_cash`, `discrepancy_amount`, `status` (`MATCHED | SURPLUS | SHORTAGE`), `denominations_detail`, `note`, `closed_by`, `created_at`.
+- `work_schedules`: `id`, `week_start_date`, `day_of_week` (`0..6`), `time_slot` (UNIQUE `uq_schedule_cell`), `employee_ids` (`JSONB`, hỗ trợ cả `FULL_SHIFT` và `CUSTOM_HOURS`), `created_by`, `updated_at`.
 
-### `order_items`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| order_id | INT | NOT NULL FK → orders(id) ON DELETE CASCADE |
-| product_id | INT | NOT NULL FK → products(id) ON DELETE RESTRICT |
-| quantity | INT | NOT NULL CHECK (`quantity > 0`) |
-| unit_price | NUMERIC(12,2) | NOT NULL (Đơn giá gốc + `extra_price` topping) |
-| modifiers_snapshot | JSONB | NOT NULL DEFAULT `'[]'`: `[{ groupId, modifierId, name, extraPrice }]` |
-| item_note | TEXT | Nullable |
-| batch_no | INT | NOT NULL DEFAULT 1: Lượt gọi 1, 2, 3... |
-| kitchen_status | VARCHAR | NOT NULL DEFAULT `'NEW'`: `'NEW'`, `'PRINTED'`, `'CANCELLED'` |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+### 2.10. `audit_logs` & `push_subscriptions`
+- `audit_logs`: `id`, `module` (13 modules), `action`, `actor_id` (nullable), `actor_full_name`, `actor_username`, `summary`, `ip_address`, `device_label`, `metadata`, `created_at`. Indexes: `(module, created_at DESC)`, `(ip_address)`.
+- `push_subscriptions`: `id`, `user_id` (`ON DELETE CASCADE`), `session_id`, `endpoint` (UNIQUE), `p256dh`, `auth`, `user_agent`, `device_label`, `created_at`, `updated_at`, `last_notified_at`. Index: `(user_id, session_id)`.
 
-### `inventory_imports`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| ingredient_mdm_id | INT | NOT NULL FK → master_data(id) (`category = 'INGREDIENT'`) |
-| item_name_snapshot | VARCHAR | NOT NULL: Tên nguyên liệu tại thời điểm nhập |
-| unit_name | VARCHAR | NOT NULL: Đơn vị tính (`Kg`, `Thùng`, `Gói`, `Két`, `Bao`...) |
-| unit_price | NUMERIC(12,2) | NOT NULL >= 0 |
-| quantity | NUMERIC(10,2) | NOT NULL > 0 |
-| total_cost | NUMERIC(12,2) | NOT NULL >= 0 (`= ROUND(unit_price * quantity, 2)`) |
-| payment_source | VARCHAR | NOT NULL DEFAULT `'CASH_DRAWER'`: `'CASH_DRAWER'`, `'EXTERNAL'` |
-| import_date | DATE | NOT NULL DEFAULT CURRENT_DATE |
-| note | TEXT | Nullable: Ghi chú phiếu nhập (Cột số 8 trên BaseTable Module 3) |
-| created_by | INT | NOT NULL FK → users(id) |
-| is_deleted | BOOLEAN | NOT NULL DEFAULT FALSE |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+---
 
-### `cash_drawer_settlements`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| settlement_date | DATE | NOT NULL |
-| shift_name | VARCHAR | NOT NULL (`Ca Sáng`, `Ca Tối`...) |
-| opening_budget | NUMERIC(12,2) | NOT NULL |
-| total_cash_sales | NUMERIC(12,2) | NOT NULL (Tổng thu tiền mặt từ đơn `CASH` + `cash_amount` của đơn `SPLIT`) |
-| total_transfer_sales | NUMERIC(12,2) | NOT NULL (Tổng thu chuyển khoản QR từ đơn `TRANSFER` + `transfer_amount` của đơn `SPLIT`) |
-| total_cash_imports | NUMERIC(12,2) | NOT NULL (Tổng chi tiền két từ phiếu nhập `CASH_DRAWER`) |
-| expected_cash_in_drawer | NUMERIC(12,2) | NOT NULL (`= opening_budget + total_cash_sales - total_cash_imports`) |
-| actual_counted_cash | NUMERIC(12,2) | NOT NULL |
-| discrepancy_amount | NUMERIC(12,2) | NOT NULL (`= actual_counted_cash - expected_cash_in_drawer`) |
-| status | VARCHAR | NOT NULL: `'MATCHED'` (`= 0`), `'SURPLUS'` (`> 0`), `'SHORTAGE'` (`< 0`) |
-| denominations_detail | JSONB | NOT NULL DEFAULT `'{}'`: `{ "500000": n, "200000": n, ..., "1000": n }` |
-| note | TEXT | Nullable: Ghi chú giải trình chênh lệch (Bắt buộc khi `discrepancy_amount !== 0`) |
-| closed_by | INT | NOT NULL FK → users(id) |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+## 3. Database Constraints, Indexes & Vietnamese Search Extension
 
-### `work_schedules`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| week_start_date | DATE | NOT NULL: Ngày Thứ Hai đầu tuần (`YYYY-MM-DD`) |
-| day_of_week | INT | NOT NULL CHECK (`day_of_week BETWEEN 0 AND 6`): `0` (Mon) – `6` (Sun) |
-| time_slot | VARCHAR | NOT NULL: Tên khung giờ (VD: `'Ca Sáng (08:00-15:00)'`) |
-| employee_ids | JSONB | NOT NULL DEFAULT `'[]'`: Array of employee IDs `[12, 15, 18]` |
-| created_by | INT | NOT NULL FK → users(id) |
-| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+- **Core CHECK constraints:** `chk_order_type_target`, `chk_order_payment_amounts`, `chk_order_discount_amounts`, `chk_discount_value`, `chk_discount_usage`, `chk_discount_target_one`, `chk_payment_accounts_limits_positive`, `chk_combo_no_self_ref`, `chk_order_item_source`, `chk_void_reason_required`, `chk_settlement_status_amounts`, `chk_settlement_note_required`.
+- **Unique & Partial Unique Indexes:** `uq_mdm_category_normalized`, `uq_schedule_cell`, `uq_settlement_date_shift`, `uq_payment_accounts_bank_account`, `uq_discount_target_category`, `uq_discount_target_product`, `uq_push_subscriptions_endpoint`, `idx_one_active_order_per_table` (`WHERE status IN ('PENDING', 'SERVING') AND table_id IS NOT NULL`).
+- **Search Extension (`20261123000000_add_unaccent_search_norm`):** `CREATE EXTENSION IF NOT EXISTS unaccent;` và hàm `f_search_norm(text)` (bỏ dấu, `đ->d`, lowercase, `y->i`) **chỉ dùng cho truy vấn tìm kiếm**, không dùng thay `master_data.normalized_name`.
 
-### `discounts`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| code | VARCHAR(32) | NOT NULL UNIQUE (`UPPERCASE`, `^[A-Z0-9_-]{3,32}$`) |
-| name | VARCHAR(128) | NOT NULL |
-| value_type | VARCHAR(16) | NOT NULL: `'PERCENT'`, `'FIXED'` |
-| value | NUMERIC(12,2) | NOT NULL > 0 (`<= 100` nếu `'PERCENT'`) |
-| max_discount_amount | NUMERIC(12,2) | Nullable (chỉ khi `value_type = 'PERCENT'`) |
-| scope | VARCHAR(16) | NOT NULL: `'ORDER'`, `'CATEGORY'`, `'PRODUCT'` |
-| min_order_amount | NUMERIC(12,2) | Nullable |
-| starts_at | TIMESTAMPTZ | Nullable |
-| ends_at | TIMESTAMPTZ | Nullable |
-| active_weekdays | JSONB | NOT NULL DEFAULT `'[]'` (`[]` = mọi ngày; `1..7` T2–CN) |
-| time_window_start | VARCHAR(5) | Nullable (`'HH:mm'` giờ VN) |
-| time_window_end | VARCHAR(5) | Nullable (`'HH:mm'` giờ VN) |
-| usage_limit | INT | Nullable |
-| used_count | INT | NOT NULL DEFAULT 0 |
-| is_active | BOOLEAN | NOT NULL DEFAULT TRUE |
-| is_archived | BOOLEAN | NOT NULL DEFAULT FALSE |
-| created_by | INT | NOT NULL FK → users(id) |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
-| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
+---
 
-### `discount_targets`
-| Cột | Kiểu | Ràng buộc |
-|-----|------|-----------|
-| id | SERIAL | PK |
-| discount_id | INT | NOT NULL FK → discounts(id) ON DELETE CASCADE |
-| category_id | INT | Nullable FK → master_data(id) |
-| product_id | INT | Nullable FK → products(id) |
+## 4. Concurrency Control (Khoá dòng & Chống AB-BA Deadlock — Hard Invariant 5)
 
-## 3. Database Constraints & Indexes (MUST có trong migration)
+- Mọi thao tác `split-kitchen`, `table-action` (`MOVE`/`MERGE`/`SWAP`/`TO_TAKEAWAY`), `applyDiscount`/`removeDiscount`, `checkout`, `split-checkout`, `void` **MUST** chạy trong `prisma.$transaction()` dùng `SELECT ... FOR UPDATE`.
+- **Thứ tự khoá bắt buộc:**
+  1. `orders` theo `ORDER BY id ASC FOR UPDATE`
+  2. `dining_tables` theo `ORDER BY id ASC FOR UPDATE`
+  3. `discounts` theo `ORDER BY id ASC FOR UPDATE` (nếu có cộng/trừ `used_count`)
+- **NEVER** gọi external HTTP/TCP (VietQR, Web Push, LAN printer, TTS) bên trong transaction đang giữ khoá.
 
-```sql
--- 1. CHECK: DINE_IN vs TAKEAWAY (Hard Invariant 2)
-ALTER TABLE orders ADD CONSTRAINT chk_order_type_target CHECK (
-  (order_type = 'DINE_IN' AND table_id IS NOT NULL AND takeaway_number IS NULL) OR
-  (order_type = 'TAKEAWAY' AND table_id IS NULL AND takeaway_number IS NOT NULL)
-);
+---
 
--- 2. CHECK: Thanh toán CASH / TRANSFER / SPLIT (Hard Invariant 6 & EC-FIN-02)
-ALTER TABLE orders ADD CONSTRAINT chk_order_payment_amounts CHECK (
-  status <> 'PAID' OR (
-    (payment_method = 'CASH' AND cash_amount = total_amount AND transfer_amount = 0) OR
-    (payment_method = 'TRANSFER' AND transfer_amount = total_amount AND cash_amount = 0) OR
-    (payment_method = 'SPLIT' AND cash_amount > 0 AND transfer_amount > 0 AND (cash_amount + transfer_amount) = total_amount)
-  )
-);
+## 5. Soft Delete & State Machines (Đồng bộ `02-verified-state-machines.mmd`)
 
--- 3. CHECK: Chống đệ quy Combo (FR-0.4)
-ALTER TABLE combo_items ADD CONSTRAINT chk_combo_no_self_ref
-  CHECK (parent_product_id <> child_product_id);
-
--- 4. UNIQUE: Master Data & Work Schedules
-CREATE UNIQUE INDEX uq_mdm_category_normalized ON master_data (category, normalized_name);
-CREATE UNIQUE INDEX uq_schedule_cell ON work_schedules (week_start_date, day_of_week, time_slot);
-
--- 5. Partial Unique Index: 1 bàn vật lý = tối đa 1 đơn đang mở
-CREATE UNIQUE INDEX idx_one_active_order_per_table
-ON orders (table_id)
-WHERE status IN ('PENDING', 'SERVING') AND table_id IS NOT NULL;
-
--- 6. Composite indexes tối ưu lọc dưới 20ms cho Base Table & Tách bếp
-CREATE INDEX idx_orders_created_status ON orders (created_at DESC, status, payment_method);
-CREATE INDEX idx_order_items_order_kitchen ON order_items (order_id, kitchen_status);
-CREATE INDEX idx_imports_date_mdm ON inventory_imports (import_date DESC, ingredient_mdm_id) WHERE is_deleted = FALSE;
-CREATE INDEX idx_settlements_date ON cash_drawer_settlements (settlement_date DESC);
-
--- 7. CHECK & Indexes cho Giảm giá (Story 18)
-ALTER TABLE orders ADD CONSTRAINT chk_order_discount_amounts CHECK (
-  discount_amount >= 0 AND discount_amount <= subtotal_amount AND total_amount = subtotal_amount - discount_amount
-);
-ALTER TABLE discounts ADD CONSTRAINT chk_discount_value CHECK (
-  value > 0 AND (value_type <> 'PERCENT' OR value <= 100) AND (max_discount_amount IS NULL OR value_type = 'PERCENT')
-);
-ALTER TABLE discounts ADD CONSTRAINT chk_discount_usage CHECK (
-  usage_limit IS NULL OR used_count <= usage_limit
-);
-ALTER TABLE discount_targets ADD CONSTRAINT chk_discount_target_one CHECK (
-  (category_id IS NOT NULL AND product_id IS NULL) OR (category_id IS NULL AND product_id IS NOT NULL)
-);
-CREATE INDEX idx_orders_discount_id ON orders (discount_id) WHERE discount_id IS NOT NULL;
-CREATE INDEX idx_discounts_active_window ON discounts (is_archived, is_active, starts_at, ends_at);
-```
-
-## 4. Concurrency Control (Khoá dòng & Chống AB-BA Deadlock)
-
-- Mọi thao tác thay đổi trạng thái đơn hàng, tách bếp (`split-kitchen`), áp/gỡ giảm giá, thanh toán (`checkout`), huỷ hoá đơn (`void`), chuyển/gộp/đổi bàn (`MOVE`/`MERGE`/`SWAP`) **MUST** dùng `prisma.$transaction()` interactive mode.
-- Bên trong transaction **MUST** dùng raw query `SELECT ... FOR UPDATE`.
-- **Thứ tự khoá bắt buộc chống AB-BA Deadlock:**
-  1. **ALWAYS** khoá bảng `orders` trước theo thứ tự `id ASC`:
-     ```typescript
-     await tx.$queryRaw`SELECT * FROM orders WHERE id IN (${Prisma.join(orderIds)}) ORDER BY id ASC FOR UPDATE`;
-     ```
-  2. Sau đó mới khoá bảng `dining_tables` theo thứ tự `id ASC`:
-     ```typescript
-     await tx.$queryRaw`SELECT * FROM dining_tables WHERE id IN (${Prisma.join(tableIds)}) ORDER BY id ASC FOR UPDATE`;
-     ```
-  3. Cuối cùng (nếu liên quan tới cộng/trừ lượt mã giảm giá khi `checkout`/`void`), khoá bảng `discounts` theo thứ tự `id ASC`:
-     ```typescript
-     await tx.$queryRaw`SELECT id, used_count, usage_limit FROM discounts WHERE id IN (${Prisma.join(discountIds)}) ORDER BY id ASC FOR UPDATE`;
-     ```
-- Thời gian giữ khoá: dưới 50ms. **NEVER** gọi external API (VietQR, Cloudflare R2) hoặc đọc/ghi file bên trong transaction đã khoá.
-
-## 5. Soft Delete Pattern
-
-| Bảng | Cột | Ý nghĩa |
-|------|-----|---------|
-| `employees` | `is_deleted` | Xoá mềm nhân viên |
-| `inventory_imports` | `is_deleted` | Xoá mềm phiếu nhập |
-| `users` | `is_active` | Vô hiệu hoá tài khoản |
-| `products` | `is_available` | Ẩn món khỏi menu |
-| `master_data` | `is_active` | Vô hiệu hoá danh mục |
-
-- Mọi query lấy danh sách active **MUST** filter `WHERE is_deleted = FALSE` (hoặc `is_active = TRUE`).
-- **Ngoại lệ Lịch làm việc (`EC-HR-02`):** Khi truy vấn `GET /api/v1/schedules`, **KHÔNG** lọc bỏ các nhân viên có `is_deleted = TRUE` đã được gán vào các ô ca làm việc trong tuần để hiển thị tag màu xám mờ kèm nhãn `(Đã nghỉ)` và chống crash bảng.
-
-## 6. State Machine Enforcement (Đồng bộ `02-verified-state-machines.mmd`)
-
-### 6.1. Order Status (`orders.status`):
-```
-QR_CODE (DINE_IN)     → PENDING → SERVING → PAID / MERGED / VOIDED
-                      → PENDING → VOIDED (Thu ngân từ chối đơn QR ảo, giải phóng bàn)
-POS_COUNTER (Bàn/MV)  → SERVING → PAID / MERGED / VOIDED
-                        PAID    → VOIDED (Quản lý/Admin có quyền invoices:void + void_reason >= 10 ký tự)
-```
-- Khi đơn đang ở `PENDING` và thu ngân bấm `[Duyệt đơn]` hoặc `[Tách đơn]` (`split-kitchen`), hệ thống tự động chuyển `order.status` từ `'PENDING'` sang `'SERVING'` và `dining_tables.status` từ `'PENDING'` sang `'OCCUPIED'`.
-- Khi bấm `[In tạm tính (VietQR)]`, giữ nguyên `status = 'SERVING'`.
-- **FORBIDDEN** transitions: `PAID → SERVING`, `PAID → PENDING`, `MERGED → *`, `VOIDED → *`.
-
-### 6.2. OrderItem Kitchen Status (`order_items.kitchen_status`):
-```
-NEW → PRINTED   (via split-kitchen; nếu station='COMBO' phải phân rã qua combo_items)
-NEW → [DELETED] (hard delete hoặc sửa trực tiếp, chỉ khi còn NEW — EC-POS-06 Nhánh A)
-PRINTED → CANCELLED (huỷ món sau khi đã in bếp, trừ total_amount & in PHIẾU BÁO HUỶ MÓN — EC-POS-06 Nhánh B)
-```
-- Khi đơn thực hiện `MOVE` / `MERGE` / `SWAP`, các món đã `PRINTED` **MUST** giữ nguyên `kitchen_status = 'PRINTED'`.
-- **FORBIDDEN** transitions: `PRINTED → NEW`, `CANCELLED → *`, hoặc Hard Delete bản ghi đã `PRINTED`.
-
-### 6.3. DiningTable Status (`dining_tables.status`):
-```
-AVAILABLE (Xanh lá) → PENDING (Cam nhấp nháy, khi khách quét QR gửi đơn lần đầu)
-AVAILABLE (Xanh lá) → OCCUPIED (Đỏ, khi tạo đơn tại POS hoặc nhận bàn MOVE tới)
-PENDING   (Cam)     → OCCUPIED (Đỏ, khi thu ngân duyệt đơn hoặc tách bếp)
-PENDING   (Cam)     → AVAILABLE (Xanh lá, khi từ chối đơn QR ảo -> active_order_id = NULL)
-OCCUPIED  (Đỏ)      → AVAILABLE (Xanh lá, khi PAID / MOVE đi / MERGE đi / VOIDED -> active_order_id = NULL)
-```
+- **Soft Delete:** `employees.is_deleted` (+ `deleted_at`), `inventory_imports.is_deleted` (+ `deleted_at`), `users.is_active`, `products.is_available`, `modifiers.is_available`, `master_data.is_active`, `discounts.is_archived`.
+- **Ngoại lệ `EC-HR-02`:** `GET /api/v1/schedules` và `GET /api/v1/payroll` KHÔNG lọc bỏ nhân viên `is_deleted = true` đã có lịch trong kỳ để hiển thị trạng thái `(Đã nghỉ)` không gây crash.
+- **Order Lifecycle:**
+  - `QR_CODE` (Tại bàn hoặc QR Mang về) → `PENDING` → `SERVING` (`approve` / `split-kitchen`) hoặc `VOIDED` (từ chối hoặc `QrAutoCancelService`).
+  - `POS_COUNTER` → `SERVING` → `PAID` (`checkout`), `MERGED` (`MERGE`), hoặc `VOIDED` (`cancel`).
+  - `SERVING` hỗ trợ `split-checkout` (tạo đơn con `PAID`, đơn gốc giữ `SERVING`), `provisional-bill` / `split-provisional-bill` (giữ nguyên `SERVING`), và `TO_TAKEAWAY`.
+  - `PAID` hỗ trợ yêu cầu sửa PTTT (`pending_payment_edit` → duyệt/từ chối bởi `invoices:approve`) và `VOIDED` ngoại lệ (`invoices:void` + `void_reason >= 10` ký tự).
+  - **FORBIDDEN:** `PAID → SERVING|PENDING`, `MERGED → *`, `VOIDED → *`, `PRINTED → NEW`, `CANCELLED → *`, hoặc Hard Delete món đã `PRINTED`.

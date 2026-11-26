@@ -1,139 +1,77 @@
+---
+trigger: model_decision
+description: Vitest unit/integration testing, coverage thresholds, and Playwright E2E testing conventions for FnB.
+---
+
 # 05 — Chiến lược Kiểm thử (Testing Strategy Rules)
 
-> Áp dụng cho: Codex (Phase 4B — viết test), Antigravity (Phase 5 — frontend tests). Kết hợp skill: `test-driven-development`.
+> Áp dụng cho: Mọi Agent viết và chạy test trên `@fnb/shared`, `@fnb/api-server`, `@fnb/web-app`. Toàn bộ monorepo sử dụng **Vitest** (unit/integration) và **Playwright** (E2E).
 
 ---
 
-## 1. Triết lý Testing
+## 1. Triết lý Testing & Runner Chuẩn
 
-- **MUST** áp dụng TDD (Test-Driven Development) cho **MỌI** business logic quan trọng.
-- Chu trình: **Red → Green → Refactor** — viết test TRƯỚC, implement SAU, refactor CUỐI.
-- Tham chiếu: built-in skill `test-driven-development` + `obra/superpowers:test-driven-development`.
+- **MUST** áp dụng TDD (**Red → Green → Refactor**) cho mọi business logic quan trọng và luôn viết regression test khi sửa bug.
+- **Test Runner thống nhất toàn monorepo: `Vitest`** (`vi.fn()`, `vi.mock()`, `vi.spyOn()`). **FORBIDDEN** dùng API của Jest (`jest.mock`, `jest.fn`) vì cả 3 packages đều chạy `vitest run`.
 
 ## 2. Phân loại Test & Coverage Targets
 
 | Loại | Coverage Target | Vị trí | Tools |
 |------|----------------|--------|-------|
-| Unit Tests | ≥ 90% (business logic) | `apps/api-server/src/modules/**/*.spec.ts` | Jest + Prisma mocks |
-| Integration Tests | ≥ 80% (API endpoints) | `apps/api-server/test/**/*.e2e-spec.ts` | Jest + Supertest + Test DB |
-| Frontend Tests | Key interactions | `apps/web-app/src/**/*.test.tsx` | Vitest + React Testing Library |
+| Shared Unit Tests | ≥ 90% | `packages/shared/src/__tests__/*.spec.ts` | Vitest |
+| Backend Unit & Service Tests | ≥ 90% (business logic) | `apps/api-server/src/**/__tests__/*.spec.ts` | Vitest + Prisma mocks (`vi.mock`) |
+| Frontend Component & Hook Tests | Key interactions & regressions | `apps/web-app/src/**/__tests__/*.{test,spec}.{ts,tsx}` | Vitest + React Testing Library |
+| E2E Regression Tests | Critical user journeys | `apps/web-app/e2e/**` | Playwright CLI (`pnpm e2e` / `npx playwright test`) |
 
 ## 3. Quy ước Đặt tên Test
 
-```typescript
-describe('[ModuleName]Service', () => {
-  describe('methodName', () => {
-    it('should [hành vi mong đợi] when [điều kiện]', () => {});
-    it('should throw [ErrorType] when [điều kiện không hợp lệ]', () => {});
-  });
-});
-```
-
-- **MUST** dùng tên mô tả đọc như specification.
-- **NEVER** dùng tên mơ hồ: `"should work"`, `"test 1"`, `"handles edge case"`.
+- Dùng tên mô tả đọc như specification: `it('should [hành vi mong đợi] when [điều kiện]', ...)` hoặc tiếng Việt rõ ngữ cảnh nghiệp vụ.
+- **NEVER** dùng tên mơ hồ: `"should work"`, `"test 1"`.
 
 ## 4. Các Kịch bản Test BẮT BUỘC (MANDATORY)
 
-> Mỗi nhóm test dưới đây **MUST** tồn tại và pass TRƯỚC KHI code được coi là hoàn thành.
+### 4.1. POS, QR Realtime & Discounts:
+- `splitKitchen`: chỉ xử lý `kitchen_status = 'NEW'`, phân rã `COMBO` qua `combo_items` về trạm vật lý (`BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`, `BEP_*`), nâng `PENDING → SERVING`, tăng `batch_no`, trả HTTP `200 OK` idempotent `{ tickets: [] }` khi không có món `NEW`.
+- `cancelOrModifyItem`: xoá cứng không in phiếu khi còn `NEW`; chuyển `CANCELLED` + in phiếu huỷ khi đã `PRINTED` (`EC-POS-06`).
+- `provisionalBill` / `splitProvisionalBill`: giữ `status = 'SERVING'`, xoay vòng `payment_accounts` theo hạn mức Ngày/Tháng/Năm (`+07:00`), fallback priority #1 kèm `qrOverLimit = true` khi tất cả vượt hạn mức.
+- `checkout` / `splitCheckout`: enforce `chk_order_payment_amounts` (`CASH`/`TRANSFER`/`SPLIT`), giải phóng bàn về `AVAILABLE` (khi thanh toán trọn đơn), tăng `discounts.used_count` atomic.
+- `createOrder`: `TAKEAWAY` (`table_id = NULL`, `takeaway_number ≠ NULL`) vs `DINE_IN` (`table_id ≠ NULL`, `takeaway_number = NULL`).
+- `createQrOrder`: chống cross-table IDOR (`403`), hỗ trợ redirect phiên khi đã `MOVE`/`MERGE` (`EC-POS-01`), kiểm tra Wi-Fi/GPS (`QrSecurityService`), và `qr-pending-check` cho Web Push.
+- `discounts`: làm tròn xuống bội `1.000đ`, chặn `split-checkout` khi có giảm giá (`409 POS_DISCOUNT_BLOCKS_SPLIT`), hoàn `used_count` khi `VOID`, kiểm tra strict `pos:manualDiscount`.
 
-### 4.1 POS Module Tests:
+### 4.2. Table Transfer (`MOVE` / `MERGE` / `SWAP` / `TO_TAKEAWAY`):
+- `MOVE`: `DINE_IN → AVAILABLE` và `TAKEAWAY → AVAILABLE` (`is_takeaway = true`); bàn đích đang `OCCUPIED` → `409 POS_TABLE_NOT_AVAILABLE`.
+- `MERGE`: `DINE_IN → OCCUPIED` và `TAKEAWAY → OCCUPIED` (`is_takeaway = true`, giữ nguyên `kitchen_status = 'PRINTED'`, gỡ giảm giá đơn nguồn, tính lại tổng đơn đích).
+- `SWAP`: hoán đổi 2 bàn `DINE_IN`; đơn `TAKEAWAY` gọi `SWAP` → `409 POS_TAKEAWAY_CANNOT_MERGE`.
+- `TO_TAKEAWAY`: giải phóng bàn nguồn về `AVAILABLE`, cấp `takeaway_number` mới, reset `is_takeaway = false`.
+- Khoá dòng `SELECT ... FOR UPDATE` theo thứ tự `orders (id ASC)` → `dining_tables (id ASC)`; emit `order:session_redirected` + sinh `kitchenTransferSlip` nếu có món `PRINTED`.
 
-```
-✓ splitKitchen: chỉ xử lý items có kitchen_status='NEW', bỏ qua 'PRINTED'
-✓ splitKitchen: phân rã COMBO qua combo_items thành sub-items đúng station (BEP_NAU, BEP_CHIEN, PHA_CHE)
-✓ splitKitchen: trả về HTTP 200 OK idempotent ({ tickets: [] }) khi không có items NEW (EC-POS-05)
-✓ splitKitchen: tự động nâng order.status từ 'PENDING' sang 'SERVING' và bàn sang 'OCCUPIED' (DISCREPANCY-SM-02)
-✓ splitKitchen: batch_no tăng dần (Lượt 1, 2, 3)
-✓ cancelOrModifyItem: xoá cứng không in phiếu khi còn 'NEW', chuyển sang 'CANCELLED' + in phiếu huỷ khi đã 'PRINTED' (EC-POS-06)
-✓ provisionalBill: giữ order.status = 'SERVING' (KHÔNG đổi sang PAID)
-✓ checkout: chuyển status → 'PAID', kiểm tra chk_order_payment_amounts (CASH/TRANSFER/SPLIT), giải phóng bàn → 'AVAILABLE'
-✓ createOrder(TAKEAWAY): table_id = NULL, takeaway_number ≠ NULL
-✓ createOrder(DINE_IN): table_id ≠ NULL, takeaway_number = NULL
-✓ qrOrderAddon: tự động điều hướng món gọi thêm từ tab QR cũ sang bàn mới khi đơn đã MOVE hoặc MERGE (EC-POS-01)
-```
+### 4.3. Cashflow & Invoices:
+- Kết ca: chỉ cộng `CASH` và `SPLIT.cash_amount`, loại trừ `TRANSFER`, `SPLIT.transfer_amount`, `VOIDED`; chỉ trừ `CASH_DRAWER` (`is_deleted = false`), loại trừ `EXTERNAL`.
+- `preview`: bật `blindMode = true` (ẩn tiền lý thuyết) với tài khoản non-SuperAdmin.
+- `discrepancy`: `=0 MATCHED`, `>0 SURPLUS`, `<0 SHORTAGE` (bắt buộc `note`), hỗ trợ `compensate` (`cashflow:compensate`).
+- Invoices: cấm in lại hoá đơn `VOIDED` (`409`); quy trình sửa PTTT 2 bước (`invoices:update` → `pending_payment_edit` → `invoices:approve`).
 
-### 4.2 Table Transfer Tests:
+### 4.4. Auth, Single-Session, RBAC & WebSocket:
+- Chưa xác thực / token hết hạn / phiên bị thu hồi → `401` (KHÔNG phải `403`).
+- Thiếu quyền / gọi `@SuperAdminOnly` → `403` (KHÔNG phải `401`); Super Admin bypass toàn bộ.
+- `GET /api/v1/mdm/lookup` mở cho mọi `authenticated` user.
+- Single-Session: đăng nhập đè phiên đang online không có `force: true` → `409 AUTH_SESSION_CONFLICT_ONLINE`; có `force: true` → phát `session:revoked`.
+- `PosSocketGateway`: Staff JWT kiểm tra `activeSessionId`, QR Guest chỉ join `table_session_*` / `order_session_*` (cấm `pos_cashier_room`).
 
-```
-✓ MOVE: bàn nguồn → AVAILABLE, bàn đích → OCCUPIED, sinh kitchenTransferSlip nếu đã có món PRINTED (EC-POS-04)
-✓ MOVE: bàn đích đã occupied → trả 409 Conflict (POS_TABLE_NOT_AVAILABLE)
-✓ MERGE: chuyển tất cả items sang đơn đích (giữ nguyên kitchen_status), đơn nguồn → MERGED
-✓ MERGE: đơn TAKEAWAY → trả 409 Conflict (POS_TAKEAWAY_CANNOT_MERGE)
-✓ SWAP: hoán đổi table_id giữa 2 đơn đúng cách
-✓ Concurrent MOVE/MERGE/SWAP + QR addon: SELECT ... FOR UPDATE theo thứ tự orders (id ASC) -> dining_tables (id ASC) ngăn deadlock & data corruption (DISCREPANCY-LOCK-01)
-✓ WebSocket: emit 'order:session_redirected' sau MOVE/MERGE
-```
+### 4.5. MDM, HR, Schedules, Payroll & UI Preferences:
+- MDM `findOrCreate`: `trim()` → Title Case → bỏ dấu + `đ/Đ -> d` + lowercase; tìm kiếm mờ dùng `f_search_norm()`.
+- HR: `short_name` & chống trùng `N.V.Anh (#12)`; nhân viên `is_deleted = true` vẫn render xám mờ `(Đã nghỉ)` trên `/schedules` và `/payroll`.
+- Logout: gọi `queryClient.clear()`, xoá token/auth state, **giữ nguyên `ui_preferences`**.
 
-### 4.3 Cashflow Tests (QUAN TRỌNG NHẤT):
+## 5. Pre-Completion Checklist
 
-```
-✓ Settlement: CHỈ tính CASH và phần cash_amount của đơn SPLIT, loại trừ TRANSFER và phần transfer_amount của đơn SPLIT (EC-FIN-02)
-✓ Settlement: loại trừ hoàn toàn các hoá đơn đã huỷ status='VOIDED' (EC-FIN-01)
-✓ Settlement: CHỈ trừ CASH_DRAWER imports (is_deleted=false), loại trừ EXTERNAL
-✓ Discrepancy = 0 → status 'MATCHED'
-✓ Discrepancy > 0 → status 'SURPLUS' (bắt buộc có note giải trình - EC-FIN-03)
-✓ Discrepancy < 0 → status 'SHORTAGE' (bắt buộc có note giải trình - EC-FIN-03)
-✓ Mixed scenario: đơn CASH + đơn TRANSFER + đơn SPLIT + đơn VOIDED + import CASH_DRAWER + import EXTERNAL
-  → verify exact expected_cash_in_drawer & discrepancy_amount value
-```
-
-### 4.4 RBAC & WebSocket Auth Tests:
-
-```
-✓ Request chưa authenticated → 401 (KHÔNG phải 403)
-✓ User authenticated nhưng thiếu quyền → 403 (KHÔNG phải 401)
-✓ Super Admin bypass tất cả permission checks
-✓ MDM lookup accessible cho mọi authenticated user (không cần quyền MDM)
-✓ PosSocketGateway Dual-Mode Auth: JWT hợp lệ join 'pos_cashier_room', qrToken hợp lệ chỉ được join 'order_session_{orderId}' (DISCREPANCY-WS-01)
-```
-
-### 4.5 MDM Tests:
-
-```
-✓ findOrCreate: trả về record hiện có (và cập nhật metadata nếu có) khi category + normalized_name match
-✓ findOrCreate: tạo record mới khi không match
-✓ Vietnamese diacritics removal: "Bún bò Huế" → "bun bo hue", "Đá bi" → "da bi"
-✓ trim() loại bỏ whitespace đầu/cuối và toTitleCase() chuẩn hoá chữ hoa đầu từ
-```
-
-### 4.6 HR & Schedule Tests:
-
-```
-✓ Short name: "Nguyễn Văn Anh" → "V.Anh"
-✓ Short name collision: "V.Anh" trùng → "N.V.Anh (#12)"
-✓ Soft-deleted employee không xuất hiện trong danh sách active nhưng hiển thị xám mờ trong lịch tuần mà không crash (EC-HR-02)
-✓ Bulk schedule save lưu đủ 7 ngày (day_of_week 0..6)
-```
-
-## 5. Mocking Strategy
-
-| Target | Unit Test | Integration Test |
-|--------|-----------|------------------|
-| Prisma | `jest.mock()` với `@prisma/client` | Real test database |
-| Socket.io | Mock gateway emit calls | Real WebSocket connections |
-| VietQR | **ALWAYS** mock | **ALWAYS** mock |
-| JWT | Provide test tokens | Real JWT middleware |
-
-- Integration tests: chạy migration trước test suite, truncate tables giữa các tests.
-- Test database: dùng schema riêng hoặc separate PostgreSQL database.
-
-## 6. Pre-Completion Checklist
-
-**TRƯỚC KHI** đánh dấu bất kỳ story nào là hoàn thành, Agent **MUST** chạy:
+**TRƯỚC KHI** báo cáo hoàn thành bất kỳ thay đổi code nào, Agent **MUST** chạy:
 
 ```bash
-# 1. Zero type errors
 pnpm -r typecheck
-
-# 2. All tests pass
 pnpm -r test
-
-# 3. Coverage thresholds met
-pnpm -r test:coverage
-
-# 4. No placeholder code
-grep -r "// TODO\|// FIXME\|// placeholder\|// hack" apps/ packages/ --include="*.ts" --include="*.tsx"
-# Expected output: empty (no matches)
+pnpm -r lint
 ```
 
-- Nếu bất kỳ bước nào fail → story **CHƯA** hoàn thành. Fix trước khi báo cáo.
+Và đảm bảo không để lại comment `// TODO`, `// FIXME`, `// placeholder` trong mã nguồn đã sửa.

@@ -1,11 +1,11 @@
 # BMAD Quy tắc Bất biến & Danh mục Tình huống Biên
 # 03-Edge-Cases-And-Invariants.md — 10 Hard Invariants & Edge Cases Catalog
 
-> **Tài liệu:** 03-Edge-Cases-And-Invariants.md  
-> **Phiên bản:** 1.0.0 (BMAD Phase 1 Final)  
+> **Tài liệu:** `docs/bmad/03-Edge-Cases-And-Invariants.md`  
+> **Phiên bản:** 2.0.0 (Synced with Production Codebase — Stories 01–21)  
 > **Vai trò thực hiện:** BMAD Business Analyst, Principal Architect & QA Specialist  
-> **Trạng thái:** FINAL  
-> **Ngày phê duyệt:** 2026-11-07  
+> **Trạng thái:** FINAL & SYNCED  
+> **Ngày phê duyệt gốc:** 2026-11-07 · **Ngày cập nhật đồng bộ:** 2026-11-26  
 > **Mục tiêu:** Định hình "Hiến pháp kỹ thuật", loại bỏ 100% mơ hồ nghiệp vụ và rủi ro sập hệ thống trong giờ cao điểm.
 
 ---
@@ -24,12 +24,12 @@
 ├────┼─────────────────────────────────┼─────────────────────────────────────────────────┤
 │ 1  │ Cô lập Module                   │ CẤM import trực tiếp giữa các src/features/*    │
 │ 2  │ Đơn Mang về (TAKEAWAY)          │ table_id = NULL, takeaway_number NOT NULL       │
-│ 3  │ Delta Split 3 Trạm Bếp          │ CHỈ lọc kitchen_status = 'NEW', CẤM in lại cũ   │
+│ 3  │ Delta Split Trạm Bếp            │ CHỈ lọc kitchen_status = 'NEW', CẤM in lại cũ   │
 │ 4  │ Tách bạch Tạm tính vs Thanh toán│ In tạm tính giữ SERVING; Thanh toán đóng PAID   │
 │ 5  │ Khoá dòng Table Actions         │ Bắt buộc SELECT ... FOR UPDATE trong $trans     │
-│ 6  │ Công thức Kết ca Dòng tiền      │ Chỉ tính CASH, trừ CASH_DRAWER; CẤM cộng QR     │
+│ 6  │ Công thức Kết ca Dòng tiền      │ CASH + SPLIT.cash - CASH_DRAWER; CẤM cộng QR    │
 │ 7  │ MDM Chuẩn hoá Chuỗi             │ trim() -> Title Case -> strip diacritics -> low │
-│ 8  │ RBAC 401 vs 403                 │ 401 khi hỏng/thiếu Auth; 403 khi thiếu Quyền    │
+│ 8  │ RBAC 401 vs 403                 │ 401 khi lỗi Auth/Session; 403 khi thiếu Quyền   │
 │ 9  │ Giữ UI Preferences khi Logout   │ Xoá token & data cache; CẤM xoá ui_preferences  │
 │ 10 │ Kiểu Tiền tệ NUMERIC(12, 2)     │ Bắt buộc NUMERIC / Decimal; CẤM FLOAT / INT     │
 └────┴─────────────────────────────────┴─────────────────────────────────────────────────┘
@@ -38,325 +38,226 @@
 ---
 
 ### INVARIANT 1: CÔ LẬP MODULE (FEATURE ISOLATION)
-- **Đặc tả:** Ứng dụng Frontend (`apps/web-app`) tuân thủ nghiêm ngặt mô hình `bulletproof-react`. Mỗi thư mục trong `src/features/<feature>/` là một ranh giới đóng kín (Bounded Context):
-  - Sole Public API của module là file barrel `index.ts`.
-  - **NGHIÊM CẤM:** Không được phép import trực tiếp giữa các thư mục feature (Ví dụ: `src/features/invoices` cấm `import from '@/features/pos-counter/components/...'`).
-  - Mọi logic, kiểu dữ liệu, hoặc thành phần giao diện cần chia sẻ giữa từ 2 modules trở lên **BẮT BUỘC** phải đưa vào:
-    1. `packages/shared/`: Cho các kiểu dữ liệu TypeScript, Zod Schema, DTOs, Enums.
-    2. `apps/web-app/src/components/`: Cho các UI Components dùng chung (BaseTable, PrintTemplates, Modal...).
-    3. `apps/web-app/src/hooks/` hoặc `src/utils/`: Cho các hàm tiện ích toàn cục.
-- **Hệ quả nếu vi phạm:** Gây ra hiện tượng phụ thuộc vòng (Circular Dependencies), phá vỡ khả năng phân mảnh story (BMAD Sharding), và khiến việc refactor một module làm sập toàn bộ các màn hình khác.
+- **Đặc tả:** Frontend (`apps/web-app/src/features/*`, hiện có 16 features) tuân thủ `bulletproof-react`. Mỗi thư mục feature là một Bounded Context đóng kín:
+  - Sole Public API là file barrel `index.ts`.
+  - **NGHIÊM CẤM** import trực tiếp giữa các thư mục feature (kể cả trong Touch Shell `/pos/touch/*`, việc gắn trang chỉ đi qua `React.lazy()` ở `router.tsx` / `route-prefetch.ts`).
+  - Mọi thành phần chia sẻ đặt trong `packages/shared/` (`@fnb/shared`), `apps/web-app/src/components/`, `src/hooks/`, `src/lib/` hoặc `src/utils/`.
 
 ---
 
 ### INVARIANT 2: ĐƠN MANG VỀ (TAKEAWAY VS DINE-IN ENFORCEMENT)
-- **Đặc tả:** Được thực thi bởi CHECK Constraint cứng ở tầng Database PostgreSQL:
+- **Đặc tả:** Được enforce bởi CHECK Constraint `chk_order_type_target` trong PostgreSQL:
   ```sql
   ALTER TABLE orders ADD CONSTRAINT chk_order_type_target CHECK (
     (order_type = 'DINE_IN' AND table_id IS NOT NULL AND takeaway_number IS NULL) OR
     (order_type = 'TAKEAWAY' AND table_id IS NULL AND takeaway_number IS NOT NULL)
   );
   ```
-- **Hành vi bắt buộc:**
-  1. Khi `order_type = 'TAKEAWAY'`: Cột `table_id` **BẮT BUỘC LÀ NULL**, cột `takeaway_number` **BẮT BUỘC KHÁC NULL**.
-  2. Khi `order_type = 'DINE_IN'`: Cột `table_id` **BẮT BUỘC KHÁC NULL**, cột `takeaway_number` **BẮT BUỘC LÀ NULL**.
-  3. Giá trị `takeaway_number` là số nguyên tự tăng trong ngày (`1, 2, 3...`) và **tự động reset về 1 vào 00:00:00 đầu ngày mới**. Nhãn hiển thị quy chuẩn: `"Mang về #01"`, `"Mang về #02"`.
-- **Hệ quả nếu vi phạm:** Khách mua mang về bị gộp chung vào một "Bàn mang về" ảo, dẫn đến việc nhiều khách mua mang về độc lập bị nấu nhầm vào chung một hoá đơn; hoặc đơn ăn tại bàn bị mất thông tin bàn gây bưng nhầm đồ ăn.
+- Bảng `dining_tables` **CHỈ** lưu các bàn ăn vật lý (`Bàn 01`..`Bàn N`), **CẤM** tạo bản ghi bàn `"Mang về"` trong `dining_tables`.
+- `takeaway_number` tự tăng từ `1` và reset mỗi ngày mới theo giờ Việt Nam (`+07:00`).
 
 ---
 
-### INVARIANT 3: DELTA SPLIT 3 TRẠM BẾP (IN TÁCH BẾP MÓN MỚI)
-- **Đặc tả:** API `POST /api/v1/pos/orders/:id/split-kitchen`:
-  1. **CHỈ ĐƯỢC PHÉP** truy vấn và xử lý các bản ghi `order_items` có `kitchen_status = 'NEW'`.
-  2. Với các món có `station = 'COMBO'`: Phân rã thành các sub-items và gán về đúng trạm chế biến gốc (`BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`). **CẤM TUYỆT ĐỐI** gửi phiếu in có chữ `COMBO` xuống bếp.
-  3. Sau khi phân nhóm và chuẩn bị phiếu in, chuyển trạng thái toàn bộ các món đó từ `'NEW'` sang `'PRINTED'`.
-  4. Đánh số lượt gọi: `batch_no = MAX(batch_no) + 1`. Nếu `batch_no > 1`, in dòng chữ: `"[GỌI THÊM - LƯỢT {batch_no}]"`.
-  5. **NGHIÊM CẤM:** Tuyệt đối không bao giờ in lại các món đã ở trạng thái `'PRINTED'`.
-- **Hệ quả nếu vi phạm:** Khi khách gọi thêm 1 ly nước ngọt ở lượt 2, máy in bếp nấu sẽ in lại 2 tô mì cay của lượt 1. Bếp nhìn phiếu tưởng đơn mới và nấu thêm 2 tô mì nữa, gây thất thoát chi phí thực phẩm và tranh cãi giữa bếp và thu ngân.
+### INVARIANT 3: DELTA SPLIT TRẠM BẾP (IN TÁCH BẾP MÓN MỚI)
+- **Đặc tả:** `POST /api/v1/pos/orders/:id/split-kitchen`:
+  1. **CHỈ** lọc `order_items` có `kitchen_status = 'NEW'`.
+  2. Món `station = 'COMBO'` bắt buộc phân rã qua `combo_items` về đúng trạm vật lý (`BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`, `BEP_*`) — **CẤM** gửi chữ `COMBO` xuống bếp.
+  3. Nâng `order.status` từ `'PENDING'` → `'SERVING'` (và `dining_tables.status` → `'OCCUPIED'`) nếu là đơn QR mới, chuyển món sang `'PRINTED'` và gán `batch_no = MAX(batch_no) + 1`.
+  4. Khi không có món `'NEW'`, trả về **HTTP 200 OK idempotent** (`{ tickets: [] }`). **CẤM** in lại món đã `PRINTED` qua endpoint này (việc in lại chủ động đi qua endpoint riêng `POST /pos/orders/:id/reprint-kitchen`).
 
 ---
 
 ### INVARIANT 4: TÁCH BẠCH TẠM TÍNH VÀ THANH TOÁN (BILLING FLOW INTEGRITY)
-- **Đặc tả:**
-  - **Nút "In tạm tính (Kèm VietQR động)":**
-    - Trạng thái của đơn hàng **BẮT BUỘC GIỮ NGUYÊN LÀ `'SERVING'`**.
-    - Sinh ảnh mã VietQR động theo chuẩn Napas247 nhúng `total_amount` và nội dung `TT {order_code}`.
-    - **CẤM TUYỆT ĐỐI** chuyển trạng thái đơn sang `'PAID'`.
-    - Bàn ăn vẫn giữ nguyên trạng thái `'OCCUPIED'`.
-  - **Nút "Thanh toán (Đóng đơn)":**
-    - Mở pop-up xác nhận 2 bước chống bấm nhầm (`Xác nhận / Huỷ bỏ`).
-    - Khi bấm Xác nhận: Cập nhật `orders.status = 'PAID'`, ghi nhận `paid_at = NOW()`, phương thức thanh toán (`CASH` / `TRANSFER` / `SPLIT`).
-    - Giải phóng bàn: `dining_tables.status = 'AVAILABLE'`, `dining_tables.active_order_id = NULL`.
-- **Hệ quả nếu vi phạm:** Nếu bấm "Tạm tính" mà hệ thống đã chuyển sang `PAID`, đơn hàng bị đóng lại, khách kiểm tra thấy thiếu/sai món sẽ không thể sửa được nữa, bàn bị giải phóng sớm khi khách chưa đứng dậy, và dòng tiền kết ca bị ghi nhận khống khi khách chưa chuyển tiền xong.
+- **Nút "In tạm tính" (`provisional-bill`, `split-provisional-bill`):**
+  - Giữ nguyên `order.status = 'SERVING'` và `dining_tables.status = 'OCCUPIED'`.
+  - Xoay vòng mã QR thanh toán (`payment_accounts`) và sinh mã VietQR động.
+  - **CẤM TUYỆT ĐỐI** chuyển trạng thái sang `'PAID'`.
+- **Nút "Thanh toán" (`checkout`, `split-checkout`):**
+  - Bắt buộc xác nhận 2 bước (`CASH` / `TRANSFER` / `SPLIT`), kiểm tra `chk_order_payment_amounts`.
+  - Chuyển sang `'PAID'`, ghi `paid_at = NOW()`, và giải phóng bàn về `'AVAILABLE'` (khi thanh toán trọn đơn).
 
 ---
 
-### INVARIANT 5: KHOÁ DÒNG CHO TABLE ACTIONS (CONCURRENCY CONTROL)
-- **Đặc tả:** Mọi thao tác Chuyển bàn (`MOVE`), Gộp bàn (`MERGE`), Hoán đổi bàn (`SWAP`) và Tách bếp (`split-kitchen`) **BẮT BUỘC PHẢI THỰC HIỆN BÊN TRONG `prisma.$transaction()` VỚI CÂU LỆNH KHOÁ DÒNG**:
-  ```typescript
-  await prisma.$queryRaw`SELECT * FROM orders WHERE id = ${orderId} FOR UPDATE`;
-  ```
-- **Thứ tự khoá dòng chống Deadlock:** **ALWAYS** khoá bản ghi trong bảng `orders` trước, sau đó mới khoá các bản ghi trong bảng `dining_tables`.
-- **Thời gian giữ khoá:** Phải hoàn thành dưới 50ms. **CẤM TUYỆT ĐỐI** gọi API bên thứ ba (như VietQR API hay Cloudflare R2) hoặc đọc ghi file trong khối transaction đã khoá dòng.
-- **Hệ quả nếu vi phạm:** Xảy ra tranh chấp đồng thời (Race Condition) khi khách ở Bàn 1 đang bấm điện thoại gọi thêm món đúng tích tắc thu ngân bấm gộp Bàn 1 vào Bàn 7, làm mất món gọi thêm hoặc sinh ra hoá đơn mồ côi (Orphan Order).
+### INVARIANT 5: KHOÁ DÒNG CHO TABLE ACTIONS & ORDER MUTATIONS (CONCURRENCY CONTROL)
+- **Đặc tả:** Mọi thao tác `MOVE` / `MERGE` / `SWAP` / `TO_TAKEAWAY`, `split-kitchen`, `checkout`, `split-checkout` **BẮT BUỘC** bọc trong `prisma.$transaction()` dùng `SELECT ... FOR UPDATE`.
+- **Thứ tự khoá chống AB-BA Deadlock:** **ALWAYS** khoá bảng `orders` (`ORDER BY id ASC FOR UPDATE`) trước, sau đó mới khoá bảng `dining_tables` (`ORDER BY id ASC FOR UPDATE`).
+- **CẤM** gọi API bên ngoài (VietQR, Web Push HTTP, LAN printer TCP) trong lúc đang giữ khoá DB.
 
 ---
 
 ### INVARIANT 6: CÔNG THỨC KẾT CA DÒNG TIỀN (CASHFLOW SETTLEMENT)
-- **Đặc tả:** Công thức toán học tính tiền mặt lý thuyết trong két bắt buộc phải tuân thủ 100%:
-  $$\text{expected\_cash} = \text{opening\_budget} + \sum_{\substack{\text{status} = \text{'PAID'} \\ \text{method} = \text{'CASH'}}} \text{total\_amount} - \sum_{\substack{\text{source} = \text{'CASH\_DRAWER'} \\ \text{is\_deleted} = \text{false}}} \text{total\_cost}$$
-  $$\text{discrepancy} = \text{actual\_counted\_cash} - \text{expected\_cash}$$
-- **2 ĐIỀU CẤM TUYỆT ĐỐI:**
-  1. **FORBIDDEN** cộng doanh thu chuyển khoản QR (`TRANSFER`) vào `expected_cash` (vì tiền chuyển khoản nằm trong tài khoản ngân hàng của chủ, không nằm trong két tiền mặt của thu ngân).
-  2. **FORBIDDEN** trừ phiếu nhập hàng thanh toán ngoài (`EXTERNAL`) khỏi `expected_cash` (vì khoản này do chủ chi riêng, không rút tiền từ két thu ngân).
-- **Hệ quả nếu vi phạm:** Cứ mỗi hoá đơn chuyển khoản QR phát sinh trong ngày thì két tiền sẽ bị báo thiếu bấy nhiêu tiền. Thu ngân bị trừ lương oan ức và công thức đối soát trở nên vô giá trị.
+- **Đặc tả:**
+  ```sql
+  expected_cash_in_drawer = opening_budget
+    + SUM(CASE WHEN payment_method = 'CASH'  THEN total_amount
+               WHEN payment_method = 'SPLIT' THEN cash_amount
+               ELSE 0 END
+          WHERE status = 'PAID' AND payment_method IN ('CASH', 'SPLIT'))
+    - SUM(total_cost WHERE payment_source = 'CASH_DRAWER' AND is_deleted = FALSE)
+
+  discrepancy_amount = actual_counted_cash - expected_cash_in_drawer
+  ```
+- **QUY TẮC CẤM:**
+  1. **FORBIDDEN** cộng doanh thu chuyển khoản (`TRANSFER` hoặc `transfer_amount` của đơn `SPLIT`) vào `expected_cash_in_drawer`.
+  2. **FORBIDDEN** cộng hoá đơn đã huỷ (`VOIDED`) hoặc trừ phiếu nhập hàng `EXTERNAL` / đã xoá mềm (`is_deleted = TRUE`).
 
 ---
 
 ### INVARIANT 7: MASTER DATA CHUẨN HOÁ CHUỖI (DATA NORMALIZATION)
-- **Đặc tả:** Phương thức `MdmService.findOrCreate(category, rawInput)` phải thực hiện chuỗi 4 thao tác tuần tự:
-  1. `trim()`: Xoá khoảng trắng ở 2 đầu.
-  2. Title Case: Viết hoa chữ cái đầu mỗi từ (Ví dụ: `"Mì Kim Chi"`).
-  3. Strip Diacritics & Lowercase: Chuyển toàn bộ ký tự tiếng Việt có dấu sang không dấu và viết thường để sinh `normalized_name` (Ví dụ: `"mi kim chi"`).
-  4. Truy vấn đối chiếu `WHERE category = :cat AND normalized_name = :normalized AND is_active = true`. Chỉ tạo mới khi chưa tồn tại.
-- **Hệ quả nếu vi phạm:** Cơ sở dữ liệu bị ô nhiễm nghiêm trọng (Data Pollution) bởi hàng trăm biến thể của cùng một món ("Mì Cay", "mì cay", "mi cay ", "Mỳ cay"), làm sai lệch hoàn toàn tính năng tìm kiếm lịch sử và gợi ý giá nhập kho.
+- `MdmService.findOrCreate()` luôn thực hiện: `trim()` → Title Case → bỏ dấu tiếng Việt + `đ/Đ -> d` + lowercase (`normalized_name`) → đối chiếu `UNIQUE(category, normalized_name)` trước khi INSERT.
+- Hàm PostgreSQL `f_search_norm()` (dùng `unaccent`, gộp `y -> i`) chỉ phục vụ tìm kiếm mờ, không thay thế cột `normalized_name`.
 
 ---
 
-### INVARIANT 8: PHÂN ĐỊNH MÃ LỖI RBAC 401 VS 403 (SECURITY CODE INTEGRITY)
-- **Đặc tả:**
-  - **HTTP 401 Unauthorized:** Dành riêng cho các lỗi liên quan đến Danh tính (Identity): Không có token, token hết hạn, token không đúng định dạng bí mật, hoặc sai thông tin đăng nhập. **CẤM TUYỆT ĐỐI TRẢ VỀ 403 CHO TRƯỜNG HỢP NÀY**.
-  - **HTTP 403 Forbidden:** Dành riêng cho trường hợp Danh tính đã được xác thực hợp lệ (User đã đăng nhập thành công), nhưng tài khoản không có đủ quyền trong ma trận phân quyền để thực hiện hành động. **CẤM TUYỆT ĐỐI TRẢ VỀ 401 CHO TRƯỜNG HỢP NÀY**.
-  - **Tách biệt MDM Lookup:** Endpoint `GET /api/v1/mdm/lookup` bắt buộc mở cho mọi tài khoản `authenticated` (không yêu cầu quyền quản trị MDM).
-- **Hệ quả nếu vi phạm:** Trả về 401 khi user thiếu quyền sẽ khiến Frontend hiểu nhầm là hết hạn phiên đăng nhập và tự động đá văng thu ngân ra màn hình Login giữa giờ cao điểm.
+### INVARIANT 8: PHÂN ĐỊNH MÃ LỖI RBAC 401 VS 403 & MỞ MDM LOOKUP
+- **`401 Unauthorized`:** Thiếu token, token hỏng/hết hạn, sai mật khẩu, hoặc phiên single-session bị thu hồi (`AUTH_SESSION_REVOKED`). **CẤM** trả `403`.
+- **`403 Forbidden`:** Đã xác thực hợp lệ nhưng thiếu quyền hoặc không phải Super Admin. **CẤM** trả `401`.
+- **`GET /api/v1/mdm/lookup`:** Mở cho mọi tài khoản đã đăng nhập (`JwtAuthGuard`), không đòi quyền `mdm:*`.
 
 ---
 
-### INVARIANT 9: GIỮ NGUYÊN CẤU HÌNH GIAO DIỆN KHI ĐĂNG XUẤT (UI PREFERENCES PRESERVATION)
-- **Đặc tả:** Khi người dùng bấm nút "Đăng xuất" trên Navbar:
-  1. Bắt buộc gọi `queryClient.clear()` để xoá sạch toàn bộ cache dữ liệu nghiệp vụ API (danh sách hoá đơn, dòng tiền, nhân viên).
-  2. Xoá Access Token, Refresh Token và Auth State.
-  3. **CẤM TUYỆT ĐỐI XOÁ `ui_preferences` KHỎI `localStorage` VÀ DATABASE**. Cấu hình theme (Sáng/Tối), độ rộng các cột bảng (Column Widths), và độ rộng Sidebar phải được giữ nguyên.
-- **Hệ quả nếu vi phạm:** Mỗi khi nhân viên giao ca hoặc đăng xuất, toàn bộ độ rộng các cột bảng đã được căn chỉnh vừa mắt sẽ bị co rúm về mặc định, bắt người dùng phải dùng chuột kéo lại từng cột mỗi ngày.
+### INVARIANT 9: GIỮ NGUYÊN CẤU HÌNH GIAO DIỆN KHI ĐĂNG XUẤT
+- Khi bấm Đăng xuất: gọi `queryClient.clear()`, xoá Access/Refresh Token và Auth State.
+- **CẤM** xoá `ui_preferences` (`theme`, `sidebarWidth`, `columnWidths`, `displayScale`, `navOrder`, `navGroupOrder`, `sidebarCollapsed`, `voiceAlertEnabled`) khỏi `localStorage` và `users.ui_preferences` trên DB.
+- Khi tài khoản cập nhật thiết lập cá nhân, đồng bộ sang các thiết bị khác qua sự kiện `account:preferences_updated` (và có nút Reset cài đặt cá nhân chủ động trong `/profile`).
 
 ---
 
-### INVARIANT 10: KIỂU TIỀN TỆ BẮT BUỘC NUMERIC(12, 2) (DECIMAL MONETARY TYPE)
-- **Đặc tả:** Toàn bộ các cột và biến biểu diễn tiền tệ:
-  - Trong PostgreSQL: Bắt buộc dùng `NUMERIC(12, 2)`.
-  - Trong Prisma Schema: Bắt buộc dùng `@db.Decimal(12, 2)` (kiểu TypeScript là `Prisma.Decimal`).
-  - Trong Zod Schema: Bắt buộc validate qua `z.number().positive()` hoặc `z.instanceof(Decimal)`.
-  - **NGHIÊM CẤM:** Tuyệt đối không dùng `FLOAT`, `DOUBLE`, `REAL`, hoặc `INT` cho tiền tệ.
-- **Hệ quả nếu vi phạm:** Xảy ra sai số dấu phẩy động kinh điển (Ví dụ: `0.1 + 0.2 = 0.30000000000000004`), dẫn đến việc khi kết ca số tiền bị lệch vài đồng lẻ, làm trạng thái kết ca bị nhảy sang `SURPLUS` hoặc `SHORTAGE` sai thực tế.
+### INVARIANT 10: KIỂU TIỀN TỆ BẮT BUỘC `NUMERIC(12, 2)` / `Decimal`
+- 100% cột tiền tệ trên `products`, `modifiers`, `orders` (`cash_amount`, `transfer_amount`, `subtotal_amount`, `discount_amount`, `total_amount`), `order_items`, `payment_accounts`, `discounts`, `inventory_imports`, `cash_drawer_settlements` dùng `NUMERIC(12, 2)` / `@db.Decimal(12, 2)`. **CẤM** dùng `FLOAT`, `DOUBLE`, `REAL`, hoặc `INT`.
 
 ---
 
-## PHẦN 2: MINH HOẠ KỊCH BẢN KẾT CA HỖN HỢP (COMPREHENSIVE CASHFLOW SCENARIO)
+## PHẦN 2: MINH HOẠ KỊCH BẢN KẾT CA HỖN HỢP (CASH + TRANSFER + SPLIT)
 
-Để kiểm chứng tính bất biến của **Hard Invariant 6**, hãy cùng phân tích kịch bản dòng tiền trong một ca làm việc thực tế tại quán mì cay:
+### Dữ liệu Đầu vào trong Ca
+1. **Ngân sách đầu ca (`opening_budget`):** `1.000.000 đ`
+2. **Doanh thu bán hàng (`status = 'PAID'`):**
+   - Đơn `HD001`: `150.000 đ` (`CASH`) → Tiền mặt `+150.000 đ`
+   - Đơn `HD002`: `220.000 đ` (`TRANSFER`) → Ngân hàng `+220.000 đ` (không cộng két)
+   - Đơn `HD003`: `300.000 đ` (`SPLIT`: `cash_amount = 100.000 đ`, `transfer_amount = 200.000 đ`) → Tiền mặt `+100.000 đ`, Ngân hàng `+200.000 đ`
+   - Đơn `HD004`: `105.000 đ` (`CASH`) → Tiền mặt `+105.000 đ`
+   - Đơn `HD005`: `180.000 đ` (`VOIDED`) → Bị loại trừ hoàn toàn (`0 đ`)
+   - *Tổng thu tiền mặt vào két:* `150.000 + 100.000 + 105.000 = 355.000 đ`
+   - *Tổng thu chuyển khoản đối soát ngân hàng:* `220.000 + 200.000 = 420.000 đ`
+3. **Chi nhập hàng trong ca (Module Nhập hàng):**
+   - Phiếu 1: Mua đá bi & rau nấm: `120.000 đ` (`CASH_DRAWER`) → Trừ két `-120.000 đ`
+   - Phiếu 2: Nhập mì Koreno: `570.000 đ` (`EXTERNAL`) → Không trừ két (`0 đ`)
+4. **Tiền thực đếm (`actual_counted_cash` từ lưới 9 mệnh giá):** `1.235.000 đ`
 
-### Dữ liệu Đầu vào trong Ca:
-1. **Ngân sách mặc định đầu ca (`opening_budget`):** `1.000.000 đ` (Tiền lẻ trong két).
-2. **Doanh thu bán hàng (5 đơn PAID):**
-   - Đơn 1 (`HD001`): `150.000 đ` — Thanh toán: `CASH` (Tiền mặt).
-   - Đơn 2 (`HD002`): `220.000 đ` — Thanh toán: `TRANSFER` (Chuyển khoản QR).
-   - Đơn 3 (`HD003`): `85.000 đ` — Thanh toán: `CASH` (Tiền mặt).
-   - Đơn 4 (`HD004`): `310.000 đ` — Thanh toán: `TRANSFER` (Chuyển khoản QR).
-   - Đơn 5 (`HD005`): `120.000 đ` — Thanh toán: `CASH` (Tiền mặt).
-   - *Tổng doanh thu bán hàng:* `885.000 đ` (Trong đó `CASH` = `355.000 đ`, `TRANSFER` = `530.000 đ`).
-3. **Chi mua hàng nguyên vật liệu trong ca (Module 3):**
-   - Phiếu 1: Mua đá bi và rau nấm: `120.000 đ` — Nguồn tiền: `CASH_DRAWER` (Lấy tiền trong két ra trả).
-   - Phiếu 2: Nhập 2 thùng mì Koreno: `570.000 đ` — Nguồn tiền: `EXTERNAL` (Chủ quán chuyển khoản từ tài khoản riêng).
-4. **Thu ngân đếm tiền thực tế trong két khi hết ca (`actual_counted_cash`):**
-   - Lưới đếm tiền theo mệnh giá kiểm đếm được: `1.235.000 đ`.
-
-### Tính toán theo Công thức Chuẩn:
-$$\text{expected\_cash} = 1.000.000 + 355.000 - 120.000 = 1.235.000\text{ đ}$$
-$$\text{discrepancy} = 1.235.000 - 1.235.000 = 0\text{ đ}$$
-$$\text{status} = \text{'MATCHED' (Chuẩn)}$$
-
-### So sánh với các cách tính Sai lầm (Common Bugs):
-- **Nếu cộng gộp cả đơn TRANSFER (`530.000 đ`):**
-  - $\text{expected\_cash} = 1.000.000 + 885.000 - 120.000 = 1.765.000\text{ đ}$
-  - $\text{discrepancy} = 1.235.000 - 1.765.000 = -530.000\text{ đ}$ -> **Hệ thống báo THIẾU 530.000đ (SAI TRẦM TRỌNG)**.
-- **Nếu trừ luôn phiếu nhập EXTERNAL (`570.000 đ`):**
-  - $\text{expected\_cash} = 1.000.000 + 355.000 - 120.000 - 570.000 = 665.000\text{ đ}$
-  - $\text{discrepancy} = 1.235.000 - 665.000 = +570.000\text{ đ}$ -> **Hệ thống báo THỪA 570.000đ (SAI TRẦM TRỌNG)**.
+### Kết quả Chuẩn
+$$\text{expected\_cash\_in\_drawer} = 1.000.000 + 355.000 - 120.000 = 1.235.000\text{ đ}$$
+$$\text{discrepancy\_amount} = 1.235.000 - 1.235.000 = 0\text{ đ} \implies \text{status} = \text{'MATCHED'}$$
+$$\text{cashRetainedInDrawer} = 1.000.000\text{ đ}, \quad \text{cashToHandOver} = 235.000\text{ đ}$$
 
 ---
 
 ## PHẦN 3: DANH MỤC TÌNH HUỐNG BIÊN TOÀN DIỆN (DETAILED EDGE CASES CATALOG)
 
-### 3.1. Nhóm POS, Đặt món QR & Tách Bếp (Modules 0 & 1)
+### 3.1. Nhóm POS, Đặt món QR & Tách Bếp
 
-#### `EC-POS-01`: Khách quét QR ở Bàn 1, sau đó dọn sang Bàn 7 và đặt thêm đồ từ Tab trình duyệt cũ
-- **Bối cảnh:** Khách quét QR Bàn 1 gửi đơn. Sau 15 phút, khách xin chuyển sang Bàn 7 ngồi máy lạnh. Thu ngân đã bấm Chuyển bàn (`MOVE`) trên POS. Khách mở lại điện thoại (vẫn lưu tab trình duyệt cũ có URL `?table=01`) và bấm đặt thêm 2 chai nước.
-- **Rủi ro:** Nếu hệ thống chỉ đọc `table=01` từ URL, một đơn hàng mới sẽ bị tạo cho Bàn 1 (lúc này Bàn 1 đã trống hoặc đã có khách khác vào ngồi).
-- **Giải pháp Kỹ thuật:**
-  1. Khi khách đặt đơn lần đầu, Backend trả về `activeOrderId = 538` và lưu vào `sessionStorage` trên điện thoại khách.
-  2. Khi thu ngân chuyển bàn, Socket.io bắn sự kiện `order:session_redirected` tới room `order_session_538`.
-  3. Trình duyệt khách nhận sự kiện và tự động cập nhật hiển thị thành `"Bàn 07"`.
-  4. Khi khách bấm gọi thêm, request mang theo `activeOrderId = 538`. Backend kiểm tra thấy đơn 538 hiện đang gắn với Bàn 07 -> Tự động nạp món mới vào Bàn 07!
-- **Tiêu chí Nghiệm thu (AC):** Món mới gọi thêm xuất hiện trên hoá đơn Bàn 07; Bàn 01 không phát sinh đơn mới.
+#### `EC-POS-01`: Khách quét QR ở Bàn 01, dọn sang Bàn 07 và gọi thêm từ Tab cũ
+- `sessionStorage` giữ `activeOrderId` + WebSocket `order:session_redirected` tự đổi nhãn sang `Bàn 07`; backend kiểm tra đơn theo `activeOrderId` (kể cả khi đã `MOVE` hoặc `MERGE` sang `merged_into_order_id`) để nối món vào đúng Bàn 07, không tạo đơn ảo tại Bàn 01.
 
-#### `EC-POS-02`: Bàn đích khi Chuyển bàn (`MOVE`) không trống mà đang có khách (`OCCUPIED`)
-- **Bối cảnh:** Thu ngân chọn nhầm bàn đích đang có khách ngồi ăn.
-- **Giải pháp:** Backend kiểm tra trong transaction: Nếu `targetTable.status !== 'AVAILABLE'` -> Bắn ngay lỗi `HTTP 409 Conflict` kèm mã `POS_TABLE_NOT_AVAILABLE` và thông báo `"Bàn đích đang có khách phục vụ, vui lòng chọn bàn trống hoặc dùng tính năng Gộp bàn"`. Giao diện POS hiển thị toast lỗi màu đỏ, rollback toàn bộ transaction.
+#### `EC-POS-02`: Bàn đích khi `MOVE` đang có khách (`OCCUPIED`)
+- Backend kiểm tra trong `$transaction` và trả `409 Conflict` (`POS_TABLE_NOT_AVAILABLE`), rollback toàn bộ giao dịch.
 
 #### `EC-POS-03`: Chuyển đổi 2 chiều giữa Đơn Mang về (`TAKEAWAY`) và Đơn Tại bàn (`DINE_IN`)
-- **Bối cảnh:** Khách đặt Mang về nhưng đổi ý xin ngồi lại bàn (bàn trống hoặc nhập chung với bạn đang ngồi ăn), hoặc khách đang ăn tại bàn nhưng có việc gấp xin gói toàn bộ đơn mang về.
-- **Giải pháp (Tuân thủ Hard Invariant 2 & 5):**
-  1. **Mang về → Bàn trống (`MOVE`):** Cập nhật `order_type = 'DINE_IN'`, `table_id = targetTableId`, `takeaway_number = NULL`, bàn đích chuyển sang `'OCCUPIED'` (hoặc `'PENDING'`), đánh dấu các món hiện có `is_takeaway = TRUE` (thu ngân có thể bật/tắt lại từng món nếu khách dùng tại bàn).
-  2. **Mang về → Gộp vào bàn đang ăn (`MERGE`):** Chuyển toàn bộ `order_items` sang đơn của bàn đích với `is_takeaway = TRUE`, tính lại tổng tiền đơn đích, đóng đơn nguồn `status = 'MERGED'`.
-  3. **Tại bàn → Mang về (`TO_TAKEAWAY`):** Giải phóng bàn nguồn về `'AVAILABLE'` (`active_order_id = NULL`), cập nhật `order_type = 'TAKEAWAY'`, `table_id = NULL`, cấp số `takeaway_number = MAX(today) + 1`, reset `is_takeaway = FALSE` trên các món.
-  4. **Cấm `SWAP` với đơn Mang về:** Đơn `TAKEAWAY` không có bàn vật lý nên không hỗ trợ `SWAP` (`POS_TAKEAWAY_CANNOT_MERGE`).
-  5. **Ghi log & Báo bếp:** Bắt buộc nhập lý do (`reason`), ghi `table_transfer_logs`, và nếu có món `PRINTED` thì tự động in `TableTransferNoticeSlip` (`Mang về #05 → Bàn 03` hoặc `Bàn 01 → Mang về #05`).
+- **`MOVE` (Mang về → Bàn trống):** Đổi `order_type = 'DINE_IN'`, gắn `table_id`, `takeaway_number = NULL`, đánh dấu các món hiện có `is_takeaway = TRUE`.
+- **`MERGE` (Mang về → Bàn đang ăn):** Chuyển toàn bộ `order_items` sang đơn đích với `is_takeaway = TRUE`, giữ nguyên `kitchen_status`, đóng đơn nguồn `status = 'MERGED'`.
+- **`TO_TAKEAWAY` (Tại bàn → Mang về):** Giải phóng bàn nguồn (`AVAILABLE`, `active_order_id = NULL`), đổi `order_type = 'TAKEAWAY'`, cấp `takeaway_number`, reset `is_takeaway = FALSE`.
+- **Cấm `SWAP` với đơn `TAKEAWAY`:** Trả `409 Conflict` (`POS_TAKEAWAY_CANNOT_MERGE`).
 
-#### `EC-POS-04`: Chuyển bàn khi đơn ĐÃ CÓ món gửi xuống bếp (`kitchen_status = 'PRINTED'`)
-- **Bối cảnh:** Khách chuyển từ Bàn 1 sang Bàn 7 sau khi bếp đã nấu được 5 phút (phiếu bếp cũ in chữ to BÀN 01).
-- **Giải pháp:**
-  1. Backend kiểm tra: Đơn có ít nhất 1 món `PRINTED` -> Đặt cờ `requireKitchenNoticePrint = true`.
-  2. Trả về đối tượng `kitchenTransferSlip`:
-     ```json
-     {
-       "title": "THÔNG BÁO CHUYỂN BÀN",
-       "fromLabel": "BÀN 01",
-       "toLabel": "BÀN 07",
-       "orderCode": "HD-20261107-0039",
-       "affectedStations": ["BEP_NAU", "PHA_CHE"]
-     }
-     ```
-  3. Máy in nhiệt quầy tự động in ngay 1 phiếu cảnh báo chuyển bàn đưa xuống bếp để nhân viên bưng đồ qua Bàn 7.
+#### `EC-POS-04`: Chuyển/Gộp bàn khi đơn ĐÃ CÓ món gửi bếp (`kitchen_status = 'PRINTED'`)
+- Trả cờ `requireKitchenNoticePrint = true` cùng `kitchenTransferSlip` để tự động in phiếu `THÔNG BÁO ĐỔI BÀN` xuống các trạm bếp bị ảnh hưởng.
 
-#### `EC-POS-05`: Thu ngân Click liên tiếp nhiều lần vào nút "Tách đơn" (Double-Click Race)
-- **Bối cảnh:** Giờ cao điểm mạng lag hoặc thu ngân sốt ruột bấm nút "Tách đơn" 3 lần liên tục trong 1 giây.
-- **Giải pháp:**
-  1. Frontend: Nút "Tách đơn" tự động disable và hiển thị Spinner ngay khi có request đang bay (`isPending = true`).
-  2. Backend: Nhờ khoá dòng `SELECT ... FOR UPDATE`, request 1 khoá bản ghi và chuyển toàn bộ món `NEW` sang `PRINTED`. Request 2 và 3 khi được mở khoá sẽ thấy danh sách món `NEW` rỗng -> Trả về HTTP 200 `"Không có món mới cần tách"`, không sinh thêm phiếu in trùng lặp.
+#### `EC-POS-05`: Thu ngân Double-Click liên tiếp vào nút "Tách đơn"
+- Frontend disable nút khi `isPending = true`; Backend khoá dòng `FOR UPDATE`, request thứ 2+ thấy 0 món `NEW` và trả HTTP `200 OK` idempotent `{ tickets: [] }`.
 
-#### `EC-POS-06`: Khách xin Huỷ/Sửa món TRƯỚC vs SAU khi bấm "Tách đơn"
-- **Bối cảnh:** Khách đổi ý không muốn ăn nữa hoặc muốn đổi cấp độ cay.
-- **Giải pháp Phân nhánh:**
-  - **Nhánh A (Món còn ở trạng thái `NEW` - Chưa in bếp):** Thu ngân click xoá hoặc sửa trực tiếp trên Hoá đơn điện tử. Backend hard delete hoặc cập nhật trực tiếp bản ghi, **KHÔNG CẦN IN PHIẾU BÁO BẾP**.
-  - **Nhánh B (Món đã ở trạng thái `PRINTED` - Đã in phiếu xuống bếp):** Thu ngân bấm nút `"Huỷ món bếp"`. Backend chuyển trạng thái món sang `CANCELLED`, và tự động sinh phiếu `"PHIẾU BÁO HUỶ MÓN: BÀN 07 - HUỶ 01 MÌ BÒ CẤP 3"` bắn xuống máy in bếp nấu ngay lập tức.
+#### `EC-POS-06`: Huỷ/Sửa món TRƯỚC vs SAU khi bấm "Tách đơn"
+- **Nhánh A (`NEW`):** Hard delete hoặc sửa trực tiếp trong DB, không in phiếu báo bếp.
+- **Nhánh B (`PRINTED`):** Chuyển sang `CANCELLED`, tính lại tổng tiền (và giảm giá nếu có), tự động in `PHIẾU BÁO HUỶ MÓN` xuống trạm bếp tương ứng.
+
+#### `EC-POS-07`: Bảo mật QR (Wi-Fi/GPS), QR Auto-Cancel & Chống phát lại Web Push cũ khi tỉnh giấc
+- **Wi-Fi / GPS Lock:** `QrSecurityService` xác thực IP mạng quán và/hoặc khoảng cách GPS trước khi cho xem menu hoặc gửi đơn QR.
+- **QR Auto-Cancel:** `QrAutoCancelService` định kỳ quét (mỗi 10s) để đẩy nhắc quá hạn và tự động huỷ đơn QR `PENDING` hoặc món QR add-on `NEW` quá thời gian cấu hình, phát `order:qr_auto_cancelled`.
+- **Stale Push Prevention:** Khi điện thoại nhận Web Push trễ sau Android Doze / iOS Low Power, Service Worker (`sw.js`) gọi `GET /api/v1/public/orders/qr-pending-check` (chỉ trả `{ stillPending: boolean }`) để bỏ qua thông báo nếu thu ngân đã xử lý đơn.
 
 ---
 
-### 3.2. Nhóm Hoá đơn & Dòng tiền (Modules 2 & 4)
+### 3.2. Nhóm Hoá đơn, Giảm giá, Mã QR Thanh toán & Dòng tiền
 
-#### `EC-FIN-01`: Huỷ hoá đơn đã thanh toán thành công (`status = 'PAID'`)
-- **Bối cảnh:** Khách đã trả tiền xong và về, 10 phút sau chủ quán phát hiện thu ngân tính nhầm tiền hoặc nhân viên thông đồng gian lận bill.
-- **Giải pháp:**
-  1. Bắt buộc kiểm tra quyền: Chỉ tài khoản có quyền `invoices:void` (Quản lý/Admin) mới được phép gọi API `POST /api/v1/invoices/:id/void`. Thu ngân bấm vào sẽ nhận `403 Forbidden`.
-  2. Bắt buộc truyền trường `voidReason` (lý do huỷ tối thiểu 10 ký tự).
-  3. Backend chuyển trạng thái hoá đơn từ `PAID` sang `VOIDED`.
-  4. Số tiền của hoá đơn `VOIDED` sẽ tự động bị loại bỏ khỏi công thức tính tiền mặt trong két và doanh thu ngày của Module 4.
+#### `EC-FIN-01`: Huỷ hoá đơn đã thanh toán (`status = 'PAID'` → `'VOIDED'`)
+- Bắt buộc quyền `invoices:void` và `voidReason` ≥ 10 ký tự; tự động loại trừ khỏi doanh thu Kết ca và hạn mức Mã QR.
 
-#### `EC-FIN-02`: Thanh toán Hỗn hợp (Khách trả một phần Tiền mặt, một phần Chuyển khoản QR)
-- **Bối cảnh:** Tổng hoá đơn `300.000 đ`. Khách đưa `100.000 đ` tiền mặt và muốn quét QR chuyển khoản nốt `200.000 đ`.
-- **Giải pháp:**
-  1. Tại dialog Thanh toán, thu ngân chọn phương thức `SPLIT`.
-  2. Nhập `cash_amount = 100000`, `transfer_amount = 200000`. Hệ thống kiểm tra: `cash_amount + transfer_amount === total_amount` mới cho xác nhận.
-  3. Khi kết ca ở Module 4: Hệ thống **CHỈ CỘNG 100.000 Đ** (tiền mặt) vào két thu ngân; 200.000 đ chuyển khoản được ghi nhận vào cột Doanh thu Ngân hàng.
+#### `EC-FIN-02`: Thanh toán Hỗn hợp (`SPLIT`)
+- Ràng buộc cứng `chk_order_payment_amounts`: `cash_amount > 0`, `transfer_amount > 0`, `cash_amount + transfer_amount = total_amount`. Kết ca chỉ cộng `cash_amount` vào tiền mặt két.
 
-#### `EC-FIN-03`: Tiền thực tế trong két bị Thừa (`SURPLUS`) hoặc Thiếu (`SHORTAGE`) khi Kết ca
-- **Bối cảnh:** Do thu ngân thối nhầm tiền cho khách trong ca đông hoặc làm rơi mất tiền lẻ.
-- **Giải pháp:**
-  1. Sau khi nhập số tiền thực đếm, nếu `discrepancy_amount !== 0`, hệ thống hiển thị badge Cảnh báo màu Vàng (`SURPLUS`) hoặc Đỏ (`SHORTAGE`) kèm số tiền lệch.
-  2. Bắt buộc thu ngân phải nhập ô `Ghi chú giải trình chênh lệch` mới được bấm nút "Xác nhận Đóng ca".
-  3. Bản ghi kết ca lưu đầy đủ chi tiết số tờ từng mệnh giá (`denominations_detail`), người đóng ca và thời điểm đóng ca để chủ quán kiểm tra camera đối soát.
+#### `EC-FIN-03`: Thừa (`SURPLUS`) / Thiếu (`SHORTAGE`) tiền két khi Kết ca & Bù chênh lệch
+- Khi `discrepancy_amount ≠ 0`, ràng buộc DB `chk_settlement_note_required` bắt buộc có ghi chú giải trình. Quản lý/thu ngân có quyền `cashflow:compensate` có thể thực hiện bù chênh lệch (`POST /cashflow/settlements/:id/compensate`) kèm lý do tối thiểu 3 ký tự.
 
----
+#### `EC-FIN-04`: Xoay vòng Mã QR Thanh toán khi tất cả đều vượt hạn mức & Khoá sửa tài khoản đã dùng
+- Nếu tất cả `payment_accounts` đang bật đều vượt hạn mức, fallback về mã có `priority` cao nhất kèm cảnh báo `qrOverLimit = true` và ghi `AuditLog` (không chặn bán hàng). Nếu không có mã nào đang bật → `409 PAYMENT_QR_NOT_CONFIGURED`.
+- Mã QR đã gắn với ít nhất 1 hoá đơn bị khoá sửa `bankCode`/`accountNo` (`409 PAYMENT_QR_LOCKED_FIELD`) và cấm xoá (`409 PAYMENT_QR_IN_USE`).
 
-### 3.3. Nhóm Nhân sự & Lịch làm việc Excel (Modules 5 & 6)
+#### `EC-FIN-05`: Chỉnh sửa PTTT Hoá đơn 2 bước & Blind Mode Kết ca
+- Nhân viên chỉ có `invoices:update` (không có `invoices:approve`) khi sửa PTTT hoá đơn `PAID` chỉ ghi nhận vào `pending_payment_edit` chờ quản lý duyệt/từ chối (`POST /invoices/:id/payment-method/review`).
+- `GET /api/v1/cashflow/preview` bật `blindMode = true` (trả `null` cho số lý thuyết) với mọi tài khoản không phải `isSuperAdmin`.
 
-#### `EC-HR-01`: Xung đột Trùng tên viết tắt Nhân viên trong Lịch làm việc
-- **Bối cảnh:** Quán tuyển dụng 2 nhân viên cùng có tên lót và tên là "Văn Anh" (Nguyễn Văn Anh - ID 12 và Trần Văn Anh - ID 15).
-- **Giải pháp Thuật toán:**
-  ```typescript
-  function resolveShortName(fullName: string, existingList: { shortName: string; id: number }[], empId: number): string {
-    const words = fullName.trim().split(/\s+/);
-    const lastName = words[words.length - 1];
-    const middleInitial = words.length > 2 ? words[words.length - 2][0] + '.' : '';
-    let candidate = `${middleInitial}${lastName}`; // "V.Anh"
-
-    const isDuplicate = existingList.some(e => e.shortName === candidate && e.id !== empId);
-    if (isDuplicate) {
-      const firstInitial = words[0][0] + '.';
-      candidate = `${firstInitial}${middleInitial}${lastName} (#${empId})`; // "N.V.Anh (#12)"
-    }
-    return candidate;
-  }
-  ```
-- **Kết quả:** Trên bảng lịch làm việc, ô ca làm việc hiển thị tách bạch rõ ràng `N.V.Anh (#12)` và `T.V.Anh (#15)`.
-
-#### `EC-HR-02`: Nhân viên bị Xoá mềm (`is_deleted = true`) giữa tuần làm việc
-- **Bối cảnh:** Bạn nhân viên Nguyễn Văn Anh nghỉ việc vào ngày Thứ Tư. Quản lý vào Module 5 bấm xoá nhân viên đó.
-- **Rủi ro:** Khi mở lại bảng Lịch làm việc của tuần đó ở Module 6, nếu câu query JOIN trực tiếp không xử lý, ô phân ca Thứ Năm và Thứ Sáu của bạn đó sẽ bị lỗi `null reference` làm sập (crash) toàn bộ màn hình.
-- **Giải pháp:**
-  1. API `GET /api/v1/schedules` truy vấn lịch sử dựa trên ID nhân viên mà không lọc `is_deleted = false` đối với các tuần trong quá khứ hoặc tuần hiện tại.
-  2. Trên giao diện bảng ma trận, nếu nhân viên có `is_deleted === true`, Tag tên của bạn đó hiển thị trạng thái xám mờ (grayed out) kèm tooltip `(Đã nghỉ việc)`, bảng vẫn render bình thường 100%.
-
-#### `EC-HR-03`: Người dùng chỉnh sửa Lịch làm việc nhưng quên bấm "Lưu" (Unsaved Changes)
-- **Bối cảnh:** Quản lý ngồi xếp lịch suốt 20 phút cho cả tuần, vừa sửa xong thì có khách gọi, quản lý tiện tay click vào menu "Bán hàng POS" trên Sidebar hoặc ấn F5 trình duyệt.
-- **Giải pháp:**
-  1. Quản lý trạng thái `isDirty = true` trên client state khi có bất kỳ ô nào thay đổi giá trị.
-  2. Đăng ký đồng thời 2 lớp bảo vệ:
-     - Lớp 1 (Browser Native): `window.addEventListener('beforeunload', (e) => { if (isDirty) { e.preventDefault(); e.returnValue = ''; } })`.
-     - Lớp 2 (In-app SPA Router): React Router Blocker bắt sự kiện chuyển route nội bộ, hiển thị Modal xác nhận:
-       ```
-       ┌─────────────────────────────────────────────────────────────┐
-       │                 ⚠️ CẢNH BÁO THAY ĐỔI CHƯA LƯU               │
-       ├─────────────────────────────────────────────────────────────┤
-       │ Bạn có thay đổi trên bảng Lịch làm việc chưa được lưu lại.   │
-       │ Nếu rời đi bây giờ, mọi chỉnh sửa phân ca của bạn sẽ bị mất!│
-       ├─────────────────────────────────────────────────────────────┤
-       │           [ HUỶ BỎ & Ở LẠI ]       [ RỜI ĐI KHÔNG LƯU ]      │
-       └─────────────────────────────────────────────────────────────┘
-       ```
+#### `EC-FIN-06`: Giảm giá Mã vs Giảm tay & Tính lại khi thay đổi món
+- Mọi đơn hàng thoả mãn `chk_order_discount_amounts`: `discount_amount >= 0`, `discount_amount <= subtotal_amount`, `total_amount = subtotal_amount - discount_amount`.
+- Khi thêm/bớt/huỷ món trên đơn đang áp mã giảm giá, hệ thống tự động tính lại `discount_amount` (hoặc cảnh báo `NOT_APPLICABLE` / `MIN_ORDER_NOT_MET`). Giảm tay `MANUAL` bắt buộc quyền riêng `pos:manualDiscount`.
 
 ---
 
-### 3.4. Nhóm Giao diện, Navbar & Đăng xuất (Modules 8 & 9)
+### 3.3. Nhóm Nhân sự, Lịch làm việc & Bảng lương
 
-#### `EC-UI-01`: Đăng xuất trên Máy tính Quầy dùng chung nhiều Ca (Logout Cleanliness)
-- **Bối cảnh:** Thu ngân ca sáng hết giờ làm, bấm "Đăng xuất" để thu ngân ca tối vào đăng nhập làm việc.
-- **Rủi ro:** Nếu không dọn sạch cache, thu ngân ca tối có thể bấm nút Back trình duyệt và xem được doanh thu hay hoá đơn của ca sáng; hoặc ngược lại nếu xoá sạch `localStorage` thì thu ngân ca tối sẽ bị mất toàn bộ cấu hình kéo giãn cột bảng và theme Tối.
-- **Giải pháp (Tuân thủ Hard Invariant 9):**
-  1. Gọi `queryClient.clear()` -> Xoá sạch toàn bộ cache dữ liệu nghiệp vụ API trong RAM.
-  2. Xoá Access Token và Refresh Token.
-  3. **GIỮ NGUYÊN** khoá `localStorage.getItem('fnb-ui-preferences')`.
-  4. Điều hướng trình duyệt về `/login`. Khi thu ngân mới đăng nhập, giao diện lập tức đọc lại độ rộng cột bảng và sidebar mà không cần cấu hình lại.
+#### `EC-HR-01`: Xung đột trùng tên viết tắt (`short_name`)
+- Tự động đổi từ `V.Anh` sang `N.V.Anh (#12)` và `T.V.Anh (#15)` để phân biệt rõ trên ma trận bảng công.
 
-#### `EC-UI-02`: Thanh tìm kiếm Category trên Navbar (`Ctrl + K`) bị lộ màn hình cấm
-- **Bối cảnh:** Thu ngân quầy chỉ có quyền vào màn hình POS và Nhập hàng, nhưng nhấn `Ctrl + K` gõ chữ "Phân quyền" hoặc "Nhân viên".
-- **Giải pháp:**
-  - Danh sách routes đưa vào component `Command` của Shadcn **BẮT BUỘC ĐƯỢC LỌC QUA PERMISSIONS**:
-    ```typescript
-    const accessibleRoutes = allRoutes.filter(route => 
-      user.is_super_admin || user.permissions[route.module]?.view === true
-    );
-    ```
-  - Thu ngân chỉ nhìn thấy các màn hình mà tài khoản mình có quyền `view = true`.
+#### `EC-HR-02`: Nhân viên bị ngưng hoạt động (`is_deleted = true`) giữa tuần làm việc
+- Lịch tuần và bảng lương vẫn truy vấn được bản ghi nhân sự đã nghỉ, hiển thị trạng thái xám mờ `(Đã nghỉ)` không gây crash.
+
+#### `EC-HR-03`: Quên bấm "Lưu" trên Ma trận Lịch làm việc
+- Bảo vệ 2 lớp (`beforeunload` + React Router Navigation Blocker) bật modal xác nhận trước khi rời trang.
 
 ---
 
-## PHẦN 4: MA TRẬN TRUY VẾT YÊU CẦU ĐẾN 10 INVARIANTS (TRACEABILITY MATRIX)
+### 3.4. Nhóm Xác thực, Giao diện & Trải nghiệm
 
-| Module Chức năng | Invariant 1 (Cô lập) | Invariant 2 (Takeaway) | Invariant 3 (Delta Split) | Invariant 4 (Tạm tính) | Invariant 5 (Khoá dòng) | Invariant 6 (Kết ca) | Invariant 7 (MDM Chuỗi) | Invariant 8 (401 vs 403) | Invariant 9 (Logout UI) | Invariant 10 (Numeric 12,2) |
+#### `EC-AUTH-01`: Đăng nhập đè phiên đang online (Single-Session Conflict) & Đá phiên từ xa
+- Nếu tài khoản đang có kết nối socket online trên thiết bị khác và đăng nhập mới không truyền `force: true` → trả `409 AUTH_SESSION_CONFLICT_ONLINE`.
+- Khi xác nhận `force: true` hoặc Super Admin gọi `POST /users/:id/revoke-session` → cập nhật `active_session_id` + `last_revoked_notice`, phát `session:revoked` buộc phiên cũ đăng xuất tức thì và hiển thị rõ lý do.
+
+#### `EC-UI-01`: Đăng xuất sạch trên Máy Quầy dùng chung (Hard Invariant 9)
+- Gọi `queryClient.clear()`, xoá token/auth state, nhưng giữ nguyên `ui_preferences` trong `localStorage` và DB.
+
+#### `EC-UI-02`: Command Palette (`Ctrl + K`) & Touch Hub lọc tuyệt đối theo RBAC
+- Mọi mục điều hướng trong Sidebar, Command Palette và Touch Hub (`/pos/touch/hub`) chỉ hiển thị các màn hình tài khoản có quyền `view === true` (hoặc `isSuperAdmin`).
+
+---
+
+## PHẦN 4: MA TRẬN TRUY VẾT PHÂN HỆ ĐẾN 10 INVARIANTS (TRACEABILITY MATRIX)
+
+| Phân hệ | Inv 1 (Cô lập) | Inv 2 (Takeaway) | Inv 3 (Delta Split) | Inv 4 (Tạm tính) | Inv 5 (Khoá dòng) | Inv 6 (Kết ca) | Inv 7 (MDM) | Inv 8 (401/403) | Inv 9 (UI Prefs) | Inv 10 (Numeric) |
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Module 0: Menu & Bàn** | ✅ | ✅ | ✅ | — | — | — | — | ✅ | — | ✅ |
-| **Module 1: POS Hợp nhất** | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — | ✅ |
-| **Module 2: Hoá đơn** | ✅ | ✅ | — | ✅ | — | — | — | ✅ | — | ✅ |
-| **Module 3: Nhập hàng** | ✅ | — | — | — | — | ✅ | ✅ | ✅ | — | ✅ |
-| **Module 4: Dòng tiền** | ✅ | — | — | — | — | ✅ | — | ✅ | — | ✅ |
-| **Module 5: Nhân viên** | ✅ | — | — | — | — | — | ✅ | ✅ | — | — |
-| **Module 6: Lịch làm việc**| ✅ | — | — | — | — | — | — | ✅ | — | — |
-| **Module 7: Master Data** | ✅ | — | — | — | — | — | ✅ | ✅ | — | — |
-| **Module 8: Phân quyền** | ✅ | — | — | — | — | — | — | ✅ | — | — |
-| **Module 9: Layout & UI** | ✅ | — | — | — | — | — | — | ✅ | ✅ | — |
+| **Dashboard (`/dashboard`)** | ✅ | ✅ | — | — | — | ✅ | — | ✅ | — | ✅ |
+| **Menu & Bàn (`/menu`)** | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — | ✅ |
+| **POS Quầy & Touch (`/pos`, `/pos/touch/*`)** | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
+| **QR Khách (`/q/:token`, `/qr/:token`)** | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — | — | ✅ |
+| **Mã giảm giá (`/discounts`)** | ✅ | — | — | ✅ | ✅ | — | — | ✅ | — | ✅ |
+| **Hoá đơn (`/invoices`)** | ✅ | ✅ | — | ✅ | — | ✅ | — | ✅ | — | ✅ |
+| **Nhập hàng (`/inventory`)** | ✅ | — | — | — | — | ✅ | ✅ | ✅ | — | ✅ |
+| **Dòng tiền (`/cashflow`)** | ✅ | — | — | — | ✅ | ✅ | — | ✅ | — | ✅ |
+| **Mã QR Thanh toán (`/payment-qr`)** | ✅ | — | — | ✅ | — | ✅ | — | ✅ | — | ✅ |
+| **Nhân sự (`/employees`)** | ✅ | — | — | — | — | — | ✅ | ✅ | — | — |
+| **Bảng công (`/schedules`)** | ✅ | — | — | — | — | — | — | ✅ | — | — |
+| **Bảng lương (`/payroll`)** | ✅ | — | — | — | — | — | — | ✅ | — | ✅ |
+| **Master Data (`/master-data`)** | ✅ | — | — | — | — | — | ✅ | ✅ | — | — |
+| **Phân quyền (`/rbac`)** | ✅ | — | — | — | — | — | — | ✅ | — | — |
+| **Cài đặt Cửa hàng (`/settings`)** | ✅ | — | — | — | — | — | ✅ | ✅ | ✅ | — |
+| **Hồ sơ & Layout (`/profile`)** | ✅ | — | — | — | — | — | — | ✅ | ✅ | — |
 
 ---
 
-> **Tài liệu 03-Edge-Cases-And-Invariants.md là cẩm nang nghiệm thu chất lượng cao nhất cho QA và Developer.**  
-> Mọi kịch bản kiểm thử tự động (Unit Test, E2E Test) ở Phase 4B và Phase 5 bắt buộc phải hiện thực hoá toàn bộ các ca kiểm thử trong tài liệu này.
+> **Tài liệu `03-Edge-Cases-And-Invariants.md` (v2.0.0) đã được đồng bộ 100% với mã nguồn thực tế (Stories 01–21).**

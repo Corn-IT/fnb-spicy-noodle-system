@@ -1,180 +1,98 @@
-# 03 — RBAC, Bảo mật & Nhân sự Lịch làm việc (RBAC, Security & HR Schedule)
+---
+trigger: model_decision
+description: JWT authentication, RBAC roles and permissions, security guards, rate limiting, and HR work-schedule rules.
+---
 
-> Áp dụng cho: Codex (Phase 4B — IamModule, HrScheduleModule), Antigravity (Phase 5 — Modules 5, 6, 8).
+# 03 — RBAC, Single-Session, Bảo mật & Nhân sự / Bảng công / Bảng lương
+
+> Áp dụng cho: Mọi Agent làm việc trên `IamModule`, `HrScheduleModule` (Employees, Schedules, Payroll), `RbacGuard`, `JwtAuthGuard`, và các màn hình `/rbac`, `/employees`, `/schedules`, `/payroll`, `/profile`. Đồng bộ 100% với `packages/shared/src/schemas/rbac.schema.ts` và `docs/bmad/02-RBAC-And-MDM-Matrix.md`.
 
 ---
 
-## 1. Authentication (JWT)
+## 1. Authentication (JWT) & Single-Session Policy
 
-- Login: `POST /api/v1/auth/login` → `{ accessToken, refreshToken, user }`.
-- `accessToken`: JWT, sống 15 phút, gửi qua header `Authorization: Bearer <token>`.
-- `refreshToken`: JWT, sống 7 ngày, lưu trong httpOnly cookie.
-- Password: **MUST** hash bằng `bcrypt`, tối thiểu 6 ký tự.
-- **MUST** validate JWT trên mọi protected endpoint qua `JwtAuthGuard`.
-- Refresh flow: `POST /api/v1/auth/refresh` → cấp lại accessToken mới.
+- **Login:** `POST /api/v1/auth/login` (`{ username, password, force? }`) → `{ accessToken, user }` + httpOnly cookie `refreshToken`.
+- **Single-Session (`active_session_id`):**
+  - Nếu tài khoản đang có kết nối socket online (`isSessionOnline(activeSessionId)`) và `force !== true` → trả `409 Conflict` (`AUTH_SESSION_CONFLICT_ONLINE`).
+  - Khi đăng nhập thành công (`force: true` hoặc phiên cũ offline): sinh `active_session_id` mới, lưu IP/thiết bị/User-Agent, phát `session:revoked` tới room `user_session_{oldSid}` để đá phiên cũ tức thì và ghi `AuditLog`.
+- **`accessToken`:** TTL `15m`, Header `Authorization: Bearer <token>`, claims `{ sub, tokenType: 'access', sid }`.
+- **`refreshToken`:** TTL `7d`, httpOnly cookie (`refresh-cookie.util.ts`), đối khớp `active_session_id` qua `POST /api/v1/auth/refresh`.
+- **Mật khẩu:** `bcryptjs` cost = `10`, độ dài `6–128` ký tự, chống timing attack bằng `DUMMY_PASSWORD_HASH`.
+- **Rate Limiting:** `RateLimitGuard` (global `APP_GUARD`) tách riêng bucket cho `/auth/refresh` và `/auth/login` để tránh `429` khi nhiều thiết bị dùng chung Wi-Fi quán.
 
-## 2. RBAC Permission Model (Đồng bộ `02-RBAC-And-MDM-Matrix.md`)
+---
 
-### Cấu trúc `users.permissions` (JSONB — `UserPermissionsSchema` tại `@fnb/shared`):
-```json
-{
-  "pos":       { "view": true, "create": true, "update": true, "delete": false, "splitKitchen": true, "tableAction": true, "checkout": true },
-  "invoices":  { "view": true, "reprint": true, "void": false },
-  "inventory": { "view": true, "create": true, "update": false, "delete": true },
-  "cashflow":  { "view": true, "create": true, "config": false },
-  "employees": { "view": true, "create": true, "update": true, "delete": false },
-  "schedules": { "view": true, "update": true },
-  "mdm":       { "view": true, "write": false },
-  "rbac":      { "view": false, "manage": false }
-}
-```
+## 2. RBAC Permission Model — 14 Nhóm Quyền (`rbac.schema.ts`)
 
-### Permission Keys & Sub-permissions:
-| Module | Key | Quyền CRUD & Sub-permissions |
-|--------|-----|-----------------------------|
-| Module 0 & 1 (Menu & POS) | `pos` | `view`, `create`, `update`, `delete`, `splitKitchen` (tách bếp), `tableAction` (MOVE/MERGE/SWAP), `checkout` (thanh toán), `openCashDrawer` (mở két tiền tự do — strict, KHÔNG fallback), `manualDiscount` (giảm giá thủ công — strict, KHÔNG fallback) |
-| Module 1B (Mã giảm giá) | `discounts` | `view`, `create`, `update`, `delete` |
-| Module 2 (Hoá đơn) | `invoices` | `view`, `reprint` (in lại bill), `void` (huỷ đơn đã PAID — bắt buộc `voidReason` >= 10 ký tự) |
-| Module 3 (Nhập hàng) | `inventory` | `view`, `create`, `update`, `delete` (Thu ngân chỉ được xoá phiếu trong ca hiện tại; ngày cũ yêu cầu Quản lý/Admin) |
-| Module 4 (Dòng tiền) | `cashflow` | `view`, `create` (kết ca), `compensate` (bù chênh lệch), `config` (sửa ngân sách mặc định đầu ngày), `export` |
-| Module 4B (Mã QR thanh toán) | `paymentQr` | `view`, `create` (thêm mã QR), `update` (sửa hạn mức / đổi thứ tự ưu tiên / bật-tắt), `delete` (xoá mã QR chưa phát sinh đơn) |
-| Module 5 (Nhân viên) | `employees` | `view`, `create`, `update`, `delete` |
-| Module 6 (Lịch) | `schedules` | `view`, `update` (xếp ca, lưu lịch tuần, sao chép từ tuần trước) |
-| Module 7 (MDM) | `mdm` | `view`, `write` (thêm/sửa/xoá danh mục gốc) |
-| Module 8 (Phân quyền) | `rbac` | `view`, `manage` (chỉ Super Admin mới thao tác) |
+`UserPermissionsSchema` (có `normalizeLegacyPermissions` tự chuyển đổi dữ liệu cũ `mdm.write` / `rbac.manage`):
 
-### Custom Decorator & RbacGuard Logic:
-```typescript
-// apps/api-server/src/common/decorators/require-permission.decorator.ts
-@RequirePermission('cashflow', 'config')
-```
+| # | Module Key | Quyền chi tiết (`boolean`) |
+|:-:|:---|:---|
+| 1 | `dashboard` | `view`, `viewProfit`, `export` |
+| 2 | `pos` | `view`, `create`, `update`, `delete`, `splitKitchen`, `tableAction`, `checkout`, `qrSecurity` *(strict)*, `manualDiscount` *(strict)*, `openCashDrawer` *(strict)* |
+| 3 | `menu` | `view`, `create`, `update`, `delete`, `manageStations`, `manageCategories`, `import`, `export` |
+| 4 | `invoices` | `view`, `reprint`, `update` *(gửi yêu cầu sửa PTTT)*, `approve` *(duyệt/từ chối sửa PTTT)*, `void` *(huỷ đơn PAID, `voidReason >= 10`)*, `export` |
+| 5 | `inventory` | `view`, `create`, `update`, `delete`, `export` |
+| 6 | `cashflow` | `view`, `create` *(chốt ca)*, `compensate` *(bù chênh lệch)*, `config` *(ngân sách đầu ca)*, `export` |
+| 7 | `employees` | `view`, `create`, `update`, `delete`, `export` |
+| 8 | `schedules` | `view`, `create`, `update`, `delete`, `export` |
+| 9 | `payroll` | `view`, `update`, `config`, `export` |
+| 10 | `discounts` | `view`, `create`, `update`, `delete` |
+| 11 | `mdm` | `view`, `create`, `update`, `delete` |
+| 12 | `rbac` | `view`, `create`, `update`, `resetPassword` |
+| 13 | `paymentQr` | `view`, `create`, `update`, `delete` |
+| 14 | `settings` | `view`, `update` |
 
-```
-1. User authenticated? (JwtAuthGuard ở tầng 1)
-   → NO  → 401 Unauthorized (NEVER 403)
-2. User is_super_admin === true? (RbacGuard ở tầng 2)
-   → YES → ALLOW (Bypass tất cả kiểm tra)
-3. permissions[module]?.[action] === true?
-   (Đối với sub-action của pos như splitKitchen/tableAction/checkout: cho phép fallback kiểm tra permissions.pos.create || permissions.pos.update nếu cờ sub-permission chưa khai báo tường minh)
-   → YES → ALLOW
-   → NO  → 403 Forbidden (NEVER 401)
-```
+### Decorators & `RbacGuard` (`apps/api-server/src/common/decorators/permissions.decorator.ts`)
+- 3 Decorators chuẩn: `@RequirePermission(module, action)`, `@RequireAnyPermission(...reqs)`, `@SuperAdminOnly()`.
+- Luồng kiểm tra:
+  1. `JwtAuthGuard` (Tầng 1): Thiếu token / token hỏng / hết hạn / phiên bị thu hồi → **`401 Unauthorized`** (**NEVER** `403`).
+  2. `RbacGuard` (Tầng 2): `user.isSuperAdmin === true` → **ALLOW** (bypass toàn bộ).
+  3. Nếu `@SuperAdminOnly()` → **`403 Forbidden`** (`RBAC_SUPER_ADMIN_REQUIRED`).
+  4. Kiểm tra `permissions[module][action] === true` (chỉ fallback sang `pos.create || pos.update` cho 3 sub-action `splitKitchen`, `tableAction`, `checkout` khi key chưa khai báo; `qrSecurity`, `manualDiscount`, `openCashDrawer` kiểm tra **strict**). Thiếu quyền → **`403 Forbidden`** (`RBAC_PERMISSION_DENIED`, **NEVER** `401`).
 
-### Bảng Mapping API Endpoints sang Quyền RBAC:
-- `GET /api/v1/public/menu` & `POST /api/v1/public/orders/qr` → Public (Kèm `qr_token` hợp lệ)
-- `GET /api/v1/pos/tables` & `GET /api/v1/pos/orders/:id/provisional-bill` → `@RequirePermission('pos', 'view')`
-- `POST /api/v1/pos/orders` → `@RequirePermission('pos', 'create')`
-- `PATCH /api/v1/pos/orders/:id/items` → `@RequirePermission('pos', 'update')`
-- `POST /api/v1/pos/orders/:id/split-kitchen` → `@RequirePermission('pos', 'splitKitchen')`
-- `POST /api/v1/pos/orders/:id/table-action` → `@RequirePermission('pos', 'tableAction')`
-- `POST /api/v1/pos/orders/:id/checkout` → `@RequirePermission('pos', 'checkout')`
-- `GET /api/v1/pos/orders/:id/applicable-discounts` & `DELETE /api/v1/pos/orders/:id/discount` → `@RequirePermission('pos', 'checkout')`
-- `POST /api/v1/pos/orders/:id/discount` → `@RequirePermission('pos', 'checkout')` (+ kiểm tra `pos.manualDiscount` trong service nếu áp giảm tay)
-- `GET / POST / PUT / PATCH / DELETE /api/v1/discounts` → `@RequirePermission('discounts', 'view' | 'create' | 'update' | 'delete')`
-- `GET /api/v1/invoices` & `GET /api/v1/invoices/:id` → `@RequirePermission('invoices', 'view')`
-- `POST /api/v1/invoices/:id/void` → `@RequirePermission('invoices', 'void')`
-- `GET / POST / DELETE /api/v1/inventory-imports` → `@RequirePermission('inventory', 'view' | 'create' | 'delete')`
-- `GET /api/v1/cashflow/settlements` → `@RequirePermission('cashflow', 'view')`
-- `POST /api/v1/cashflow/settle` → `@RequirePermission('cashflow', 'create')`
-- `PUT /api/v1/cashflow/default-budget` → `@RequirePermission('cashflow', 'config')`
-- `GET /api/v1/payment-qr` & `GET /api/v1/payment-qr/:id/orders` → `@RequirePermission('paymentQr', 'view')`
-- `POST /api/v1/payment-qr` → `@RequirePermission('paymentQr', 'create')`
-- `PUT /api/v1/payment-qr/:id` & `PUT /api/v1/payment-qr/reorder` → `@RequirePermission('paymentQr', 'update')`
-- `DELETE /api/v1/payment-qr/:id` → `@RequirePermission('paymentQr', 'delete')`
-- `GET / POST / PUT / DELETE /api/v1/employees` → `@RequirePermission('employees', 'view' | 'create' | 'update' | 'delete')`
-- `GET /api/v1/schedules` → `@RequirePermission('schedules', 'view')`
-- `PUT /api/v1/schedules/bulk-save` → `@RequirePermission('schedules', 'update')`
-- `GET /api/v1/mdm/lookup` → `AuthenticatedOnly` (`@UseGuards(JwtAuthGuard)`, KHÔNG yêu cầu quyền MDM)
-- `GET / POST / PUT / DELETE /api/v1/mdm` → `@RequirePermission('mdm', 'view' | 'write')`
-- `GET /api/v1/users` → `@RequirePermission('rbac', 'view')`
-- `POST /api/v1/users` & `PUT /api/v1/users/:id/permissions` → `SuperAdminOnly` (`is_super_admin = true`)
-- `GET / PUT /api/v1/profile` & `PATCH /api/v1/profile/ui-prefs` → `AuthenticatedOnly`
+### Mapping Endpoints Chính (xem bảng đầy đủ tại `docs/bmad/02-RBAC-And-MDM-Matrix.md` §5)
+- `GET /api/v1/mdm/lookup` → **`JwtAuthGuard` (`AuthenticatedOnly` — Hard Invariant 8)**, KHÔNG đòi quyền `mdm:*`.
+- `GET/POST/PUT/DELETE /api/v1/mdm` → `mdm:view|create|update|delete`.
+- `GET /api/v1/users` → `rbac:view` (ẩn IP/thiết bị phiên đối với non-SuperAdmin).
+- `POST /api/v1/users`, `PUT /api/v1/users/:id`, `PUT /api/v1/users/:id/permissions`, `POST /api/v1/users/:id/reset-password`, `GET /api/v1/users/:id/session-history`, `POST /api/v1/users/:id/revoke-session` → **`@SuperAdminOnly()`**.
+- `GET /api/v1/audit-logs/:module` → `JwtAuthGuard` + quyền `view` của module tương ứng (riêng `RBAC` chỉ Super Admin; IP/thiết bị chỉ trả cho Super Admin).
+- `GET/PUT/PATCH/DELETE /api/v1/profile/*` & `GET /api/v1/store-messages` → `AuthenticatedOnly`.
 
-## 3. HTTP Status Code Rules (HARD INVARIANT)
+---
+
+## 3. HTTP Status Code Rules (Hard Invariant 8)
 
 | Code | Khi nào | Ví dụ |
 |------|---------|-------|
-| `401` | Token missing, malformed, hoặc expired | Request không có Bearer token |
-| `403` | User ĐÃ authenticated nhưng thiếu quyền | Thu ngân cố truy cập `/api/v1/cashflow/default-budget` mà không có `cashflow:config` |
-| `404` | Resource không tồn tại | Order ID không tìm thấy |
-| `409` | Vi phạm business rule | Merge đơn TAKEAWAY, bàn đích đã occupied khi MOVE |
-| `422` | Zod validation failure | Thiếu trường bắt buộc trong request body |
+| `401` | Thiếu token, token hỏng/hết hạn, sai mật khẩu, phiên single-session bị thu hồi | `AUTH_TOKEN_EXPIRED`, `AUTH_SESSION_REVOKED` |
+| `403` | Đã xác thực hợp lệ nhưng thiếu quyền / không phải Super Admin | `RBAC_PERMISSION_DENIED`, `RBAC_SUPER_ADMIN_REQUIRED` |
+| `404` | Resource không tồn tại | Order/Employee/Discount ID không tồn tại |
+| `409` | Xung đột phiên online hoặc vi phạm quy tắc nghiệp vụ | `AUTH_SESSION_CONFLICT_ONLINE`, `POS_TABLE_NOT_AVAILABLE`, `PAYMENT_QR_IN_USE` |
+| `422` | Sai Zod Schema validation | `VALIDATION_FAILED` |
 
-- **NEVER** trả `401` khi user đã đăng nhập nhưng thiếu quyền → phải là `403`.
-- **NEVER** trả `403` khi token không hợp lệ → phải là `401`.
+---
 
-## 4. Super Admin Rules
+## 4. Super Admin & 4 Tài khoản Seed Chuẩn (`seed-data.ts`)
 
-- `is_super_admin = true`: có **TẤT CẢ** quyền implicitly — `RbacGuard` bỏ qua kiểm tra permissions.
-- Trên UI Module 8 (Phân quyền): hàng Super Admin hiển thị tất cả checkboxes nhưng ở trạng thái **disabled/readonly**.
-- **CHỈ** Super Admin mới được:
-  - Tạo tài khoản mới: `POST /api/v1/users`
-  - Sửa quyền người khác: `PUT /api/v1/users/:id/permissions`
-- Super Admin **MUST** được tạo sẵn trong `prisma/seed.ts`.
+- 4 tài khoản seed (mật khẩu mặc định `Password@123`): `superadmin` (`isSuperAdmin: true`), `admin` (quản lý vận hành), `adminview` (chỉ xem & xuất báo cáo), `thungan` (thu ngân quầy).
+- Trên UI `/rbac`: tách riêng **Drawer Thông tin tài khoản** (`username`, `roleLabel`, liên kết nhân sự, `isActive`) và **Drawer Phân quyền** (14 nhóm quyền, đẩy realtime qua `account:permissions_updated`). Tài khoản Super Admin luôn readonly, không thể tự hạ quyền hay vô hiệu hoá.
 
-## 5. MDM Lookup API Tách biệt
+---
 
-- `GET /api/v1/mdm/lookup?category=INGREDIENT`:
-  - Quyền: **authenticated** (bất kỳ user đã đăng nhập, KHÔNG cần quyền MDM).
-  - Dùng bởi: Drawer Module 3 (autocomplete nguyên liệu), Dropdowns Module 5 (chức vụ/chuyên môn), mọi Combobox trong hệ thống.
-- `CRUD /api/v1/mdm`:
-  - Quyền: `mdm:view` / `mdm:write`.
-  - Dùng bởi: Màn hình quản trị Module 7.
-- **MUST** tách biệt 2 endpoint này — **NEVER** yêu cầu `mdm:write` cho lookup.
+## 5. Nhân sự (1-1), Bảng công & Bảng tính lương (`HrScheduleModule`)
 
-## 6. Liên kết Employee ↔ User (Strict 1-1)
+### 5.1. Liên kết Employee ↔ User (Strict 1-1) & Short Name
+- `users.employee_id` là `UNIQUE FK → employees.id`. Danh sách `/employees` hiển thị ánh xạ tài khoản liên kết; hồ sơ `/profile` đọc/ghi đồng bộ về `employees`.
+- Thuật toán `generateShortName`: `"Nguyễn Văn Anh"` → `"V.Anh"`; khi trùng → `"N.V.Anh (#12)"`.
+- Hỗ trợ tạm ngưng/khôi phục (`PATCH /api/v1/employees/:id/status`) và xoá vĩnh viễn (`DELETE /api/v1/employees/:id/permanent` khi chưa có phát sinh).
 
-- `employees`: lưu trữ đầy đủ hồ sơ nhân sự thực tế (`full_name`, `short_name`, `dob`, `phone`, `address`, `citizen_id`, `citizen_id_issued_place`, `start_date`, `bank_name`, `bank_account_no`, `bank_account_name`, `avatar_url`, `attachment_urls`, `note`, `position_id`, `specialty_id`).
-- `users`: đăng nhập (`username`, `password_hash`), phân quyền (`is_super_admin`, `permissions`), UI preferences (`ui_preferences`), trạng thái (`is_active`).
-- `users.employee_id` **MUST** là FK **UNIQUE** → `employees.id` (strict 1-to-1).
-- Khi tạo nhân viên kèm tài khoản: tạo `employee` **TRƯỚC**, rồi tạo `user` linked với `employee_id`.
-- Trang Hồ sơ cá nhân (Module 9) đọc từ **CẢ HAI** bảng (JOIN) và khi cập nhật thông tin cá nhân/ngân hàng/avatar sẽ đồng bộ trực tiếp về bảng `employees`.
+### 5.2. Bảng công Tuần (`/schedules`)
+- API: `GET /api/v1/schedules?weekStartDate=...`, `PUT /api/v1/schedules/bulk-save`, `POST /api/v1/schedules/copy-previous-week`.
+- Mỗi ô hỗ trợ 2 chế độ chấm công: **`FULL_SHIFT`** (đủ ca) và **`CUSTOM_HOURS`** (`startTime`–`endTime`).
+- **Unsaved Changes Guard:** Bắt buộc cài đủ 2 lớp (`beforeunload` + React Router blocker + cảnh báo chuyển tuần khi chưa lưu).
+- **Edge case `EC-HR-02`:** Nhân viên đã `is_deleted = true` vẫn hiển thị xám mờ kèm `(Đã nghỉ)` trên bảng công & bảng lương, không gây crash.
 
-## 7. Thuật toán Sinh Tên Viết tắt (Employee Short Name)
-
-```typescript
-function generateShortName(fullName: string, existingShortNames: string[], employeeId: number): string {
-  // "Nguyễn Văn Anh" → words = ["Nguyễn", "Văn", "Anh"]
-  const words = fullName.trim().split(/\s+/);
-  const lastName = words[words.length - 1];           // "Anh"
-  const middleInitial = words.length > 2
-    ? words[words.length - 2][0] + '.'                // "V."
-    : '';
-  let shortName = `${middleInitial}${lastName}`;      // "V.Anh"
-
-  if (existingShortNames.includes(shortName)) {
-    // Collision → add first name initial + " (#ID)"
-    const firstInitial = words[0][0] + '.';           // "N."
-    shortName = `${firstInitial}${middleInitial}${lastName} (#${employeeId})`; // "N.V.Anh (#12)"
-  }
-
-  return shortName;
-}
-```
-
-- Hiển thị trong ô lịch làm việc Module 6 dưới dạng tags có màu theo chuyên môn:
-  - `BEP_NAU` → tag màu đỏ
-  - `BEP_CHIEN` → tag màu cam
-  - `PHA_CHE` → tag màu xanh dương
-
-## 8. Lịch làm việc (Module 6 — Excel-style Matrix)
-
-### Cấu trúc dữ liệu:
-- 7 cột (Thứ 2 → Chủ nhật) × N hàng (khung giờ).
-- Mỗi ô là **Multi-select Dropdown** hiển thị `short_name` nhân viên.
-- Tags có màu theo `specialty` của nhân viên.
-
-### API:
-- `GET /api/v1/schedules?weekStartDate=2026-11-02` → lấy ma trận tuần.
-- `PUT /api/v1/schedules/bulk-save` → lưu toàn bộ tuần trong 1 request.
-- Copy từ tuần trước: API hỗ trợ clone schedule tuần trước.
-
-### Unsaved Changes Guard:
-- **MUST** implement `window.addEventListener('beforeunload', handler)` — bắt close/refresh.
-- **MUST** implement React Router navigation blocker — bắt chuyển trang in-app.
-- Hiển thị dialog: `"Bạn có thay đổi chưa lưu. Bạn có chắc muốn rời trang?"`.
-- **MUST** active khi grid đã bị sửa nhưng chưa save.
-- **MUST** deactivate sau khi save thành công.
-
-### Edge case:
-- Nhân viên bị soft-delete giữa tuần → hiển thị tên xám (grayed out) trong ô lịch, **NEVER** crash.
+### 5.3. Bảng tính Lương (`/payroll`)
+- API: `GET /api/v1/payroll?fromDate=&toDate=`, `PUT /api/v1/payroll/config` (`payroll:config`), `PUT /api/v1/payroll/employees/:employeeId` (`payroll:update`).
+- Tự tổng hợp `scheduleFullShiftDays` và `scheduleCustomHours` từ `work_schedules`; hỗ trợ `FULL_TIME` (mặc định `7.000.000đ / 28 công / 12h`) và `PART_TIME` (mặc định `25.000đ/giờ`), ghi đè công/giờ, lương riêng và thưởng/phạt (`bonusOrAdjustment`).

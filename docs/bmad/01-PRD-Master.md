@@ -1,12 +1,12 @@
 # BMAD Product Requirements Document (PRD) — Master Specification
-# Hệ thống POS & Quản trị Vận hành Cửa hàng Mì Cay (fnb-spicy-noodle-system)
+# Hệ thống POS & Quản trị Vận hành Cửa hàng Mì Cay (`fnb-spicy-noodle-system`)
 
-> **Tài liệu:** 01-PRD-Master.md  
-> **Phiên bản:** 1.0.0 (BMAD Phase 1 Final)  
+> **Tài liệu:** `docs/bmad/01-PRD-Master.md`  
+> **Phiên bản:** 2.0.0 (Synced with Production Codebase — Stories 01–21)  
 > **Vai trò thực hiện:** BMAD Business Analyst & Product Manager  
-> **Trạng thái:** FINAL  
-> **Ngày phê duyệt:** 2026-11-07  
-> **Phạm vi:** Toàn bộ 10 Modules (Module 0 đến Module 9)  
+> **Trạng thái:** FINAL & SYNCED  
+> **Ngày phê duyệt gốc:** 2026-11-07 · **Ngày cập nhật đồng bộ:** 2026-11-26  
+> **Phạm vi:** Toàn bộ 16 phân hệ thực tế (Dashboard, POS Quầy & Cảm ứng Touch Shell, QR Mobile, Thực đơn 3 tầng, Mã giảm giá, Hoá đơn, Nhập hàng, Dòng tiền Kết ca, Mã QR Thanh toán, Nhân sự, Lịch làm việc, Bảng tính lương, Master Data, Phân quyền & Phiên, Cài đặt Cửa hàng, Hồ sơ & Giao diện)  
 > **Quy chuẩn tuân thủ:** 10 Hard Invariants tại `AGENTS.md` và `.agents/rules/*.md`
 
 ---
@@ -14,556 +14,229 @@
 ## 1. TỔNG QUAN SẢN PHẨM & BỐI CẢNH DOANH NGHIỆP
 
 ### 1.1. Bối cảnh & Điểm đau Vận hành (Pain Points)
-Cửa hàng kinh doanh F&B ẩm thực đặc thù: **Mì cay nhiều cấp độ, đồ ăn vặt chiên nóng, và quầy pha chế nước uống**. 
-- **Quy mô hoạt động:** 20–30 bàn ăn tại chỗ, khu vực tiếp đón khách mua mang về, lưu lượng 200–600 đơn hàng/ngày. Giờ cao điểm tập trung từ 18:00 đến 21:30.
-- **Mô hình chế biến tách biệt 3 trạm (Stations):**
-  1. `BEP_NAU`: Phụ trách mì cay (cấp độ 0–7, mì kim chi bò, hải sản, lẩu mini).
-  2. `BEP_CHIEN`: Phụ trách đồ chiên nhanh (khoai tây chiên, cá viên, phô mai que, gà rán).
-  3. `PHA_CHE`: Phụ trách quầy nước (trà sữa, trà đào cam sả, nước ngọt có ga).
-- **Điểm nghẽn cũ:** Nhân viên ghi giấy note tay cho khách, chuyển vào quầy thu ngân. Thu ngân phải xé hoặc chép lại thành 3 mẩu giấy note con chạy đi phát cho 3 bếp. Khi khách gọi thêm món (add-on), đổi cấp độ cay, hoặc chuyển bàn, giấy note thất lạc gây nhầm món, sót món, nấu thừa hoặc sai tiền khi thanh toán.
-- **Điểm đau đối soát:** Doanh thu chuyển khoản QR bị tính gộp chung vào tiền mặt trong két khiến đối soát kết ca cuối ngày luôn báo thiếu tiền giả tạo; tiền rút két đi chợ mua rau/đá bi không được trừ tự động vào dòng tiền lý thuyết.
+Cửa hàng kinh doanh F&B ẩm thực đặc thù: **Mì cay nhiều cấp độ, đồ ăn vặt chiên nóng, và quầy pha chế nước uống**.
+- **Quy mô hoạt động:** 20–30 bàn ăn tại chỗ, khu vực tiếp đón khách mua mang về (tại quầy và QR Mang về), lưu lượng 200–600 đơn hàng/ngày. Giờ cao điểm tập trung từ 18:00 đến 21:30.
+- **Mô hình chế biến tách biệt theo trạm bếp (Stations):**
+  1. `BEP_NAU`: Mì cay (cấp độ 0–7), bánh mì chảo, lẩu, món nóng.
+  2. `BEP_CHIEN`: Khoai tây chiên, cá viên, phô mai que, gà rán, đồ ăn vặt.
+  3. `PHA_CHE`: Trà sữa, trà trái cây, sinh tố, đá xay, nước ngọt (hỗ trợ Size M/L).
+  4. **Mở rộng động (`BEP_*`):** Chủ quán có thể quản trị thêm trạm bếp vật lý mới qua MDM `KITCHEN_STATION` (định dạng `BEP_[A-Z0-9_]{1,12}`) và cấu hình món `COMBO` tự động phân rã về đúng các trạm thực tế.
+- **Điểm nghẽn cũ:** Ghi giấy note tay rồi chép lại thành 3 mẩu giấy gửi xuống 3 bếp → dễ thất lạc, nấu trùng khi gọi thêm món, nhầm bàn khi khách chuyển chỗ; lẫn lộn doanh thu chuyển khoản QR với tiền mặt két; khó thao tác trên máy POS cảm ứng toàn màn hình.
 
 ### 1.2. Tầm nhìn & Mục tiêu Sản phẩm (Vision & Objectives)
-Xây dựng một hệ thống phần mềm **POS & Quản trị Vận hành (Mini ERP) khép kín, siêu nhẹ, thời gian thực** theo kiến trúc **Modular Monolith trong Turborepo**, vận hành mượt mà với đội ngũ tinh gọn (1–2 developers):
-1. **Triệt tiêu 100% việc chép giấy note thủ công:** Khách tự quét QR tại bàn hoặc nhân viên bấm order tại quầy; hệ thống tự động phân tách (Delta Split) các món mới gọi xuống đúng 3 trạm bếp kèm logo nhận diện trên giấy in nhiệt 80mm tự động cắt.
-2. **Đối soát Dòng tiền chính xác tuyệt đối:** Công thức kết ca tự động tách bạch Doanh thu Tiền mặt (`CASH`) và Chuyển khoản QR (`TRANSFER`), tự động khấu trừ phiếu chi mua nguyên vật liệu từ tiền két (`CASH_DRAWER`).
-3. **Quản trị Nhân sự & Lịch làm việc trực quan:** Bảng ma trận ca làm việc tuần dạng Excel với cơ chế chống mất dữ liệu (Unsaved Changes Guard) và nhận diện nhân viên bằng tên viết tắt gắn màu theo chuyên môn.
-4. **Hiệu năng & Trải nghiệm đỉnh cao (60 FPS):** Độ trễ thao tác tại quầy POS dưới 50ms, in bill dưới 500ms, kéo giãn cột bảng và sidebar mượt mà không re-render giật lag, giữ nguyên cấu hình giao diện cá nhân khi đăng xuất.
+Xây dựng một hệ thống phần mềm **POS & Quản trị Vận hành (Mini ERP) khép kín, siêu nhẹ, thời gian thực** theo kiến trúc **Modular Monolith trong Turborepo**:
+1. **Triệt tiêu 100% giấy note thủ công:** Khách tự quét QR (`/q/:token` hoặc `/qr/:token`, tại bàn hoặc mang về) hoặc nhân viên bấm order trên POS Desktop (`/pos`) / POS Cảm ứng kiểu iPOS (`/pos/touch`); hệ thống tự động phân tách (Delta Split) các món `NEW` xuống đúng trạm bếp trên máy in nhiệt 80mm (Browser `--kiosk-printing`, Android POS USB RawBT `iMin D3-505`, hoặc LAN ESC/POS `:9100` `iPOS.vn iTP6`).
+2. **Đối soát Dòng tiền chính xác tuyệt đối:** Công thức kết ca tách bạch Tiền mặt (`CASH` + phần mặt của `SPLIT`) với Chuyển khoản QR (`TRANSFER` + phần CK của `SPLIT`), trừ tự động phiếu chi két (`CASH_DRAWER`), hỗ trợ **Blind Mode** khi đếm tiền, **Bù chênh lệch**, và **Tự động xoay vòng nhiều mã QR thanh toán** theo hạn mức Ngày/Tháng/Năm.
+3. **Quản trị Nhân sự, Bảng công & Tính lương tự động:** Bảng công ma trận tuần dạng Excel (`FULL_SHIFT` / `CUSTOM_HOURS`) liên kết trực tiếp sang **Bảng tính lương (`/payroll`)** hỗ trợ `FULL_TIME` và `PART_TIME`.
+4. **Cá nhân hoá sâu & Bảo mật vận hành:** Cài đặt cửa hàng động (`/settings`: thương hiệu, logo/favicon, màu sắc, 5 mẫu phiếu in 80mm, danh mục thông báo tuỳ chỉnh, tỷ lệ hiển thị), **Single-Session Login**, **Audit Logs 13 phân hệ**, và cảnh báo đơn QR đa kênh (**Socket.io + Giọng nói tiếng Việt + Web Push VAPID + Tự động huỷ quá hạn**).
 
 ---
 
 ## 2. CHÂN DUNG NGƯỜI DÙNG & HÀNH TRÌNH TRẢI NGHIỆM (PERSONAS & USER JOURNEYS)
 
 ### 2.1. Danh mục Nhân vật (Personas)
-1. **Khách hàng tại bàn (`QR_GUEST`):** Sử dụng smartphone quét mã QR dán trên bàn ăn. Cần xem menu trực quan có hình ảnh, chọn cấp độ cay (0–7), chọn topping thêm có giá rõ ràng, gọi thêm món đợt 2–3 mà không bị gián đoạn, và quét mã VietQR động để thanh toán nhanh tại bàn.
-2. **Khách mua mang về / Khách vãng lai (`WALK_IN_GUEST`):** Đứng tại quầy gọi món trực tiếp. Được cấp số thẻ mang về (`Mang về #01`, `#02`...) hoặc chọn bàn trống để vào ngồi.
-3. **Nhân viên Thu ngân (`CASHIER`):** Trung tâm điều phối đơn. Thao tác trên máy tính quầy POS (màn hình cảm ứng hoặc chuột + phím). Nhận thông báo đơn QR thời gian thực, duyệt đơn, tạo đơn mang về, bấm "Tách đơn" 3 bếp, xử lý đổi/gộp bàn khi khách chuyển chỗ, bấm "In tạm tính" đưa bill VietQR cho khách, và xác nhận "Thanh toán" giải phóng bàn.
-4. **Nhân viên Bếp / Pha chế (`STATION_CHEF`):** Đứng tại 3 trạm độc lập. Nhận lệnh qua máy in nhiệt 80mm tự động cắt phiếu có logo nhận diện riêng (`CHEF_HAT_NOODLE`, `FRENCH_FRIES`, `DRINK_CUP`), thông tin bàn to rõ, nhãn lượt gọi ("Lượt 1", "GỌI THÊM - LƯỢT 2") và phiếu báo đổi bàn.
-5. **Chủ quán / Quản trị viên (`SUPER_ADMIN`):** Cấu hình thực đơn, kiểm soát ngân sách mặc định đầu ngày, giám sát lịch sử hoá đơn, huỷ đơn ngoại lệ (`void`), nhập kho nguyên liệu tự lưu Master Data, xếp lịch làm việc tuần, và phân quyền chi tiết cho nhân viên.
+1. **Khách hàng QR (`QR_GUEST`):** Quét mã QR dán tại bàn hoặc tại quầy mang về (`/q/:token`, `/qr/:token`), xem thực đơn 3 tầng, chọn cấp độ cay / Size M-L / bỏ đồ mặc định / đổi món chính / thêm topping, theo dõi trạng thái realtime và nhận thông báo tức thời khi thu ngân thao tác trên đơn.
+2. **Khách mua mang về / Vãng lai (`WALK_IN_GUEST`):** Gọi trực tiếp tại quầy POS hoặc quét QR Mang về, được cấp số `Mang về #01`, `#02`... tự tăng theo ngày.
+3. **Nhân viên Thu ngân (`CASHIER`):** Thao tác trên POS Desktop (`/pos`) hoặc máy POS cảm ứng toàn màn hình (`/pos/touch` + `/pos/touch/hub`). Nhận cảnh báo âm thanh / giọng nói / Web Push khi có đơn QR mới, duyệt đơn, tách bếp, xử lý chuyển/gộp/đổi bàn/chuyển mang về, áp mã giảm giá, in tạm tính VietQR, tách thanh toán, chốt thanh toán, bung két RJ11, nhập hàng và kết ca.
+4. **Nhân viên Bếp / Pha chế (`STATION_CHEF`):** Nhận phiếu in nhiệt 80mm tự động cắt rời theo trạm, kèm logo trạm, lượt gọi (`GỌI THÊM - LƯỢT 2`), nhãn `Mang về` cho món gói riêng, phiếu báo đổi bàn và phiếu báo huỷ món.
+5. **Quản lý Cửa hàng (`ADMIN` / `ADMIN_VIEW`) & Chủ quán (`SUPER_ADMIN`):** Xem Dashboard tổng quan doanh thu/lợi nhuận/cảnh báo, quản trị thực đơn, mã giảm giá, mã QR thanh toán, duyệt yêu cầu sửa PTTT hoá đơn, huỷ hoá đơn ngoại lệ (`invoices:void`), xếp lịch & tính lương, cấu hình cửa hàng động (`/settings`), quản trị tài khoản & thu hồi phiên từ xa (`/rbac`).
 
-### 2.2. Hành trình Người dùng Mẫu (User Journeys)
+### 2.2. Hành trình Người dùng Cốt lõi (User Journeys)
 
-#### Hành trình UJ-01: Khách quét QR gọi món tại bàn & Gọi thêm món (Add-on Order)
+#### UJ-01: Khách quét QR đặt món, Bảo mật QR, Cảnh báo Đa kênh & Gọi thêm món
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Guest as Khách tại bàn (Bàn 05)
-    participant Phone as Trình duyệt Mobile (QR)
-    participant Server as NestJS API & Socket.io
-    actor Cashier as Thu ngân (Màn hình POS)
+    actor Guest as Khách hàng (Bàn 05 / Mang về QR)
+    participant Phone as Mobile Web (/q/:token)
+    participant Server as NestJS API & Socket.io / WebPush
+    actor Cashier as Thu ngân (/pos hoặc /pos/touch)
     participant Printer as Máy in nhiệt 80mm
 
-    Guest->>Phone: Quét mã QR tại Bàn 05 (chứa qr_token)
-    Phone->>Server: GET /api/v1/public/menu?token=xyz
-    Server-->>Phone: Menu, Nhóm cay 0-7, Toppings, Phiên bàn
-    Guest->>Phone: Chọn Mì hải sản Cấp 3 + Thêm Bò viên + 1 Trà đào
-    Guest->>Phone: Bấm "Gửi đơn gọi món"
-    Phone->>Server: POST /api/v1/public/orders/qr (DINE_IN, Bàn 05)
-    Server->>Server: Tạo đơn status = PENDING (Lượt 1)
-    Server-->>Cashier: Socket.io `order:qr_new` (Chuông reo + Bàn 05 nhấp nháy cam)
-    Cashier->>Server: Bấm duyệt đơn -> status chuyển SERVING
-    Cashier->>Server: Bấm "Tách đơn" (POST /api/v1/pos/orders/:id/split-kitchen)
-    Server->>Server: Lọc items NEW -> PRINTED, batch_no = 1
-    Server-->>Printer: In 2 phiếu (Phiếu Bếp Nấu + Phiếu Quầy Nước)
-    Server-->>Phone: Socket.io `order:status_updated` ("Bếp đang chế biến")
-    
-    Note over Guest, Phone: 20 phút sau, khách muốn uống thêm nước
-    Guest->>Phone: Chọn 1 Khoai tây chiên + 1 Pepsi -> Bấm "Gọi thêm món"
-    Phone->>Server: POST /api/v1/public/orders/qr (Nối vào active_order_id)
-    Server->>Server: Thêm order_items mới (status = NEW, batch_no = 2)
-    Server-->>Cashier: Socket.io `order:qr_addon` (Bàn 05 hiện badge cam "Gọi thêm Lượt 2")
-    Cashier->>Server: Bấm "Tách đơn"
-    Server->>Server: CHỈ lọc items NEW Lượt 2 -> PRINTED
-    Server-->>Printer: In 2 phiếu (Phiếu Bếp Chiên + Phiếu Quầy Nước có chữ "GỌI THÊM - LƯỢT 2")
+    Guest->>Phone: Quét mã QR rút gọn /q/:qrToken
+    Phone->>Server: GET /api/v1/public/menu?token=qrToken (kèm lat/lng nếu bật GPS)
+    Server-->>Phone: Kiểm tra Wi-Fi/GPS -> Trả về Menu 3 tầng + Tuỳ chọn + Store Settings
+    Guest->>Phone: Chọn món (Cấp cay / Size M-L / Bỏ đồ mặc định / Đổi món chính) -> Gửi đơn
+    Phone->>Server: POST /api/v1/public/orders/qr
+    Server->>Server: Tạo đơn status=PENDING (item_source=QR_CODE)
+    Server-->>Cashier: Socket.io order:qr_new + Web Push VAPID + Giọng nói tiếng Việt
+    Note over Server,Cashier: Nếu thu ngân chưa duyệt quá hạn -> Nhắc định kỳ & QrAutoCancelService tự huỷ
+    Cashier->>Server: Bấm [Duyệt đơn] hoặc [Tách đơn] (POST /pos/orders/:id/split-kitchen)
+    Server->>Server: Nâng PENDING -> SERVING; Lọc items NEW -> PRINTED, batch_no=1
+    Server-->>Printer: In cắt rời phiếu từng trạm (Browser / RawBT USB / LAN :9100)
+    Server-->>Phone: Socket.io order:status_updated + qr:order_notice ("Bếp đang chế biến")
 ```
 
-#### Hành trình UJ-02: Chuyển bàn (Bàn 01 sang Bàn 07) khi khách đang ăn
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Guest as Khách (Bàn 01)
-    actor Cashier as Thu ngân (POS)
-    participant Server as NestJS API ($transaction FOR UPDATE)
-    participant Printer as Máy in nhiệt 80mm
-    participant Phone as ĐT Khách (Tab QR cũ)
+#### UJ-02: Chuyển / Gộp / Đổi bàn & Chuyển đổi 2 chiều Mang về (`MOVE / MERGE / SWAP / TO_TAKEAWAY`)
+- Thực thi qua `POST /api/v1/pos/orders/:id/table-action` trong `prisma.$transaction()` với khoá dòng `SELECT ... FOR UPDATE` (`orders` trước, `dining_tables` sau theo `id ASC` — **Hard Invariant 5**).
+- Hỗ trợ đầy đủ 4 hành động:
+  - `MOVE`: Bàn → Bàn trống, hoặc Mang về → Bàn trống (gán `is_takeaway = true` trên món sẵn có).
+  - `MERGE`: Bàn → Bàn đang ăn, hoặc Mang về → Bàn đang ăn (gán `is_takeaway = true`, giữ nguyên `kitchen_status = 'PRINTED'`).
+  - `SWAP`: Hoán đổi 2 bàn đang mở (cấm `SWAP` với đơn `TAKEAWAY` → `409`).
+  - `TO_TAKEAWAY`: Chuyển đơn đang ngồi bàn sang Mang về (cấp `takeaway_number`, giải phóng bàn).
+- Tự động phát `order:session_redirected` xuống điện thoại khách và in phiếu `THÔNG BÁO ĐỔI BÀN` xuống các trạm bếp nếu đã có món `PRINTED`.
 
-    Guest->>Cashier: "Em ơi cho anh dọn từ Bàn 01 sang Bàn 07 ngồi máy lạnh"
-    Cashier->>Server: POST /api/v1/pos/orders/538/table-action { action: 'MOVE', targetTableId: 7 }
-    Server->>Server: Bắt đầu Transaction: SELECT ... FOR UPDATE (order 538, table 1, table 7)
-    Server->>Server: Đổi order.table_id = 7, Bàn 01 -> AVAILABLE, Bàn 07 -> OCCUPIED
-    Server->>Server: Ghi log vào table_transfer_logs
-    Server->>Server: Kiểm tra: Đã có món PRINTED trước đó -> requireKitchenNoticePrint = true
-    Server-->>Printer: In phiếu "THÔNG BÁO CHUYỂN BÀN: BÀN 01 -> BÀN 07"
-    Server-->>Phone: Socket.io `order:session_redirected` { newTableLabel: "Bàn 07" }
-    Phone->>Phone: Tự cập nhật giao diện thành "Bàn 07", khách gọi thêm tự vào bill Bàn 07!
-```
-
-#### Hành trình UJ-03: In tạm tính VietQR động và Chốt thanh toán
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Guest as Khách (Bàn 07)
-    actor Cashier as Thu ngân (POS)
-    participant Server as NestJS API
-    participant Printer as Máy in nhiệt quầy
-
-    Guest->>Cashier: "Tính tiền Bàn 07 em ơi"
-    Cashier->>Server: GET /api/v1/pos/orders/538/provisional-bill
-    Server->>Server: Đơn VẪN GIỮ NGUYÊN status = 'SERVING'
-    Server->>Server: Sinh link VietQR động: https://img.vietqr.io/...amount=185000&addInfo=TT HD202611070039
-    Server-->>Printer: In "PHIẾU TẠM TÍNH" kèm hình ảnh mã VietQR động
-    Cashier->>Guest: Mang phiếu tạm tính ra bàn cho khách kiểm tra món & quét QR
-    Guest->>Guest: Khách mở app ngân hàng quét mã VietQR chuyển đúng 185.000đ
-    Cashier->>Cashier: Thấy thông báo nhận tiền -> Bấm "Thanh toán" trên POS
-    Cashier->>Server: Pop-up xác nhận 2 bước: Chọn 'TRANSFER' -> Bấm "Xác nhận & Không in"
-    Server->>Server: Transaction: status = 'PAID', paid_at = NOW(), Bàn 07 -> AVAILABLE
-    Server-->>Cashier: Giải phóng Bàn 07 trên sơ đồ bàn (chuyển sang màu Xanh)
-    Server-->>Guest: Socket.io `order:status_updated` ("Cảm ơn quý khách và hẹn gặp lại!")
-```
+#### UJ-03: Áp Giảm giá, In Tạm tính Xoay vòng VietQR & Thanh toán (Đủ bill hoặc Tách bill)
+- Thu ngân có thể áp **Mã giảm giá** (`CODE`) hoặc **Giảm giá thủ công** (`MANUAL`, bắt buộc quyền `pos:manualDiscount`).
+- Bấm **In tạm tính** (`POST /api/v1/pos/orders/:id/provisional-bill` hoặc `/split-provisional-bill`):
+  - Đơn **giữ nguyên `SERVING`**, bàn giữ nguyên `OCCUPIED` (**Hard Invariant 4**).
+  - Tự động xoay vòng `payment_accounts` đang bật theo `priority ASC` và hạn mức Ngày/Tháng/Năm (`+07:00`).
+  - Sinh mã VietQR Napas247 chuẩn số tiền sau giảm giá.
+- Bấm **Thanh toán** (`POST /api/v1/pos/orders/:id/checkout`) hoặc **Tách thanh toán** (`/split-checkout`):
+  - Xác nhận 2 bước, chọn `CASH` / `TRANSFER` / `SPLIT` (ràng buộc `chk_order_payment_amounts`).
+  - Chuyển đơn sang `PAID`, giải phóng bàn về `AVAILABLE` (với `checkout` toàn đơn), tăng `discounts.used_count`, và gửi lệnh mở két `RJ11` nếu thanh toán tiền mặt có bật tự động bung két.
 
 ---
 
-## 3. ĐẶC TẢ CHI TIẾT 10 MODULES HỆ THỐNG (FUNCTIONAL REQUIREMENTS)
+## 3. ĐẶC TẢ CHI TIẾT 16 PHÂN HỆ THỰC TẾ (FUNCTIONAL REQUIREMENTS)
 
-### 3.1. Module 0: Quản trị Thực đơn, Topping, Combo & Bàn QR (`Menu & Dining Tables`)
+### 3.1. Phân hệ 1: Bảng điều khiển Tổng quan (`dashboard` — `/dashboard`, `/pos/touch/dashboard`)
+- API: `GET /api/v1/dashboard/overview?preset=today|yesterday|7d|month|custom&fromDate=&toDate=` (tối đa 366 ngày).
+- **Lọc dữ liệu theo quyền RBAC (`DashboardScope`):** Tự động ẩn/hiện từng khối KPI tùy quyền (`pos`, `invoices`, `inventory`, `cashflow`, `paymentQr`, `discounts`, `schedules`, `payroll`, `dashboard:viewProfit`).
+- **Cảnh báo vận hành thời gian thực (`alerts`):** Bàn có đơn QR chờ duyệt quá hạn, yêu cầu sửa PTTT hoá đơn đang chờ duyệt, tài khoản QR sắp/đã chạm hạn mức ngày.
+- **Nhóm KPI & Biểu đồ:** Doanh thu thuần & tăng trưởng so với kỳ trước, Két tiền mặt (tuân thủ Blind Mode), Doanh thu chuyển khoản theo từng mã QR, Chi phí nhập kho & tỷ lệ chi phí/doanh thu, Bàn đang mở & món chưa in bếp, Lợi nhuận gộp & ước tính chi phí lương (`dashboard:viewProfit`), Biểu đồ doanh thu theo giờ/ngày & khung giờ cao điểm, Thống kê trạm bếp & cấp độ cay (0–7), Top món bán chạy & topping, Rủi ro (huỷ đơn, huỷ món đã in, giảm giá tay, chuyển/gộp bàn), Nhân sự trực ca hôm nay và Audit Logs gần nhất.
 
-#### 3.1.1. Mục tiêu & Nghiệp vụ
-Cung cấp hạt nhân dữ liệu cho toàn bộ chu trình đặt món, phân bổ món về trạm bếp và định danh bàn ăn bảo mật.
+### 3.2. Phân hệ 2: Quản trị Thực đơn 3 tầng động (`menu` — `/menu`, `/pos/touch/menu`, `/pos/touch/stock-status`)
+- **Cấu trúc 3 tầng động:**
+  1. **Tầng 1 — Khu vực Bếp (`station`):** `BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`, `COMBO` và các trạm mở rộng `BEP_*` quản trị qua `KITCHEN_STATION` (`/api/v1/menu/stations`).
+  2. **Tầng 2 — Danh mục món (`category_id`):** Quản trị qua `MENU_CATEGORY` (`/api/v1/menu/categories`), gắn trạm bếp mặc định.
+  3. **Tầng 3 — Sản phẩm (`products`):** `name`, `subtitle` (mô tả phụ động), `price` (`NUMERIC(12,2)`), `station`, `is_available` (báo tạm hết 1 chạm), `image_url`, `sort_order`, `combo_items` (phân rã Combo).
+- **Engine Tuỳ chọn Món động (`modifier_groups` & `modifiers`):**
+  - Nhóm bắt buộc chọn 1 (Cấp độ cay 0–7, Size M / Size L `+5.000đ` tự động cho nhóm đồ uống).
+  - Nhóm **Auto-Check (`is_auto_select`)**: Tự tích sẵn đồ ăn mặc định (0đ); bỏ tích sẽ in rõ `Không ...` xuống bếp.
+  - Nhóm **Đổi món chính (`allow_substitution` + `default_substitute_name`)**: Bỏ tích món chính (VD: Tôm/Ngao/Mực) tự suy luận đổi sang món thay thế hoặc khoá sang món duy nhất còn lại.
+  - Nhóm **Thêm Topping (`extra_price > 0`)**: Có cờ `is_available` riêng cho từng topping để báo tạm hết nguyên liệu thành phần.
+- **Nhập / Xuất Excel thực đơn:** `POST /api/v1/menu/products/import-excel` (`menu:import`) và xuất Excel (`menu:export`).
+- **Màn Báo hết món 1 chạm (`/pos/touch/stock-status`):** Tối ưu cảm ứng cho quầy POS để bật/tắt `is_available` của món và topping ngay trong giờ cao điểm.
 
-#### 3.1.2. Danh mục Tính năng Chi tiết
-- **FR-0.1: Định danh Bàn ăn & Sinh mã QR Bảo mật:**
-  - Quản lý từ 20 đến 30 bàn ăn vật lý (`Bàn 01` đến `Bàn 30`) và 1 vị trí trừu tượng `Mang về` (chỉ dùng hiển thị danh mục, khi tạo đơn mang về tuân theo Invariant 2).
-  - Mỗi bàn có một chuỗi ngẫu nhiên bảo mật cao `qr_token` (UUID v4 hoặc token mã hoá 64 ký tự).
-  - URL mã QR dán tại bàn: `https://tenquan.vn/qr/:qrToken`.
-  - Cơ chế chống đặt đơn ảo từ xa: Đơn QR gửi lên khi bàn chưa có phiên ăn sẽ rơi vào trạng thái `PENDING` (Chờ duyệt). Thu ngân nhìn thấy khách ngồi thực tế mới bấm duyệt đơn chuyển sang `SERVING`.
-- **FR-0.2: Quản lý Món ăn & Gán Trạm chế biến (`Station`):**
-  - Mỗi món ăn (`products`) bắt buộc thuộc về 1 trong 4 giá trị trạm chế biến:
-    - `BEP_NAU`: Mì kim chi, mì cay hải sản, mì bò, lẩu mini...
-    - `BEP_CHIEN`: Khoai tây chiên, gà lắc, phô mai que, xúc xích rán...
-    - `PHA_CHE`: Trà sữa, trà đào, nước ép, nước ngọt lon...
-    - `COMBO`: Gói kết hợp nhiều món liên trạm.
-  - Các thuộc tính: `name`, `price` (NUMERIC 12,2), `station`, `is_available` (Soft disable khi hết hàng), `image_url` (tải lên Cloudflare R2), `sort_order`.
-- **FR-0.3: Cấu hình Tuỳ chọn Món (`Modifier Groups` & `Modifiers`):**
-  - **Nhóm bắt buộc chọn 1 (Radio):** Điển hình là "Cấp độ cay" từ Cấp 0 đến Cấp 7 (`is_required = true`, `max_select = 1`, `extra_price = 0`).
-  - **Nhóm chọn nhiều có tính thêm tiền (Checkbox):** Điển hình là "Thêm Topping" (`is_required = false`, `max_select = N`, `extra_price > 0` như Thêm bò viên +15.000đ, Thêm phô mai +10.000đ, Thêm tôm +20.000đ).
-  - Topping khi đặt hàng được chụp lại cấu trúc (`modifiers_snapshot` JSONB) vào chi tiết đơn để bảo toàn giá trị lịch sử kể cả khi sau này giá topping trong menu thay đổi.
-- **FR-0.4: Cấu hình Món Combo & Thuật toán Phân rã Trạm (Combo Explosion):**
-  - Định nghĩa bảng quan hệ `combo_items`: Một món có `station = 'COMBO'` sẽ liên kết với nhiều `child_product_id` kèm `quantity`.
-  - Ví dụ `Combo Đôi`: Chứa 2 Mì kim chi bò (`BEP_NAU`) + 1 Khoai tây chiên (`BEP_CHIEN`) + 2 Trà đào (`PHA_CHE`).
-  - Trên hoá đơn của khách hiển thị 1 dòng `Combo Đôi`. Khi thực hiện Tách đơn bếp (API `split-kitchen`), hệ thống tự động phân rã thành các sub-items và gán về đúng 3 trạm tương ứng, **CẤM TUYỆT ĐỐI** gửi chữ `COMBO` xuống bếp.
+### 3.3. Phân hệ 3: Bán hàng POS Desktop & POS Cảm ứng Touch Shell (`pos-counter` — `/pos`, `/pos/touch/*`)
+- **POS Desktop (`/pos`):** Giao diện Split-View (Sơ đồ bàn + Đơn mang về / Thực đơn nhanh + Live Invoice).
+- **POS Cảm ứng Touch Shell (`/pos/touch/*` — Stories 20 & 21):**
+  - Toàn màn hình kiosk (`data-pos-touch="true"`, Screen Wake Lock), 3 tab sơ đồ bàn (**Tất cả** — đưa ô `+ Đơn mang về mới` & đơn mang về lên đầu trước Bàn 01, **Phòng bàn**, **Mang về**).
+  - **Thanh điều hướng đáy 4 nút** (`Bán hàng · Hoá đơn · Kết ca · Quản lý`) tự ẩn khi đang ở màn gọi món/tính tiền (`TouchOrderScreen`).
+  - **Trung tâm Quản lý Hub (`/pos/touch/hub`):** Truy cập nhanh 10 màn vận hành quầy ngay trong Touch Shell (`/pos/touch/dashboard`, `/pos/touch/invoices`, `/pos/touch/cashflow`, `/pos/touch/inventory`, `/pos/touch/menu`, `/pos/touch/stock-status`, `/pos/touch/discounts`, `/pos/touch/payment-qr`, `/pos/touch/printer`, `/pos/touch/settings`, `/pos/touch/profile`).
+- **Quản lý Bàn & Mã QR:** Thêm/sửa/xoá bàn vật lý (`POST/PUT/DELETE /api/v1/pos/tables`), xoay mã QR từng bàn (`POST /api/v1/pos/tables/:id/rotate-qr`), xoay mã QR Mang về (`POST /api/v1/pos/takeaway-qr/rotate`), rút gọn mã QR cũ (`POST /api/v1/pos/tables/shorten-qr`), xuất/in thẻ QR theo thiết kế động (`qrCard`).
+- **Nghiệp vụ Đơn hàng đầy đủ:**
+  - 3 nguồn tạo đơn (QR tại bàn / QR mang về → `PENDING`; POS tại bàn / POS mang về → `SERVING`), đánh dấu từng món gói mang về (`order_items.is_takeaway`).
+  - Duyệt/từ chối đơn QR (`approve`, `cancel`), chỉnh sửa món (`PATCH /pos/orders/:id/items`), Delta Split 3+ bếp (`split-kitchen`), in lại phiếu bếp (`reprint-kitchen`), thao tác bàn 4 chế độ (`MOVE`, `MERGE`, `SWAP`, `TO_TAKEAWAY`), áp/gỡ giảm giá, in tạm tính / tạm tính tách đơn, thanh toán / tách thanh toán (`checkout`, `split-checkout`).
+- **Cảnh báo Đơn QR Đa kênh & Bảo mật QR:**
+  - Web Push VAPID (`/api/v1/pos/push/*`) + Service Worker kiểm tra 1-bit `GET /api/v1/public/orders/qr-pending-check` tránh báo lại đơn đã xử lý khi điện thoại tỉnh giấc.
+  - Phát giọng nói tiếng Việt (`/api/v1/public/tts` + audio keep-alive mobile).
+  - Nhắc quá hạn định kỳ và tự động huỷ đơn/món QR quá hạn (`QrAutoCancelService`).
+  - Cấu hình bảo mật QR (`GET/PUT /api/v1/pos/qr-security-config`, quyền `pos:qrSecurity`): khoá theo IP Wi-Fi quán và/hoặc toạ độ GPS Geofence.
 
----
+### 3.4. Phân hệ 4: Khách Quét QR Gọi món (`qr-order` — `/q/:token`, `/qr/:token`)
+- Hỗ trợ cả đường dẫn rút gọn `/q/:token` và `/qr/:token`, cho cả **Bàn vật lý** và **QR Mang về** (dùng `guestSessionToken` riêng cho từng phiên mang về).
+- Kết nối Socket.io Dual-Mode (`table_session_{tableId}`, `order_session_{orderId}`) nhận realtime trạng thái đơn, thông báo tức thời từ thu ngân (`qr:order_notice`), tự động đồng bộ chuyển/gộp/đổi bàn (`order:session_redirected`), tự động khoá khi đổi mã QR bàn (`table:qr_rotated`), cập nhật thực đơn (`menu:updated`) và cấu hình cửa hàng (`store-settings:updated`).
 
-### 3.2. Module 1: Màn hình POS Hợp nhất, Tách Bếp & Chuyển/Gộp Bàn (`pos-counter`)
+### 3.5. Phân hệ 5: Quản lý Mã Giảm giá (`discounts` — `/discounts`, `/pos/touch/discounts`)
+- API: `/api/v1/discounts` (`GET`, `POST`, `PUT :id`, `PATCH :id/status`, `DELETE :id`) và POS `/api/v1/pos/orders/:id/applicable-discounts`, `POST/DELETE /api/v1/pos/orders/:id/discount`.
+- Loại giá trị: `PERCENT` (có trần `max_discount_amount`) hoặc `FIXED`.
+- Phạm vi áp dụng (`scope`): Toàn đơn (`ORDER`), theo Danh mục món (`CATEGORY`), hoặc theo Món ăn cụ thể (`PRODUCT`) qua bảng `discount_targets`.
+- Điều kiện linh hoạt: Giá trị đơn tối thiểu (`min_order_amount`), khoảng ngày (`starts_at`–`ends_at`), thứ trong tuần (`active_weekdays`), khung giờ vàng (`time_window_start`–`time_window_end`), giới hạn lượt dùng (`usage_limit` / `used_count`).
+- Mã đã dùng sẽ lưu trữ mềm (`is_archived = true`) thay vì xoá cứng để bảo toàn lịch sử hoá đơn.
+- **Giảm giá thủ công trên POS (`MANUAL`):** Tách quyền nghiêm ngặt `pos:manualDiscount` (không fallback theo `pos:checkout`).
 
-#### 3.2.1. Mục tiêu & Bố cục Giao diện
-Tích hợp toàn bộ thao tác tại quầy trên một màn hình duy nhất theo bố cục **Chia đôi màn hình (Split-View POS)**:
-- **Nửa bên trái (50–60%):** Lật linh hoạt giữa **Tab 1: Sơ đồ Bàn / Đơn** và **Tab 2: Thực đơn Gọi món nhanh**.
-- **Nửa bên phải (40–50%):** **Hoá đơn Điện tử Thời gian thực (Live Invoice)** kèm cụm nút thao tác nghiệp vụ tốc độ cao.
+### 3.6. Phân hệ 6: Quản lý & Tra cứu Hoá đơn (`invoices` — `/invoices`, `/pos/touch/invoices`)
+- Base Table TanStack v8 lọc kép (khoảng ngày + từ khoá/trạng thái/PTTT) và xuất Excel (`invoices:export`).
+- Xem chi tiết món theo từng lượt gọi (`batch_no`), lịch sử chuyển/gộp bàn (`table_transfer_logs`), snapshot giảm giá và tài khoản QR đã dùng.
+- **In lại hoá đơn:** `POST /api/v1/invoices/:id/reprint` (`invoices:reprint`).
+- **Quy trình Sửa PTTT 2 bước sau thanh toán:**
+  - Nhân viên có quyền `invoices:update` gửi yêu cầu sửa PTTT (`PATCH /api/v1/invoices/:id/payment-method`) → lưu vào `orders.pending_payment_edit` (nếu có sẵn quyền `invoices:approve` sẽ duyệt ngay).
+  - Quản lý có quyền `invoices:approve` phê duyệt hoặc từ chối (`POST /api/v1/invoices/:id/payment-method/review`).
+- **Huỷ hoá đơn ngoại lệ (`VOID`):** `POST /api/v1/invoices/:id/void` (`invoices:void`), bắt buộc lý do ≥ 10 ký tự; tự động loại trừ khỏi doanh thu Kết ca và hạn mức Mã QR.
 
-#### 3.2.2. 3 Nguồn Tạo Đơn Hợp nhất (Unified Ingestion)
-| Nguồn | `order_type` | `order_source` | Status Khởi tạo | Ràng buộc Dữ liệu & Hành vi |
-|:---|:---|:---|:---|:---|
-| **A. Khách quét QR** | `DINE_IN` | `QR_CODE` | `PENDING` | `table_id` NOT NULL, `takeaway_number` NULL. Bàn chuyển màu Cam nhấp nháy + chuông kêu. Thu ngân bấm duyệt -> chuyển sang `SERVING`. |
-| **B. Thu ngân bấm Bàn** | `DINE_IN` | `POS_COUNTER` | `SERVING` | Thu ngân click vào ô bàn trống trên sơ đồ -> chuyển sang tab Menu -> chọn món -> đơn sinh ra ngay ở trạng thái `SERVING`. |
-| **C. Đơn Mang về** | `TAKEAWAY` | `POS_COUNTER` | `SERVING` | Thu ngân bấm nút lớn `[+ TẠO ĐƠN MANG VỀ]` -> hệ thống tự cấp `takeaway_number` tự tăng (`Mang về #01`, `#02`...) -> `table_id` BẮT BUỘC là `NULL`. |
+### 3.7. Phân hệ 7: Quản lý Nhập hàng Nguyên vật liệu (`inventory` — `/inventory`, `/pos/touch/inventory`)
+- API: `GET/POST /api/v1/inventory-imports`, `PUT/DELETE /api/v1/inventory-imports/:id`.
+- Base Table hiển thị nguyên liệu, nhà cung cấp (`supplier_mdm_id` + `supplier_name_snapshot`), ĐVT, đơn giá, số lượng, thành tiền (`Đơn giá × Số lượng`), nguồn tiền (`CASH_DRAWER` / `EXTERNAL`), ghi chú; hỗ trợ lọc theo kỳ, sửa phiếu (`inventory:update`), xoá mềm (`is_deleted`, `deleted_at`) và xuất Excel (`inventory:export`).
+- Drawer Thêm mới đa dòng tích hợp Smart Combobox gọi `GET /api/v1/mdm/lookup` cho `INGREDIENT`, `SUPPLIER`, `UNIT`, tự chuẩn hoá & tạo mới vào Master Data qua `MdmService.findOrCreate()` (**Hard Invariant 7**).
 
-#### 3.2.3. Quy tắc Đơn Mang về (TAKEAWAY — Hard Invariant 2)
-1. Trường `table_id` **MUST** là `NULL`.
-2. Trường `takeaway_number` **MUST NOT** là `NULL`.
-3. Số thứ tự `takeaway_number` bắt đầu từ 1 và **tự động reset về 1 vào đầu mỗi ngày kinh doanh mới** (00:00:00).
-4. Nhãn hiển thị trên màn hình POS và trên phiếu in nhiệt: `"Mang về #01"`, `"Mang về #02"`, ...
-5. Khách mang về được phục vụ song song độc lập, không chiếm dụng bất kỳ bàn vật lý nào trên sơ đồ bàn.
+### 3.8. Phân hệ 8: Ngân sách, Dòng tiền & Đối soát Kết ca (`cashflow` — `/cashflow`, `/pos/touch/cashflow`)
+- **Công thức Kết ca Bất biến (Hard Invariant 6):**
+  $$\text{expected\_cash\_in\_drawer} = \text{opening\_budget} + \sum_{\substack{\text{status}=\text{'PAID'} \\ \text{method}\in\{\text{'CASH'},\text{'SPLIT'}\}}} \text{cash\_amount} - \sum_{\substack{\text{source}=\text{'CASH\_DRAWER'} \\ \text{is\_deleted}=\text{false}}} \text{total\_cost}$$
+  $$\text{discrepancy\_amount} = \text{actual\_counted\_cash} - \text{expected\_cash\_in\_drawer}$$
+  - **CẤM** cộng doanh thu chuyển khoản (`TRANSFER` hoặc `transfer_amount` của `SPLIT`), đơn `VOIDED`, hoặc trừ phiếu nhập `EXTERNAL`.
+- **Blind Mode (`GET /api/v1/cashflow/preview`):** Thu ngân đếm tiền theo bảng 9 mệnh giá (`500k`..`1k`) mà không thấy trước số tiền lý thuyết để chống gian lận; Super Admin thấy đầy đủ.
+- **Chốt ca (`POST /api/v1/cashflow/settle`):** Khoá duy nhất theo `(settlement_date, shift_name)`, bắt buộc ghi chú khi `discrepancy_amount ≠ 0`, tính rõ tiền giữ lại két (`cashRetainedInDrawer`) và tiền nộp chủ (`cashToHandOver`).
+- **Bù chênh lệch kết ca (`POST /api/v1/cashflow/settlements/:id/compensate`):** Dành cho quyền `cashflow:compensate` để ghi nhận bù tiền thiếu và lưu vết kiểm toán.
+- **Cấu hình ngân sách đầu ca (`PUT /api/v1/cashflow/default-budget`):** Chỉ quyền `cashflow:config`. Hỗ trợ xuất Excel lịch sử kết ca (`cashflow:export`).
 
-#### 3.2.4. Thuật toán Tách Đơn 3 Trạm Bếp (Delta Split — Hard Invariant 3)
-- **API Endpoint:** `POST /api/v1/pos/orders/:id/split-kitchen`
-- **Các bước thực thi:**
-  1. Kiểm tra transaction với khoá dòng `SELECT ... FOR UPDATE` trên bảng `orders`.
-  2. Lọc các bản ghi trong `order_items` thoả mãn: `order_id = :id AND kitchen_status = 'NEW'`.
-  3. Nếu không có món nào thoả mãn: Trả về HTTP 200 kèm message: `"Không có món mới cần tách"`, không sinh phiếu in.
-  4. Nếu có món thuộc `station = 'COMBO'`: Phân rã thành các sub-items và map vào station thực tế.
-  5. Tính toán số thứ tự lượt gọi: `current_batch = MAX(batch_no) + 1` (nếu đơn mới thì `batch_no = 1`, gọi thêm thì `batch_no = 2, 3...`).
-  6. Gom nhóm món theo 3 trạm: `BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`.
-  7. Cập nhật `kitchen_status = 'PRINTED'`, ghi `batch_no = current_batch`.
-  8. Trả về payload gồm tối đa 3 tickets tương ứng với các trạm có món phát sinh:
-     - Trạm `BEP_NAU`: `stationTitle: "BẾP NẤU (MÌ CAY)"`, `logoType: "CHEF_HAT_NOODLE"`.
-     - Trạm `BEP_CHIEN`: `stationTitle: "BẾP CHIÊN"`, `logoType: "FRENCH_FRIES"`.
-     - Trạm `PHA_CHE`: `stationTitle: "QUẦY NƯỚC UỐNG"`, `logoType: "DRINK_CUP"`.
-  9. Nếu `batch_no > 1`: In thêm dòng chữ nổi bật trên đầu phiếu: `"[GỌI THÊM - LƯỢT {batch_no}]"`.
-  10. **QUY TẮC CẤM:** Tuyệt đối không bao giờ in lại các món đã ở trạng thái `PRINTED`.
+### 3.9. Phân hệ 9: Quản lý Mã QR Thanh toán & Xoay vòng (`payment-qr` — `/payment-qr`, `/pos/touch/payment-qr`)
+- API: `/api/v1/payment-qr` (`GET`, `GET :id/orders`, `POST`, `PUT reorder`, `PUT :id`, `DELETE :id`).
+- Quản lý nhiều tài khoản ngân hàng VietQR theo `priority ASC`, cấu hình hạn mức `daily_limit`, `monthly_limit`, `yearly_limit`, xem doanh thu thực tế từng kỳ và danh sách hoá đơn gắn với từng mã QR.
+- Mã QR đã phát sinh hoá đơn bị khoá đổi `bankCode`/`accountNo` (`409 PAYMENT_QR_LOCKED_FIELD`) và không cho xoá cứng (`409 PAYMENT_QR_IN_USE`).
 
-#### 3.2.5. Tách bạch Tạm tính và Thanh toán (Hard Invariant 4) & Xoay vòng Mã QR tự động
-- **Nút "In tạm tính (Kèm VietQR động)":**
-  - Giữ nguyên `order.status = 'SERVING'`. **CẤM TUYỆT ĐỐI** chuyển sang `PAID`.
-  - **Tự động chọn Mã QR theo Hạn mức & Thứ tự ưu tiên (`payment_accounts`):**
-    - Hệ thống duyệt các mã QR đang bật (`is_active = TRUE`) theo thứ tự `priority ASC`, kiểm tra tổng tiền chuyển khoản đã thu trong Ngày / Tháng / Năm lịch Việt Nam (`Asia/Ho_Chi_Minh`, chỉ tính hoá đơn `PAID`: `TRANSFER` lấy `total_amount`, `SPLIT` lấy `transfer_amount`).
-    - Chọn mã QR đầu tiên thoả mãn `used + billAmount <= limit` cho cả 3 ngưỡng `daily_limit`, `monthly_limit`, `yearly_limit` (`NULL` = không giới hạn). Nếu mã ưu tiên cao hơn đã chạm hạn mức thì tự động xoay vòng sang mã kế tiếp (`qrRotated = true`) và ghi nhận `orders.payment_account_id`.
-    - Nếu tất cả các mã QR đang bật đều chạm hạn mức, hệ thống vẫn in mã QR có `priority` cao nhất kèm cờ cảnh báo `qrOverLimit = true` để không làm gián đoạn bán hàng tại quầy.
-  - Sinh URL ảnh mã VietQR động chuẩn Napas247 nhúng sẵn tài khoản ngân hàng của mã QR được chọn, số tiền `amount = total_amount`, và nội dung chuyển khoản `memo = "TT " + tableCode + " " + order_code`.
-  - In ra phiếu kiểm món để nhân viên cầm ra bàn cho khách kiểm tra món ăn và quét mã chuyển khoản. Khách vẫn có thể yêu cầu bớt món (nếu bếp chưa làm) hoặc đổi món lúc này.
-- **Nút "Thanh toán (Đóng đơn)":**
-  - Mở Dialog xác nhận 2 bước chống bấm nhầm (`Xác nhận / Huỷ bỏ`).
-  - Cho phép chọn Phương thức thanh toán: `CASH` (Tiền mặt), `TRANSFER` (Chuyển khoản QR), hoặc `SPLIT` (Hỗn hợp: nhập cả `cash_amount` và `transfer_amount`).
-  - Khi bấm Xác nhận:
-    1. Chuyển trạng thái `orders.status = 'PAID'`, ghi nhận `paid_at = NOW()`.
-    2. Giải phóng bàn: `dining_tables.status = 'AVAILABLE'`, xoá con trỏ `active_order_id = NULL`.
-    3. Cung cấp 2 lựa chọn: "Xác nhận & In hoá đơn" hoặc "Xác nhận & Không in" (tiết kiệm giấy vì khách đã cầm phiếu tạm tính).
-    4. Bắn sự kiện Socket.io `order:status_updated` xuống điện thoại khách hiện thông báo cảm ơn.
+### 3.10. Phân hệ 10: Quản lý Hồ sơ Nhân sự (`employees` — `/employees`)
+- API: `/api/v1/employees` (`GET`, `GET :id`, `POST`, `PUT :id`, `PATCH :id/status`, `DELETE :id`, `DELETE :id/permanent`).
+- Liên kết 1-1 với tài khoản đăng nhập `users` (hiển thị trạng thái tài khoản liên kết ngay trên danh sách nhân sự, cho phép tạo kèm tài khoản khi thêm nhân sự).
+- Thuật toán tự sinh tên viết tắt `short_name` kèm chống trùng lặp (`N.V.Anh (#12)`).
+- Hỗ trợ tạm ngưng / khôi phục nhân sự (`is_deleted`, `deleted_at`), xoá vĩnh viễn khi chưa có phát sinh, và xuất Excel (`employees:export`).
 
-#### 3.2.6. Thao tác Bàn: Chuyển bàn (MOVE), Gộp bàn (MERGE), Hoán đổi bàn (SWAP)
-- **API Endpoint:** `POST /api/v1/pos/orders/:id/table-action`
-- **Ràng buộc Concurrency (Hard Invariant 5):** Bắt buộc bọc trong `prisma.$transaction()` với thứ tự khoá dòng `SELECT ... FOR UPDATE` trên bảng `orders` trước, sau đó tới `dining_tables` để tránh Deadlock.
-- **Hành vi theo từng loại hành động:**
-  - **1. MOVE (Chuyển sang bàn trống):**
-    - Điều kiện tiên quyết: Bàn đích bắt buộc phải ở trạng thái `AVAILABLE`. Nếu bàn đích đã `OCCUPIED` -> Bắn lỗi HTTP 409 Conflict.
-    - Cập nhật `order.table_id = targetTableId`. Đổi bàn nguồn thành `AVAILABLE`, bàn đích thành `OCCUPIED`.
-    - Ghi log vào `table_transfer_logs`.
-    - Nếu đơn đã có món `PRINTED`: Cờ `requireKitchenNoticePrint = true`, tự động in ra phiếu `"THÔNG BÁO CHUYỂN BÀN"` xuống các trạm bếp bị ảnh hưởng.
-  - **2. MERGE (Gộp vào bàn đang có khách ngồi ăn):**
-    - Điều kiện tiên quyết: Cả bàn nguồn và bàn đích đều phải có đơn đang mở (`SERVING`). **CẤM GỘP ĐƠN TAKEAWAY** (HTTP 409 Conflict).
-    - Chuyển toàn bộ `order_items` từ đơn nguồn sang đơn đích (cập nhật `order_id = targetOrderId`), giữ nguyên trạng thái `kitchen_status` của từng món để không in lại món đã in.
-    - Đơn nguồn chuyển sang `status = 'MERGED'`, ghi nhận `merged_into_order_id = targetOrderId`.
-    - Giải phóng bàn nguồn về `AVAILABLE`. Đơn đích được cộng dồn tổng tiền.
-  - **3. SWAP (Hoán đổi 2 bàn):**
-    - Điều kiện: Cả 2 bàn đều có đơn đang mở.
-    - Hoán đổi giá trị `table_id` và các con trỏ `active_order_id` trên `dining_tables`. Ghi log vào cả 2 đơn.
-- **Đồng bộ Điện thoại Khách (Session Redirect qua WebSocket):**
-  - Sau khi MOVE hoặc MERGE, Server phát sự kiện Socket.io `order:session_redirected` tới room `order_session_{orderId}` của điện thoại khách:
-    ```json
-    {
-      "previousOrderId": 538,
-      "newActiveOrderId": 540,
-      "previousTableLabel": "Bàn 01",
-      "newTableId": 7,
-      "newTableLabel": "Bàn 07",
-      "message": "Đơn hàng của bạn đã được chuyển sang Bàn 07."
-    }
-    ```
-  - Trình duyệt trên điện thoại của khách tự động cập nhật session sang Bàn 07 mà **không cần quét lại mã QR**, loại bỏ 100% rủi ro gọi thêm món rơi lại vào bàn cũ.
+### 3.11. Phân hệ 11: Bảng tính Ngày công / Lịch làm việc Tuần (`schedules` — `/schedules`)
+- API: `GET /api/v1/schedules`, `PUT /api/v1/schedules/bulk-save`, `POST /api/v1/schedules/copy-previous-week`.
+- Ma trận 7 ngày (`0..6`) × N khung giờ; mỗi nhân viên trong ô hỗ trợ 2 chế độ chấm công: **`FULL_SHIFT`** (đủ ca) hoặc **`CUSTOM_HOURS`** (nhập `startTime`–`endTime` thực tế).
+- Bảo vệ 2 lớp chống mất dữ liệu chưa lưu (`beforeunload` + React Router Blocker), đồng bộ realtime qua `schedule:updated` và xuất Excel (`schedules:export`).
 
----
+### 3.12. Phân hệ 12: Bảng tính Lương (`payroll` — `/payroll`)
+- API: `GET /api/v1/payroll?fromDate=&toDate=`, `PUT /api/v1/payroll/config`, `PUT /api/v1/payroll/employees/:employeeId`.
+- Tự động tổng hợp số công `FULL_SHIFT` và giờ lẻ `CUSTOM_HOURS` từ `work_schedules` trong kỳ.
+- Hỗ trợ 2 hình thức trả lương: **`FULL_TIME`** (lương cơ bản mặc định `7.000.000đ` / `28` công chuẩn / `12` giờ/ngày) và **`PART_TIME`** (đơn giá giờ mặc định `25.000đ/giờ`).
+- Cho phép tuỳ chỉnh mức lương riêng, ghi đè công/giờ thực tế, cộng/trừ thưởng phạt (`bonusOrAdjustment`), ghi chú, đồng bộ realtime (`payroll:updated`) và xuất Excel (`payroll:export`).
 
-### 3.3. Module 2: Quản lý & Tra cứu Hoá đơn (`invoices`)
+### 3.13. Phân hệ 13: Quản trị Master Data (`master-data` — `/master-data`)
+- Quản trị tập trung **7 danh mục người dùng** (`POSITION`, `SPECIALTY`, `INGREDIENT`, `UNIT`, `SUPPLIER`, `MENU_CATEGORY`, `KITCHEN_STATION`) với chuẩn hoá tự động `MdmService.findOrCreate()` (**Hard Invariant 7**) và Composite Unique `(category, normalized_name)`.
+- Tách bạch hoàn toàn `GET /api/v1/mdm/lookup` (`JwtAuthGuard` — mở cho mọi tài khoản đăng nhập) với CRUD `/api/v1/mdm` (`mdm:view|create|update|delete` — **Hard Invariant 8**).
 
-#### 3.3.1. Cấu trúc Base Table Hoá đơn (7 Cột Chuẩn)
-Mọi bảng dữ liệu kế thừa từ BaseTable xây dựng trên TanStack Table v8:
-1. `STT`: Số thứ tự dòng tăng dần.
-2. `Mã hoá đơn`: Chuỗi định dạng chuẩn `HD-YYYYMMDD-NNNN` (Click để xem nhanh).
-3. `Bàn / Hình thức`: Hiển thị badge `"Bàn 05"` hoặc `"Mang về #02"`.
-4. `Thời điểm tạo`: Hiển thị ngày giờ dạng `DD/MM/YYYY HH:mm:ss`.
-5. `Tổng tiền & PTTT`: Số tiền kèm Badge màu (Xanh lá: `CASH`, Xanh dương: `TRANSFER`, Tím: `SPLIT`).
-6. `Ghi chú & Trạng thái`: Badge trạng thái đơn (`SERVING`, `PAID`, `MERGED`, `VOIDED`) kèm ghi chú nếu có.
-7. `Thao tác`: Action buttons:
-   - Icon `Eye` (Con mắt): Mở Modal xem chi tiết món ăn, các lượt gọi (batch), vết chuyển bàn, in lại hoá đơn.
-   - Nút `Huỷ đơn (Void)`: Chỉ hiển thị khi user có quyền `invoices:void`. Bắt buộc nhập `void_reason`. Đơn chuyển sang `VOIDED` và bị khấu trừ khỏi doanh thu ngày.
+### 3.14. Phân hệ 14: Phân quyền Hệ thống, Tài khoản & Quản trị Phiên (`rbac` — `/rbac`)
+- API: `GET /api/v1/users`, `POST /api/v1/users`, `PUT /api/v1/users/:id`, `PUT /api/v1/users/:id/permissions`, `POST /api/v1/users/:id/reset-password`, `GET /api/v1/users/:id/session-history`, `POST /api/v1/users/:id/revoke-session`.
+- **Tách biệt 2 Drawer quản trị:** Drawer **Thông tin tài khoản** (sửa `username`, `roleLabel`, nhân viên liên kết, trạng thái `isActive`) và Drawer **Phân quyền chi tiết** (ma trận 14 phân hệ + sub-permissions, đẩy realtime qua `account:permissions_updated`).
+- **Single-Session Security:** Theo dõi trạng thái online/IP/thiết bị phiên hiện tại, lịch sử đăng nhập/đá phiên (`session-history`), và nút thu hồi phiên từ xa (`revoke-session` → phát `session:revoked`).
+- Tài khoản `is_super_admin = true` luôn có toàn quyền và bị khoá readonly trên UI.
 
-#### 3.3.2. Bộ lọc Kép Tách bạch (Date Range & Keyword Search)
-- **Bên trái thanh công cụ:** Bộ chọn ngày / khoảng thời gian (`DateRangePicker`). Mặc định chọn sẵn `Hôm nay` để câu lệnh SQL đánh index `created_at` tải trang dưới 20ms. Cho phép chọn hôm qua, tuần này, hoặc khoảng ngày tuỳ chỉnh.
-- **Bên phải thanh công cụ:** Dropdown tiêu chí tìm kiếm (`Mã hoá đơn`, `Số bàn`, `Ghi chú`) kết hợp với ô nhập từ khoá `keyword`. Hai bộ lọc hoạt động đồng thời (điều kiện AND), giải quyết dứt điểm điểm nghẽn tra cứu.
+### 3.15. Phân hệ 15: Cài đặt Cửa hàng Động (`store-settings` — `/settings`, `/pos/touch/settings`)
+- API: `GET /api/v1/public/store-settings`, `GET /api/v1/public/store-assets/:kind`, `GET/PUT /api/v1/settings`, `PUT/DELETE /api/v1/settings/assets/:kind`, `GET /api/v1/store-messages`.
+- Quản trị động (lưu trong `master_data` `SYSTEM_CONFIG`, phát realtime `store-settings:updated`, có optimistic locking `expectedUpdatedAt`):
+  1. **Thương hiệu & Tài nguyên ảnh:** Tên quán, subtitle, mô tả, tải lên `logo`, `favicon`, `qr-logo` (PNG/JPEG/WebP).
+  2. **Màu sắc & Giao diện:** Màu thương hiệu (`brandColor`), màu chữ chính, màu chữ nhấn (`accentTextColor`), màu đơn giá (`priceColor`) riêng cho Sáng/Tối, theme mặc định, tỷ lệ hiển thị (`displayScale`: 80%–150% toàn cục / theo trang / trang QR).
+  3. **Trang QR & Thẻ in QR (`qr`, `qrCard`):** Tên/mô tả/lời chào/theme riêng trang QR, tuỳ biến thẻ in QR bàn & mang về.
+  4. **Tuỳ chỉnh 5 Mẫu Phiếu in Nhiệt 80mm (`printTemplates`):** `provisional`, `official`, `kitchen`, `kitchenCancel`, `tableTransfer` (tiêu đề, footer, cỡ chữ `6pt–16pt` bước `0.5pt`, bật/tắt từng khối nội dung, chọn danh mục hiện giá trên phiếu bếp).
+  5. **Danh mục Thông báo Tuỳ chỉnh (`messages` / `store-messages`):** Cho phép tuỳ biến nội dung thông báo POS, QR và cấu hình giọng nói/nhắc đơn/tự huỷ QR.
+  6. **Cấu hình Menu & Tiêu đề Trang (`navLabels`, `navGroupLabels`, `navOrder`, `navGroupOrder`, `pageHeaders`)** và tích hợp cấu hình máy in vật lý + bảo mật QR.
+
+### 3.16. Phân hệ 16: Navbar, Hồ sơ Cá nhân, Audit Logs & Tuỳ biến Giao diện (`profile`, `layout` — `/profile`, `/pos/touch/profile`)
+- **Navbar:** Command Palette (`Ctrl+K` / `Cmd+K`, lọc theo RBAC), chuyển nhanh POS Cảm ứng, thông báo âm thanh/Web Push, chuyển Theme Sáng/Tối, Menu Tài khoản (`Hồ sơ`, `Đăng xuất`).
+- **Hồ sơ Cá nhân (`/profile`):** Cập nhật thông tin cá nhân & ngân hàng (đồng bộ về `employees`), tải lên/xoá Avatar (`/api/v1/profile/avatar` phục vụ công khai qua `/api/v1/public/avatars/:employeeId`), đổi mật khẩu (`PATCH /api/v1/profile/password` giữ nguyên phiên hiện tại & thu hồi phiên cũ nếu có), xem thông tin phiên hiện tại và nút **Khôi phục toàn bộ cài đặt giao diện cá nhân**.
+- **UI Preferences (Hard Invariant 9):** Lưu `theme`, `sidebarWidth`, `columnWidths`, `displayScale`, `navOrder`, `navGroupOrder`, `sidebarCollapsed`, `voiceAlertEnabled` ở cả `localStorage` và `users.ui_preferences`, đồng bộ đa thiết bị qua `account:preferences_updated`, và **KHÔNG xoá khi đăng xuất** (chỉ gọi `queryClient.clear()` và xoá token/auth state).
+- **Nhật ký Kiểm toán (`GET /api/v1/audit-logs/:module`):** Mỗi phân hệ quản trị đều có Drawer xem lịch sử thao tác chuẩn hoá theo 13 module (`POS`, `DISCOUNTS`, `MENU`, `INVOICES`, `INVENTORY`, `CASHFLOW`, `PAYMENT_QR`, `EMPLOYEES`, `SCHEDULES`, `PAYROLL`, `MDM`, `RBAC`, `SETTINGS`).
 
 ---
 
-### 3.4. Module 3: Quản lý Nhập hàng Nguyên vật liệu (`inventory`)
+## 4. QUY CHUẨN IN NHIỆT KHỔ 80MM & PHẦN CỨNG VẬT LÝ (STORY 16 & 19)
 
-#### 3.4.1. Cấu trúc Base Table Nhập hàng (8 Cột Chuẩn)
-1. `STT`
-2. `Ngày nhập`: Định dạng `DD/MM/YYYY`.
-3. `Tên món hàng`: Tên nguyên liệu lấy từ Master Data.
-4. `Đơn vị tính`: `Kg`, `Thùng`, `Gói`, `Két`, `Bao`...
-5. `Đơn giá`: Đơn giá trên 1 đơn vị tính (`NUMERIC(12, 2)`).
-6. `Số lượng`: Số lượng thực nhập (`NUMERIC(10, 2)`).
-7. `Thành tiền`: Tự động tính = `Đơn vị tính * Số lượng` (`NUMERIC(12, 2)`).
-8. `Nguồn tiền & Ghi chú`: Badge phân biệt `CASH_DRAWER` (Tiền két) hoặc `EXTERNAL` (Quỹ ngoài/Chủ CK).
-9. `Thao tác`: Icon `Trash` (Thùng rác) ở cột cuối cùng để xoá dòng nhập nhầm (Soft delete `is_deleted = true`, có pop-up confirm; nhân viên chỉ được xoá phiếu trong ca làm việc hiện tại, ngày cũ chỉ Admin mới có quyền xoá).
+### 4.1. Ba chế độ in nhiệt 80mm được hỗ trợ
+1. **In qua Trình duyệt (`BROWSER`):** Dùng `#thermal-print-container` với `@page { size: 80mm auto; margin: 0; }`, `break-after: page` và Chrome/Edge `--kiosk-printing`.
+2. **Cáp USB trực tiếp trên Android POS (`RAWBT`):** Thiết kế cho máy POS **iMin D3-505 (Android 11)** nối cáp USB-B tới máy in nhiệt **iPOS.vn iTP6** (khổ 80mm / 576 dots) thông qua RawBT Print Service, gửi byte ESC/POS chuẩn (hỗ trợ cắt giấy tự động và lệnh mở két `ESC p`).
+3. **Dây mạng LAN ESC/POS (`LAN_ESCPOS`):** Gửi qua `POST /api/v1/pos/print/lan-escpos` (`ThermalLanPrintService`) trực tiếp tới địa chỉ IP máy in cổng TCP `:9100`, hỗ trợ cả **bung két đựng tiền RJ11 (24V)** có bảo vệ quyền `pos:openCashDrawer` và xác nhận 2 bước.
 
-#### 3.4.2. Tách bạch Thanh Lọc Lịch sử vs Drawer Thêm mới
-- **Thanh tìm kiếm trên Base Table:** CHỈ dùng để lọc lịch sử theo Ngày/Tháng/Năm và Tên nguyên liệu. Phía dưới chân bảng hiển thị dòng tổng kết: **"Tổng tiền nhập hàng trong kỳ: xxx.xxx đ"**.
-- **Drawer "Thêm mới" (Mở từ bên phải màn hình):**
-  - Cho phép nhập danh sách nhiều dòng hàng cùng lúc trước khi bấm Lưu.
-  - Ô nhập Tên món hàng là một **Smart Combobox**: Gõ từ khoá gọi API `GET /api/v1/mdm/lookup?category=INGREDIENT` để gợi ý nhanh.
-  - Khi chọn nguyên liệu có sẵn: Tự động điền đơn vị tính và gợi ý đơn giá nhập của lần gần nhất từ `master_data.metadata`.
-  - Nếu gõ tên nguyên liệu mới hoàn toàn chưa có trong hệ thống: Khi bấm submit, hệ thống tự động gọi `MdmService.findOrCreate()` để chuẩn hoá và lưu ngay nguyên liệu mới vào Master Data (Module 7).
-  - Chọn Nguồn tiền thanh toán (Radio):
-    - `CASH_DRAWER` (Tiền két thu ngân — mặc định): Tự động khấu trừ vào công thức Kết ca ở Module 4.
-    - `EXTERNAL` (Quỹ ngoài / Chủ chuyển khoản): Chỉ ghi nhận chi phí kho, KHÔNG trừ vào tiền mặt tại két.
-
----
-
-### 3.5. Module 4: Ngân sách, Dòng tiền & Đối soát Kết ca (`cashflow`)
-
-#### 3.5.1. Công thức Kết ca Dòng tiền Chuẩn xác (Hard Invariant 6)
-Để loại bỏ 100% tình trạng báo thiếu tiền ảo do lẫn lộn doanh thu chuyển khoản QR và tiền chi mua rau/đá bi, thuật toán kết ca áp dụng công thức toán học bất biến:
-
-$$\text{expected\_cash\_in\_drawer} = \text{opening\_budget} + \sum \text{total\_amount}_{\text{CASH, PAID}} - \sum \text{total\_cost}_{\text{CASH\_DRAWER, NOT\_DELETED}}$$
-
-$$\text{discrepancy\_amount} = \text{actual\_counted\_cash} - \text{expected\_cash\_in\_drawer}$$
-
-$$\text{status} = \begin{cases} \text{MATCHED} & \text{khi } \text{discrepancy\_amount} = 0 \\ \text{SURPLUS} & \text{khi } \text{discrepancy\_amount} > 0 \\ \text{SHORTAGE} & \text{khi } \text{discrepancy\_amount} < 0 \end{cases}$$
-
-- **QUY TẮC CẤM:**
-  - **FORBIDDEN** cộng doanh thu `TRANSFER` (chuyển khoản QR) vào `expected_cash_in_drawer` (tiền ngân hàng không nằm trong két vật lý).
-  - **FORBIDDEN** trừ phiếu nhập hàng `EXTERNAL` khỏi tiền két.
-
-#### 3.5.2. Component Đếm tiền theo Mệnh giá & Giao diện Kết ca
-- **Cấu hình Ngân sách mặc định (`opening_budget`):** Tiền lẻ để trong két đầu ngày phục vụ thối tiền (Ví dụ: 1.000.000đ). Chỉ tài khoản có quyền `cashflow:config` (Super Admin) mới được sửa qua `PUT /api/v1/cashflow/default-budget`.
-- **Component Đếm tiền theo Mệnh giá:**
-  - Bảng lưới gồm các mệnh giá tiền Việt Nam: 500.000đ, 200.000đ, 100.000đ, 50.000đ, 20.000đ, 10.000đ, 5.000đ, 2.000đ, 1.000đ kèm ô nhập số tờ.
-  - Tự động nhân thành tiền từng loại và cộng dồn ra con số `actual_counted_cash`, giúp thu ngân kiểm tiền lúc nửa đêm không bị nhầm lẫn bấm máy tính.
-- **Bàn giao sau khi bấm nút "Kết ca":**
-  - Hiển thị bảng tóm tắt rõ ràng:
-    1. Tiền mặt giữ lại trong két cho ca/ngày mai: Bằng đúng mức `opening_budget` (1.000.000đ).
-    2. Số tiền mặt thực tế rút ra khỏi két nộp cho Chủ quán: `actual_counted_cash - opening_budget`.
-- **Base Table Lịch sử Kết ca:** Các cột gồm: Ngày/Ca, Ngân sách đầu ca, Thu tiền mặt, Thu QR, Chi tiền két, Tiền lý thuyết, Tiền thực đếm, Chênh lệch, Tình trạng (Badge Xanh: `Chuẩn`, Vàng: `Dư`, Đỏ: `Thiếu`), Người đóng ca.
-
----
-
-### 3.6. Module 5: Quản lý Hồ sơ Nhân sự (`employees`)
-
-#### 3.6.1. Cấu trúc Bảng & Tìm kiếm
-- **Base Table 7 Cột:** `STT`, `Tên nhân viên` (kèm Tên viết tắt), `Năm sinh`, `Chức vụ`, `Chuyên môn`, `Ghi chú`, `Thao tác` (`Eye` xem chi tiết, `Pencil` chỉnh sửa, `Trash` xoá mềm có confirm).
-- **Bộ lọc Đa năng:** Dropdown bên trái chọn lọc theo `Chức vụ` hoặc `Chuyên môn` (lấy từ MDM) kết hợp ô nhập từ khoá tìm theo Tên hoặc Số điện thoại.
-
-#### 3.6.2. Thuật toán Tự sinh Tên Viết tắt Nhân viên (`short_name`)
-- Áp dụng hàm chuẩn xác: Lấy chữ cái đầu của Tên lót + Tên chính.
-  - Ví dụ: `"Nguyễn Văn Anh"` -> `words = ["Nguyễn", "Văn", "Anh"]` -> `short_name = "V.Anh"`.
-- **Xử lý xung đột trùng tên (Collision Handling):** Nếu danh sách nhân viên đang làm việc đã tồn tại `"V.Anh"` (ví dụ có cả Nguyễn Văn Anh và Trần Văn Anh):
-  - Tự động nối thêm chữ cái đầu của Họ và mã số nhân viên: `"N.V.Anh (#12)"` và `"T.V.Anh (#15)"`.
-  - Hiển thị tên viết tắt này trong ô ma trận Lịch làm việc Module 6.
-
-#### 3.6.3. Liên kết 1-1 giữa `employees` và `users`
-- Bảng `employees`: Lưu trữ hồ sơ nhân sự thực tế (họ tên, ngày sinh, CCCD, nơi cấp, địa chỉ, SĐT, thông tin ngân hàng, ngày vào làm, chức vụ, chuyên môn, avatar, file hợp đồng đính kèm).
-- Bảng `users`: Lưu trữ thông tin đăng nhập và phân quyền hệ thống. Cột `users.employee_id` là Foreign Key **UNIQUE** trỏ tới `employees.id`.
-- Mọi nhân viên có tài khoản thì đều lấy thông tin cá nhân và ngân hàng từ `employees`. Khi nhân viên cập nhật thông tin tại trang Hồ sơ tài khoản (Module 9), dữ liệu được đồng bộ trực tiếp về `employees`.
-
----
-
-### 3.7. Module 6: Lịch làm việc Ma trận Dạng Excel (`schedules`)
-
-#### 3.7.1. Cấu trúc Bảng Ma trận Tuần (Excel-like Matrix Grid)
-- **7 Cột:** Thứ Hai, Thứ Ba, Thứ Tư, Thứ Năm, Thứ Sáu, Thứ Bảy, Chủ Nhật.
-- **N Dòng:** Các khung giờ / ca làm việc cấu hình linh hoạt (Ca Sáng 08:00–15:00, Ca Tối 15:00–22:00, Ca Gãy...).
-- **Cơ chế Multi-select Tags theo Chuyên môn:**
-  - Một ô giao giữa Ngày và Ca cho phép chọn **nhiều nhân viên cùng làm việc**.
-  - Mỗi nhân viên hiển thị dạng Tag/Chip với tên viết tắt (`V.Anh`) kèm màu sắc phân biệt chuyên môn:
-    - `BEP_NAU`: Tag màu Đỏ.
-    - `BEP_CHIEN`: Tag màu Cam.
-    - `PHA_CHE`: Tag màu Xanh dương.
-    - Chuyên môn khác: Tag màu Xám/Tím.
-  - Quản lý nhìn lướt qua trong 2 giây biết ngay ca đó đã đủ người cho 3 trạm bếp hay chưa.
-
-#### 3.7.2. Điều hướng Tuần & Sao chép Lịch
-- Thanh chuyển tuần ở đầu bảng: `[< Tuần trước] | [Tuần 45: 02/11/2026 - 08/11/2026] | [Tuần sau >]`. Lưu trữ trong DB theo `week_start_date` (ngày Thứ 2 đầu tuần) để bảo toàn 100% lịch sử các tuần cũ phục vụ chấm công tính lương.
-- Nút `[Sao chép từ tuần trước]`: Sao chép nhanh toàn bộ ma trận phân ca của tuần liền trước sang tuần hiện tại, quản lý chỉ việc tinh chỉnh các ca xin nghỉ rồi bấm Lưu.
-
-#### 3.7.3. Cơ chế Bảo vệ Thay đổi Chưa lưu (Unsaved Changes Guard)
-- Khi người dùng thay đổi dữ liệu bất kỳ ô nào trên bảng mà chưa bấm nút `[Lưu]`:
-  1. Kích hoạt sự kiện `window.addEventListener('beforeunload', handler)` để chặn hành vi reload trang hoặc tắt tab trình duyệt.
-  2. Kích hoạt React Router Navigation Blocker để chặn hành vi click menu Sidebar hoặc chuyển trang trong app.
-  3. Bật Modal cảnh báo: `"Bạn có thay đổi lịch làm việc chưa lưu. Bạn có chắc chắn muốn rời khỏi trang?"`.
-  4. Sau khi bấm `[Lưu]` thành công (API `PUT /api/v1/schedules/bulk-save`), gỡ bỏ toàn bộ blocker.
-- **Xử lý nhân viên bị Soft-delete giữa tuần:** Nhân viên đã bị xoá mềm trong tuần vẫn hiển thị tên trên ô lịch với màu xám mờ (grayed out) kèm nhãn `(Đã nghỉ)`, tuyệt đối không gây lỗi crash bảng.
-
----
-
-### 3.8. Module 7: Quản trị Master Data (`master-data`)
-
-#### 3.8.1. Danh mục & Phân loại
-Giao diện Tabs quản lý các nhóm danh mục dùng chung toàn hệ thống:
-1. `POSITION`: Chức vụ nhân sự (Quản lý, Thu ngân, Bếp chính, Phụ bếp, Phục vụ...).
-2. `SPECIALTY`: Chuyên môn trạm làm việc (`BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`, `PHUC_VU`).
-3. `INGREDIENT`: Tên nguyên liệu nhập kho (Ba chỉ bò Mỹ, Mì Hàn Quốc, Tương ớt Gochujang, Bạch tuộc, Phô mai mozzarella, Đá bi, Hộp xốp...).
-4. `UNIT`: Đơn vị tính (Kg, Thùng, Gói, Két, Chai, Cây...).
-
-#### 3.8.2. Thuật toán Chuẩn hoá Chuỗi Tự động (Hard Invariant 7)
-Mọi thao tác lưu danh mục tự động từ Module 3 (Nhập hàng) và Module 5 (Nhân sự) đều phải đi qua phương thức duy nhất `MdmService.findOrCreate(category, rawInput)`:
-1. `rawInput.trim()`: Cắt bỏ khoảng trắng thừa ở 2 đầu.
-2. `capitalizeWords()`: Chuẩn hoá chữ hoa đầu từ (Ví dụ: `"mì cay hải sản "` -> `"Mì Cay Hải Sản"`).
-3. `removeVietnameseDiacritics().toLowerCase()`: Chuyển đổi chuỗi tiếng Việt có dấu sang không dấu và viết thường làm giá trị `normalized_name` (Ví dụ: `"mi cay hai san"`).
-4. Kiểm tra Database với khoá duy nhất: `category + normalized_name`. Nếu đã tồn tại bản ghi `is_active = true` -> Trả về bản ghi cũ. Nếu chưa có -> Tạo bản ghi mới.
-5. Loại bỏ triệt để rác dữ liệu do lỗi gõ phím của nhân viên giữa các ca làm việc.
-
----
-
-### 3.9. Module 8: Phân quyền Hệ thống Đa cấp (`rbac`)
-
-#### 3.9.1. Cấu trúc Quản trị Phân quyền
-- **Base Table Danh sách Tài khoản:** Hiển thị `username`, `Họ tên nhân viên`, `Trạng thái`, và nút `[+ Thêm mới tài khoản]` (Chỉ Super Admin mới thấy và thực hiện được; chọn nhân viên liên kết từ Module 5).
-- **Drawer Cấu hình Quyền (Bấm Bánh răng Settings trên từng dòng):**
-  - Danh sách toàn bộ các màn hình hiển thị dưới dạng Checkbox kiểm soát quyền Xem/Truy cập (`view`). Khi được tích chọn, màn hình mới xuất hiện trên Sidebar và thanh điều hướng.
-  - Dưới mỗi màn hình có Dropdown cấu hình CRUD chi tiết: `Create`, `Update`, `Delete`.
-  - Hỗ trợ các quyền nghiệp vụ con (**Sub-permissions**):
-    - Dưới Module 4: Checkbox `[ ] Cấu hình ngân sách mặc định (cashflow:config)`.
-    - Dưới Module 2: Checkbox `[ ] Huỷ hoá đơn đã thanh toán (invoices:void)`.
-- **Đặc quyền Super Admin:**
-  - Tài khoản có `is_super_admin = true` mặc định có toàn bộ quyền (Full Permissions).
-  - Trên giao diện Drawer, tất cả Checkbox và Dropdown của Super Admin đều hiển thị ở trạng thái **DISABLED / READONLY** (Không ai có thể tự hạ quyền của Super Admin).
-
-#### 3.9.2. Quy tắc Mã lỗi HTTP (Hard Invariant 8)
-- `401 Unauthorized`: Token JWT bị thiếu, không hợp lệ, hoặc đã hết hạn. **CẤM TUYỆT ĐỐI** trả về mã 403 cho trường hợp này.
-- `403 Forbidden`: Người dùng đã đăng nhập hợp lệ nhưng không có quyền truy cập vào màn hình hoặc API endpoint được yêu cầu. **CẤM TUYỆT ĐỐI** trả về mã 401 cho trường hợp này.
-- **Tách bạch API Lookup:** Endpoint `GET /api/v1/mdm/lookup` bắt buộc mở cho mọi tài khoản `authenticated` (đã đăng nhập) để lấy dữ liệu autocomplete cho combobox nhập hàng và dropdown nhân viên, không đòi hỏi quyền quản trị `mdm:read` / `mdm:write`.
-
----
-
-### 3.10. Module 9: Thanh Navbar, Hồ sơ Cá nhân & Tuỳ biến Giao diện (`layout`)
-
-#### 3.10.1. Cấu trúc Thanh Navbar (Thứ tự Góc Phải)
-Từ trái sang phải:
-1. `[Thanh Search nhỏ / Command Palette]` (Nhấn chuột hoặc phím tắt `Ctrl + K` / `Cmd + K`): Mở Pop-up tìm kiếm nhanh màn hình theo danh mục Sidebar. **BẮT BUỘC** lọc theo quyền RBAC của người dùng đang đăng nhập (User chỉ thấy các màn hình mình có quyền truy cập).
-2. `[Nút chuyển Theme Sáng/Tối]` (Light / Dark Mode toggle): Khoảng cách tách biệt rõ ràng.
-3. `[Avatar + Tên người dùng]` (Nối liền thành một khối bấm được): Click mở Dropdown gồm 2 tuỳ chọn: `Hồ sơ tài khoản` và `Đăng xuất`.
-
-#### 3.10.2. Trang Hồ sơ Tài khoản Cá nhân
-- Đọc dữ liệu JOIN từ cả 2 bảng `employees` và `users`.
-- Các trường `Chức vụ` và `Chuyên môn` hiển thị dạng Badge **READONLY**.
-- Cho phép nhân viên tự chỉnh sửa: Số điện thoại, Địa chỉ nơi ở, Thông tin ngân hàng (Tên NH, Số TK, Chủ TK), và Tải lên/cắt ảnh đại diện (`Avatar Crop & Resize`). Khi lưu, tự động đồng bộ về bảng `employees`.
-
-#### 3.10.3. Kéo giãn Cột Bảng, Sidebar & Hành vi Đăng xuất (Hard Invariant 9)
-- **Kéo giãn Cột (BaseTable Column Resize):** Sử dụng TanStack Table v8 với `columnResizeMode: 'onChange'`, điều khiển bằng CSS Variables và `requestAnimationFrame` đạt 60fps mượt mà. Debounce 500ms khi thả chuột để lưu cấu hình độ rộng cột vào `localStorage` và đồng bộ lên `users.ui_preferences`.
-- **Kéo giãn Sidebar:** Nắm kéo chuột thanh phân cách để thay đổi độ rộng Sidebar từ 200px đến 360px hoặc thu gọn về Icon-only mode.
-- **HÀNH VI KHI ĐĂNG XUẤT (LOGOUT INVARIANT):**
-  1. Gọi `queryClient.clear()` xoá sạch toàn bộ bộ nhớ đệm API dữ liệu nghiệp vụ (không để rò rỉ dữ liệu tài chính/hoá đơn cho ca sau).
-  2. Xoá Access Token và Refresh Token khỏi bộ nhớ.
-  3. Xoá thông tin định danh Auth State.
-  4. **CẤM TUYỆT ĐỐI** xoá `ui_preferences` (cấu hình theme Sáng/Tối, độ rộng cột bảng, độ rộng sidebar) khỏi `localStorage` và Database. Khi người dùng đăng nhập lại trên máy đó, giao diện phục hồi chính xác bố cục đã tuỳ biến.
-
----
-
-## 4. QUY CHUẨN IN NHIỆT KHỔ 80MM (THERMAL PRINT SPECIFICATION)
-
-### 4.1. Cấu hình In ngầm & Ngắt trang Tự cắt giấy
-- Máy tính thu ngân khởi chạy trình duyệt Chrome/Edge với tham số: `--kiosk-printing` (tắt pop-up preview của trình duyệt, bắn thẳng lệnh xuống máy in nhiệt mặc định trong 0,5 giây).
-- Định dạng CSS `@media print`:
-  ```css
-  @media print {
-    @page {
-      size: 80mm auto;
-      margin: 0;
-    }
-    body * {
-      visibility: hidden;
-    }
-    #thermal-print-container, #thermal-print-container * {
-      visibility: visible;
-    }
-    #thermal-print-container {
-      position: absolute;
-      left: 0;
-      top: 0;
-      width: 72mm; /* Trừ lề an toàn 4mm mỗi bên cho khổ 80mm */
-    }
-    .ticket-page {
-      width: 100%;
-      padding: 2mm 0;
-      break-after: page;
-      page-break-after: always; /* Kích hoạt lệnh cắt giấy vật lý giữa các phiếu */
-    }
-  }
-  ```
-
-### 4.2. Đặc tả 4 Mẫu Phiếu In Nhiệt Chuẩn
-
-```
-================================================================================
-MẪU 1: PHIẾU TÁCH BẾP (In ra 3 phiếu rời nhau theo từng trạm chế biến)
-================================================================================
-              [ LOGO: CHEF_HAT_NOODLE / FRENCH_FRIES / DRINK_CUP ]
-                           BẾP NẤU (MÌ CAY)
-                           
-BÀN: BÀN 07                              Mã Đơn: HD-20261107-0039
-Thời gian: 07/11/2026 19:25:30            Lượt: GỌI THÊM - LƯỢT 2
-[GHI CHÚ ĐỔI BÀN: Chuyển từ BÀN 01 sang BÀN 07]
-----------------------------------------------------------------
-TÊN MÓN                             SL   GHI CHÚ / CẤP ĐỘ CAY
-----------------------------------------------------------------
-Mì Kim Chi Bò                       02   Cấp độ 3 - Ít hành
-  + Thêm Bò viên                    02
-Mì Hải Sản                          01   Cấp độ 1 - Không ớt bột
-----------------------------------------------------------------
-Ghi chú đơn: Cho ớt bột để riêng chén nhỏ
-================================================================
-
-================================================================================
-MẪU 2: PHIẾU THÔNG BÁO CHUYỂN BÀN (In ngay khi MOVE/MERGE đơn đã có món PRINTED)
-================================================================================
-                     ⚠️ THÔNG BÁO ĐỔI BÀN ⚠️
-                     
-ĐƠN HÀNG: HD-20261107-0039
-CHUYỂN TỪ:  >>> BÀN 01 <<<
-SANG BÀN:   >>> BÀN 07 <<<
-Thời gian: 07/11/2026 19:20:15
-Trạm ảnh hưởng: BẾP NẤU, QUẦY PHA CHẾ
-----------------------------------------------------------------
-LƯU Ý: Các món đang chế biến của BÀN 01 vui lòng bưng qua BÀN 07!
-================================================================
-
-================================================================================
-MẪU 3: PHIẾU TẠM TÍNH (In kèm mã VietQR động cho khách quét thanh toán)
-================================================================================
-                           QUÁN MÌ CAY SƠN BẢO
-                       ĐC: 123 Đường Số 8, Linh Xuân, TP. Thủ Đức
-                           PHIẾU TẠM TÍNH
-                           
-Số Bàn: BÀN 07                           Mã HĐ: HD-20261107-0039
-Giờ vào: 19:00:22                        Giờ in: 19:45:10
-Thu ngân: V.Anh
-----------------------------------------------------------------
-Tên món                     SL       Đơn giá         Thành tiền
-----------------------------------------------------------------
-Mì Kim Chi Bò (Cấp 3)       2        55.000             110.000
-  + Thêm Bò viên            2        15.000              30.000
-Khoai tây chiên             1        30.000              30.000
-Trà đào cam sả              2        25.000              50.000
-----------------------------------------------------------------
-TỔNG CỘNG TIỀN MÓN:                                     220.000 đ
-GIẢM GIÁ (0%):                                               0 đ
-----------------------------------------------------------------
-TỔNG THANH TOÁN:                                        220.000 đ
-----------------------------------------------------------------
-               QUÉT MÃ VIETQR ĐỂ CHUYỂN KHOẢN TỰ ĐỘNG
-                  [ ẢNH MÃ VIETQR ĐỘNG CHUẨN NAPAS247 ]
-               (Đã nhúng sẵn số tiền 220.000đ & TT HD0039)
-                  
-                 Phiếu này dùng để kiểm tra món ăn.
-                 Quý khách vui lòng không dùng làm hoá đơn tài chính.
-================================================================
-
-================================================================================
-MẪU 4: HOÁ ĐƠN THANH TOÁN CHÍNH THỨC (In sau khi bấm Thanh toán -> Xác nhận)
-================================================================================
-                           QUÁN MÌ CAY SƠN BẢO
-                       HOÁ ĐƠN THANH TOÁN (PAID)
-                       
-Số HĐ: HD-20261107-0039                  Bàn: BÀN 07
-Ngày: 07/11/2026 19:48:00                Thu ngân: V.Anh
-Phương thức thanh toán:                  CHUYỂN KHOẢN (QR)
-----------------------------------------------------------------
-TỔNG TIỀN THANH TOÁN:                                   220.000 đ
-----------------------------------------------------------------
-               CẢM ƠN QUÝ KHÁCH VÀ HẸN GẶP LẠI!
-================================================================
-```
+### 4.2. Năm mẫu phiếu in nhiệt chuẩn (Tuỳ biến được trong `/settings`)
+1. **Phiếu Tách Bếp (`kitchen`):** Cắt rời từng trạm (`BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`, `BEP_*`), logo trạm, bàn/số mang về, lượt gọi (`GỌI THÊM - LƯỢT N`), nhãn `[MANG VỀ]` nếu món gói riêng, tuỳ chọn/đổi món/ghi chú.
+2. **Phiếu Báo Huỷ Món (`kitchenCancel`):** In ngay xuống trạm bếp khi huỷ món đã `PRINTED`, kèm số lượng huỷ và lý do.
+3. **Phiếu Thông Báo Đổi Bàn (`tableTransfer`):** In ngay khi `MOVE`/`MERGE`/`SWAP`/`TO_TAKEAWAY` trên đơn đã có món `PRINTED`.
+4. **Phiếu Tạm Tính (`provisional`):** Gồm danh sách món, tạm tính, giảm giá, tổng thanh toán và **mã VietQR Napas247 động** từ tài khoản xoay vòng (giữ nguyên trạng thái `SERVING`).
+5. **Hoá Đơn Thanh Toán Chính Thức (`official`):** In sau khi chốt `PAID`, hiển thị chi tiết PTTT (`CASH` / `TRANSFER` / `SPLIT`), giảm giá và lời cảm ơn.
 
 ---
 
 ## 5. RÀNG BUỘC KỸ THUẬT & YÊU CẦU PHI CHỨC NĂNG (NFR)
 
 ### 5.1. Kiểu Tiền tệ Bắt buộc (Hard Invariant 10)
-- Mọi trường dữ liệu lưu trữ giá trị tiền tệ (`price`, `total_amount`, `total_cost`, `opening_budget`, `cash_amount`, `transfer_amount`, `unit_price`, `extra_price`, `expected_cash_in_drawer`, `actual_counted_cash`, `discrepancy_amount`) **MUST** sử dụng kiểu `NUMERIC(12, 2)` trong PostgreSQL và kiểu `Decimal` trong Prisma ORM.
-- **FORBIDDEN:** Tuyệt đối không dùng `FLOAT`, `DOUBLE`, `REAL`, hoặc `INT` cho tiền tệ để tránh sai số dấu phẩy động.
+- 100% cột tiền tệ trên PostgreSQL dùng `NUMERIC(12, 2)` và Prisma dùng `@db.Decimal(12, 2)`. **CẤM** dùng `FLOAT`, `DOUBLE`, `REAL` hoặc `INT`.
 
-### 5.2. Hiệu năng & Khả năng Chịu tải (Performance SLAs)
-- **Độ trễ API nội bộ tại quầy POS:** $\le 50\text{ ms}$ cho các thao tác chọn món, cập nhật giỏ hàng và duyệt đơn.
-- **Tốc độ xử lý lệnh In nhiệt:** $\le 500\text{ ms}$ từ lúc click "Tách đơn" tới khi dao cắt máy in hoạt động.
-- **Tốc độ tải Menu QR trên Mobile khách (4G):** $\le 400\text{ ms}$ qua mạng lưới Cloudflare CDN tại Việt Nam.
-- **Tốc độ phản hồi giao diện kéo giãn cột bảng:** 60 FPS mượt mà bằng CSS Variables và `requestAnimationFrame`.
-
-### 5.3. Độ sẵn sàng & An toàn Dữ liệu (Reliability & Disaster Recovery)
-- Cơ chế Interactive Transaction trong PostgreSQL đảm bảo tính nguyên tử (ACID) cho các thao tác nhạy cảm: Chuyển/Gộp bàn, Kết ca đối soát dòng tiền và Tách đơn.
-- Tự động sao lưu dữ liệu (`pg_dump`) mỗi ngày lúc 03:00 sáng, nén và tải lên Cloudflare R2 với chi phí 0đ.
-- Phục hồi toàn bộ hệ thống sau sự cố vật lý trong thời gian dưới 5 phút.
+### 5.2. Hiệu năng, Tìm kiếm & Triển khai
+- **Độ trễ API nội bộ POS:** $\le 50\text{ ms}$; tốc độ gửi lệnh in nhiệt $\le 500\text{ ms}$; kéo giãn cột bảng & sidebar 60 FPS.
+- **Tìm kiếm tiếng Việt không dấu:** Sử dụng extension PostgreSQL `unaccent` và hàm `f_search_norm(text)` (tách biệt với `master_data.normalized_name` của Invariant 7).
+- **Triển khai Production:** Docker Compose gồm 3 container (`postgres:16-alpine`, `api-server`, `caddy` làm reverse proxy + phục vụ static web-app + TLS tự động), kèm kiểm tra sức khoẻ `/api/v1/health` và giới hạn tài nguyên chuẩn.
 
 ---
 
-> **Tài liệu PRD Master Specification này là căn cứ gốc có hiệu lực cao nhất.**  
-> Các bước thiết kế kiến trúc, biên dịch rules, phân mảnh stories và lập trình mã nguồn ở các Phase tiếp theo bắt buộc đối chiếu tuân thủ 100% tài liệu này.
+> **Tài liệu PRD Master Specification (v2.0.0) đã được đồng bộ 100% với mã nguồn thực tế (Stories 01–21).**

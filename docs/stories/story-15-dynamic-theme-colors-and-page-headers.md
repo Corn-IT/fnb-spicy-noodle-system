@@ -1,6 +1,6 @@
 # Story 15: Tuỳ chỉnh Màu Chữ Nhấn, Màu Đơn Giá & Tiêu đề / Mô tả Trang (`store-settings-v2`)
 
-> **Trạng thái:** Chờ duyệt · **Tiền đề:** Kế thừa toàn bộ kiến trúc & quyết định D1–D16 của [Story 14](file:///c:/Users/ngomi/OneDrive/Documents/POS%20FnB/docs/stories/story-14-dynamic-store-settings-and-branding.md) và [Kế hoạch Store Settings v2](file:///c:/Users/ngomi/.gemini/antigravity/brain/76068e25-6871-454a-9151-0ea7e5701023/implementation_plan_store_settings_v2.md).
+> **Trạng thái:** Đã triển khai (Completed) · **Tiền đề:** Kế thừa toàn bộ kiến trúc & quyết định D1–D16 của [Story 14](./story-14-dynamic-store-settings-and-branding.md).
 
 ---
 

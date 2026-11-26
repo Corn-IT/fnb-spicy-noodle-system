@@ -1,6 +1,7 @@
 # Story 20: Màn POS cảm ứng — 3 tab "Tất cả / Phòng bàn / Mang về" trên sơ đồ bàn
 
 > **Story ID:** `STORY-20`
+> **Trạng thái:** Đã triển khai (Completed)
 > **Tên file:** `docs/stories/story-20-pos-touch-board-tabs.md`
 > **Phạm vi:** Chỉ frontend, chỉ màn `/pos/touch` (`apps/web-app/src/features/pos-counter/touch/`). **Không** sửa backend, `packages/shared`, `/pos` thường hay luồng đặt món.
 > **Người thực hiện:** Agent Codex.

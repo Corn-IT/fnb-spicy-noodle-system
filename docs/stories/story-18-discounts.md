@@ -1,6 +1,6 @@
 # Story 18: Quản lý Mã Giảm giá & Giảm giá Trực tiếp trên Hoá đơn POS (`discounts`)
 
-> **Trạng thái:** Đã duyệt kế hoạch · **Tiền đề:** Kế thừa nền tảng Story 01–17 và tuân thủ nghiêm ngặt 10 Hard Invariants trong `AGENTS.md`.
+> **Trạng thái:** Đã triển khai (Completed) · **Tiền đề:** Kế thừa nền tảng Story 01–17 và tuân thủ nghiêm ngặt 10 Hard Invariants trong `AGENTS.md`.
 
 ---
 

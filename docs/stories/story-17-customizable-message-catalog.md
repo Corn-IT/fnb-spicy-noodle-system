@@ -1,6 +1,6 @@
 # Story 17: Danh mục Thông báo Tuỳ chỉnh Toàn Hệ thống & Trang Khách QR (`message-catalog`)
 
-> **Trạng thái:** Chờ duyệt · **Tiền đề:** Thực hiện sau [Story 16](file:///c:/Users/ngomi/OneDrive/Documents/POS%20FnB/docs/stories/story-16-thermal-print-template-customizer.md), kế thừa toàn bộ nền tảng Story 14–16 và tuân thủ nghiêm ngặt Hard Invariants 1, 8, 9 trong `AGENTS.md`.
+> **Trạng thái:** Đã triển khai (Completed) · **Tiền đề:** Thực hiện sau [Story 16](./story-16-thermal-print-template-customizer.md), kế thừa toàn bộ nền tảng Story 14–16 và tuân thủ nghiêm ngặt Hard Invariants 1, 8, 9 trong `AGENTS.md`.
 
 ---
 

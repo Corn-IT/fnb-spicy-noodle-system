@@ -1,179 +1,60 @@
-# 06 — Xử lý Lỗi & Logging (Error Handling & Logging Rules)
+---
+trigger: model_decision
+description: Standard Error Response DTO, NestJS exception filters, request ID tracing, and structured logging conventions.
+---
 
-> Áp dụng cho: Codex (Phase 4B), Antigravity (Phase 5).
+# 06 — Xử lý Lỗi, Audit Logs & Logging (Error Handling, Audit & Logging Rules)
+
+> Áp dụng cho: Mọi Agent làm việc trên Backend (`apps/api-server`), Shared (`packages/shared`) và xử lý lỗi trên Frontend (`apps/web-app`).
 
 ---
 
-## 1. Standard Error Response DTO
+## 1. Standard Error Response Schema
 
-Mọi API error response **MUST** theo format này (định nghĩa trong `packages/shared/`):
+Định nghĩa tại **`packages/shared/src/schemas/api-error.schema.ts`** (không tạo file trùng ở nơi khác):
 
 ```typescript
-// packages/shared/src/dto/api-error.dto.ts
-import { z } from 'zod';
-
 export const ApiErrorResponseSchema = z.object({
-  statusCode: z.number(),        // HTTP status code (400, 401, 403, 404, 409, 422, 500)
-  error: z.string(),             // Short error type: "Bad Request", "Forbidden", "Conflict"
-  message: z.string(),           // Human-readable description (Vietnamese)
-  code: z.string().optional(),   // Machine-readable: "POS_TABLE_OCCUPIED", "CASHFLOW_FORMULA_MISMATCH"
-  details: z.unknown().optional(), // Zod validation errors, field-level errors
-  requestId: z.string().optional(), // UUID v4 trace ID
+  statusCode: z.number(),
+  error: z.string(),
+  message: z.string(),
+  code: z.string().optional(),
+  details: z.unknown().optional(),
+  requestId: z.string().optional(),
 });
-
-export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;
 ```
 
-- **MUST** dùng NestJS `ExceptionFilter` để chuẩn hoá tất cả error responses.
+- **MUST** chuẩn hoá mọi exception qua `GlobalExceptionFilter` (`apps/api-server/src/common/filters/global-exception.filter.ts`).
 - **NEVER** trả raw Prisma errors hoặc stack traces cho client ở production.
+- Trên Frontend: map mã lỗi qua `packages/shared/src/constants/http-error-catalog.ts` và `message-catalog.ts` để hỗ trợ thông báo tuỳ biến từ `/settings`.
 
-## 2. Error Codes by Module
+## 2. Error Codes Catalog (`packages/shared/src/constants/error-codes.ts`)
 
-Định nghĩa tại `packages/shared/src/constants/error-codes.ts`:
-
-```typescript
-export const ErrorCodes = {
-  // Auth & RBAC
-  AUTH_TOKEN_MISSING: 'AUTH_TOKEN_MISSING',           // 401
-  AUTH_TOKEN_EXPIRED: 'AUTH_TOKEN_EXPIRED',           // 401
-  AUTH_TOKEN_INVALID: 'AUTH_TOKEN_INVALID',           // 401
-  AUTH_CREDENTIALS_INVALID: 'AUTH_CREDENTIALS_INVALID', // 401
-  RBAC_PERMISSION_DENIED: 'RBAC_PERMISSION_DENIED',   // 403
-  RBAC_SUPER_ADMIN_REQUIRED: 'RBAC_SUPER_ADMIN_REQUIRED', // 403
-
-  // POS
-  POS_TABLE_NOT_AVAILABLE: 'POS_TABLE_NOT_AVAILABLE',     // 409
-  POS_TABLE_NOT_OCCUPIED: 'POS_TABLE_NOT_OCCUPIED',       // 409
-  POS_ORDER_NOT_ACTIVE: 'POS_ORDER_NOT_ACTIVE',           // 409
-  POS_NO_NEW_ITEMS_TO_SPLIT: 'POS_NO_NEW_ITEMS_TO_SPLIT', // Giữ hằng số contract; endpoint split-kitchen trả HTTP 200 OK idempotent ({ tickets: [] }) theo EC-POS-05
-  POS_TAKEAWAY_CANNOT_MERGE: 'POS_TAKEAWAY_CANNOT_MERGE', // 409
-  POS_CONCURRENT_MODIFICATION: 'POS_CONCURRENT_MODIFICATION', // 409
-
-  // Cashflow
-  CASHFLOW_ALREADY_SETTLED: 'CASHFLOW_ALREADY_SETTLED',   // 409
-  CASHFLOW_BUDGET_NOT_SET: 'CASHFLOW_BUDGET_NOT_SET',     // 400
-
-  // Inventory
-  INVENTORY_ALREADY_DELETED: 'INVENTORY_ALREADY_DELETED', // 409
-
-  // HR
-  HR_CITIZEN_ID_DUPLICATE: 'HR_CITIZEN_ID_DUPLICATE',     // 409
-  HR_USERNAME_TAKEN: 'HR_USERNAME_TAKEN',                  // 409
-  HR_EMPLOYEE_DELETED: 'HR_EMPLOYEE_DELETED',              // 404
-
-  // Validation
-  VALIDATION_FAILED: 'VALIDATION_FAILED',                  // 422
-} as const;
-```
+Sử dụng đúng các hằng số trong `ErrorCodes` (48 mã lỗi chuẩn — không hardcode string rời rạc):
+- **Auth & Single-Session (401/409):** `AUTH_TOKEN_MISSING`, `AUTH_TOKEN_EXPIRED`, `AUTH_TOKEN_INVALID`, `AUTH_CREDENTIALS_INVALID`, `AUTH_SESSION_REPLACED`, `AUTH_SESSION_REVOKED`, `AUTH_SESSION_CONFLICT_ONLINE`.
+- **RBAC (403):** `RBAC_PERMISSION_DENIED`, `RBAC_SUPER_ADMIN_REQUIRED`.
+- **POS & QR Security (403/409):** `POS_TABLE_NOT_AVAILABLE`, `POS_TABLE_NOT_OCCUPIED`, `POS_ORDER_NOT_ACTIVE`, `POS_NO_NEW_ITEMS_TO_SPLIT` *(giữ contract; `split-kitchen` trả 200 idempotent)*, `POS_TAKEAWAY_CANNOT_MERGE`, `POS_CONCURRENT_MODIFICATION`, `POS_DISCOUNT_BLOCKS_SPLIT`, `QR_WIFI_REQUIRED`, `QR_GEO_REQUIRED`, `QR_GEO_OUT_OF_RANGE`.
+- **Discounts (404/409):** `DISCOUNT_NOT_FOUND`, `DISCOUNT_INACTIVE`, `DISCOUNT_EXPIRED`, `DISCOUNT_NOT_STARTED`, `DISCOUNT_OUT_OF_TIME_WINDOW`, `DISCOUNT_USAGE_EXHAUSTED`, `DISCOUNT_NOT_APPLICABLE`, `DISCOUNT_LOCKED_FIELDS`.
+- **Payment QR (409):** `PAYMENT_QR_NOT_CONFIGURED`, `PAYMENT_QR_LOCKED_FIELD`, `PAYMENT_QR_IN_USE`, `PAYMENT_QR_CANNOT_DELETE_ACTIVE`, `PAYMENT_QR_LAST_ACTIVE`, `PAYMENT_QR_DUPLICATE_ACCOUNT`.
+- **Cashflow & Inventory (400/403/409):** `CASHFLOW_ALREADY_SETTLED`, `CASHFLOW_BUDGET_NOT_SET`, `CASHFLOW_DISCREPANCY_NOTE_REQUIRED`, `INVENTORY_ALREADY_DELETED`, `INVENTORY_PAST_SHIFT_FORBIDDEN`.
+- **MDM, HR & Store Settings (404/409/422):** `MDM_NAME_TAKEN`, `HR_CITIZEN_ID_DUPLICATE`, `HR_USERNAME_TAKEN`, `HR_EMPLOYEE_DELETED`, `HR_EMPLOYEE_ACCOUNT_EXISTS`, `STORE_ASSET_INVALID_TYPE`, `STORE_ASSET_TOO_LARGE`, `STORE_SETTINGS_CONFLICT`, `VALIDATION_FAILED`.
 
 ## 3. Zod Validation Error Format
 
-Khi Zod validation fail, trường `details` **MUST** chứa field errors có cấu trúc:
+- Dùng `ZodValidationPipe` (`apps/api-server/src/common/pipes/zod-validation.pipe.ts`) với schema từ `@fnb/shared`.
+- Khi fail, ném `UnprocessableEntityException` (HTTP `422`) với `code: ErrorCodes.VALIDATION_FAILED` và `details: { fieldErrors: result.error.flatten().fieldErrors }`.
 
-```json
-{
-  "statusCode": 422,
-  "error": "Unprocessable Entity",
-  "message": "Dữ liệu không hợp lệ",
-  "code": "VALIDATION_FAILED",
-  "details": {
-    "fieldErrors": {
-      "orderType": ["Giá trị phải là 'DINE_IN' hoặc 'TAKEAWAY'"],
-      "items": ["Phải có ít nhất 1 món trong đơn hàng"]
-    }
-  }
-}
-```
+## 4. Audit Logging (`AuditLogModule` — `audit_logs`)
 
-- Dùng `ZodError.flatten()` hoặc `.format()` để sinh field-level errors.
-- **MUST** implement dưới dạng NestJS Pipe validate request body bằng Zod schema từ `@fnb/shared`.
+- Mọi thao tác ghi quan trọng trên 13 phân hệ (`POS`, `DISCOUNTS`, `MENU`, `INVOICES`, `INVENTORY`, `CASHFLOW`, `PAYMENT_QR`, `EMPLOYEES`, `SCHEDULES`, `PAYROLL`, `MDM`, `RBAC`, `SETTINGS`) **MUST** ghi nhận qua `AuditLogService`.
+- **Bảo mật dữ liệu nhạy cảm:** `ip_address` và `device_label` chỉ được trả về qua API khi `actor.isSuperAdmin === true` (`AuditLogController`). Nhật ký module `RBAC` chỉ cho phép Super Admin xem.
 
-```typescript
-// apps/api-server/src/common/pipes/zod-validation.pipe.ts
-@Injectable()
-export class ZodValidationPipe implements PipeTransform {
-  constructor(private schema: ZodSchema) {}
+## 5. Structured Application Logging & Request ID Tracing
 
-  transform(value: unknown) {
-    const result = this.schema.safeParse(value);
-    if (!result.success) {
-      throw new UnprocessableEntityException({
-        code: ErrorCodes.VALIDATION_FAILED,
-        message: 'Dữ liệu không hợp lệ',
-        details: { fieldErrors: result.error.flatten().fieldErrors },
-      });
-    }
-    return result.data;
-  }
-}
-```
+- `RequestIdMiddleware` sinh UUID v4 gắn vào `requestId` (`AsyncLocalStorage` trong `common/context/request-context.ts`) và trả header `X-Request-Id`.
+- `LoggingInterceptor` log các sự kiện quan trọng kèm `requestId`.
+- **NEVER log:** Passwords, `password_hash`, JWT access/refresh tokens, VAPID private key, số `citizen_id` đầy đủ.
 
-## 4. Logging Rules
+## 6. Health Check
 
-- Dùng NestJS built-in `Logger` hoặc `Pino` cho structured logging.
-
-### Log Levels:
-
-| Level | Khi nào | Ví dụ |
-|-------|---------|-------|
-| `ERROR` | Unhandled exceptions, DB connection fail, critical violations | Prisma connection refused |
-| `WARN` | Handled nhưng bất thường | Concurrent lock retry, cashflow discrepancy detected |
-| `LOG` (INFO) | Business events quan trọng | Order created, settlement completed, table transferred |
-| `DEBUG` | Chi tiết execution flow | Chỉ bật ở development |
-
-### Business Events BẮT BUỘC phải log:
-
-```
-[LOG] Order created: orderId=542, orderType=TAKEAWAY, tableId=null
-[LOG] Split kitchen: orderId=542, batchNo=2, BEP_NAU=3items, BEP_CHIEN=1item, PHA_CHE=2items
-[LOG] Table transfer: orderId=538, action=MOVE, from=Ban_01, to=Ban_07
-[LOG] Settlement: date=2026-11-07, shift=Ca_Toi, expected=2850000, actual=2850000, discrepancy=0
-[WARN] Permission denied: userId=15, endpoint=PUT /cashflow/default-budget, required=cashflow:config
-```
-
-### NEVER log:
-- Passwords, JWT tokens, password_hash
-- Số citizen_id đầy đủ (mask nếu cần)
-- Stack traces trong production response (chỉ log server-side)
-
-## 5. Request ID Tracing
-
-- Sinh `requestId` (UUID v4) cho mọi incoming HTTP request qua NestJS middleware.
-- Gắn `requestId` vào **MỌI** log entries trong request lifecycle đó.
-- Trả `requestId` trong error responses để debug.
-
-```typescript
-// apps/api-server/src/common/middleware/request-id.middleware.ts
-@Injectable()
-export class RequestIdMiddleware implements NestMiddleware {
-  use(req: Request, res: Response, next: NextFunction) {
-    req['requestId'] = randomUUID();
-    res.setHeader('X-Request-Id', req['requestId']);
-    next();
-  }
-}
-```
-
-## 6. Global Exception Filter
-
-```typescript
-// apps/api-server/src/common/filters/global-exception.filter.ts
-@Catch()
-export class GlobalExceptionFilter implements ExceptionFilter {
-  catch(exception: unknown, host: ArgumentsHost) {
-    // 1. Extract request context (requestId, path, method)
-    // 2. Map known exceptions → ApiErrorResponse format
-    // 3. Log error with requestId (ERROR level)
-    // 4. Return standardized JSON response
-    // 5. In production: NEVER expose stack traces in response body
-  }
-}
-```
-
-- Register globally: `app.useGlobalFilters(new GlobalExceptionFilter())` trong `main.ts`.
-
-## 7. Health Check
-
-- `GET /api/v1/health` — public, không cần auth.
-- Response: `{ status: 'ok', timestamp, database: 'connected' | 'disconnected', uptime }`.
-- Dùng bởi Docker `HEALTHCHECK` và monitoring.
+- `GET /api/v1/health` (public) trả `{ status: 'ok', timestamp, database: 'connected' | 'disconnected', uptime }`, dùng cho Docker `HEALTHCHECK`.

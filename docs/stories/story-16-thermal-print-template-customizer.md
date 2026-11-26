@@ -1,6 +1,6 @@
 # Story 16: Tuỳ chỉnh Toàn bộ 5 Mẫu Phiếu in Nhiệt 80mm (`thermal-print-customizer`)
 
-> **Trạng thái:** Chờ duyệt · **Tiền đề:** Thực hiện sau [Story 15](file:///c:/Users/ngomi/OneDrive/Documents/POS%20FnB/docs/stories/story-15-dynamic-theme-colors-and-page-headers.md), kế thừa Story 14 D13 và quy chuẩn in nhiệt 80mm trong `.agents/rules/04-frontend-ux-table-and-print.md`.
+> **Trạng thái:** Đã triển khai (Completed) · **Tiền đề:** Thực hiện sau [Story 15](./story-15-dynamic-theme-colors-and-page-headers.md), kế thừa Story 14 D13 và quy chuẩn in nhiệt 80mm trong `.agents/rules/04-frontend-ux-table-and-print.md`.
 
 ---
 
