@@ -9,6 +9,17 @@
 > 4. `thungan` (`thungan` / `Password@123`)
 > 5. `qr_guest` (ẩn danh `/qr/:token`, không auth)
 
+## 0A. Kết quả chạy lại gần nhất — 2026-11-26
+
+`pnpm e2e` (Playwright CLI, Node 22.20): **71 PASS / 5 SKIP / 9 FAIL** trên 85 ca, chạy 8,8 phút. Chưa đạt trạng thái E2E toàn bộ xanh.
+
+- Các ca POS drafts và Touch trên Chromium đều PASS, gồm lưu đơn nháp, khôi phục, gán bàn và gửi đơn. Tuy nhiên `pos-drafts.spec.ts` mock API bằng `page.route`, nên không kiểm tra migration/ghi DB thật.
+- Lỗi lưu giỏ tạm trên môi trường local do migration `20261126000000_add_pos_drafts_and_takeaway_sequence` chưa được áp dụng. Đã chạy `pnpm --filter @fnb/api-server db:migrate`; Prisma xác nhận schema local cập nhật và `public.pos_drafts` tồn tại.
+- Sau đó, tab Touch `Lưu tạm` được kiểm tra riêng: POS Touch Vitest 26/26 và `e2e/pos-touch.spec.ts` 15/15 PASS; `pnpm -r typecheck`, `pnpm -r test` (915 test) và `pnpm -r lint` cũng PASS. Full E2E nhiều browser 71/5/9 nêu trên chưa được chạy lại sau thay đổi tab.
+- Còn lỗi chọn đơn Mang về ở WebKit mobile/tablet (không mở được chi tiết đơn) và lỗi thao tác Touch/đơn gọi thêm ở WebKit tablet.
+- Các lỗi khác trong lượt chạy: ESC/POS raster width; 2 ca account preferences; quick cancel; route audit và responsive matrix bị điều hướng lồng nhau làm gián đoạn `page.goto`.
+- Cần xử lý và chạy lại các ca lỗi trước khi coi toàn bộ responsive/E2E là đạt. Các trạng thái module bên dưới là kết quả lịch sử riêng của từng module, không thay thế kết quả chạy toàn suite này.
+
 ---
 
 ## 0. Tiến độ Tổng quan Theo Module
@@ -256,13 +267,16 @@
 
 ## 7. POS Drafts & Takeaway Conversion — Đã chạy kiểm tra tập trung
 
-Các kết quả PASS trong bảng lịch sử ở trên được ghi trước thay đổi này. Trong phiên triển khai, toàn bộ Vitest (`pnpm -r test`) và các luồng POS tập trung đã chạy đạt. Lần chạy full `pnpm e2e` đầu tiên có 71 PASS, 5 SKIP, 9 FAIL; một FAIL là test Touch cũ còn gọi API tạo order trực tiếp sau khi flow chuyển sang draft, đã được sửa và file Touch chạy lại đạt 15/15. Các FAIL còn lại gồm thermal-raster và một số kiểm tra responsive/account trên WebKit. Full suite chưa chạy lại sau khi sửa test Touch, nên trạng thái toàn suite chưa được xác nhận sạch.
+Các kết quả PASS trong bảng lịch sử ở trên được ghi trước thay đổi này. Lần chạy full `pnpm e2e` gần nhất có 72 PASS, 5 SKIP, 8 FAIL. Một lỗi là luồng Touch resume giỏ chưa gán bàn quay lại tab không có bàn; đã chuyển target picker về tab `Tất cả` để giữ cả lựa chọn bàn và Mang về, rồi chạy lại `pos-drafts.spec.ts` đạt 3/3. Bảy lỗi khác ở thermal-raster và một số luồng WebKit (đổi bàn, tuỳ chọn tài khoản, quick cancel) chưa được xử lý hoặc xác minh lại. Full suite chưa chạy lại sau các sửa cuối, nên không ghi nhận toàn bộ E2E sạch. Sau khi sửa header, route audit Chromium chạy đủ 18 route × 9 viewport không ghi nhận vi phạm (`all-routes-audit-output.json: []`). Vitest cuối phiên: Shared 67, API 431, Web 420; tổng 918.
 
 | Hạng mục | Coverage mới | File | Trạng thái hiện tại |
 |----------|--------------|------|--------------------|
 | Shared draft cart Desktop + Touch: giỏ chưa gán bàn → lưu → resume → chọn bàn trống → submit một lần; không gọi endpoint tạo order riêng từ client | E2E flow & request assertions | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — 2 Desktop, 1 Touch |
 | Xoá giỏ tạm đã lưu khỏi danh sách POS | E2E | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — Desktop |
-| POS Touch chuyển sang flow tạo draft rồi submit | E2E regression | `apps/web-app/e2e/pos-touch.spec.ts` | PASS — 15/15; kết hợp với `pos-drafts.spec.ts` chạy lại đạt 18/18 |
+| POS Touch chuyển sang flow tạo draft rồi submit | E2E regression | `apps/web-app/e2e/pos-touch.spec.ts` | PASS — 16/16; kết hợp với `pos-drafts.spec.ts` chạy lại đạt 19/19 |
+| Tab `Lưu tạm`: loading/error/retry, empty state, resume; sau lưu tự chọn tab; target picker mở cả bàn và Mang về | Vitest + E2E | `apps/web-app/src/features/pos-counter/touch/__tests__/pos-touch-page.test.tsx`, `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — 28 Vitest; `pos-drafts.spec.ts` 3/3 |
+| Touch header không tràn ở 768/820px; mở được tab draft ở bề ngang tối thiểu | Playwright + all-routes Chromium audit | `apps/web-app/e2e/pos-touch.spec.ts`, `apps/web-app/e2e/all-routes-audit-output.json` | PASS — `pos-touch.spec.ts` 16/16; audit 18 route × 9 viewport, 0 violation |
+| Seed production yêu cầu `FNB_SEED_INITIAL_PASSWORD` riêng tối thiểu 16 ký tự | Unit | `apps/api-server/prisma/seed.spec.ts` | PASS — 3 seed tests; docs cảnh báo seed reset `order_items`, chỉ dùng lúc khởi tạo DB mới |
 | Revision conflict, occupied target preserves draft, submit/replay idempotency | Service | `apps/api-server/src/modules/pos/__tests__/pos-drafts.spec.ts` | PASS — included in `pnpm -r test` |
 | Vietnam-day sequence boundaries and atomic persistent allocation | Helper | `apps/api-server/src/modules/pos/__tests__/takeaway-sequence.spec.ts` | PASS — included in `pnpm -r test` |
 | MOVE/MERGE TAKEAWAY items no longer print `[MANG VỀ]`; transfer note remains on future kitchen ticket | Service and kitchen split | `apps/api-server/src/modules/pos/__tests__/table-transfer.spec.ts`, `apps/api-server/src/modules/pos/__tests__/kitchen-split.spec.ts` | PASS — included in `pnpm -r test` |

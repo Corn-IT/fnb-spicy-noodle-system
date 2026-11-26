@@ -144,8 +144,8 @@ Mở trình duyệt truy cập **[http://localhost:5173](http://localhost:5173)*
 | `pnpm -r test` | Chạy toàn bộ bộ kiểm thử tự động (Unit & Integration Tests với Vitest). |
 | `pnpm -r test:coverage` | Chạy kiểm thử kèm báo cáo độ phủ mã nguồn (Coverage Report). |
 | `pnpm -r lint` | Kiểm tra quy chuẩn mã nguồn với ESLint. |
-| `pnpm db:setup` | Chạy `prisma generate` + `prisma migrate deploy` + `prisma db seed`. |
-| `pnpm db:seed` | Nạp lại dữ liệu mẫu chuẩn hoá vào PostgreSQL (Idempotent — an toàn chạy lại nhiều lần). |
+| `pnpm db:setup` | Chạy `prisma generate` + migration + seed; chỉ dùng với DB mới vì seed xoá `order_items` và reset menu. |
+| `pnpm db:seed` | Reset danh mục món rồi nạp dữ liệu mẫu; xoá toàn bộ `order_items`, không chạy trên DB có dữ liệu cần giữ. |
 
 ---
 
@@ -153,17 +153,26 @@ Mở trình duyệt truy cập **[http://localhost:5173](http://localhost:5173)*
 
 Khi triển khai lên máy chủ VPS Production:
 
-1. Thiết lập biến môi trường `DB_PASSWORD` và cập nhật tên miền trong `Caddyfile`.
-2. Khởi chạy toàn bộ cụm dịch vụ (`caddy`, `api`, `db`, `backup`):
+1. Sao chép `.env.production.example` thành `.env` và `.env.production`. Đặt `POSTGRES_PASSWORD` trong `.env`; dùng cùng thông tin đăng nhập trong `FNB_DATABASE_URL`/`DATABASE_URL` của `.env.production`; cập nhật `DOMAIN`, `CORS_ORIGIN`, JWT secrets và `FNB_SEED_INITIAL_PASSWORD` (chuỗi ngẫu nhiên riêng, tối thiểu 16 ký tự).
+2. Khởi chạy PostgreSQL và API trước, chưa bật Caddy:
    ```bash
-   DB_PASSWORD=your_strong_postgres_password docker compose up -d --build
+   docker compose up -d --build postgres api-server
    ```
-3. Áp dụng migration và nạp dữ liệu khởi tạo trên container Production:
+3. Container `api-server` đợi PostgreSQL healthy, sau đó chạy `prisma migrate deploy` trước khi khởi động NestJS. Nếu migration lỗi, API không khởi động. Theo dõi log và kiểm tra trạng thái migration:
    ```bash
-   docker compose exec api npx prisma migrate deploy
-   docker compose exec api npx prisma db seed
+   docker compose logs api-server
+   docker compose exec api-server npx prisma migrate status
    ```
-4. Kiểm tra trạng thái hoạt động:
+4. Chỉ trên DB production mới hoàn toàn, nạp dữ liệu ban đầu đúng một lần:
    ```bash
-   curl -f http://localhost:3000/api/v1/health
+   docker compose exec api-server npx prisma db seed
+   ```
+   Tất cả tài khoản seed dùng `FNB_SEED_INITIAL_PASSWORD`. **Không chạy lại trên DB đang vận hành:** script seed hiện tại xoá `order_items` và reset danh mục món trước khi nạp lại. Đổi mật khẩu từng tài khoản sau khi đăng nhập.
+5. Khởi chạy Caddy:
+   ```bash
+   docker compose up -d caddy
+   ```
+6. Kiểm tra trạng thái hoạt động qua domain HTTPS đã cấu hình:
+   ```bash
+   curl -f https://pos.yourdomain.vn/api/v1/health
    ```
