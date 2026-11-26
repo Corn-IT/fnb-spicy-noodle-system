@@ -59,7 +59,7 @@ test.describe('Thermal Provisional VietQR Raster & Scannability Verification (Ch
     expect(decoded!.data).toContain('5802VN');
   });
 
-  test('renders left & right margin controls cleanly, persists across reload/legacy storage, and narrows real Chrome ESC/POS raster', async ({ page }) => {
+  test('renders left & right margin controls cleanly, persists across reload/legacy storage, and keeps full-width real Chrome ESC/POS raster', async ({ page }) => {
     const consoleErrors: string[] = [];
     page.on('console', (msg) => {
       if (msg.type() === 'error') {
@@ -128,24 +128,24 @@ test.describe('Thermal Provisional VietQR Raster & Scannability Verification (Ch
     await page.getByTestId('btn-test-thermal-print').click();
     await expect.poll(() => capturedPayloads.length).toBe(1);
 
-    // Verify real ESC/POS binary bytes: GS L 0 0 and GS v 0 width = 68 bytes (544 dots = 576 - 32)
+    // Margins are baked into the raster so the printer receives the full 576-dot width.
     const firstPayload = capturedPayloads[0]!;
     const hasGsL0 = firstPayload.some(
       (_b, i) => firstPayload[i] === 0x1d && firstPayload[i + 1] === 0x4c && firstPayload[i + 2] === 0 && firstPayload[i + 3] === 0,
     );
-    const hasGsV0Width68 = firstPayload.some(
+    const hasGsV0Width72 = firstPayload.some(
       (_b, i) =>
         firstPayload[i] === 0x1d &&
         firstPayload[i + 1] === 0x76 &&
         firstPayload[i + 2] === 0x30 &&
         firstPayload[i + 3] === 0x00 &&
-        firstPayload[i + 4] === 68 &&
+        firstPayload[i + 4] === 72 &&
         firstPayload[i + 5] === 0,
     );
     expect(hasGsL0).toBe(true);
-    expect(hasGsV0Width68).toBe(true);
+    expect(hasGsV0Width72).toBe(true);
 
-    // Now test left=3mm (24 dots) + right=2mm (16 dots) => GS L 24 0 and GS v 0 width = 67 bytes (536 dots = 576 - 40)
+    // Margins alter the image content, not the raster width or printer hardware margin.
     await leftInput.fill('3');
     await rightInput.fill('2');
     await page.getByTestId('btn-test-thermal-print').click();
@@ -155,17 +155,17 @@ test.describe('Thermal Provisional VietQR Raster & Scannability Verification (Ch
     const hasGsL24 = secondPayload.some(
       (_b, i) => secondPayload[i] === 0x1d && secondPayload[i + 1] === 0x4c && secondPayload[i + 2] === 24 && secondPayload[i + 3] === 0,
     );
-    const hasGsV0Width67 = secondPayload.some(
+    const hasSecondGsV0Width72 = secondPayload.some(
       (_b, i) =>
         secondPayload[i] === 0x1d &&
         secondPayload[i + 1] === 0x76 &&
         secondPayload[i + 2] === 0x30 &&
         secondPayload[i + 3] === 0x00 &&
-        secondPayload[i + 4] === 67 &&
+        secondPayload[i + 4] === 72 &&
         secondPayload[i + 5] === 0,
     );
-    expect(hasGsL24).toBe(true);
-    expect(hasGsV0Width67).toBe(true);
+    expect(hasGsL24).toBe(false);
+    expect(hasSecondGsV0Width72).toBe(true);
 
     // Reload and verify persisted values survive reload
     await page.reload({ waitUntil: 'domcontentloaded' });
