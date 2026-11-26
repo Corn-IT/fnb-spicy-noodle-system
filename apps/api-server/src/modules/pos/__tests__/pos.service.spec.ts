@@ -16,9 +16,12 @@ const product = {
 
 function createHarness() {
   const lockedTables: string[] = [];
+  let takeawaySequence = 0;
   const tx = {
     $queryRaw: vi.fn(async (strings: TemplateStringsArray) => {
-      lockedTables.push(strings.raw.join(''));
+      const sql = strings.raw.join('');
+      lockedTables.push(sql);
+      if (sql.includes('INSERT INTO takeaway_sequences')) return [{ takeawayNumber: ++takeawaySequence }];
       return [];
     }),
     $executeRaw: vi.fn(async (strings: TemplateStringsArray) => {
@@ -104,7 +107,7 @@ function createHarness() {
       vietQrAccountName: 'QUAN MI CAY',
     } as Record<string, string>)[key]),
   };
-  return { tx, prisma, gateway, configuration, lockedTables };
+  return { tx, prisma, gateway, configuration, lockedTables, setTakeawaySequence: (number: number) => { takeawaySequence = number; } };
 }
 
 function createPosService(harness: ReturnType<typeof createHarness>) {
@@ -142,7 +145,7 @@ describe('PosService', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-08T03:00:00.000Z'));
     const firstHarness = createHarness();
-    firstHarness.tx.order.aggregate.mockResolvedValue({ _max: { takeawayNumber: 2 } });
+    firstHarness.setTakeawaySequence(2);
     firstHarness.tx.order.create.mockResolvedValue({
       id: 23, orderCode: 'HD-20261108-0001', orderType: 'TAKEAWAY', orderSource: 'POS_COUNTER',
       tableId: null, takeawayNumber: 3, status: 'SERVING', totalAmount: new Prisma.Decimal('100.00'),
@@ -151,9 +154,7 @@ describe('PosService', () => {
 
     await expect(firstService.createOrder({ orderType: 'TAKEAWAY', tableId: null, items: [{ productId: 11, quantity: 1 }] }, 3))
       .resolves.toMatchObject({ takeawayNumber: 3 });
-    expect(firstHarness.tx.order.aggregate).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
-      createdAt: { gte: new Date('2026-11-07T17:00:00.000Z'), lt: new Date('2026-11-08T17:00:00.000Z') },
-    }) }));
+    expect(firstHarness.lockedTables.some((sql) => sql.includes('INSERT INTO takeaway_sequences'))).toBe(true);
 
     vi.setSystemTime(new Date('2026-11-08T17:00:00.000Z'));
     const nextDayHarness = createHarness();
@@ -165,9 +166,7 @@ describe('PosService', () => {
 
     await expect(nextDayService.createOrder({ orderType: 'TAKEAWAY', tableId: null, items: [{ productId: 11, quantity: 1 }] }, 3))
       .resolves.toMatchObject({ takeawayNumber: 1 });
-    expect(nextDayHarness.tx.order.aggregate).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
-      createdAt: { gte: new Date('2026-11-08T17:00:00.000Z'), lt: new Date('2026-11-09T17:00:00.000Z') },
-    }) }));
+    expect(nextDayHarness.lockedTables.some((sql) => sql.includes('INSERT INTO takeaway_sequences'))).toBe(true);
   });
 
   it('should reject a POS dine-in order when its physical table is already occupied', async () => {

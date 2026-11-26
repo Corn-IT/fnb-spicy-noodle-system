@@ -5,7 +5,7 @@ description: Prisma database schema, PostgreSQL data types, transactions, SELECT
 
 # 01 — Cơ sở Dữ liệu & Xử lý Đồng thời (Database & Concurrency Rules)
 
-> Áp dụng cho: Mọi Agent thao tác trên Prisma Schema, Migrations, Services và SQL Transactions. Đồng bộ 100% với `apps/api-server/prisma/schema.prisma` (18 bảng, 16 migrations) và `docs/architecture/01-verified-erd.mmd`.
+> Áp dụng cho: Mọi Agent thao tác trên Prisma Schema, Migrations, Services và SQL Transactions. Đồng bộ 100% với `apps/api-server/prisma/schema.prisma` (20 bảng, 17 migrations) và `docs/architecture/01-verified-erd.mmd`.
 
 ---
 

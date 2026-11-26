@@ -78,6 +78,8 @@ model User {
   schedules     WorkSchedule[]
   createdDiscounts Discount[]          @relation("DiscountCreator")
   pushSubscriptions PushSubscription[]
+  posDraftsCreated PosDraft[]         @relation("PosDraftCreator")
+  posDraftsUpdated PosDraft[]         @relation("PosDraftUpdater")
 
   @@map("users")
 }
@@ -90,6 +92,7 @@ model DiningTable {
   activeOrderId Int?    @map("active_order_id")
   activeOrder   Order?  @relation("ActiveOrder", fields: [activeOrderId], references: [id], onDelete: SetNull)
   orders        Order[] @relation("OrderTable")
+  posDrafts     PosDraft[]
 
   @@map("dining_tables")
 }
@@ -206,12 +209,44 @@ model Order {
   paymentAccount     PaymentAccount? @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
   discount           Discount?       @relation(fields: [discountId], references: [id], onDelete: Restrict)
   items              OrderItem[]
+  submittedPosDraft  PosDraft?
 
   @@index([createdAt(sort: Desc), status, paymentMethod], map: "idx_orders_created_status")
   @@index([status, orderSource, createdAt], map: "idx_orders_qr_pending")
   @@index([paymentAccountId, paidAt], map: "idx_orders_payment_account_paid")
   @@index([discountId], map: "idx_orders_discount_id")
   @@map("orders")
+}
+
+model PosDraft {
+  id                  String      @id @default(cuid()) @db.VarChar(30)
+  orderType           String?     @map("order_type") @db.VarChar(16)
+  tableId             Int?        @map("table_id")
+  items               Json        @default("[]") @db.JsonB
+  note                String?     @db.Text
+  revision            Int         @default(1)
+  createdBy           Int         @map("created_by")
+  updatedBy           Int         @map("updated_by")
+  submittedOrderId    Int?        @unique(map: "uq_pos_drafts_submitted_order") @map("submitted_order_id")
+  submitIdempotencyKey String?    @map("submit_idempotency_key") @db.VarChar(128)
+  submittedAt         DateTime?   @map("submitted_at") @db.Timestamptz(6)
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  table               DiningTable? @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  creator             User        @relation("PosDraftCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  updater             User        @relation("PosDraftUpdater", fields: [updatedBy], references: [id], onDelete: Restrict)
+  submittedOrder      Order?      @relation(fields: [submittedOrderId], references: [id], onDelete: Restrict)
+
+  @@index([submittedAt, updatedAt(sort: Desc)], map: "idx_pos_drafts_active_updated")
+  @@map("pos_drafts")
+}
+
+model TakeawaySequence {
+  businessDate String   @id @map("business_date") @db.Char(8)
+  lastNumber   Int      @default(0) @map("last_number")
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("takeaway_sequences")
 }
 
 model Discount {

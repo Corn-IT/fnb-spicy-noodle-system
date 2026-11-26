@@ -31,6 +31,8 @@ export function PosUnifiedPage() {
     onViewChange: (event) => {
       if (event === 'draft-started') {
         setPosTab('menu');
+      } else if (event === 'draft-target-picker' || event === 'draft-parked') {
+        setPosTab('tables');
       } else if (event === 'draft-submitted') {
         setPosTab('tables');
       } else if (isNarrowViewport()) {
@@ -57,7 +59,7 @@ export function PosUnifiedPage() {
     dialogs,
     actions,
   } = workspace;
-  const { canCreateOrder, canUpdateOrder, canSplitKitchen, canTableAction, canCheckout } =
+  const { canCreateOrder, canUpdateOrder, canSaveDraft, canSplitKitchen, canTableAction, canCheckout } =
     permissions;
   const { activeBadgeCount, activeTotal, activeLabel } = summary;
 
@@ -172,6 +174,8 @@ export function PosUnifiedPage() {
             <TableGridPanel
               tables={gridData?.tables ?? []}
               takeaways={gridData?.takeaways ?? []}
+              drafts={workspace.parkedDrafts}
+              activeDraftId={workspace.activeDraftId}
               takeawayQrToken={gridData?.takeawayQrToken}
               selectedOrderId={selectedOrderId}
               draftTarget={draftTarget}
@@ -179,6 +183,9 @@ export function PosUnifiedPage() {
               onSelectTable={actions.selectTable}
               onSelectTakeawayOrder={actions.selectTakeawayOrder}
               onStartNewTakeaway={actions.startNewTakeaway}
+              onStartUntargetedDraft={actions.startUntargetedDraft}
+              onResumeDraft={actions.resumeDraft}
+              onDeleteDraft={actions.deleteDraft}
             />
           </TabsContent>
 
@@ -238,6 +245,7 @@ export function PosUnifiedPage() {
           draftTarget={draftTarget}
           draftItems={draftItems}
           canCreate={canCreateOrder}
+          canSaveDraft={canSaveDraft}
           canUpdate={canUpdateOrder}
           canSplitKitchen={canSplitKitchen}
           canTableAction={canTableAction}
@@ -246,6 +254,7 @@ export function PosUnifiedPage() {
           isProvisionalPending={pending.isProvisionalPending}
           isApprovingQr={pending.isApprovingQr}
           isSubmittingDraft={pending.isSubmittingDraft}
+          isSavingDraft={pending.isSavingDraft}
           isCancellingOrder={pending.isCancellingOrder}
           isReprintPending={pending.isReprintPending}
           isDiscountPending={pending.isDiscountPending}
@@ -253,6 +262,8 @@ export function PosUnifiedPage() {
           onUpdateDraftQty={actions.updateDraftQty}
           onRemoveDraftItem={actions.removeDraftItem}
           onSubmitDraftOrder={actions.submitDraftOrder}
+          onSaveDraft={actions.saveDraft}
+          onChooseDraftTarget={actions.chooseDraftTarget}
           onApproveQrOrder={actions.approveQrOrder}
           onUpdateOrderItemQuantity={actions.updateOrderItemQuantity}
           onToggleOrderItemTakeaway={actions.toggleOrderItemTakeaway}

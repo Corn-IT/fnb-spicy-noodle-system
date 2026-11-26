@@ -210,7 +210,12 @@ export function PersonalPreferencesCard() {
   };
 
   const handleMoveGroup = (key: string, delta: -1 | 1) => {
-    const current: string[] = orderedGroups.map((group) => group.key);
+    const latestUserOrder = useUiPreferencesStore.getState().userNavGroupOrder;
+    const latestOrder = sortNavGroups(
+      [...APP_NAVIGATION_GROUPS],
+      latestUserOrder.length > 0 ? latestUserOrder : settings.navGroupOrder,
+    );
+    const current: string[] = latestOrder.map((group) => group.key);
     const next = moveWithinSubset(current, current, key, delta);
     setUserNavGroupOrder(next);
     void persist({ navGroupOrder: next });

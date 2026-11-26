@@ -9,6 +9,15 @@
 > 4. `thungan` (`thungan` / `Password@123`)
 > 5. `qr_guest` (ẩn danh `/qr/:token`, không auth)
 
+## 0A. Kết quả chạy lại gần nhất — 2026-11-26
+
+`pnpm e2e` (Playwright CLI, Node 22.23): **82 PASS / 5 SKIP / 0 FAIL** trên 87 ca, chạy 9,6 phút.
+
+- Cả 5 ca skip là theo thiết bị: một ca chỉ dành cho phone bị bỏ trên Chromium desktop và WebKit tablet; ba ca sidebar desktop được bỏ trên WebKit mobile. Không có ca nào skip vì thiếu cấu hình hoặc lỗi.
+- POS drafts, Touch, chuyển đổi Mang về/bàn, thermal QR, responsive matrix và route audit đều pass trong full suite. Case UI “QR lấy bàn đã lưu, giữ giỏ rồi cho đổi bàn và gửi lại” pass trên Chromium; UI E2E này dùng API mock.
+- Đã kiểm tra thêm với API thật và PostgreSQL local cô lập: áp dụng đủ 17 migration, seed dữ liệu; QR lấy Bàn 10 trước khiến POS submit nhận `409 POS_TABLE_NOT_AVAILABLE`, giỏ revision 1 còn nguyên; đổi sang Bàn 03 rồi submit thành công. Kiểm tra đồng thời QR + POS submit trên Bàn 11 cho kết quả QR thắng, POS nhận `409`, DB chỉ có một đơn hoạt động và draft được giữ. Database/API tạm đã được dọn sau kiểm tra.
+- Kiểm tra tranh chấp PostgreSQL là một lượt đồng thời, chưa phải stress test nhiều lượt hoặc kiểm tra mọi lịch xen kẽ. Các trạng thái module bên dưới vẫn có một số kết quả lịch sử; ưu tiên số liệu chạy mới ở mục này.
+
 ---
 
 ## 0. Tiến độ Tổng quan Theo Module
@@ -253,3 +262,20 @@
 | SEC-08 | SQLi / NoSQLi ở ô tìm kiếm, bộ lọc, query params, URL params | PASS | — | Probe `' OR '1'='1`, `"; DROP TABLE orders;--`, `{"$ne":null}` trên `/employees`, `/invoices`, `/menu`, `/mdm/lookup` đều trả `200 OK` an toàn (Prisma parameterized) |
 | SEC-09 | Giới hạn kích thước payload (body JSON lớn, upload ảnh quá lớn / sai MIME / giả mạo extension) | PASS | — | Body JSON `2MB` trên `/public/orders/qr` trả `413`; SVG MIME bị chặn `422`; file `.txt` đổi tên / vượt dung lượng bị từ chối ở M6 & M16 (`413`/`422`) |
 | SEC-10 | Rate Limit (`login`, `public/orders/qr`, `public/tts`) & Concurrency (double submit, 2 thu ngân checkout/table-action/split-kitchen đồng thời trên cùng đơn) | FAIL→FIXED | `rate-limit.guard.ts:125-161,299-308`; `live-invoice-panel.tsx:283,288,491,690,720,745` | Attempt 9 `/auth/login` → `429` (`Retry-After: 300`); attempt 7 `/public/orders/qr` → `429` (`Retry-After: 60`); 65 req `/public/tts` < 300/min; Concurrency live `2x createQrOrder` `Promise.all` (`Bàn 04` gộp 1 đơn), `2` tab thu ngân bắn song song `POST /checkout` (`1` thành công, `1` trả `409`), cộng thêm **Hotfix M10-2** khoá UI trên tab còn lại khi đơn chuyển `PAID` |
+
+## 7. POS Drafts & Takeaway Conversion — Đã chạy kiểm tra tập trung
+
+Full suite `pnpm e2e` hiện tại đạt 82 PASS / 5 SKIP / 0 FAIL trên 87 ca. Kiểm tra PostgreSQL/API thật cho QR chiếm bàn và submit giỏ đồng thời cũng pass như ghi tại mục 0A; đây là một lượt race, không thay thế stress test. Sau khi sửa header, route audit Chromium chạy đủ 18 route × 9 viewport không ghi nhận vi phạm (`all-routes-audit-output.json: []`). Vitest gần nhất: Shared 67, API 431, Web 420; tổng 918.
+
+| Hạng mục | Coverage mới | File | Trạng thái hiện tại |
+|----------|--------------|------|--------------------|
+| Shared draft cart Desktop + Touch: giỏ chưa gán bàn → lưu → resume → chọn bàn trống → submit một lần; không gọi endpoint tạo order riêng từ client | E2E flow & request assertions | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — 3 Desktop, 1 Touch |
+| QR nhận bàn đã gắn với draft; UI giữ giỏ và cho đổi bàn; API thật + PostgreSQL từ chối submit cũ và giữ revision, race QR/POS không tạo hai đơn hoạt động | Playwright UI mock + HTTP/API E2E trên PostgreSQL cô lập | `apps/web-app/e2e/pos-drafts.spec.ts`; lượt kiểm tra DB thật được chạy riêng | PASS — UI 1/1; DB thật: QR-first Bàn 10 và một lượt đồng thời Bàn 11 |
+| Xoá giỏ tạm đã lưu khỏi danh sách POS | E2E | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — Desktop |
+| POS Touch chuyển sang flow tạo draft rồi submit | E2E regression | `apps/web-app/e2e/pos-touch.spec.ts` | PASS — 16/16; kết hợp với `pos-drafts.spec.ts` chạy lại đạt 19/19 |
+| Tab `Lưu tạm`: loading/error/retry, empty state, resume; sau lưu tự chọn tab; target picker mở cả bàn và Mang về | Vitest + E2E | `apps/web-app/src/features/pos-counter/touch/__tests__/pos-touch-page.test.tsx`, `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — 28 Vitest; `pos-drafts.spec.ts` 3/3 |
+| Touch header không tràn ở 768/820px; mở được tab draft ở bề ngang tối thiểu | Playwright + all-routes Chromium audit | `apps/web-app/e2e/pos-touch.spec.ts`, `apps/web-app/e2e/all-routes-audit-output.json` | PASS — `pos-touch.spec.ts` 16/16; audit 18 route × 9 viewport, 0 violation |
+| Seed production yêu cầu `FNB_SEED_INITIAL_PASSWORD` riêng tối thiểu 16 ký tự | Unit | `apps/api-server/prisma/seed.spec.ts` | PASS — 3 seed tests; docs cảnh báo seed reset `order_items`, chỉ dùng lúc khởi tạo DB mới |
+| Revision conflict, occupied target preserves draft, submit/replay idempotency | Service | `apps/api-server/src/modules/pos/__tests__/pos-drafts.spec.ts` | PASS — included in `pnpm -r test` |
+| Vietnam-day sequence boundaries and atomic persistent allocation | Helper | `apps/api-server/src/modules/pos/__tests__/takeaway-sequence.spec.ts` | PASS — included in `pnpm -r test` |
+| MOVE/MERGE TAKEAWAY items no longer print `[MANG VỀ]`; transfer note remains on future kitchen ticket | Service and kitchen split | `apps/api-server/src/modules/pos/__tests__/table-transfer.spec.ts`, `apps/api-server/src/modules/pos/__tests__/kitchen-split.spec.ts` | PASS — included in `pnpm -r test` |

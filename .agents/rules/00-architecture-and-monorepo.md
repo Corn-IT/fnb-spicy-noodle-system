@@ -47,7 +47,7 @@ fnb-spicy-noodle-system/
 ├── docs/
 │   ├── HUONG_DAN_SU_DUNG_VA_GIAI_PHAP.md
 │   ├── bmad/                          # PRD, RBAC/MDM Matrix, Edge Cases
-│   ├── architecture/                  # Verified ERD (18 bảng), State Machines, Sequences, Audit Report
+│   ├── architecture/                  # Verified ERD (20 bảng), State Machines, Sequences, Audit Report
 │   ├── stories/                       # story-01 .. story-21
 │   └── qa/                            # E2E & Realtime QA reports
 ├── apps/

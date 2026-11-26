@@ -1,13 +1,19 @@
 ---
 name: bmad-build-auto
-description: 'One iteration of an unattended development loop. Use when invoked by name'
+description: 'Implements one story, feature, or bug fix end to end without human interaction: plan, code, review, verify, report status. Use when invoked by name, usually by an orchestrator'
 ---
 
-Run the following command exactly once without changing the current working directory. Replace `{project-root}` with the absolute path to the project root and `{skill-root}` with the absolute path to this skill's directory:
+Run the following command exactly once without changing the current working directory.
+
+Replace `{project-root}` with the nearest folder containing `_bmad/`, from the working directory upward.
+Replace `{skill-root}` with the absolute path to this skill's directory.
 
 ```bash
 uv run --no-cache "{project-root}/_bmad/scripts/render_skill.py" --project-root "{project-root}" --skill "{skill-root}"
 ```
 
-- On success, read and follow the one absolute `workflow.md` instruction printed to stdout.
-- On failure (including `uv` being unavailable), report the command output and HALT. Do not run any workflow source directly.
+- When the invocation names a route (`oneshot` or `full`), append `--set workflow.route=<value>` to the command.
+- When the invocation names a review selection (`none`, `quick`, or `thorough`; "skip review" or "no review" mean `none`), append `--set workflow.review=<value>` to the command.
+- The command prints the skill's workflow: follow it. `HALT: <reason>`: report the reason and stop.
+- If the script does not exist, BMad is not set up in this project yet. When the implementation is already authorized by the user or project instructions, run the documented project-local setup/update flow with the `bmad` skill, then render again without asking for confirmation. If the `bmad` skill is missing, use the project's documented official install flow first; never hand-write `_bmad/` or use a temporary skill copy. Ask only when setup is outside the user's authorization.
+- On any other output or failure, including `uv` being unavailable, report the command output and stop. Do not run any workflow source directly.

@@ -33,6 +33,7 @@ Hệ thống chạy gói gọn trong **3 container** trên mạng nội bộ `fn
   - `FNB_JWT_REFRESH_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` (mặc định `7d`)
   - `FNB_PORT` / `PORT` (mặc định `3000`)
   - `FNB_CORS_ORIGIN` / `CORS_ORIGIN`
+  - `FNB_SEED_INITIAL_PASSWORD` — bắt buộc khi seed production, tối thiểu 16 ký tự; đặt trước lần seed đầu tiên.
   - Tuỳ chọn: `FNB_R2_*` (Cloudflare R2), `FNB_VAPID_PUBLIC_KEY` / `FNB_VAPID_PRIVATE_KEY` / `FNB_VAPID_SUBJECT` (Web Push — nếu bỏ trống hệ thống tự sinh & lưu trong PostgreSQL).
 - Frontend: `VITE_API_BASE_URL`, `VITE_SOCKET_URL`.
 - **NEVER** commit `.env` hoặc `.env.production`.
@@ -63,11 +64,34 @@ hotfix/<description> ← branch từ main, merge lại main + develop
 ## 4. Production Deploy Checklist
 
 1. Chạy `pnpm -r typecheck && pnpm -r test && pnpm -r lint` trước khi merge vào `main`.
-2. Trên VPS: `docker compose up -d --build`.
-3. Chạy migration: `docker compose exec api-server npx prisma migrate deploy`.
-4. Kiểm tra `/api/v1/health` trả `200 OK` với `"status":"ok","database":"connected"`.
+2. Cài mới: đặt `FNB_SEED_INITIAL_PASSWORD`, sau đó chạy `docker compose up -d --build postgres api-server` để API tự migrate trước khi khởi động. Xác nhận log và `docker compose exec api-server npx prisma migrate status`.
+3. Chỉ với DB hoàn toàn mới, chạy `docker compose exec api-server npx prisma db seed` đúng một lần trước khi mở traffic. Mọi tài khoản seed dùng mật khẩu trên. Lệnh seed hiện tại reset menu và xoá `order_items`; **NEVER** chạy trên DB production đang có dữ liệu cần giữ.
+4. Sau khi seed thành công, chạy `docker compose up -d caddy`, đăng nhập và đổi mật khẩu các tài khoản seed.
+5. Nếu nền tảng deploy không gọi Docker entrypoint này, release job **MUST** chạy `pnpm db:migrate` trước khi khởi động hoặc chuyển traffic sang API mới.
+6. Kiểm tra `/api/v1/health` trả `200 OK` với `"status":"ok","database":"connected"`.
 
 ## 5. MUST / NEVER Commit
 
-- **MUST commit:** `docker-compose.yml`, `Dockerfile.caddy`, `apps/api-server/Dockerfile`, `Caddyfile`, `.env.example`, `.env.production.example`, `prisma/schema.prisma`, `prisma/migrations/`, `pnpm-lock.yaml`.
+- **MUST commit:** `docker-compose.yml`, `Dockerfile.caddy`, `apps/api-server/Dockerfile`, `Caddyfile`, `.env.example`, `.env.production.example`, `prisma/schema.prisma`, `prisma/migrations/`, `pnpm-lock.yaml`, BMAD project skills/module records and `skills-lock.json`.
 - **NEVER commit:** `.env`, `.env.production`, `certs/*`, `node_modules/`, `dist/`, `coverage/`.
+
+## 6. BMAD Skills & Project Runtime
+
+- Version the project BMAD entry skills, module records and `skills-lock.json`; keep `bmad-build` / `bmad-build-auto` on the same BMAD Method release as the `bmad` / Core Tools runtime.
+- BMAD setup scripts require `uv`. The Skills CLI currently requires Node.js `>=22.20.0`; use that for skill management without changing the Node runtime used by the POS app.
+- Initial project installation (run with Node.js `>=22.20.0`):
+
+```bash
+npx skills add bmad-code-org/BMAD-METHOD/skills/core-tools --skill bmad bmod-core-tools -a codex -y
+npx skills add bmad-code-org/BMAD-METHOD/skills/method --skill bmad-build bmad-build-auto bmod-method -a codex -y
+```
+
+- Then run the `bmad` skill's `bmad setup` flow to generate or repair `_bmad/`. If an implementation request is already authorized, setup is part of that work; do not pause to ask permission. **NEVER** hand-write `_bmad/scripts` or bypass a parser error with a temporary skill copy.
+- If `render_skill.py` reports old template syntax, update the project skills with `npx skills update -p -y`, run `bmad setup`, then render the project-local skill again. Preserve retired skills until the user authorizes removal.
+- `_bmad/` and `_bmad-output/` are generated local runtime and planning artifacts; keep them ignored. Commit the skill sources and lock so another developer can reproduce setup.
+
+If the app shell has Node.js older than 22.20.0, run the CLI with an isolated newer runtime instead of changing the app toolchain:
+
+```bash
+npx --yes --package=node@22.20.0 --package=skills@1.9.0 -c 'skills update -p -y'
+```

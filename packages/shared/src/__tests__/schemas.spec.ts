@@ -14,6 +14,8 @@ const publicContractNames = [
   'ProductSchema', 'CreateProductSchema', 'UpdateProductSchema', 'DiningTableSchema', 'PublicMenuResponseSchema',
   'OrderItemModifierSnapshotSchema', 'CreateOrderItemInputSchema', 'CreateQrOrderSchema', 'CreatePosOrderSchema',
   'OrderItemModifierSelectionSchema', 'ApproveQrOrderSchema', 'PatchOrderItemsSchema', 'PosOrderCreationResponseSchema',
+  'PosDraftStateSchema', 'CreatePosDraftRequestSchema', 'UpdatePosDraftRequestSchema', 'SubmitPosDraftRequestSchema',
+  'PosDraftResponseSchema', 'PosDraftListResponseSchema', 'SubmitPosDraftResponseSchema', 'PosDraftInvalidationPayloadSchema',
   'QrOrderResponseSchema', 'PosOrderSummarySchema', 'PosTableGridResponseSchema', 'OrderDetailResponseSchema',
   'UpdateOrderItemSchema', 'SplitKitchenResponseSchema', 'TableActionRequestSchema', 'TableActionResponseSchema',
   'ProvisionalBillResponseSchema', 'CheckoutOrderRequestSchema', 'InvoiceFilterQuerySchema', 'VoidInvoiceRequestSchema',
@@ -71,11 +73,13 @@ describe('@fnb/shared contracts', () => {
       'PAYMENT_QR_NOT_CONFIGURED', 'PAYMENT_QR_LOCKED_FIELD', 'PAYMENT_QR_IN_USE', 'PAYMENT_QR_CANNOT_DELETE_ACTIVE', 'PAYMENT_QR_LAST_ACTIVE', 'PAYMENT_QR_DUPLICATE_ACCOUNT',
       'STORE_ASSET_INVALID_TYPE', 'STORE_ASSET_TOO_LARGE', 'STORE_SETTINGS_CONFLICT',
       'DISCOUNT_NOT_FOUND', 'DISCOUNT_INACTIVE', 'DISCOUNT_EXPIRED', 'DISCOUNT_NOT_STARTED', 'DISCOUNT_OUT_OF_TIME_WINDOW', 'DISCOUNT_USAGE_EXHAUSTED', 'DISCOUNT_NOT_APPLICABLE', 'DISCOUNT_LOCKED_FIELDS', 'POS_DISCOUNT_BLOCKS_SPLIT',
+      'POS_DRAFT_CONCURRENT_MODIFICATION', 'POS_DRAFT_ALREADY_SUBMITTED',
     ]);
     expect(contracts.ErrorCodes.AUTH_TOKEN_EXPIRED).toBe('AUTH_TOKEN_EXPIRED');
     expect(contracts.ErrorCodes.CASHFLOW_DISCREPANCY_NOTE_REQUIRED).toBe('CASHFLOW_DISCREPANCY_NOTE_REQUIRED');
     expect(contracts.SocketNamespace).toBe('/pos');
     expect(contracts.SocketEvents.ORDER_QR_NEW).toBe('order:qr_new');
+    expect(contracts.SocketEvents.POS_DRAFTS_UPDATED).toBe('pos:drafts_updated');
     expect(contracts.SocketRooms.orderSession(42)).toBe('order_session_42');
   });
 
@@ -279,6 +283,11 @@ describe('@fnb/shared contracts', () => {
     expect(contracts.CreatePosOrderSchema.safeParse({ orderType: 'DINE_IN', tableId: null, items: [item] }).success).toBe(false);
     expect(contracts.CreatePosOrderSchema.safeParse({ orderType: 'TAKEAWAY', tableId: null, items: [item] }).success).toBe(true);
     expect(contracts.CreatePosOrderSchema.safeParse({ orderType: 'TAKEAWAY', tableId: 3, items: [item] }).success).toBe(false);
+    expect(contracts.CreatePosDraftRequestSchema.safeParse({ orderType: null, tableId: null, items: [item], note: null }).success).toBe(true);
+    expect(contracts.CreatePosDraftRequestSchema.safeParse({ orderType: null, tableId: 3, items: [item], note: null }).success).toBe(false);
+    expect(contracts.CreatePosDraftRequestSchema.safeParse({ orderType: 'DINE_IN', tableId: null, items: [item], note: null }).success).toBe(true);
+    expect(contracts.CreatePosDraftRequestSchema.safeParse({ orderType: 'TAKEAWAY', tableId: 3, items: [item], note: null }).success).toBe(false);
+    expect(contracts.CreatePosDraftRequestSchema.safeParse({ orderType: 'TAKEAWAY', tableId: null, items: [{ ...item, unitPrice: 100 }], note: null }).success).toBe(false);
     expect(contracts.UpdateOrderItemSchema.safeParse({ orderItemId: 1, quantity: 1 }).success).toBe(true);
     expect(contracts.UpdateOrderItemSchema.safeParse({ orderItemId: 1 }).success).toBe(false);
     expect(contracts.SplitKitchenResponseSchema.safeParse({ tickets: [] }).success).toBe(true);

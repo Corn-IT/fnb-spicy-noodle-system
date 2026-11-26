@@ -13,18 +13,24 @@ const discountsMigration = readFileSync(
   resolve(prismaDirectory, 'migrations/20261115134905_add_discounts/migration.sql'),
   'utf8',
 );
+const posDraftsMigration = readFileSync(
+  resolve(prismaDirectory, 'migrations/20261126000000_add_pos_drafts_and_takeaway_sequence/migration.sql'),
+  'utf8',
+);
 
 describe('Prisma schema and initial migration', () => {
-  it('should define all eighteen physical models including payment_accounts, discounts, audit_logs, and push_subscriptions', () => {
+  it('should define all twenty physical models including POS drafts and takeaway sequences', () => {
     const tableNames = [
       'master_data', 'employees', 'users', 'dining_tables', 'products', 'combo_items',
-      'modifier_groups', 'modifiers', 'payment_accounts', 'orders', 'discounts', 'discount_targets',
+      'modifier_groups', 'modifiers', 'payment_accounts', 'orders', 'pos_drafts', 'takeaway_sequences', 'discounts', 'discount_targets',
       'order_items', 'inventory_imports', 'cash_drawer_settlements', 'work_schedules', 'audit_logs',
       'push_subscriptions',
     ];
 
     expect([...schema.matchAll(/@@map\("([a-z_]+)"\)/g)].map((match) => match[1])).toEqual(tableNames);
-    expect([...schema.matchAll(/^model\s+/gm)]).toHaveLength(18);
+    expect([...schema.matchAll(/^model\s+/gm)]).toHaveLength(20);
+    expect(posDraftsMigration).toContain('CREATE TABLE "pos_drafts"');
+    expect(posDraftsMigration).toContain('CREATE TABLE "takeaway_sequences"');
   });
 
   it('should keep every monetary column as Decimal(12, 2)', () => {

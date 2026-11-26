@@ -68,6 +68,79 @@ export const CreatePosOrderSchema = z.object({
 });
 export type CreatePosOrderInput = z.infer<typeof CreatePosOrderSchema>;
 
+const PosDraftFieldsSchema = z.object({
+  orderType: OrderTypeSchema.nullable(),
+  tableId: IdSchema.nullable(),
+  items: z.array(CreateOrderItemInputSchema).max(100),
+  note: z.string().trim().max(1000).nullable(),
+}).strict();
+
+const validatePosDraftTarget = (draft: PosDraftState, context: z.RefinementCtx) => {
+  if (draft.orderType === null && draft.tableId !== null) {
+    context.addIssue({ code: 'custom', message: 'Giỏ chưa gán loại đơn không được gắn bàn', path: ['tableId'] });
+  }
+  if (draft.orderType === 'TAKEAWAY' && draft.tableId !== null) {
+    context.addIssue({ code: 'custom', message: 'Đơn mang về không được gắn bàn', path: ['tableId'] });
+  }
+};
+
+export const PosDraftStateSchema = PosDraftFieldsSchema.superRefine(validatePosDraftTarget);
+export type PosDraftState = z.infer<typeof PosDraftStateSchema>;
+
+export const CreatePosDraftRequestSchema = PosDraftStateSchema;
+export type CreatePosDraftRequest = z.infer<typeof CreatePosDraftRequestSchema>;
+
+export const UpdatePosDraftRequestSchema = PosDraftFieldsSchema.extend({
+  expectedRevision: z.number().int().positive(),
+}).strict().superRefine((draft, context) => validatePosDraftTarget(draft, context));
+export type UpdatePosDraftRequest = z.infer<typeof UpdatePosDraftRequestSchema>;
+
+export const SubmitPosDraftRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  idempotencyKey: z.string().trim().min(16).max(128),
+}).strict();
+export type SubmitPosDraftRequest = z.infer<typeof SubmitPosDraftRequestSchema>;
+
+export const PosDraftResponseSchema = PosDraftFieldsSchema.extend({
+  id: z.string().min(1),
+  revision: z.number().int().positive(),
+  tableName: z.string().min(1).nullable(),
+  createdAt: IsoDateTimeSchema,
+  updatedAt: IsoDateTimeSchema,
+}).strict().superRefine((draft, context) => validatePosDraftTarget(draft, context));
+export type PosDraftResponse = z.infer<typeof PosDraftResponseSchema>;
+
+export const PosDraftListResponseSchema = z.object({
+  drafts: z.array(PosDraftResponseSchema),
+}).strict();
+export type PosDraftListResponse = z.infer<typeof PosDraftListResponseSchema>;
+
+export const SubmitPosDraftResponseSchema = z.object({
+  draftId: z.string().min(1),
+  order: z.object({
+    orderId: IdSchema,
+    orderCode: z.string().min(1),
+    orderType: OrderTypeSchema,
+    tableId: IdSchema.nullable(),
+    takeawayNumber: IdSchema.nullable(),
+    tableLabel: z.string().min(1).nullable(),
+    status: OrderStatusSchema,
+    subtotalAmount: MoneyAmountSchema.optional(),
+    discountAmount: MoneyAmountSchema.optional(),
+    totalAmount: MoneyAmountSchema,
+  }).strict(),
+  idempotentReplay: z.boolean(),
+}).strict();
+export type SubmitPosDraftResponse = z.infer<typeof SubmitPosDraftResponseSchema>;
+
+export const PosDraftInvalidationPayloadSchema = z.object({
+  draftId: z.string().min(1),
+  action: z.enum(['SAVED', 'DELETED', 'SUBMITTED']),
+  revision: z.number().int().positive().optional(),
+  updatedAt: IsoDateTimeSchema,
+}).strict();
+export type PosDraftInvalidationPayload = z.infer<typeof PosDraftInvalidationPayloadSchema>;
+
 export const UpdateOrderItemSchema = z.object({
   orderItemId: IdSchema,
   quantity: z.number().int().positive().optional(),

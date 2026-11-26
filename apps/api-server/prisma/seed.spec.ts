@@ -6,6 +6,25 @@ import { productSeed } from './seed-data';
 type SeedRow = Record<string, unknown> & { id: number };
 
 describe('seedDatabase', () => {
+  it('requires a private initial password before production seeding', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousSeedPassword = process.env.FNB_SEED_INITIAL_PASSWORD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.FNB_SEED_INITIAL_PASSWORD;
+    const transaction = vi.fn();
+    const prisma = { $transaction: transaction } as never;
+
+    try {
+      await expect(seedDatabase(prisma)).rejects.toThrow('FNB_SEED_INITIAL_PASSWORD is required in production');
+      expect(transaction).not.toHaveBeenCalled();
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousSeedPassword === undefined) delete process.env.FNB_SEED_INITIAL_PASSWORD;
+      else process.env.FNB_SEED_INITIAL_PASSWORD = previousSeedPassword;
+    }
+  });
+
   it('should stop before creating accounts when required master data is missing', async () => {
     const prisma = {
       $transaction: vi.fn(async (callback: (transaction: { masterData: { upsert: () => Promise<{ id: number }> } }) => Promise<void>) =>

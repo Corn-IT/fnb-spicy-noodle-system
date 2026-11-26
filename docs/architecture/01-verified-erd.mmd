@@ -1,9 +1,9 @@
 %% ============================================================================
 %% FILE: docs/architecture/01-verified-erd.mmd
 %% PROJECT: Hệ thống POS & Quản trị Vận hành Quán Mì Cay (fnb-spicy-noodle-system)
-%% PHASE: Phase 2 Baseline + Post-Implementation Sync (18 Physical Tables)
+%% PHASE: Phase 2 Baseline + POS Draft Extension (20 Physical Tables)
 %% AUTHOR: Principal System Architect & QA Auditor
-%% LAST UPDATED: 2026-11-26 (Synced with apps/api-server/prisma/schema.prisma & 16 migrations)
+%% LAST UPDATED: 2026-11-26 (Synced with apps/api-server/prisma/schema.prisma & 17 migrations)
 %% ============================================================================
 %% QUY TẮC BẤT BIẾN ĐÃ KIỂM ĐỊNH TRONG ERD NÀY:
 %% - Hard Invariant 2 (TAKEAWAY vs DINE_IN): orders.table_id NULLABLE cho TAKEAWAY,
@@ -36,8 +36,11 @@ erDiagram
     USERS ||--o{ CASH_DRAWER_SETTLEMENTS : "closed_by (ON DELETE RESTRICT)"
     USERS ||--o{ DISCOUNTS : "created_by (ON DELETE RESTRICT)"
     USERS ||--o{ PUSH_SUBSCRIPTIONS : "user_id (ON DELETE CASCADE)"
+    USERS ||--o{ POS_DRAFTS : "created_by / updated_by (ON DELETE RESTRICT)"
     DINING_TABLES ||--o{ ORDERS : "table_id (Nullable for TAKEAWAY)"
+    DINING_TABLES o|--o{ POS_DRAFTS : "table_id (Optional draft target; ON DELETE SET NULL)"
     ORDERS ||--o| DINING_TABLES : "active_order_id (Current open session)"
+    ORDERS o|--o| POS_DRAFTS : "submitted_order_id (Idempotent draft result)"
     PAYMENT_ACCOUNTS ||--o{ ORDERS : "payment_account_id (ON DELETE RESTRICT)"
     DISCOUNTS ||--o{ ORDERS : "discount_id (ON DELETE RESTRICT)"
     DISCOUNTS ||--o{ DISCOUNT_TARGETS : "discount_id (ON DELETE CASCADE)"
@@ -219,6 +222,28 @@ erDiagram
         jsonb pending_payment_edit "NULLABLE: Yeu cau sua PTTT cho quan ly duyet (invoices:approve)"
         timestamptz created_at "NOT NULL DEFAULT NOW()"
         timestamptz paid_at "NULLABLE: Thoi diem chot thanh toan (status='PAID')"
+    }
+
+    POS_DRAFTS {
+        varchar id PK "PRIMARY KEY (CUID, NOT NULL)"
+        varchar order_type "NULLABLE: DINE_IN | TAKEAWAY; NULL khi chua chon dich vu"
+        int table_id FK "NULLABLE FK -> dining_tables(id) ON DELETE SET NULL"
+        jsonb items "NOT NULL DEFAULT '[]': productId, quantity, modifiers, itemNote, isTakeaway; KHONG luu gia"
+        text note "NULLABLE: Ghi chu se duoc copy vao order khi submit"
+        int revision "NOT NULL DEFAULT 1: optimistic concurrency token"
+        int created_by FK "NOT NULL FK -> users(id)"
+        int updated_by FK "NOT NULL FK -> users(id)"
+        int submitted_order_id FK "NULLABLE UNIQUE FK -> orders(id) ON DELETE RESTRICT"
+        varchar submit_idempotency_key "NULLABLE (128): key cho submit replay"
+        timestamptz submitted_at "NULLABLE: null khi draft con dang cho"
+        timestamptz created_at "NOT NULL DEFAULT NOW()"
+        timestamptz updated_at "NOT NULL DEFAULT NOW()"
+    }
+
+    TAKEAWAY_SEQUENCES {
+        char_8 business_date PK "PRIMARY KEY: YYYYMMDD theo ngay kinh doanh +07:00"
+        int last_number "NOT NULL DEFAULT 0: so TAKEAWAY cuoi cung da cap"
+        timestamptz updated_at "NOT NULL DEFAULT NOW()"
     }
 
     ORDER_ITEMS {
