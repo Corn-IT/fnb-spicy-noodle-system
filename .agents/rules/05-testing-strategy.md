@@ -36,12 +36,14 @@ description: Vitest unit/integration testing, coverage thresholds, and Playwrigh
 - `provisionalBill` / `splitProvisionalBill`: giữ `status = 'SERVING'`, xoay vòng `payment_accounts` theo hạn mức Ngày/Tháng/Năm (`+07:00`), fallback priority #1 kèm `qrOverLimit = true` khi tất cả vượt hạn mức.
 - `checkout` / `splitCheckout`: enforce `chk_order_payment_amounts` (`CASH`/`TRANSFER`/`SPLIT`), giải phóng bàn về `AVAILABLE` (khi thanh toán trọn đơn), tăng `discounts.used_count` atomic.
 - `createOrder`: `TAKEAWAY` (`table_id = NULL`, `takeaway_number ≠ NULL`) vs `DINE_IN` (`table_id ≠ NULL`, `takeaway_number = NULL`).
+- POS drafts: create/resume/update/delete without an `orders` or table mutation; stale `expectedRevision` conflicts; submit reads current menu prices, refuses an occupied/missing target while preserving the draft, and replays the same idempotency key without duplicate orders. Include unassigned, DINE_IN, and TAKEAWAY targets.
+- Takeaway sequence: atomic allocation across POS create, QR create, split checkout, `TO_TAKEAWAY`, and draft submit; keep issued numbers after MOVE/MERGE and reset only at the Vietnam (`+07:00`) day boundary. Seed from same-day active orders and transfer-log labels.
 - `createQrOrder`: chống cross-table IDOR (`403`), hỗ trợ redirect phiên khi đã `MOVE`/`MERGE` (`EC-POS-01`), kiểm tra Wi-Fi/GPS (`QrSecurityService`), và `qr-pending-check` cho Web Push.
 - `discounts`: làm tròn xuống bội `1.000đ`, chặn `split-checkout` khi có giảm giá (`409 POS_DISCOUNT_BLOCKS_SPLIT`), hoàn `used_count` khi `VOID`, kiểm tra strict `pos:manualDiscount`.
 
 ### 4.2. Table Transfer (`MOVE` / `MERGE` / `SWAP` / `TO_TAKEAWAY`):
-- `MOVE`: `DINE_IN → AVAILABLE` và `TAKEAWAY → AVAILABLE` (`is_takeaway = true`); bàn đích đang `OCCUPIED` → `409 POS_TABLE_NOT_AVAILABLE`.
-- `MERGE`: `DINE_IN → OCCUPIED` và `TAKEAWAY → OCCUPIED` (`is_takeaway = true`, giữ nguyên `kitchen_status = 'PRINTED'`, gỡ giảm giá đơn nguồn, tính lại tổng đơn đích).
+- `MOVE`: `DINE_IN → AVAILABLE` và `TAKEAWAY → AVAILABLE` (`is_takeaway = false` for TAKEAWAY items); bàn đích đang `OCCUPIED` → `409 POS_TABLE_NOT_AVAILABLE`.
+- `MERGE`: `DINE_IN → OCCUPIED` và `TAKEAWAY → OCCUPIED` (`is_takeaway = false` for transferred TAKEAWAY items, giữ nguyên `kitchen_status = 'PRINTED'`, gỡ giảm giá đơn nguồn, tính lại tổng đơn đích).
 - `SWAP`: hoán đổi 2 bàn `DINE_IN`; đơn `TAKEAWAY` gọi `SWAP` → `409 POS_TAKEAWAY_CANNOT_MERGE`.
 - `TO_TAKEAWAY`: giải phóng bàn nguồn về `AVAILABLE`, cấp `takeaway_number` mới, reset `is_takeaway = false`.
 - Khoá dòng `SELECT ... FOR UPDATE` theo thứ tự `orders (id ASC)` → `dining_tables (id ASC)`; emit `order:session_redirected` + sinh `kitchenTransferSlip` nếu có món `PRINTED`.

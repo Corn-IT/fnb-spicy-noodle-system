@@ -98,6 +98,35 @@ describe('KitchenSplitService', () => {
     });
   });
 
+  it('should retain the transfer route note without the generated takeaway label after MOVE', async () => {
+    const harness = createHarness({
+      id: 42,
+      orderCode: 'HD-20261107-0008',
+      orderType: 'DINE_IN',
+      status: 'SERVING',
+      tableId: 7,
+      tableTransferLogs: [{ action: 'MOVE', fromTable: 'Mang về #03', toTable: 'Bàn 07', timestamp: '2026-11-07T10:00:00.000Z' }],
+      items: [{
+        id: 4,
+        productId: 11,
+        quantity: 1,
+        kitchenStatus: 'NEW',
+        isTakeaway: false,
+        modifiersSnapshot: [],
+        itemNote: null,
+        product: { id: 11, name: 'Mì bò', station: 'BEP_NAU' },
+      }],
+    });
+
+    const result = await harness.service.splitKitchen(42);
+
+    expect(result.tickets[0]).toMatchObject({
+      transferNotice: '[GHI CHÚ ĐỔI BÀN: Chuyển từ Mang về #03 sang Bàn 07]',
+      items: [{ name: 'Mì bò', qty: 1, note: '' }],
+    });
+    expect(result.tickets[0]?.items[0]).not.toHaveProperty('isTakeaway');
+  });
+
   it('should keep batch numbers increasing after a previously printed batch was cancelled', async () => {
     const harness = createHarness({
       id: 42,

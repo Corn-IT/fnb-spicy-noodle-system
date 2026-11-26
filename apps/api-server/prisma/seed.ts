@@ -31,8 +31,19 @@ function resolveAccountPermissions(roleKey: NonNullable<SeedEmployeeDef['account
   return cashierPermissions;
 }
 
+function resolveInitialSeedPassword(): string {
+  const configuredPassword = process.env.FNB_SEED_INITIAL_PASSWORD?.trim();
+  if (process.env.NODE_ENV === 'production') {
+    if (!configuredPassword || configuredPassword.length < 16) {
+      throw new Error('FNB_SEED_INITIAL_PASSWORD is required in production and must be at least 16 characters.');
+    }
+    return configuredPassword;
+  }
+  return configuredPassword || 'Password@123';
+}
+
 export async function seedDatabase(prisma: SeedClient): Promise<void> {
-  const passwordHash = await hash('Password@123', 10);
+  const passwordHash = await hash(resolveInitialSeedPassword(), 10);
 
   await prisma.$transaction(async (tx) => {
     const masterDataIds = new Map<string, number>();

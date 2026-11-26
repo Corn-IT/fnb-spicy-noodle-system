@@ -106,6 +106,10 @@ export async function setupMockApi(page: Page, options: MockApiOptions = {}): Pr
       return json({ tables, takeaways: [], takeawayQrToken: 'b'.repeat(64) });
     }
 
+    if (pathname.endsWith('/pos/drafts') && method === 'GET') {
+      return json({ drafts: [] });
+    }
+
     if (/\/pos\/orders\/\d+$/.test(pathname)) {
       return json({
         orderId: 101,

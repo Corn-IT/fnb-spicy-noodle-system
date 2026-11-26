@@ -87,7 +87,7 @@ test.describe('Core feature E2E (Display Scale, Print Customizer, i/y Search, Qu
     await page.goto('/pos', { waitUntil: 'domcontentloaded' });
 
     // Select occupied table 01
-    await page.getByText('Bàn 01').first().click();
+    await page.getByTestId('table-card-1').click();
     const cancelBtn = page.getByTestId('btn-quick-cancel-order');
     await expect(cancelBtn).toBeVisible();
 

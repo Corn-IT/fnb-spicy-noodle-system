@@ -90,15 +90,16 @@ Thực thi bên trong `await this.prisma.$transaction(async (tx) => { ... })`:
      await tx.$queryRaw`SELECT * FROM dining_tables WHERE id IN (${Prisma.join(sortedTableIds)}) ORDER BY id ASC FOR UPDATE`;
      ```
 2. **Xử lý theo từng `action`:**
-   - **`MOVE` (Chuyển sang bàn trống):**
-     - Kiểm tra đơn nguồn là `DINE_IN` và bàn đích có `status === 'AVAILABLE'` (nếu bàn đích đang `OCCUPIED` hoặc `PENDING` → ném `409 ConflictException` với `code: ErrorCodes.POS_TABLE_NOT_AVAILABLE` — `EC-POS-02`).
+  - **`MOVE` (Chuyển sang bàn trống):**
+    - Kiểm tra bàn đích có `status === 'AVAILABLE'` (nếu bàn đích đang `OCCUPIED` hoặc `PENDING` → ném `409 ConflictException` với `code: ErrorCodes.POS_TABLE_NOT_AVAILABLE` — `EC-POS-02`).
+    - Khi nguồn là TAKEAWAY, đổi các cờ `is_takeaway` của món sang `false`; vẫn giữ `kitchen_status` và transfer log.
      - Cập nhật `order.table_id = targetTableId`, nối log vào `table_transfer_logs`.
      - Bàn nguồn → `status = 'AVAILABLE'`, `active_order_id = null`.
      - Bàn đích → `status = 'OCCUPIED'`, `active_order_id = order.id`.
    - **`MERGE` (Gộp vào bàn đang có khách):**
-     - Nếu đơn nguồn có `order_type === 'TAKEAWAY'` → ném `409 ConflictException` với `code: ErrorCodes.POS_TAKEAWAY_CANNOT_MERGE` (`EC-POS-03`).
+    - Đơn nguồn `TAKEAWAY` được phép `MERGE` khi bàn đích đang `OCCUPIED`; đặt `is_takeaway = false` cho món chuyển và giữ nguyên `kitchen_status`. `SWAP` với đơn `TAKEAWAY` vẫn bị từ chối bằng `409 POS_TAKEAWAY_CANNOT_MERGE` (`EC-POS-03`).
      - Nếu bàn đích không ở trạng thái `OCCUPIED` (hoặc không có `active_order_id`) → ném `409 ConflictException` với `code: ErrorCodes.POS_TABLE_NOT_OCCUPIED`.
-     - Chuyển toàn bộ `order_items` từ `sourceOrder.id` sang `targetOrder.id` (`UPDATE order_items SET order_id = targetOrderId WHERE order_id = sourceOrderId`), **BẮT BUỘC GIỮ NGUYÊN** `kitchen_status` (`'PRINTED'` hoặc `'NEW'`) của từng món để không bao giờ in nấu lại món cũ.
+     - Chuyển toàn bộ `order_items` từ `sourceOrder.id` sang `targetOrder.id` (`UPDATE order_items SET order_id = targetOrderId WHERE order_id = sourceOrderId`), **BẮT BUỘC GIỮ NGUYÊN** `kitchen_status` (`'PRINTED'` hoặc `'NEW'`) của từng món để không bao giờ in nấu lại món cũ. Nếu nguồn là TAKEAWAY, đặt `is_takeaway = false` cho món chuyển.
      - Cộng dồn `total_amount` sang `targetOrder`, ghi `table_transfer_logs`.
      - Đơn nguồn → `status = 'MERGED'`, `merged_into_order_id = targetOrder.id`, `total_amount = 0`, `table_id = null`.
      - Bàn nguồn → `status = 'AVAILABLE'`, `active_order_id = null`.
@@ -117,5 +118,18 @@ Thực thi bên trong `await this.prisma.$transaction(async (tx) => { ... })`:
 - [x] **AC-05.1 (Delta Split Only NEW Items):** Đơn có 2 món ở Lượt 1 đã `PRINTED`. Khi khách gọi thêm 1 món ở Lượt 2 (`NEW`) và bấm `split-kitchen`, hệ thống CHỈ trả về phiếu in chứa 1 món của Lượt 2 với `batchNo = 2` và nhãn `"[GỌI THÊM - LƯỢT 2]"`.
 - [x] **AC-05.2 (Combo Explosion):** Khi tách đơn có món `Combo Đôi` (`station = 'COMBO'`), kết quả trả về phân rã chính xác thành các món con thuộc `BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`; tuyệt đối không có ticket nào mang `station = 'COMBO'`.
 - [x] **AC-05.3 (Double-Click Idempotency `EC-POS-05`):** Gọi `split-kitchen` lần 2 ngay sau lần 1 (khi không có món `NEW` mới) trả về HTTP `200 OK` với `tickets: []`.
-- [x] **AC-05.4 (Table Action Guards `EC-POS-02` & `EC-POS-03`):** Gọi `MOVE` tới bàn đang `OCCUPIED` trả về `409 POS_TABLE_NOT_AVAILABLE`; gọi `MERGE` đơn `TAKEAWAY` trả về `409 POS_TAKEAWAY_CANNOT_MERGE`.
+- [x] **AC-05.4 (Table Actions `EC-POS-02` & `EC-POS-03`):** Gọi `MOVE` tới bàn đang `OCCUPIED` trả về `409 POS_TABLE_NOT_AVAILABLE`. Đơn `TAKEAWAY` được `MOVE` tới bàn trống hoặc `MERGE` vào bàn đang `OCCUPIED`; các món chuyển sang bàn đều đặt `is_takeaway = false` và giữ nguyên `kitchen_status`. `SWAP` với đơn `TAKEAWAY` vẫn trả về `409 POS_TAKEAWAY_CANNOT_MERGE`.
 - [x] **AC-05.5 (Kitchen Notice & WS Session Redirect `EC-POS-04`):** Khi `MOVE` hoặc `MERGE` đơn đã có món `PRINTED`, response trả về `requireKitchenNoticePrint: true` kèm `kitchenTransferSlip`, và Socket.io phát sự kiện `order:session_redirected` tới room của đơn cũ.
+
+---
+
+## 5. POS Drafts & Takeaway Sequence Extension
+
+Giỏ bán hàng chưa gửi được lưu ở `pos_drafts`, tách khỏi `orders` để không tác động tới trạng thái bàn, QR, bếp hoặc thanh toán. API `GET/POST/PUT/DELETE /api/v1/pos/drafts` và `POST /api/v1/pos/drafts/:id/submit` yêu cầu JWT/RBAC: xem bằng `pos.view`; tạo và gửi bằng `pos.create`; sửa bằng `pos.update`; xoá bằng `pos.delete`. Socket `pos:drafts_updated` chỉ phát vào `pos_cashier_room`.
+
+- Draft lưu mã món, số lượng, modifiers, ghi chú và target; không lưu giá. Khi submit, service khóa draft, kiểm tra `revision` và idempotency key, xác nhận bàn còn trống, đọc lại menu/giá hiện hành và tạo order trong cùng transaction. Lỗi stale revision, bàn đã bận hoặc món không còn hợp lệ không đánh dấu draft đã gửi.
+- Chọn bàn/loại đơn là tùy chọn khi lưu. Draft `DINE_IN` có thể đang chờ gán bàn; draft `TAKEAWAY` luôn không có `table_id`. `orders` chỉ được tạo khi submit thành công.
+- `takeaway_sequences` duy trì bộ đếm theo ngày kinh doanh Việt Nam, cấp số atomic xuyên POS, QR, split checkout và `TO_TAKEAWAY`. Khởi tạo bộ đếm kế tiếp từ các đơn takeaway cùng ngày và số đã xuất hiện trong transfer log; vì vậy số takeaway không bị tái dùng sau khi MOVE/MERGE.
+- Migration chỉ xoá cờ `[MANG VỀ]` của món active DINE_IN được tạo không muộn hơn timestamp của log `MOVE` chứng minh nguồn là `Mang về #N` và đích trùng bàn hiện tại; món được thêm sau khi chuyển được giữ nguyên. Không suy luận hoặc thay đổi MERGE lịch sử không có đủ provenance.
+
+Kiểm thử hồi quy bổ sung trong `pos-drafts.spec.ts`, `takeaway-sequence.spec.ts`, và các suite table-transfer/kitchen-split: revision conflict, submit/replay, xung đột bàn giữ nguyên draft, thứ tự số trong ngày, conversion flag và transfer note.

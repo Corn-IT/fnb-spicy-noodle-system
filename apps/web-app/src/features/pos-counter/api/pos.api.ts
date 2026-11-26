@@ -7,11 +7,14 @@ import {
   ApproveQrOrderSchema,
   CheckoutOrderRequestSchema,
   CreateDiningTableSchema,
+  CreatePosDraftRequestSchema,
   CreatePosOrderSchema,
   OrderDetailResponseSchema,
   PatchOrderItemsResponseSchema,
   PatchOrderItemsSchema,
   PosOrderCreationResponseSchema,
+  PosDraftListResponseSchema,
+  PosDraftResponseSchema,
   ProductSchema,
   ProvisionalBillResponseSchema,
   QrSecurityConfigResponseSchema,
@@ -22,9 +25,12 @@ import {
   SplitCheckoutOrderRequestSchema,
   SplitKitchenResponseSchema,
   SplitProvisionalBillRequestSchema,
+  SubmitPosDraftRequestSchema,
+  SubmitPosDraftResponseSchema,
   TableActionRequestSchema,
   TableActionResponseSchema,
   UpdateDiningTableSchema,
+  UpdatePosDraftRequestSchema,
   UpdateQrSecurityConfigSchema,
   VoidInvoiceRequestSchema,
   type ApproveQrOrderInput,
@@ -32,11 +38,13 @@ import {
   type CancelOrderResponse,
   type CheckoutOrderRequest,
   type CreateDiningTableInput,
+  type CreatePosDraftRequest,
   type CreatePosOrderInput,
   type OrderDetailResponse,
   type PatchOrderItemsInput,
   type PatchOrderItemsResponse,
   type PosOrderCreationResponse,
+  type PosDraftResponse,
   type Product,
   type ProvisionalBillResponse,
   type QrSecurityConfigResponse,
@@ -47,9 +55,12 @@ import {
   type SplitCheckoutOrderRequest,
   type SplitKitchenResponse,
   type SplitProvisionalBillRequest,
+  type SubmitPosDraftRequest,
+  type SubmitPosDraftResponse,
   type TableActionRequest,
   type TableActionResponse,
   type UpdateDiningTableInput,
+  type UpdatePosDraftRequest,
   type UpdateQrSecurityConfigInput,
   type VoidInvoiceRequest,
 } from '@fnb/shared';
@@ -64,6 +75,7 @@ import {
 export const posQueryKeys = {
   all: ['pos'] as const,
   tableGrid: () => POS_TABLE_GRID_QUERY_KEY,
+  drafts: () => ['pos', 'drafts'] as const,
   products: () => ['pos', 'products'] as const,
   orderDetail: (orderId: number | null) => ['pos', 'order', orderId] as const,
   applicableDiscounts: (orderId: number | null) =>
@@ -89,6 +101,30 @@ export async function createPosOrder(
   const parsed = CreatePosOrderSchema.parse(input);
   const raw = await apiClient.post<unknown>('/api/v1/pos/orders', parsed);
   return PosOrderCreationResponseSchema.parse(raw);
+}
+
+export async function fetchPosDrafts(): Promise<PosDraftResponse[]> {
+  const raw = await apiClient.get<unknown>('/api/v1/pos/drafts');
+  return PosDraftListResponseSchema.parse(raw).drafts;
+}
+
+export async function createPosDraft(input: CreatePosDraftRequest): Promise<PosDraftResponse> {
+  const parsed = CreatePosDraftRequestSchema.parse(input);
+  return PosDraftResponseSchema.parse(await apiClient.post<unknown>('/api/v1/pos/drafts', parsed));
+}
+
+export async function updatePosDraft(params: { id: string; input: UpdatePosDraftRequest }): Promise<PosDraftResponse> {
+  const parsed = UpdatePosDraftRequestSchema.parse(params.input);
+  return PosDraftResponseSchema.parse(await apiClient.put<unknown>(`/api/v1/pos/drafts/${params.id}`, parsed));
+}
+
+export async function deletePosDraft(params: { id: string; revision: number }): Promise<{ id: string; deleted: true }> {
+  return apiClient.delete<{ id: string; deleted: true }>(`/api/v1/pos/drafts/${params.id}?revision=${params.revision}`);
+}
+
+export async function submitPosDraft(params: { id: string; input: SubmitPosDraftRequest }): Promise<SubmitPosDraftResponse> {
+  const parsed = SubmitPosDraftRequestSchema.parse(params.input);
+  return SubmitPosDraftResponseSchema.parse(await apiClient.post<unknown>(`/api/v1/pos/drafts/${params.id}/submit`, parsed));
 }
 
 export async function approvePosQrOrder(params: {
@@ -251,6 +287,37 @@ export function usePosTableGridQuery() {
   return useQuery({
     queryKey: posQueryKeys.tableGrid(),
     queryFn: fetchPosTableGrid,
+  });
+}
+
+export function usePosDraftsQuery() {
+  return useQuery({ queryKey: posQueryKeys.drafts(), queryFn: fetchPosDrafts });
+}
+
+export function useCreatePosDraftMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: createPosDraft, onSuccess: () => queryClient.invalidateQueries({ queryKey: posQueryKeys.drafts() }) });
+}
+
+export function useUpdatePosDraftMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: updatePosDraft, onSuccess: () => queryClient.invalidateQueries({ queryKey: posQueryKeys.drafts() }) });
+}
+
+export function useDeletePosDraftMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: deletePosDraft, onSuccess: () => queryClient.invalidateQueries({ queryKey: posQueryKeys.drafts() }) });
+}
+
+export function useSubmitPosDraftMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: submitPosDraft,
+    onSuccess: async () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: posQueryKeys.drafts() }),
+      queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() }),
+      queryClient.invalidateQueries({ queryKey: ['invoices'] }),
+    ]),
   });
 }
 

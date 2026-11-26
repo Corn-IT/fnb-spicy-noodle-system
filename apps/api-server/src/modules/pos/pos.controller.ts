@@ -5,6 +5,7 @@ import {
   ApproveQrOrderSchema,
   CheckoutOrderRequestSchema,
   CreateDiningTableSchema,
+  CreatePosDraftRequestSchema,
   CreatePosOrderSchema,
   CreateQrOrderSchema,
   ErrorCodes,
@@ -13,8 +14,10 @@ import {
   ReprintKitchenRequestSchema,
   SplitCheckoutOrderRequestSchema,
   SplitProvisionalBillRequestSchema,
+  SubmitPosDraftRequestSchema,
   TableActionRequestSchema,
   UpdateDiningTableSchema,
+  UpdatePosDraftRequestSchema,
   UpdateQrSecurityConfigSchema,
   VoidInvoiceRequestSchema,
   type ApplyPosDiscountRequest,
@@ -22,6 +25,7 @@ import {
   type AuthPrincipal,
   type CheckoutOrderRequest,
   type CreateDiningTableInput,
+  type CreatePosDraftRequest,
   type CreatePosOrderInput,
   type CreateQrOrderInput,
   type LanEscPosPrintRequest,
@@ -29,8 +33,10 @@ import {
   type ReprintKitchenRequest,
   type SplitCheckoutOrderRequest,
   type SplitProvisionalBillRequest,
+  type SubmitPosDraftRequest,
   type TableActionRequest,
   type UpdateDiningTableInput,
+  type UpdatePosDraftRequest,
   type UpdateQrSecurityConfigInput,
   type VoidInvoiceRequest,
 } from '@fnb/shared';
@@ -231,6 +237,56 @@ export class PosController {
   @RequirePermission('pos', 'update')
   shortenLegacyQrTokens(@CurrentUser('id') userId: number) {
     return this.posService.shortenLegacyQrTokens(userId);
+  }
+
+  @Get('pos/drafts')
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'view')
+  listPosDrafts() {
+    return this.posService.listPosDrafts();
+  }
+
+  @Post('pos/drafts')
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'create')
+  createPosDraft(
+    @Body(new ZodValidationPipe(CreatePosDraftRequestSchema)) body: CreatePosDraftRequest,
+    @CurrentUser('id') userId: number,
+  ) {
+    return this.posService.createPosDraft(body, userId);
+  }
+
+  @Put('pos/drafts/:id')
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'update')
+  updatePosDraft(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(UpdatePosDraftRequestSchema)) body: UpdatePosDraftRequest,
+    @CurrentUser('id') userId: number,
+  ) {
+    return this.posService.updatePosDraft(id, body, userId);
+  }
+
+  @Delete('pos/drafts/:id')
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'delete')
+  deletePosDraft(
+    @Param('id') id: string,
+    @Query('revision', ParseIntPipe) revision: number,
+    @CurrentUser('id') userId: number,
+  ) {
+    return this.posService.deletePosDraft(id, revision, userId);
+  }
+
+  @Post('pos/drafts/:id/submit')
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @RequirePermission('pos', 'create')
+  submitPosDraft(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(SubmitPosDraftRequestSchema)) body: SubmitPosDraftRequest,
+    @CurrentUser('id') cashierId: number,
+  ) {
+    return this.posService.submitPosDraft(id, body, cashierId);
   }
 
   @Post('pos/orders')

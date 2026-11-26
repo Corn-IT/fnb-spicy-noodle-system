@@ -113,6 +113,10 @@ export function usePosCashierSocket(options?: UsePosCashierSocketOptions) {
       }
     };
 
+    const handleDraftsUpdated = () => {
+      void queryClient.invalidateQueries({ queryKey: posQueryKeys.drafts() });
+    };
+
     const handleSocketReconnect = () => {
       void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
       void queryClient.invalidateQueries({ queryKey: ['pos', 'order'] });
@@ -142,6 +146,7 @@ export function usePosCashierSocket(options?: UsePosCashierSocketOptions) {
     socket.on(SocketEvents.ORDER_QR_ADDON, handleQrAddon);
     socket.on(SocketEvents.ORDER_QR_AUTO_CANCELLED, handleQrAutoCancelled);
     socket.on(SocketEvents.TABLE_GRID_SYNC, handleGridSync);
+    socket.on(SocketEvents.POS_DRAFTS_UPDATED, handleDraftsUpdated);
     socket.on('connect', handleSocketReconnect);
 
     return () => {
@@ -149,6 +154,7 @@ export function usePosCashierSocket(options?: UsePosCashierSocketOptions) {
       socket.off(SocketEvents.ORDER_QR_ADDON, handleQrAddon);
       socket.off(SocketEvents.ORDER_QR_AUTO_CANCELLED, handleQrAutoCancelled);
       socket.off(SocketEvents.TABLE_GRID_SYNC, handleGridSync);
+      socket.off(SocketEvents.POS_DRAFTS_UPDATED, handleDraftsUpdated);
       socket.off('connect', handleSocketReconnect);
     };
   }, [socket, queryClient, clearAddonBadge]);

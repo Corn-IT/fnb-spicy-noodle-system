@@ -138,13 +138,10 @@ test.describe('4 New Features E2E & Full-Size Responsive Verification', () => {
         contentType: 'application/json',
         body: JSON.stringify({
           action: body.action,
-          sourceOrderId: 101,
-          targetOrderId: 101,
           sourceTableId: body.action === 'TO_TAKEAWAY' ? 1 : null,
           targetTableId: body.targetTableId ?? null,
           takeawayNumber: body.action === 'TO_TAKEAWAY' ? 6 : undefined,
           requireKitchenNoticePrint: false,
-          message: 'Đã chuyển đơn thành công',
         }),
       });
     });
@@ -169,16 +166,26 @@ test.describe('4 New Features E2E & Full-Size Responsive Verification', () => {
       ),
     ).toEqual([]);
 
-    await page.keyboard.press('Escape');
+    await page.getByTestId('target-table-2').click();
+    await page.getByTestId('confirm-table-action-btn').click();
+    await expect.poll(() => tableActionRequests.length).toBe(1);
+    expect(tableActionRequests[0]).toMatchObject({
+      path: '/api/v1/pos/orders/205/table-action',
+      body: {
+        action: 'MOVE',
+        targetTableId: 2,
+        reason: 'Khách đổi ý ngồi dùng tại bàn',
+      },
+    });
 
     // On mobile POS view, return to the table grid before selecting Bàn 01
-    const backToTablesBtn = page.getByRole('button', { name: 'Sơ đồ Bàn' });
+    const backToTablesBtn = page.getByRole('button', { name: 'Bàn', exact: true });
     if (await backToTablesBtn.isVisible()) {
       await backToTablesBtn.click();
     }
 
     // 1B: Open TableActionDialog on DINE_IN order (Bàn 01) -> select TO_TAKEAWAY & submit
-    await page.getByText('Bàn 01').first().click();
+    await page.getByTestId('table-card-1').click();
     await page.getByTestId('btn-table-action').click();
     const toTakeawayBtn = page.getByTestId('table-action-type-TO_TAKEAWAY');
     await expect(toTakeawayBtn).toBeVisible();
@@ -188,8 +195,8 @@ test.describe('4 New Features E2E & Full-Size Responsive Verification', () => {
     await page.getByTestId('table-action-reason-input').fill('Khách xin gói mang về');
     await page.getByTestId('confirm-table-action-btn').click();
 
-    await expect.poll(() => tableActionRequests.length).toBe(1);
-    expect(tableActionRequests[0]?.body).toMatchObject({
+    await expect.poll(() => tableActionRequests.length).toBe(2);
+    expect(tableActionRequests[1]?.body).toMatchObject({
       action: 'TO_TAKEAWAY',
       targetTableId: null,
       reason: 'Khách xin gói mang về',
@@ -374,7 +381,7 @@ test.describe('4 New Features E2E & Full-Size Responsive Verification', () => {
     // Desktop POS (/pos)
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto('/pos', { waitUntil: 'domcontentloaded' });
-    await page.getByText('Bàn 01').first().click();
+    await page.getByTestId('table-card-1').click();
 
     // LiveInvoicePanel shows segmented buttons immediately for 2nd+ batch
     await expect(page.getByTestId('invoice-addon-mode-dine-in')).toBeVisible();

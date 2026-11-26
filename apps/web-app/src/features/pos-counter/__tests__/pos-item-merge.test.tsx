@@ -158,18 +158,38 @@ describe('POS — đặt cùng món thì cộng dồn số lượng trên một 
   it('merges repeated picks in the draft cart and creates the order with quantity 2', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/api/v1/pos/tables') return grid;
+      if (url === '/api/v1/pos/drafts') return { drafts: [] };
       if (url === '/api/v1/menu/products') return products;
       return [];
     });
-    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
-      orderId: 701,
-      orderCode: 'HD-20261124-0002',
-      orderType: 'DINE_IN',
-      tableId: 1,
-      takeawayNumber: null,
-      tableLabel: 'Bàn 01',
-      status: 'SERVING',
-      totalAmount: 60000,
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string, body?: unknown) => {
+      if (url === '/api/v1/pos/drafts') {
+        return {
+          ...(body as Record<string, unknown>),
+          id: 'draft-701',
+          revision: 1,
+          tableName: 'Bàn 01',
+          createdAt: '2026-11-24T08:15:00.000Z',
+          updatedAt: '2026-11-24T08:15:00.000Z',
+        };
+      }
+      if (url === '/api/v1/pos/drafts/draft-701/submit') {
+        return {
+          draftId: 'draft-701',
+          idempotentReplay: false,
+          order: {
+            orderId: 701,
+            orderCode: 'HD-20261124-0002',
+            orderType: 'DINE_IN',
+            tableId: 1,
+            takeawayNumber: null,
+            tableLabel: 'Bàn 01',
+            status: 'SERVING',
+            totalAmount: 60000,
+          },
+        };
+      }
+      throw new Error(`Unexpected POST ${url}`);
     });
     renderDesktopPos();
 
@@ -181,12 +201,54 @@ describe('POS — đặt cùng món thì cộng dồn số lượng trên một 
     expect(screen.queryByTestId('draft-item-1')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('pos-submit-new-order-btn'));
-    await waitFor(() =>
+    await waitFor(() => {
       expect(postSpy).toHaveBeenCalledWith(
-        '/api/v1/pos/orders',
+        '/api/v1/pos/drafts',
         expect.objectContaining({ items: [expect.objectContaining({ productId: 102, quantity: 2 })] }),
-      ),
-    );
+      );
+      expect(postSpy).toHaveBeenCalledWith(
+        '/api/v1/pos/drafts/draft-701/submit',
+        expect.objectContaining({ expectedRevision: 1, idempotencyKey: expect.any(String) }),
+      );
+    });
+  });
+
+  it('hydrates a resumed draft item after the product query finishes loading', async () => {
+    let resolveProducts!: (value: PublicMenuResponse['products']) => void;
+    const delayedProducts = new Promise<PublicMenuResponse['products']>((resolve) => {
+      resolveProducts = resolve;
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/tables') return grid;
+      if (url === '/api/v1/pos/drafts') {
+        return {
+          drafts: [{
+            id: 'draft-702',
+            revision: 1,
+            orderType: 'DINE_IN',
+            tableId: null,
+            tableName: null,
+            items: [{ productId: 102, quantity: 1, modifiers: [] }],
+            note: null,
+            createdAt: '2026-11-24T08:15:00.000Z',
+            updatedAt: '2026-11-24T08:15:00.000Z',
+          }],
+        };
+      }
+      if (url === '/api/v1/menu/products') return delayedProducts;
+      return [];
+    });
+    renderDesktopPos();
+
+    fireEvent.click(await screen.findByTestId('pos-resume-draft-draft-702'));
+    expect(await screen.findByTestId('draft-item-0')).toHaveTextContent('Món #102');
+    expect(screen.getByTestId('draft-item-0')).toHaveTextContent('0 đ');
+
+    resolveProducts(products);
+    await waitFor(() => {
+      expect(screen.getByTestId('draft-item-0')).toHaveTextContent('Trà Đào Cam Sả');
+      expect(screen.getByTestId('draft-item-0')).toHaveTextContent('30.000 đ');
+    });
   });
 
   it('on a live order, sends rapid taps as additive adds one after another (server merges them)', async () => {

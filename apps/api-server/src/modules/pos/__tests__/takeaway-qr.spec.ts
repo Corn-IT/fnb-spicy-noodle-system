@@ -18,6 +18,7 @@ const TABLE_TOKEN = 'd'.repeat(64);
 function createPosTakeawayHarness() {
   const lockedTables: string[] = [];
   let takeawayQrToken = TAKEAWAY_TOKEN;
+  let takeawaySequence = 0;
 
   const product = {
     id: 11,
@@ -30,7 +31,9 @@ function createPosTakeawayHarness() {
 
   const tx = {
     $queryRaw: vi.fn(async (strings: TemplateStringsArray) => {
-      lockedTables.push(strings.raw.join(''));
+      const sql = strings.raw.join('');
+      lockedTables.push(sql);
+      if (sql.includes('INSERT INTO takeaway_sequences')) return [{ takeawayNumber: ++takeawaySequence }];
       return [];
     }),
     $executeRaw: vi.fn(async (strings: TemplateStringsArray) => {
@@ -110,9 +113,6 @@ describe('Takeaway QR End-to-End Backend Logic', () => {
 
   it('should create independent TAKEAWAY orders with null tableId, incremented takeawayNumber, and guestSessionToken', async () => {
     const harness = createPosTakeawayHarness();
-    harness.tx.order.aggregate
-      .mockResolvedValueOnce({ _max: { takeawayNumber: null } })
-      .mockResolvedValueOnce({ _max: { takeawayNumber: 1 } });
     harness.tx.order.findFirst
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ orderCode: 'HD-20261122-0001' });

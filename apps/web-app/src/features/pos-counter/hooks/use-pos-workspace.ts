@@ -1,6 +1,7 @@
 import {
   type OrderDetailResponse,
   type PaymentMethod,
+  type PosDraftResponse,
   TableActionType,
   type ApplyPosDiscountRequest,
   type CheckoutOrderRequest,
@@ -16,14 +17,17 @@ import { useThermalPrinter, useThermalPrinterConfigStore } from '@/components/pr
 import { useAppMessages } from '@/hooks/use-app-messages';
 import { evaluateOrderPendingAlert } from '@/lib/qr-pending-reminder';
 import { getActiveQrReminderConfig } from '@/lib/qr-voice-announcer';
+import { buildInitialSelectedByGroup, computeOrderModifiersPayload } from '@/lib/modifier-selection';
 import { useAuthStore } from '@/stores/auth.store';
 import {
   useApproveQrOrderMutation,
   useCancelPosOrderMutation,
   useCheckoutOrderMutation,
-  useCreatePosOrderMutation,
+  useCreatePosDraftMutation,
+  useDeletePosDraftMutation,
   usePatchOrderItemsMutation,
   usePosOrderDetailQuery,
+  usePosDraftsQuery,
   usePosProductsQuery,
   usePosTableGridQuery,
   useProvisionalBillMutation,
@@ -32,6 +36,8 @@ import {
   useSplitKitchenMutation,
   useApplyPosDiscountMutation,
   useSplitProvisionalBillMutation,
+  useSubmitPosDraftMutation,
+  useUpdatePosDraftMutation,
   useTableActionMutation,
   useRemovePosDiscountMutation,
   posQueryKeys,
@@ -51,7 +57,7 @@ import { usePosCashierSocket } from './use-pos-cashier-socket';
  * - `order-opened`: vừa chọn bàn / đơn mang về đang có hoá đơn.
  * - `draft-submitted`: vừa tạo đơn từ giỏ nháp thành công (đơn mới đã được chọn).
  */
-export type PosWorkspaceViewEvent = 'draft-started' | 'order-opened' | 'draft-submitted';
+export type PosWorkspaceViewEvent = 'draft-started' | 'draft-target-picker' | 'draft-parked' | 'order-opened' | 'draft-submitted';
 
 export interface UsePosWorkspaceOptions {
   onViewChange?: (event: PosWorkspaceViewEvent) => void;
@@ -92,6 +98,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   const gridData = tableGridQuery.data;
   const productsQuery = usePosProductsQuery();
   const products = productsQuery.data ?? [];
+  const draftsQuery = usePosDraftsQuery();
+  const parkedDrafts = draftsQuery.data ?? [];
   const [selectedOrderId, setSelectedOrderId] = React.useState<number | null>(null);
   const { addonBadgesByOrderId, clearAddonBadge } = usePosCashierSocket({
     onQrAutoCancelled: (payload) => {
@@ -104,6 +112,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   const currentUser = useAuthStore((s) => s.user);
   const canCreateOrder = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.create);
   const canUpdateOrder = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.update);
+  const canDeleteOrder = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.delete);
   const canSplitKitchen = Boolean(
     currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.splitKitchen,
   );
@@ -114,6 +123,10 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
 
   const [draftTarget, setDraftTarget] = React.useState<LiveInvoiceDraftTarget | null>(null);
   const [draftItems, setDraftItems] = React.useState<PosMenuSelectedItem[]>([]);
+  const [activeSavedDraft, setActiveSavedDraft] = React.useState<{ id: string; revision: number } | null>(null);
+  const [pendingDraftHydration, setPendingDraftHydration] = React.useState<PosDraftResponse | null>(null);
+  const [draftIsDirty, setDraftIsDirty] = React.useState(false);
+  const draftSubmitKeyRef = React.useRef<string | null>(null);
   const [addonIsTakeaway, setAddonIsTakeaway] = React.useState(false);
 
   const [tableActionOpen, setTableActionOpen] = React.useState(false);
@@ -126,7 +139,10 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
 
   const { data: currentOrder } = usePosOrderDetailQuery(selectedOrderId);
 
-  const createOrderMutation = useCreatePosOrderMutation();
+  const createDraftMutation = useCreatePosDraftMutation();
+  const updateDraftMutation = useUpdatePosDraftMutation();
+  const deleteDraftMutation = useDeletePosDraftMutation();
+  const submitDraftMutation = useSubmitPosDraftMutation();
   const approveQrMutation = useApproveQrOrderMutation();
   const patchItemsMutation = usePatchOrderItemsMutation();
   const splitKitchenMutation = useSplitKitchenMutation();
@@ -192,6 +208,10 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   }, [selectedActivePendingOrder, selectedTableRow, selectedTakeawayRow?.status, alertClockMs]);
 
   const handleSelectTable = (table: PosTableGridResponse['tables'][number]) => {
+    if (draftTarget && draftIsDirty && draftItems.length > 0 && table.status !== 'AVAILABLE') {
+      notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
+      return;
+    }
     if (table.status === 'AVAILABLE' || !table.activeOrderId) {
       if (!canCreateOrder) {
         setSelectedOrderId(null);
@@ -199,8 +219,17 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         setDraftItems([]);
         return;
       }
+      if (draftTarget && table.status === 'AVAILABLE') {
+        setDraftTarget({ orderType: 'DINE_IN', tableId: table.id, tableName: table.name });
+        setDraftIsDirty(true);
+        emitViewChange('draft-started');
+        return;
+      }
       // Source B: Click empty table -> prepare DINE_IN draft and switch to Menu tab
       setSelectedOrderId(null);
+      setActiveSavedDraft(null);
+      draftSubmitKeyRef.current = null;
+      setDraftIsDirty(false);
       setDraftTarget({
         orderType: 'DINE_IN',
         tableId: table.id,
@@ -219,8 +248,15 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleSelectTakeawayOrder = (order: PosOrderSummary) => {
+    if (draftTarget && draftIsDirty && draftItems.length > 0) {
+      notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
+      return;
+    }
     setDraftTarget(null);
     setDraftItems([]);
+    setActiveSavedDraft(null);
+    setDraftIsDirty(false);
+    draftSubmitKeyRef.current = null;
     setSelectedOrderId(order.orderId);
     clearAddonBadge(order.orderId);
     emitViewChange('order-opened');
@@ -245,8 +281,30 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     if (!canCreateOrder) return;
     // Source C: Click [+ TẠO ĐƠN MANG VỀ] -> prepare TAKEAWAY draft (tableId: null) and switch to Menu tab
     setSelectedOrderId(null);
+    if (!draftTarget) {
+      setDraftItems([]);
+      setActiveSavedDraft(null);
+      draftSubmitKeyRef.current = null;
+      setDraftIsDirty(false);
+    } else {
+      setDraftIsDirty(true);
+    }
     setDraftTarget({ orderType: 'TAKEAWAY' });
-    setDraftItems([]);
+    emitViewChange('draft-started');
+  };
+
+  const handleStartUntargetedDraft = () => {
+    if (!canCreateOrder) return;
+    setSelectedOrderId(null);
+    if (!draftTarget) {
+      setDraftItems([]);
+      setActiveSavedDraft(null);
+      draftSubmitKeyRef.current = null;
+      setDraftIsDirty(false);
+    } else {
+      setDraftIsDirty(true);
+    }
+    setDraftTarget({ orderType: null });
     emitViewChange('draft-started');
   };
 
@@ -302,8 +360,9 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     if (!canCreateOrder) return;
 
     if (!draftTarget) {
-      setDraftTarget({ orderType: 'TAKEAWAY' });
+      setDraftTarget({ orderType: null });
     }
+    setDraftIsDirty(true);
 
     setDraftItems((prev) => {
       const existingIndex = findMatchingDraftIndex(prev, item);
@@ -315,6 +374,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleUpdateDraftQty = (index: number, delta: number) => {
+    setDraftIsDirty(true);
     setDraftItems((prev) =>
       prev.map((item, idx) =>
         idx === index ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item,
@@ -323,26 +383,183 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleRemoveDraftItem = (index: number) => {
+    setDraftIsDirty(true);
     setDraftItems((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const draftStateForSave = () => ({
+    orderType: draftTarget?.orderType ?? null,
+    tableId: draftTarget?.orderType === 'DINE_IN' ? draftTarget.tableId : null,
+    items: draftItems.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      modifiers: item.modifiers,
+      ...(item.itemNote ? { itemNote: item.itemNote } : {}),
+      ...(item.isTakeaway ? { isTakeaway: true } : {}),
+    })),
+    note: null,
+  });
+
+  const persistCurrentDraft = async () => {
+    const state = draftStateForSave();
+    if (activeSavedDraft) {
+      const updated = await updateDraftMutation.mutateAsync({
+        id: activeSavedDraft.id,
+        input: { ...state, expectedRevision: activeSavedDraft.revision },
+      });
+      setActiveSavedDraft({ id: updated.id, revision: updated.revision });
+      setDraftIsDirty(false);
+      return updated;
+    }
+    const created = await createDraftMutation.mutateAsync(state);
+    setActiveSavedDraft({ id: created.id, revision: created.revision });
+    setDraftIsDirty(false);
+    return created;
+  };
+
+  const handleSaveDraft = async () => {
+    const canSave = activeSavedDraft ? canUpdateOrder : canCreateOrder;
+    if (!canSave || draftItems.length === 0) return;
+    try {
+      const saved = draftIsDirty || !activeSavedDraft ? await persistCurrentDraft() : null;
+      notify('pos.draft.saved', { variant: 'success', vars: { itemCount: saved?.items.length ?? draftItems.length } });
+      setSelectedOrderId(null);
+      setDraftTarget(null);
+      setDraftItems([]);
+      setActiveSavedDraft(null);
+      setDraftIsDirty(false);
+      draftSubmitKeyRef.current = null;
+      emitViewChange('draft-parked');
+    } catch (err) {
+      notifyErr('pos.draft.saveError', err);
+    }
+  };
+
+  const toSelectedDraftItems = React.useCallback((draft: PosDraftResponse): PosMenuSelectedItem[] => draft.items.map((item) => {
+    const product = products.find((candidate) => candidate.id === item.productId);
+    if (!product) {
+      return {
+        productId: item.productId,
+        name: `Món #${item.productId}`,
+        quantity: item.quantity,
+        unitPrice: 0,
+        modifiers: item.modifiers,
+        modifierLabels: [],
+        ...(item.itemNote ? { itemNote: item.itemNote } : {}),
+        ...(item.isTakeaway ? { isTakeaway: true } : {}),
+      };
+    }
+    const selectedByGroup = buildInitialSelectedByGroup(product);
+    const manualSubstituteByModifierId: Record<number, number> = {};
+    for (const selection of item.modifiers) {
+      const selected = selectedByGroup[selection.groupId] ?? [];
+      if (selection.action === 'REMOVED_DEFAULT' || selection.action === 'SUBSTITUTED') {
+        selectedByGroup[selection.groupId] = selected.filter((id) => id !== selection.modifierId);
+      }
+      if (selection.action === 'SUBSTITUTED') {
+        if (selection.substituteModifierId !== undefined) {
+          selectedByGroup[selection.groupId] = [...new Set([...(selectedByGroup[selection.groupId] ?? []), selection.substituteModifierId])];
+          manualSubstituteByModifierId[selection.modifierId] = selection.substituteModifierId;
+        }
+      } else {
+        selectedByGroup[selection.groupId] = [...new Set([...(selectedByGroup[selection.groupId] ?? []), selection.modifierId])];
+      }
+    }
+    const computed = computeOrderModifiersPayload(product, selectedByGroup, manualSubstituteByModifierId);
+    return {
+      productId: item.productId,
+      name: product.name,
+      quantity: item.quantity,
+      unitPrice: product.price + computed.extraPrice,
+      modifiers: item.modifiers,
+      modifierLabels: computed.modifierLabels,
+      ...(item.itemNote ? { itemNote: item.itemNote } : {}),
+      ...(item.isTakeaway ? { isTakeaway: true } : {}),
+    };
+  }), [products]);
+
+  React.useEffect(() => {
+    if (!pendingDraftHydration) return;
+    if (activeSavedDraft?.id !== pendingDraftHydration.id) {
+      setPendingDraftHydration(null);
+      return;
+    }
+    if (!productsQuery.isSuccess) return;
+    const hydratedItems = toSelectedDraftItems(pendingDraftHydration);
+    setDraftItems((current) => current.map((item) => {
+      const hydrated = hydratedItems.find((candidate) => candidate.productId === item.productId
+        && JSON.stringify(candidate.modifiers) === JSON.stringify(item.modifiers));
+      return hydrated
+        ? { ...item, name: hydrated.name, unitPrice: hydrated.unitPrice, modifierLabels: hydrated.modifierLabels }
+        : item;
+    }));
+    setPendingDraftHydration(null);
+  }, [activeSavedDraft?.id, pendingDraftHydration, productsQuery.isSuccess, toSelectedDraftItems]);
+
+  const handleResumeDraft = (draft: PosDraftResponse) => {
+    if (draftTarget && draftIsDirty && draftItems.length > 0) {
+      notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
+      return;
+    }
+    setSelectedOrderId(null);
+    setDraftTarget(draft.orderType === 'DINE_IN'
+      ? { orderType: 'DINE_IN', tableId: draft.tableId, tableName: draft.tableName ?? undefined }
+      : draft.orderType === 'TAKEAWAY'
+        ? { orderType: 'TAKEAWAY' }
+        : { orderType: null });
+    setDraftItems(toSelectedDraftItems(draft));
+    setActiveSavedDraft({ id: draft.id, revision: draft.revision });
+    setPendingDraftHydration(productsQuery.isSuccess ? null : draft);
+    setDraftIsDirty(false);
+    draftSubmitKeyRef.current = null;
+    emitViewChange('draft-started');
+  };
+
+  const handleDeleteDraft = async (draft: PosDraftResponse) => {
+    if (!canDeleteOrder) return;
+    try {
+      await deleteDraftMutation.mutateAsync({ id: draft.id, revision: draft.revision });
+      if (activeSavedDraft?.id === draft.id) {
+        setActiveSavedDraft(null);
+        setDraftTarget(null);
+        setDraftItems([]);
+        setDraftIsDirty(false);
+        draftSubmitKeyRef.current = null;
+      }
+      notify('pos.draft.deleted', { variant: 'success' });
+    } catch (err) {
+      notifyErr('pos.draft.deleteError', err);
+    }
   };
 
   const handleSubmitDraftOrder = async () => {
     if (!draftTarget || draftItems.length === 0) return;
+    if (draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)) {
+      notify('pos.draft.assignTarget', { variant: 'warning' });
+      return;
+    }
 
     try {
-      const created = await createOrderMutation.mutateAsync({
-        orderType: draftTarget.orderType,
-        tableId: draftTarget.orderType === 'DINE_IN' ? draftTarget.tableId : null,
-        items: draftItems.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity,
-          modifiers: item.modifiers,
-          ...(item.itemNote ? { itemNote: item.itemNote } : {}),
-        })),
+      let saved = activeSavedDraft;
+      if (!saved || draftIsDirty) {
+        const persisted = await persistCurrentDraft();
+        saved = { id: persisted.id, revision: persisted.revision };
+      }
+      const idempotencyKey = draftSubmitKeyRef.current ?? (typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`);
+      draftSubmitKeyRef.current = idempotencyKey;
+      const response = await submitDraftMutation.mutateAsync({
+        id: saved.id,
+        input: { expectedRevision: saved.revision, idempotencyKey },
       });
+      const created = response.order;
 
       setDraftTarget(null);
       setDraftItems([]);
+      setActiveSavedDraft(null);
+      setDraftIsDirty(false);
+      draftSubmitKeyRef.current = null;
       setSelectedOrderId(created.orderId);
       emitViewChange('draft-submitted');
 
@@ -883,12 +1100,19 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     ? currentOrder.tableLabel
     : draftTarget?.orderType === 'TAKEAWAY'
       ? 'Đơn Mang về mới'
-      : draftTarget?.tableName ?? 'Đang chọn bàn';
+      : draftTarget?.orderType === 'DINE_IN'
+        ? draftTarget.tableName ?? 'Chưa gán bàn'
+        : draftTarget?.orderType === null
+          ? 'Giỏ chưa gán bàn'
+          : 'Đang chọn bàn';
 
   const clearSelection = () => {
     setSelectedOrderId(null);
     setDraftTarget(null);
     setDraftItems([]);
+    setActiveSavedDraft(null);
+    setDraftIsDirty(false);
+    draftSubmitKeyRef.current = null;
   };
 
   return {
@@ -896,11 +1120,15 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     gridData,
     productsQuery,
     products,
+    draftsQuery,
+    parkedDrafts,
+    activeDraftId: activeSavedDraft?.id ?? null,
     currentOrder: currentOrder ?? null,
     currentUser,
     selectedOrderId,
     draftTarget,
     draftItems,
+      draftIsDirty,
     addonIsTakeaway,
     setAddonIsTakeaway,
     addonBadgesByOrderId,
@@ -908,6 +1136,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     permissions: {
       canCreateOrder,
       canUpdateOrder,
+      canDeleteOrder,
+      canSaveDraft: activeSavedDraft ? canUpdateOrder : canCreateOrder,
       canSplitKitchen,
       canTableAction,
       canCheckout,
@@ -921,7 +1151,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       isSplitPending: splitKitchenMutation.isPending,
       isProvisionalPending: provisionalBillMutation.isPending,
       isApprovingQr: approveQrMutation.isPending,
-      isSubmittingDraft: createOrderMutation.isPending,
+      isSubmittingDraft: submitDraftMutation.isPending || createDraftMutation.isPending || updateDraftMutation.isPending,
+      isSavingDraft: createDraftMutation.isPending || updateDraftMutation.isPending,
       isCancellingOrder: cancelOrderMutation.isPending,
       isReprintPending: reprintKitchenMutation.isPending,
       isDiscountPending: applyDiscountMutation.isPending || removeDiscountMutation.isPending,
@@ -949,9 +1180,14 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       selectTakeawayOrder: handleSelectTakeawayOrder,
       selectOrderById: handleSelectOrderById,
       startNewTakeaway: handleStartNewTakeaway,
+      startUntargetedDraft: handleStartUntargetedDraft,
+      chooseDraftTarget: () => emitViewChange('draft-target-picker'),
       addItemFromMenu: handleAddItemFromMenu,
       updateDraftQty: handleUpdateDraftQty,
       removeDraftItem: handleRemoveDraftItem,
+      saveDraft: handleSaveDraft,
+      resumeDraft: handleResumeDraft,
+      deleteDraft: handleDeleteDraft,
       submitDraftOrder: handleSubmitDraftOrder,
       approveQrOrder: handleApproveQrOrder,
       updateOrderItemQuantity: handleUpdateOrderItemQuantity,

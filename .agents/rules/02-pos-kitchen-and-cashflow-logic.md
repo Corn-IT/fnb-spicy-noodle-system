@@ -18,8 +18,9 @@ description: Core business logic for POS order creation, takeaway numbering, del
 | B | `DINE_IN` | `POS_COUNTER` | `SERVING` | Thu ngân tạo đơn trên bàn trống → bàn chuyển `OCCUPIED` |
 | C | `TAKEAWAY` | `POS_COUNTER` | `SERVING` | Thu ngân tạo đơn mang về → cấp `takeaway_number` tự tăng theo ngày |
 
-- `takeaway_number` bắt đầu từ `1`, reset lúc `00:00:00` mỗi ngày theo giờ Việt Nam (`+07:00`), hiển thị `"Mang về #01"`, `"Mang về #02"`...
+- `takeaway_number` bắt đầu từ `1`, reset lúc `00:00:00` mỗi ngày theo giờ Việt Nam (`+07:00`), hiển thị `"Mang về #01"`, `"Mang về #02"`... Bộ đếm lưu trong `takeaway_sequences` và cấp số atomic; số đã cấp vẫn được ghi nhận khi đơn chuyển sang DINE_IN, nên không tái sử dụng trong cùng ngày. Lần cấp đầu ngày phải seed từ số takeaway cùng ngày còn trong `orders` và nhãn số trong `table_transfer_logs`.
 - Khi `order_type = 'TAKEAWAY'`: `table_id` **MUST** là `NULL`; khi `DINE_IN`: `takeaway_number` **MUST** là `NULL` (Invariant 2).
+- **POS draft:** giỏ tạm lưu trong `pos_drafts`, không tạo `orders`, không giữ chỗ bàn, không in/thanh toán và không lưu snapshot giá. Khi gửi, backend đọc lại menu/giá hiện tại trong transaction; revision kiểm tra sửa đồng thời, idempotency key ngăn tạo đơn lặp. `GET /api/v1/pos/drafts` yêu cầu `pos.view`; `POST` và gửi yêu cầu `pos.create`, `PUT` yêu cầu `pos.update`, `DELETE` yêu cầu `pos.delete`. Draft có thể chưa chọn bàn/loại đơn; gửi chỉ được phép sau khi chọn DINE_IN với bàn trống hoặc TAKEAWAY.
 - **Bảo mật QR (`QrSecurityService`) & Chống IDOR:**
   - `GET /api/v1/public/menu` và `POST /api/v1/public/orders/qr` kiểm tra khoá Wi-Fi IP và/hoặc GPS Geofence nếu bật (`pos:qrSecurity`).
   - Xác thực `activeOrderId` chỉ cho phép nối món vào đúng đơn thuộc bàn hoặc đơn từng chuyển đi từ bàn đó (`EC-POS-01`), chặn cross-table IDOR bằng `403`.
@@ -71,11 +72,11 @@ description: Core business logic for POS order creation, takeaway numbering, del
 **API:** `POST /api/v1/pos/orders/:id/table-action` (`{ action, targetTableId, reason }`)
 
 - Khoá dòng theo `ORDER BY id ASC FOR UPDATE`: `orders` trước → `dining_tables` sau.
-- **`MOVE`:** Bàn đích phải `AVAILABLE` (nếu không → `409 POS_TABLE_NOT_AVAILABLE`). Hỗ trợ cả `DINE_IN → DINE_IN` và `TAKEAWAY → DINE_IN` (gán `is_takeaway = TRUE` trên các món sẵn có).
-- **`MERGE`:** Bàn đích phải `OCCUPIED` (nếu không → `409 POS_TABLE_NOT_OCCUPIED`). Hỗ trợ cả `DINE_IN → DINE_IN` và `TAKEAWAY → DINE_IN` (gán `is_takeaway = TRUE`). Giữ nguyên `kitchen_status` của mọi món; gỡ giảm giá đơn nguồn, tính lại tổng đơn đích; đơn nguồn chuyển `MERGED`.
+- **`MOVE`:** Bàn đích phải `AVAILABLE` (nếu không → `409 POS_TABLE_NOT_AVAILABLE`). Hỗ trợ cả `DINE_IN → DINE_IN` và `TAKEAWAY → DINE_IN`; khi đưa đơn TAKEAWAY vào bàn, đặt `is_takeaway = FALSE` cho món đã chuyển để phiếu bếp sau này không còn nhãn mang về.
+- **`MERGE`:** Bàn đích phải `OCCUPIED` (nếu không → `409 POS_TABLE_NOT_OCCUPIED`). Hỗ trợ cả `DINE_IN → DINE_IN` và `TAKEAWAY → DINE_IN`; món chuyển từ TAKEAWAY đặt `is_takeaway = FALSE`. Giữ nguyên `kitchen_status` của mọi món; gỡ giảm giá đơn nguồn, tính lại tổng đơn đích; đơn nguồn chuyển `MERGED`.
 - **`SWAP`:** Chỉ cho 2 đơn `DINE_IN` đang mở (cấm `SWAP` với `TAKEAWAY` → `409 POS_TAKEAWAY_CANNOT_MERGE`).
 - **`TO_TAKEAWAY`:** Chuyển đơn `DINE_IN` sang `TAKEAWAY` (giải phóng bàn về `AVAILABLE`, cấp `takeaway_number` mới trong ngày, reset `is_takeaway = FALSE`).
-- Nếu có món đã `PRINTED` → `requireKitchenNoticePrint = true` + `kitchenTransferSlip`. Emit `order:session_redirected` + `qr:order_notice` tới khách và `table:grid_sync` tới POS.
+- Nếu có món đã `PRINTED` → `requireKitchenNoticePrint = true` + `kitchenTransferSlip`. Món TAKEAWAY đã chuyển bàn bỏ nhãn `[MANG VỀ]`; lượt tách bếp sau đó vẫn in ghi chú tuyến chuyển từ `table_transfer_logs`. Emit `order:session_redirected` + `qr:order_notice` tới khách và `table:grid_sync` tới POS.
 
 ---
 
@@ -122,6 +123,7 @@ status                  = MATCHED (=0) | SURPLUS (>0) | SHORTAGE (<0)
 | `qr:order_notice` | Server → Khách | `table_session_{id}`, `order_session_{id}` | Thông báo tức thời POS → khách (sửa/huỷ món, giảm giá, tạm tính...) |
 | `table:qr_rotated` | Server → Khách | `table_session_{id}`, `order_session_{id}` | Thu ngân xoay mã QR bàn → khoá phiên QR cũ |
 | `table:grid_sync` | Server → POS | `pos_cashier_room` | Đồng bộ sơ đồ bàn & danh sách đơn realtime |
+| `pos:drafts_updated` | Server → POS staff | `pos_cashier_room` | Lưu, xoá hoặc gửi giỏ tạm; chỉ invalidates danh sách draft của POS, không phát vào room khách QR |
 | `menu:updated` | Server → Broadcast | Toàn namespace `/pos` | Cập nhật món/giá/tạm hết/trạm/danh mục |
 | `schedule:updated` | Server → POS/Staff | `pos_cashier_room` | Lưu hoặc sao chép bảng công tuần |
 | `payroll:updated` | Server → POS/Staff | `pos_cashier_room` | Cập nhật cấu hình hoặc bảng lương nhân viên |

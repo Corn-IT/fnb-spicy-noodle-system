@@ -442,26 +442,41 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
 
       vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
         if (url === '/api/v1/pos/tables') return tableGridResponse;
+        if (url === '/api/v1/pos/drafts') return { drafts: [] };
         if (url === '/api/v1/menu/products') return mockProducts;
         if (url === '/api/v1/pos/orders/601') return pendingOrderDetail;
         if (url === '/api/v1/pos/orders/604') return takeawayOrderDetail;
         throw new Error(`Unexpected GET ${url}`);
       });
 
-      const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => {
+      const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string, body?: unknown) => {
         if (url === '/api/v1/pos/orders/601/approve') {
           return { orderId: 601, status: 'SERVING' };
         }
-        if (url === '/api/v1/pos/orders') {
+        if (url === '/api/v1/pos/drafts') {
           return {
-            orderId: 604,
-            orderCode: 'HD-20261108-0013',
-            orderType: 'TAKEAWAY',
-            tableId: null,
-            takeawayNumber: 2,
-            tableLabel: 'Mang về #02',
-            status: 'SERVING',
-            totalAmount: 30000,
+            ...(body as Record<string, unknown>),
+            id: 'draft-604',
+            revision: 1,
+            tableName: null,
+            createdAt: '2026-11-08T08:15:00.000Z',
+            updatedAt: '2026-11-08T08:15:00.000Z',
+          };
+        }
+        if (url === '/api/v1/pos/drafts/draft-604/submit') {
+          return {
+            draftId: 'draft-604',
+            idempotentReplay: false,
+            order: {
+              orderId: 604,
+              orderCode: 'HD-20261108-0013',
+              orderType: 'TAKEAWAY',
+              tableId: null,
+              takeawayNumber: 2,
+              tableLabel: 'Mang về #02',
+              status: 'SERVING',
+              totalAmount: 30000,
+            },
           };
         }
         throw new Error(`Unexpected POST ${url}`);
@@ -511,12 +526,16 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
 
       await waitFor(() => {
         expect(postSpy).toHaveBeenCalledWith(
-          '/api/v1/pos/orders',
+          '/api/v1/pos/drafts',
           expect.objectContaining({
             orderType: 'TAKEAWAY',
             tableId: null,
             items: [expect.objectContaining({ productId: 102, quantity: 1 })],
           }),
+        );
+        expect(postSpy).toHaveBeenCalledWith(
+          '/api/v1/pos/drafts/draft-604/submit',
+          expect.objectContaining({ expectedRevision: 1, idempotencyKey: expect.any(String) }),
         );
       });
 

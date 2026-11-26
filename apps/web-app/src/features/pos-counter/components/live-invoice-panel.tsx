@@ -37,18 +37,20 @@ import type { PosMenuSelectedItem } from './pos-menu-types';
 export type LiveInvoiceDraftTarget =
   | {
       orderType: 'DINE_IN';
-      tableId: number;
-      tableName: string;
+      tableId: number | null;
+      tableName?: string;
     }
   | {
       orderType: 'TAKEAWAY';
-    };
+    }
+  | { orderType: null };
 
 export interface LiveInvoicePanelProps {
   order: OrderDetailResponse | null;
   draftTarget: LiveInvoiceDraftTarget | null;
   draftItems: PosMenuSelectedItem[];
   canCreate?: boolean;
+  canSaveDraft?: boolean;
   canUpdate?: boolean;
   canSplitKitchen?: boolean;
   canTableAction?: boolean;
@@ -57,6 +59,7 @@ export interface LiveInvoicePanelProps {
   isProvisionalPending: boolean;
   isApprovingQr: boolean;
   isSubmittingDraft: boolean;
+  isSavingDraft?: boolean;
   isCancellingOrder?: boolean;
   isDiscountPending?: boolean;
   isReprintPending?: boolean;
@@ -64,6 +67,8 @@ export interface LiveInvoicePanelProps {
   onUpdateDraftQty: (index: number, delta: number) => void;
   onRemoveDraftItem: (index: number) => void;
   onSubmitDraftOrder: () => void;
+  onSaveDraft?: () => void;
+  onChooseDraftTarget?: () => void;
   onApproveQrOrder: () => void;
   onUpdateOrderItemQuantity: (orderItemId: number, newQuantity: number) => void;
   onToggleOrderItemTakeaway?: (orderItemId: number, nextIsTakeaway: boolean) => void;
@@ -87,6 +92,7 @@ export function LiveInvoicePanel({
   draftTarget,
   draftItems,
   canCreate = true,
+  canSaveDraft = canCreate,
   canUpdate = true,
   canSplitKitchen = true,
   canTableAction = true,
@@ -95,6 +101,7 @@ export function LiveInvoicePanel({
   isProvisionalPending,
   isApprovingQr,
   isSubmittingDraft,
+  isSavingDraft = false,
   isCancellingOrder = false,
   isDiscountPending = false,
   isReprintPending = false,
@@ -102,6 +109,8 @@ export function LiveInvoicePanel({
   onUpdateDraftQty,
   onRemoveDraftItem,
   onSubmitDraftOrder,
+  onSaveDraft = () => undefined,
+  onChooseDraftTarget = () => undefined,
   onApproveQrOrder,
   onUpdateOrderItemQuantity,
   onToggleOrderItemTakeaway,
@@ -136,7 +145,9 @@ export function LiveInvoicePanel({
     const label =
       draftTarget.orderType === 'TAKEAWAY'
         ? 'Đơn Mang về mới'
-        : draftTarget.tableName ?? `Bàn #${draftTarget.tableId}`;
+        : draftTarget.orderType === 'DINE_IN'
+          ? draftTarget.tableName ?? (draftTarget.tableId ? `Bàn #${draftTarget.tableId}` : 'Chưa gán bàn')
+          : 'Giỏ chưa gán bàn';
 
     return (
       <div className="flex flex-1 min-h-0 h-full flex-col justify-between bg-card p-3 sm:p-4">
@@ -147,7 +158,7 @@ export function LiveInvoicePanel({
                 {label}
               </h2>
               <p className="text-xs text-muted-foreground leading-snug break-words">
-                Đang chọn món tạo đơn mới ({draftTarget.orderType === 'DINE_IN' ? 'TẠI BÀN' : 'MANG VỀ'})
+                Đang chọn món tạo đơn mới ({draftTarget.orderType === null ? 'CHƯA GÁN BÀN' : draftTarget.orderType === 'DINE_IN' ? 'TẠI BÀN' : 'MANG VỀ'})
               </p>
             </div>
             <Badge className="shrink-0 bg-indigo-600 font-bold text-white shadow-xs px-2.5 py-0.5 text-xs">
@@ -266,16 +277,39 @@ export function LiveInvoicePanel({
               {draftTotal.toLocaleString('vi-VN')} đ
             </span>
           </div>
-          {canCreate ? (
-            <Button
-              type="button"
-              data-testid="pos-submit-new-order-btn"
-              disabled={draftItems.length === 0 || isSubmittingDraft}
-              onClick={onSubmitDraftOrder}
-              className="w-full h-10 bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.99] touch-manipulation shadow-sm"
-            >
-              {isSubmittingDraft ? 'Đang tạo đơn...' : 'Xác nhận Tạo Đơn'}
+          {draftItems.length > 0 ? (
+            <Button type="button" variant="outline" className="mb-2 w-full" onClick={onChooseDraftTarget}>
+              {draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)
+                ? 'Gán bàn hoặc chọn Mang về'
+                : 'Đổi bàn hoặc chọn Mang về'}
             </Button>
+          ) : null}
+          {canCreate || canSaveDraft ? (
+            <div className="grid grid-cols-2 gap-2">
+              {canSaveDraft ? (
+                <Button
+                  type="button"
+                  data-testid="pos-save-draft-btn"
+                  variant="outline"
+                  disabled={draftItems.length === 0 || isSavingDraft}
+                  onClick={onSaveDraft}
+                  className="h-10 font-bold"
+                >
+                  {isSavingDraft ? 'Đang lưu...' : 'Lưu tạm'}
+                </Button>
+              ) : null}
+              {canCreate ? (
+                <Button
+                  type="button"
+                  data-testid="pos-submit-new-order-btn"
+                  disabled={draftItems.length === 0 || isSubmittingDraft || draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)}
+                  onClick={onSubmitDraftOrder}
+                  className="h-10 bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.99] touch-manipulation shadow-sm"
+                >
+                  {isSubmittingDraft ? 'Đang tạo đơn...' : 'Xác nhận Tạo Đơn'}
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>
@@ -870,8 +904,8 @@ export function LiveInvoicePanel({
                   className="min-h-11 lg:min-h-10 min-w-0 px-2 sm:px-3 text-xs xl:text-sm font-semibold touch-manipulation active:scale-[0.98]"
                 >
                   <ArrowLeftRight className="h-4 w-4 shrink-0" />
-                  <span className="sm:hidden">Đổi bàn</span>
-                  <span className="hidden sm:inline">Đổi / Gộp bàn</span>
+                  <span className="sm:hidden">{order.orderType === 'TAKEAWAY' ? 'Gán bàn' : 'Đổi bàn'}</span>
+                  <span className="hidden sm:inline">{order.orderType === 'TAKEAWAY' ? 'Gán bàn' : 'Đổi / Gộp bàn'}</span>
                 </Button>
               ) : null}
 

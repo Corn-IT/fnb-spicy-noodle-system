@@ -61,7 +61,7 @@ export function TableActionDialog({
 
   const availableActions = isTakeaway
     ? ([
-        { type: TableActionType.MOVE, label: 'Chuyển sang bàn trống' },
+        { type: TableActionType.MOVE, label: 'Gán vào bàn trống' },
         { type: TableActionType.MERGE, label: 'Gộp vào bàn đang ăn' },
       ] as const)
     : ([
@@ -113,7 +113,7 @@ export function TableActionDialog({
   const confirmLabel =
     action === TableActionType.MOVE
       ? isTakeaway
-        ? 'Xác nhận Chuyển vào bàn'
+        ? 'Xác nhận Gán bàn'
         : 'Xác nhận Chuyển bàn'
       : action === TableActionType.MERGE
         ? 'Xác nhận Gộp bàn'

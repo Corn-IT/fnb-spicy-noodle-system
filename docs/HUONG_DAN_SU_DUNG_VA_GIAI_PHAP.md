@@ -151,11 +151,17 @@ Mật khẩu mặc định chung sau khi seed: **`Password@123`**
 - **Tách Bếp (`Tách đơn`):** Chỉ in các món trạng thái `NEW` về đúng từng trạm bếp (phân rã `COMBO`), đánh dấu lượt gọi (`Lượt 1`, `GỌI THÊM - LƯỢT 2`), kèm nhãn `[MANG VỀ]` nếu từng món được đánh dấu gói mang về (`is_takeaway`). Có nút **In lại phiếu bếp** riêng khi cần.
 - **Huỷ / Sửa món:** Món chưa in (`NEW`) sửa/xoá trực tiếp không tốn giấy; món đã in (`PRINTED`) khi huỷ sẽ tự in **Phiếu báo huỷ món** xuống trạm bếp tương ứng.
 - **4 Thao tác Bàn (`Chuyển / Ghép / Đổi bàn / Mang về`):**
-  1. **Chuyển bàn (`MOVE`):** Bàn → Bàn trống, hoặc **Mang về → Bàn trống** (đánh dấu món sẵn có là mang về).
-  2. **Ghép bàn (`MERGE`):** Bàn → Bàn đang ăn, hoặc **Mang về → Bàn đang ăn** (giữ nguyên trạng thái `PRINTED` không in lặp).
+  1. **Chuyển bàn (`MOVE`):** Bàn → Bàn trống, hoặc **Mang về → Bàn trống**. Khi chuyển đơn Mang về vào bàn, các món cũ được bỏ cờ `[MANG VỀ]`; trạng thái `PRINTED` vẫn giữ nguyên.
+  2. **Ghép bàn (`MERGE`):** Bàn → Bàn đang ăn, hoặc **Mang về → Bàn đang ăn**. Các món từ đơn Mang về được bỏ cờ `[MANG VỀ]`; trạng thái `PRINTED` vẫn giữ nguyên.
   3. **Đổi bàn (`SWAP`):** Hoán đổi 2 bàn đang có khách (không áp dụng cho đơn Mang về).
   4. **Chuyển sang Mang về (`TO_TAKEAWAY`):** Giải phóng bàn đang ngồi và cấp số `Mang về #NN` cho đơn đó.
-  - Nếu đơn đã có món `PRINTED`, hệ thống tự in **Phiếu Thông báo Đổi bàn** cho bếp và đồng bộ tức thời điện thoại khách (`order:session_redirected`).
+  - Nếu đơn đã có món `PRINTED`, hệ thống tự in **Phiếu Thông báo Đổi bàn** cho bếp và đồng bộ tức thời điện thoại khách (`order:session_redirected`). Với món từ đơn Mang về, phiếu bếp ở lượt tách sau bỏ nhãn `[MANG VỀ]` và giữ ghi chú tuyến chuyển như `Chuyển từ Mang về #02 sang Bàn 22`.
+
+#### 3.3. Giỏ tạm POS dùng chung giữa các máy
+- Có thể bắt đầu giỏ từ một bàn trống, từ **`+ Đơn mang về mới`**, hoặc chọn **`Giỏ chưa gán bàn`** để gọi món trước rồi chọn bàn/Mang về sau.
+- Bấm **`Lưu tạm`** để lưu giỏ vào danh sách giỏ tạm của POS. Giỏ đã lưu xuất hiện trên các máy POS khác; thu ngân có thể mở lại, tiếp tục gọi món hoặc xoá.
+- Giỏ tạm không tạo hoá đơn, không chiếm bàn, không gửi phiếu bếp và không thể thanh toán. Khi bấm gửi, hệ thống dùng giá món hiện hành. Bàn phải còn trống; nếu bàn đã có khách hoặc món không còn hợp lệ, giỏ vẫn được giữ để sửa/đổi đích.
+- Draft được đồng bộ bằng thông báo staff POS. Khách QR không xem được danh sách giỏ tạm.
 
 ---
 
