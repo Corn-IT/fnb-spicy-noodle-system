@@ -11,14 +11,12 @@
 
 ## 0A. Kết quả chạy lại gần nhất — 2026-11-26
 
-`pnpm e2e` (Playwright CLI, Node 22.20): **71 PASS / 5 SKIP / 9 FAIL** trên 85 ca, chạy 8,8 phút. Chưa đạt trạng thái E2E toàn bộ xanh.
+`pnpm e2e` (Playwright CLI, Node 22.23): **82 PASS / 5 SKIP / 0 FAIL** trên 87 ca, chạy 9,6 phút.
 
-- Các ca POS drafts và Touch trên Chromium đều PASS, gồm lưu đơn nháp, khôi phục, gán bàn và gửi đơn. Tuy nhiên `pos-drafts.spec.ts` mock API bằng `page.route`, nên không kiểm tra migration/ghi DB thật.
-- Lỗi lưu giỏ tạm trên môi trường local do migration `20261126000000_add_pos_drafts_and_takeaway_sequence` chưa được áp dụng. Đã chạy `pnpm --filter @fnb/api-server db:migrate`; Prisma xác nhận schema local cập nhật và `public.pos_drafts` tồn tại.
-- Sau đó, tab Touch `Lưu tạm` được kiểm tra riêng: POS Touch Vitest 26/26 và `e2e/pos-touch.spec.ts` 15/15 PASS; `pnpm -r typecheck`, `pnpm -r test` (915 test) và `pnpm -r lint` cũng PASS. Full E2E nhiều browser 71/5/9 nêu trên chưa được chạy lại sau thay đổi tab.
-- Còn lỗi chọn đơn Mang về ở WebKit mobile/tablet (không mở được chi tiết đơn) và lỗi thao tác Touch/đơn gọi thêm ở WebKit tablet.
-- Các lỗi khác trong lượt chạy: ESC/POS raster width; 2 ca account preferences; quick cancel; route audit và responsive matrix bị điều hướng lồng nhau làm gián đoạn `page.goto`.
-- Cần xử lý và chạy lại các ca lỗi trước khi coi toàn bộ responsive/E2E là đạt. Các trạng thái module bên dưới là kết quả lịch sử riêng của từng module, không thay thế kết quả chạy toàn suite này.
+- Cả 5 ca skip là theo thiết bị: một ca chỉ dành cho phone bị bỏ trên Chromium desktop và WebKit tablet; ba ca sidebar desktop được bỏ trên WebKit mobile. Không có ca nào skip vì thiếu cấu hình hoặc lỗi.
+- POS drafts, Touch, chuyển đổi Mang về/bàn, thermal QR, responsive matrix và route audit đều pass trong full suite. Case UI “QR lấy bàn đã lưu, giữ giỏ rồi cho đổi bàn và gửi lại” pass trên Chromium; UI E2E này dùng API mock.
+- Đã kiểm tra thêm với API thật và PostgreSQL local cô lập: áp dụng đủ 17 migration, seed dữ liệu; QR lấy Bàn 10 trước khiến POS submit nhận `409 POS_TABLE_NOT_AVAILABLE`, giỏ revision 1 còn nguyên; đổi sang Bàn 03 rồi submit thành công. Kiểm tra đồng thời QR + POS submit trên Bàn 11 cho kết quả QR thắng, POS nhận `409`, DB chỉ có một đơn hoạt động và draft được giữ. Database/API tạm đã được dọn sau kiểm tra.
+- Kiểm tra tranh chấp PostgreSQL là một lượt đồng thời, chưa phải stress test nhiều lượt hoặc kiểm tra mọi lịch xen kẽ. Các trạng thái module bên dưới vẫn có một số kết quả lịch sử; ưu tiên số liệu chạy mới ở mục này.
 
 ---
 
@@ -267,11 +265,12 @@
 
 ## 7. POS Drafts & Takeaway Conversion — Đã chạy kiểm tra tập trung
 
-Các kết quả PASS trong bảng lịch sử ở trên được ghi trước thay đổi này. Lần chạy full `pnpm e2e` gần nhất có 72 PASS, 5 SKIP, 8 FAIL. Một lỗi là luồng Touch resume giỏ chưa gán bàn quay lại tab không có bàn; đã chuyển target picker về tab `Tất cả` để giữ cả lựa chọn bàn và Mang về, rồi chạy lại `pos-drafts.spec.ts` đạt 3/3. Bảy lỗi khác ở thermal-raster và một số luồng WebKit (đổi bàn, tuỳ chọn tài khoản, quick cancel) chưa được xử lý hoặc xác minh lại. Full suite chưa chạy lại sau các sửa cuối, nên không ghi nhận toàn bộ E2E sạch. Sau khi sửa header, route audit Chromium chạy đủ 18 route × 9 viewport không ghi nhận vi phạm (`all-routes-audit-output.json: []`). Vitest cuối phiên: Shared 67, API 431, Web 420; tổng 918.
+Full suite `pnpm e2e` hiện tại đạt 82 PASS / 5 SKIP / 0 FAIL trên 87 ca. Kiểm tra PostgreSQL/API thật cho QR chiếm bàn và submit giỏ đồng thời cũng pass như ghi tại mục 0A; đây là một lượt race, không thay thế stress test. Sau khi sửa header, route audit Chromium chạy đủ 18 route × 9 viewport không ghi nhận vi phạm (`all-routes-audit-output.json: []`). Vitest gần nhất: Shared 67, API 431, Web 420; tổng 918.
 
 | Hạng mục | Coverage mới | File | Trạng thái hiện tại |
 |----------|--------------|------|--------------------|
-| Shared draft cart Desktop + Touch: giỏ chưa gán bàn → lưu → resume → chọn bàn trống → submit một lần; không gọi endpoint tạo order riêng từ client | E2E flow & request assertions | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — 2 Desktop, 1 Touch |
+| Shared draft cart Desktop + Touch: giỏ chưa gán bàn → lưu → resume → chọn bàn trống → submit một lần; không gọi endpoint tạo order riêng từ client | E2E flow & request assertions | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — 3 Desktop, 1 Touch |
+| QR nhận bàn đã gắn với draft; UI giữ giỏ và cho đổi bàn; API thật + PostgreSQL từ chối submit cũ và giữ revision, race QR/POS không tạo hai đơn hoạt động | Playwright UI mock + HTTP/API E2E trên PostgreSQL cô lập | `apps/web-app/e2e/pos-drafts.spec.ts`; lượt kiểm tra DB thật được chạy riêng | PASS — UI 1/1; DB thật: QR-first Bàn 10 và một lượt đồng thời Bàn 11 |
 | Xoá giỏ tạm đã lưu khỏi danh sách POS | E2E | `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — Desktop |
 | POS Touch chuyển sang flow tạo draft rồi submit | E2E regression | `apps/web-app/e2e/pos-touch.spec.ts` | PASS — 16/16; kết hợp với `pos-drafts.spec.ts` chạy lại đạt 19/19 |
 | Tab `Lưu tạm`: loading/error/retry, empty state, resume; sau lưu tự chọn tab; target picker mở cả bàn và Mang về | Vitest + E2E | `apps/web-app/src/features/pos-counter/touch/__tests__/pos-touch-page.test.tsx`, `apps/web-app/e2e/pos-drafts.spec.ts` | PASS — 28 Vitest; `pos-drafts.spec.ts` 3/3 |
