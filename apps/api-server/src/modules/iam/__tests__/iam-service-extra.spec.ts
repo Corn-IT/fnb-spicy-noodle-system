@@ -309,6 +309,140 @@ describe('IamService additional failure and success paths', () => {
       data: { uiPreferences: { theme: 'light', sidebar_width: 260, column_widths: {}, display_scale: { perPath: {} }, nav_order: [], nav_group_order: [], sidebar_collapsed: false } },
     }));
   });
+
+  it('should record localized Vietnamese audit diffs for all 14 modules and new camelCase permission flags in updateUserPermissions', async () => {
+    const prevPerms = UserPermissionsSchema.parse({});
+    const updatedPerms = UserPermissionsSchema.parse({
+      pos: {
+        view: true,
+        deleteDrafts: true,
+        openCashDrawer: true,
+        manualDiscount: true,
+      },
+      discounts: { view: true, create: true },
+      paymentQr: { view: true },
+      payroll: { view: true, export: true },
+      invoices: { view: true, void: true },
+    });
+
+    const record = vi.fn().mockResolvedValue(undefined);
+    const emitPermissionsUpdated = vi.fn();
+    const existingRow = activeUser({
+      id: 7,
+      username: 'cashier07',
+      permissions: prevPerms,
+      activeSessionId: 'sid_live_7',
+    });
+
+    const prisma = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue(existingRow),
+        update: vi.fn().mockResolvedValue({ ...existingRow, permissions: updatedPerms }),
+      },
+      pushSubscription: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+
+    const service = new IamService(
+      prisma as never,
+      {} as never,
+      { get: vi.fn().mockReturnValue('7d') } as never,
+      { record } as never,
+      { emitPermissionsUpdated, isSessionOnline: vi.fn(() => true) } as never,
+    );
+
+    await service.updateUserPermissions(
+      7,
+      { permissions: updatedPerms },
+      {
+        id: 1,
+        employeeId: 1,
+        username: 'superadmin',
+        isSuperAdmin: true,
+        permissions: UserPermissionsSchema.parse({}),
+      },
+    );
+
+    expect(emitPermissionsUpdated).toHaveBeenCalledWith(7, expect.objectContaining({
+      pos: expect.objectContaining({ deleteDrafts: true, openCashDrawer: true, manualDiscount: true }),
+    }));
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({
+      module: 'RBAC',
+      action: 'Cập nhật phân quyền',
+      metadata: expect.objectContaining({
+        changes: expect.arrayContaining([
+          { field: 'Bán hàng POS · Xóa giỏ lưu tạm', from: 'Tắt', to: 'Bật' },
+          { field: 'Bán hàng POS · Mở két tiền tự do', from: 'Tắt', to: 'Bật' },
+          { field: 'Bán hàng POS · Giảm giá tay trực tiếp', from: 'Tắt', to: 'Bật' },
+          { field: 'Mã giảm giá · Thêm mới', from: 'Tắt', to: 'Bật' },
+          { field: 'Mã QR thanh toán · Xem', from: 'Tắt', to: 'Bật' },
+          { field: 'Bảng tính lương · Xuất file Excel', from: 'Tắt', to: 'Bật' },
+          { field: 'Quản lý Hoá đơn · Huỷ đơn', from: 'Tắt', to: 'Bật' },
+        ]),
+      }),
+    }));
+  });
+
+  it('should emit session revoke, clear push subscriptions, and prevent modifying Super Admin inside updateUserPermissions', async () => {
+    const emitSessionRevoked = vi.fn();
+    const deletePush = vi.fn().mockResolvedValue({ count: 1 });
+    const record = vi.fn().mockResolvedValue(undefined);
+    const existingRegular = activeUser({
+      id: 8,
+      username: 'staff08',
+      isActive: true,
+      activeSessionId: 'sid_888',
+      activeSessionIp: '192.168.1.88',
+      activeSessionDevice: 'Windows · Chrome',
+    });
+
+    const service = new IamService(
+      {
+        user: {
+          findUnique: vi
+            .fn()
+            .mockResolvedValueOnce(activeUser({ id: 1, isSuperAdmin: true }))
+            .mockResolvedValueOnce(existingRegular),
+          update: vi.fn().mockResolvedValue({ ...existingRegular, isActive: false, activeSessionId: null }),
+        },
+        pushSubscription: { deleteMany: deletePush },
+      } as never,
+      {} as never,
+      { get: vi.fn().mockReturnValue('7d') } as never,
+      { record } as never,
+      { emitSessionRevoked, isSessionOnline: vi.fn(() => false) } as never,
+    );
+
+    const adminActor = {
+      id: 1,
+      employeeId: 1,
+      username: 'superadmin',
+      isSuperAdmin: true,
+      permissions: UserPermissionsSchema.parse({}),
+    };
+
+    await expect(service.updateUserPermissions(1, { isActive: false }, adminActor)).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({ code: 'RBAC_SUPER_ADMIN_REQUIRED' }),
+    });
+
+    await service.updateUserPermissions(8, { isActive: false }, adminActor);
+    expect(emitSessionRevoked).toHaveBeenCalledWith(
+      'sid_888',
+      expect.objectContaining({ reason: 'ACCOUNT_DISABLED' }),
+    );
+    expect(deletePush).toHaveBeenCalledWith({ where: { userId: 8 } });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'Khoá / Mở tài khoản',
+        metadata: expect.objectContaining({
+          revokedIp: '192.168.1.88',
+          revokedDevice: 'Windows · Chrome',
+        }),
+      }),
+    );
+  });
 });
 
 describe('durationToMilliseconds', () => {

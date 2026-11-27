@@ -672,4 +672,232 @@ describe('MenuService', () => {
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it('should invalidate cached getPublicMenu catalog immediately whenever PosSocketGateway.emitMenuUpdated bumps revision', async () => {
+    let revision = 0;
+    const fakeGateway = {
+      getMenuCatalogRevision: () => revision,
+      emitMenuUpdated: () => {
+        revision += 1;
+      },
+    };
+    const findManyProducts = vi.fn().mockResolvedValue([productRow]);
+    const prisma = {
+      diningTable: { findUnique: vi.fn().mockResolvedValue({ id: 7, name: 'Bàn 07', status: 'AVAILABLE', activeOrderId: null }) },
+      product: { findMany: findManyProducts },
+    };
+    const service = new MenuService(prisma as never, fakeGateway as never);
+
+    // First call populates cache; second call hits cache
+    await service.getPublicMenu('a'.repeat(64));
+    await service.getPublicMenu('a'.repeat(64));
+    expect(findManyProducts).toHaveBeenCalledTimes(1);
+
+    // External MDM / Menu mutation calls emitMenuUpdated() -> bumps revision -> forces fresh DB read
+    fakeGateway.emitMenuUpdated();
+    await service.getPublicMenu('a'.repeat(64));
+    expect(findManyProducts).toHaveBeenCalledTimes(2);
+  });
+
+  it('should preserve existing comboItems on partial COMBO updates while still rejecting empty COMBO conversions', async () => {
+    const comboProduct = {
+      ...productRow,
+      id: 50,
+      name: 'Combo Đặc Biệt',
+      station: 'COMBO',
+      comboParents: [{ childProductId: 1, quantity: 2 }],
+      modifierGroups: [],
+    };
+    const nonComboProduct = {
+      ...productRow,
+      id: 51,
+      station: 'BEP_NAU',
+      comboParents: [],
+      modifierGroups: [],
+    };
+
+    const tx = {
+      product: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce(comboProduct)
+          .mockResolvedValueOnce(nonComboProduct),
+        update: vi.fn().mockResolvedValue({ ...comboProduct, isAvailable: false }),
+      },
+      comboItem: { deleteMany: vi.fn() },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (op: (client: typeof tx) => Promise<unknown>) => op(tx)),
+    };
+    const service = new MenuService(prisma as never);
+
+    const toggled = await service.updateProduct(50, { isAvailable: false });
+    expect(toggled.isAvailable).toBe(false);
+    expect(toggled.comboItems).toEqual([{ productId: 1, quantity: 2 }]);
+
+    // Converting a regular product to COMBO without comboItems still rejects validation (422)
+    await expect(service.updateProduct(51, { station: 'COMBO' })).rejects.toMatchObject({ status: 422 });
+  });
+
+  it('should enforce deleteProduct active-order & combo-child guards, soft-archive historical items, and hard-delete unused items', async () => {
+    const prismaActiveOrder = {
+      $transaction: vi.fn(async (op: (client: unknown) => Promise<unknown>) =>
+        op({
+          product: { findUnique: vi.fn().mockResolvedValue({ id: 1, name: 'Mì Cay', _count: { orderItems: 0, comboChildren: 0 } }) },
+          orderItem: { count: vi.fn().mockResolvedValue(2) },
+        }),
+      ),
+    };
+    await expect(new MenuService(prismaActiveOrder as never).deleteProduct(1))
+      .rejects.toMatchObject({ response: { code: 'PRODUCT_IN_ACTIVE_ORDER' } });
+
+    const prismaInCombo = {
+      $transaction: vi.fn(async (op: (client: unknown) => Promise<unknown>) =>
+        op({
+          product: { findUnique: vi.fn().mockResolvedValue({ id: 2, name: 'Xúc Xích', _count: { orderItems: 0, comboChildren: 1 } }) },
+          orderItem: { count: vi.fn().mockResolvedValue(0) },
+          comboItem: { count: vi.fn().mockResolvedValue(1) },
+        }),
+      ),
+    };
+    await expect(new MenuService(prismaInCombo as never).deleteProduct(2))
+      .rejects.toMatchObject({ response: { code: 'PRODUCT_IN_COMBO' } });
+
+    const historicalUpdate = vi.fn().mockResolvedValue({ id: 3 });
+    const prismaHistorical = {
+      $transaction: vi.fn(async (op: (client: unknown) => Promise<unknown>) =>
+        op({
+          product: {
+            findUnique: vi.fn().mockResolvedValue({ id: 3, name: 'Trà Đào Cũ', _count: { orderItems: 5, comboChildren: 0 } }),
+            update: historicalUpdate,
+          },
+          orderItem: { count: vi.fn().mockResolvedValue(0) },
+        }),
+      ),
+    };
+    const resArchive = await new MenuService(prismaHistorical as never).deleteProduct(3);
+    expect(resArchive.deleted).toBe(true);
+    expect(historicalUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ isAvailable: false, sortOrder: -9999 }),
+    }));
+  });
+
+  it('lists active products, records field change diffs in updateProduct, and runs importProductsExcel sync', async () => {
+    const gateway = { emitMenuUpdated: vi.fn() };
+    const auditLog = { record: vi.fn() };
+    const comboDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
+    const existingProduct = {
+      id: 77,
+      categoryId: 10,
+      category: { id: 10, name: 'Mỳ Cay', isActive: true, metadata: { defaultStation: 'BEP_NAU' } },
+      station: 'COMBO',
+      name: 'Combo Mì Bò',
+      subtitle: 'Cũ',
+      price: new Prisma.Decimal('80000'),
+      isAvailable: true,
+      sortOrder: 1,
+      imageUrl: null,
+      modifierGroups: [
+        {
+          id: 1,
+          name: 'Cấp độ',
+          isRequired: true,
+          maxSelect: 1,
+          isAutoSelect: false,
+          allowSubstitution: false,
+          modifiers: [{ id: 11, name: 'Trứng', extraPrice: new Prisma.Decimal('0'), isDefaultChecked: false, isAvailable: true, isHidden: false }],
+        },
+      ],
+      comboParents: [{ childProductId: 1, quantity: 1 }],
+    };
+    const updatedProduct = {
+      ...existingProduct,
+      comboParents: [],
+      categoryId: 20,
+      category: { id: 20, name: 'Trà Trái Cây', isActive: true, metadata: { defaultStation: 'PHA_CHE' } },
+      station: 'BEP_NAU',
+      name: 'Mì Bò Đặc Biệt',
+      subtitle: 'Mới',
+      price: new Prisma.Decimal('95000'),
+      isAvailable: false,
+      modifierGroups: [
+        {
+          id: 2,
+          name: 'Topping',
+          isRequired: false,
+          maxSelect: 3,
+          isAutoSelect: false,
+          allowSubstitution: false,
+          modifiers: [{ id: 12, name: 'Trứng', extraPrice: new Prisma.Decimal('10000'), isDefaultChecked: false, isAvailable: false, isHidden: false }],
+        },
+      ],
+    };
+
+    const tx = {
+      product: {
+        findMany: vi.fn().mockResolvedValue([existingProduct]),
+        findUnique: vi.fn().mockResolvedValue(existingProduct),
+        create: vi.fn().mockResolvedValue({ ...existingProduct, id: 88, name: 'Trà Đào Mới', station: 'PHA_CHE', modifierGroups: [], comboParents: [] }),
+        update: vi.fn().mockResolvedValue(updatedProduct),
+        delete: vi.fn().mockResolvedValue({ id: 77 }),
+      },
+      comboItem: { deleteMany: comboDeleteMany },
+      masterData: {
+        findMany: vi.fn()
+          .mockResolvedValueOnce([{ name: 'Pha Chế', metadata: { code: 'PHA_CHE' } }])
+          .mockResolvedValueOnce([{ id: 10, name: 'Trà Trái Cây', normalizedName: 'tra trai cay', isActive: false }]),
+        update: vi.fn().mockResolvedValue({ id: 10, isActive: true }),
+        create: vi.fn().mockResolvedValue({ id: 30, name: 'Trà Sữa', normalizedName: 'tra sua', isActive: true }),
+      },
+      orderItem: { count: vi.fn().mockResolvedValue(0) },
+    };
+    const prisma = {
+      ...tx,
+      product: { ...tx.product, findMany: vi.fn().mockResolvedValue([updatedProduct]) },
+      $transaction: vi.fn(async (op: (client: typeof tx) => Promise<unknown>) => op(tx)),
+    };
+
+    const svc = new MenuService(prisma as never, gateway as never, auditLog as never);
+    const listed = await svc.listProducts();
+    expect(listed[0]?.name).toBe('Mì Bò Đặc Biệt');
+
+    const res = await svc.updateProduct(
+      77,
+      {
+        name: 'Mì Bò Đặc Biệt',
+        subtitle: 'Mới',
+        categoryId: 20,
+        price: 95000,
+        station: 'BEP_NAU',
+        isAvailable: false,
+        modifierGroups: [
+          {
+            name: 'Topping',
+            isRequired: false,
+            maxSelect: 3,
+            modifiers: [{ name: 'Trứng', extraPrice: 10000, isAvailable: false }],
+          },
+        ],
+      },
+      { id: 1, employeeId: 1, username: 'admin', isSuperAdmin: true } as never,
+    );
+    expect(res.price).toBe(95000);
+    expect(comboDeleteMany).toHaveBeenCalledWith({ where: { parentProductId: 77 } });
+    expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({
+      module: 'MENU',
+      action: 'Cập nhật món ăn',
+    }));
+
+    const importSummary = await svc.importProductsExcel(
+      {
+        items: [
+          { name: 'Combo Mì Bò', station: 'BEP_NAU', categoryName: 'Trà Trái Cây', price: 85000, isAvailable: true, sortOrder: 1, subtitle: '', modifierGroupsText: '' },
+          { name: 'Trà Sữa Trân Châu', station: 'Pha Chế', categoryName: 'Trà Sữa', price: 32000, isAvailable: true, sortOrder: 2 },
+        ],
+        syncMissingAsDeleted: true,
+      },
+      { id: 1, employeeId: 1, username: 'admin', isSuperAdmin: true } as never,
+    );
+    expect(importSummary).toMatchObject({ createdCount: 1, updatedCount: 1 });
+  });
 });

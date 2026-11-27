@@ -407,4 +407,129 @@ describe('CashflowService', () => {
     expect(partial.discrepancyAmount).toBe(-40000);
     expect(partial.status).toBe('SHORTAGE');
   });
+
+  it('decreases actualCountedCash and logs reduced newActualNum on SURPLUS settlement compensation, plus handles listSettlements & default budget', async () => {
+    const harness = createHarness();
+    const txWithUpdate = {
+      ...harness.tx,
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          username: 'manager01',
+          employee: { fullName: 'Quản Lý Lan' },
+        }),
+      },
+      cashDrawerSettlement: {
+        ...harness.tx.cashDrawerSettlement,
+        findUnique: vi.fn(),
+        update: vi.fn(),
+      },
+    };
+    harness.prisma.$transaction.mockImplementation(async (callback: (client: typeof txWithUpdate) => Promise<unknown>) =>
+      callback(txWithUpdate),
+    );
+    const auditLogService = { record: vi.fn() };
+    const service = new CashflowService(harness.prisma as never, auditLogService as never);
+
+    txWithUpdate.cashDrawerSettlement.findUnique.mockResolvedValueOnce({
+      id: 15,
+      settlementDate: new Date('2026-11-27T00:00:00.000Z'),
+      shiftName: 'CA_NGAY',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashSales: new Prisma.Decimal('500000.00'),
+      totalTransferSales: new Prisma.Decimal('0.00'),
+      totalCashImports: new Prisma.Decimal('100000.00'),
+      expectedCashInDrawer: new Prisma.Decimal('1400000.00'),
+      actualCountedCash: new Prisma.Decimal('1500000.00'),
+      discrepancyAmount: new Prisma.Decimal('100000.00'), // +100k SURPLUS
+      status: 'SURPLUS',
+      denominationsDetail: denominations,
+      note: 'Dư 100k',
+      closedBy: 1,
+      createdAt: new Date('2026-11-27T15:00:00.000Z'),
+    });
+    txWithUpdate.cashDrawerSettlement.update.mockResolvedValueOnce({
+      id: 15,
+      settlementDate: new Date('2026-11-27T00:00:00.000Z'),
+      shiftName: 'CA_NGAY',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashSales: new Prisma.Decimal('500000.00'),
+      totalTransferSales: new Prisma.Decimal('0.00'),
+      totalCashImports: new Prisma.Decimal('100000.00'),
+      expectedCashInDrawer: new Prisma.Decimal('1400000.00'),
+      actualCountedCash: new Prisma.Decimal('1400000.00'),
+      discrepancyAmount: new Prisma.Decimal('0.00'),
+      status: 'MATCHED',
+      denominationsDetail: denominations,
+      note: 'Dư 100k\n[Đã bù ...]',
+      closedBy: 1,
+      closer: { username: 'manager01', employee: { fullName: 'Quản Lý Lan' } },
+      createdAt: new Date('2026-11-27T15:00:00.000Z'),
+    });
+
+    await service.compensateSettlement(15, { compensationAmount: 100000, note: 'Rút tiền thừa nhập quỹ' }, 1);
+    expect(txWithUpdate.cashDrawerSettlement.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          actualCountedCash: new Prisma.Decimal('1400000.00'),
+          discrepancyAmount: new Prisma.Decimal('0.00'),
+          status: 'MATCHED',
+        }),
+      }),
+    );
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          changes: expect.arrayContaining([
+            {
+              field: 'Tiền thực đếm',
+              from: `${(1500000).toLocaleString('vi-VN')}đ`,
+              to: `${(1400000).toLocaleString('vi-VN')}đ`,
+            },
+          ]),
+        }),
+      }),
+    );
+
+    // Default budget configuration records audit diff
+    harness.prisma.masterData.findUnique.mockResolvedValueOnce({
+      metadata: { opening_budget: '1000000.00' },
+    });
+    harness.prisma.masterData.upsert.mockResolvedValueOnce({});
+    const budgetRes = await service.setDefaultBudget({ openingBudget: 1200000 }, 1);
+    expect(budgetRes).toEqual({ openingBudget: 1200000 });
+    expect(auditLogService.record).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: 'Cấu hình ngân sách',
+        metadata: expect.objectContaining({
+          openingBudget: 1200000,
+        }),
+      }),
+    );
+
+    // Additional preview blindMode, getDefaultOpeningBudget & listSettlements filter coverage
+    harness.prisma.masterData.findUnique.mockResolvedValueOnce({ metadata: { opening_budget: '1200000.00' } });
+    await expect(service.getDefaultOpeningBudget()).resolves.toBe(1200000);
+
+    harness.prisma.masterData.findUnique.mockResolvedValueOnce({ metadata: { opening_budget: '1200000.00' } });
+    const blindPreview = await service.preview(new Date('2026-11-27T10:00:00.000Z'), false);
+    expect(blindPreview).toMatchObject({ blindMode: true, openingBudget: 1200000, totalCashSales: null });
+
+    await expect(service.listSettlements({ page: -1, limit: 20 } as never)).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    // closerKeyword via unaccent ID match
+    harness.prisma.$queryRaw.mockResolvedValueOnce([{ id: 2 }]).mockResolvedValueOnce([{ id: 3 }]);
+    harness.prisma.cashDrawerSettlement.count.mockResolvedValueOnce(1);
+    harness.prisma.cashDrawerSettlement.findMany.mockResolvedValueOnce([]);
+    await expect(
+      service.listSettlements({ page: 1, limit: 20, fromDate: '2026-11-01', toDate: '2026-11-30', closerKeyword: 'lan' }),
+    ).resolves.toMatchObject({ total: 1 });
+
+    // closerKeyword fallback when unaccent query returns empty/unsupported
+    harness.prisma.$queryRaw.mockRejectedValueOnce(new Error('unaccent missing')).mockRejectedValueOnce(new Error('unaccent missing'));
+    harness.prisma.cashDrawerSettlement.count.mockResolvedValueOnce(0);
+    harness.prisma.cashDrawerSettlement.findMany.mockResolvedValueOnce([]);
+    await expect(
+      service.listSettlements({ page: 1, limit: 20, closerKeyword: 'thu ngan' }),
+    ).resolves.toMatchObject({ total: 0 });
+  });
 });

@@ -231,7 +231,10 @@ describe('EmployeeFormDrawer', () => {
 
     const onOpenChange = vi.fn();
     render(
-      <MemoryRouter initialEntries={['/employees']}>
+      <MemoryRouter
+        initialEntries={['/employees']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
         <Routes>
           <Route
             path="*"

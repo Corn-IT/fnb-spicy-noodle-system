@@ -4,7 +4,7 @@ import {
   type OrderDetailResponse,
   UserPermissionsSchema,
 } from '@fnb/shared';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -142,16 +142,18 @@ describe('Story 18 — POS Discount UI, Split/Merge Guards & Invoices Discount F
       expect(onApply).toHaveBeenCalledWith({ code: 'GIAM10' });
     });
 
-    useAuthStore.getState().setAuth({
-      user: {
-        id: 3,
-        employeeId: 3,
-        username: 'manager',
-        fullName: 'Quản lý',
-        isSuperAdmin: false,
-        permissions: UserPermissionsSchema.parse({ pos: { view: true, checkout: true, manualDiscount: true } }),
-      },
-      accessToken: 'tk2',
+    act(() => {
+      useAuthStore.getState().setAuth({
+        user: {
+          id: 3,
+          employeeId: 3,
+          username: 'manager',
+          fullName: 'Quản lý',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({ pos: { view: true, checkout: true, manualDiscount: true } }),
+        },
+        accessToken: 'tk2',
+      });
     });
 
     rerender(
@@ -166,7 +168,7 @@ describe('Story 18 — POS Discount UI, Split/Merge Guards & Invoices Discount F
       </QueryProvider>,
     );
 
-    expect(screen.getByTestId('discount-tab-manual')).toBeInTheDocument();
+    expect(await screen.findByTestId('discount-tab-manual')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('discount-tab-manual'));
     fireEvent.change(screen.getByTestId('manual-discount-value-input'), { target: { value: '25000' } });
     fireEvent.change(screen.getByTestId('manual-discount-reason-input'), { target: { value: 'Khách VIP thân thiết' } });

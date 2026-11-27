@@ -793,5 +793,117 @@ describe('EmployeesService and SchedulesService', () => {
     expect(txWithDelete.employee.delete).toHaveBeenCalledWith({ where: { id: 12 } });
     vi.useRealTimers();
   });
+
+  it('exercises SchedulesService bulkSaveSchedule audit diff, stale deletion, rich attendances, copyPreviousWeek & validation', async () => {
+    const harness = createHarness();
+    const auditLogService = { record: vi.fn() };
+    const posSocketGateway = { emitScheduleUpdated: vi.fn() };
+    const scheduleSvc = new SchedulesService(
+      harness.prisma as never,
+      auditLogService as never,
+      posSocketGateway as never,
+    );
+
+    // Existing cells: day 0 Full-time had emp #1, day 1 Part-time is stale and should be removed
+    harness.tx.workSchedule.findMany.mockResolvedValueOnce([
+      { id: 10, dayOfWeek: 0, timeSlot: 'Full-time', employeeIds: [1] },
+      { id: 11, dayOfWeek: 1, timeSlot: 'Part-time', employeeIds: [{ employeeId: 2, mode: 'CUSTOM_HOURS', startTime: '08:00', endTime: '12:00' }] },
+    ]);
+    harness.tx.employee.findMany
+      .mockResolvedValueOnce([
+        { id: 1, isDeleted: false },
+        { id: 2, isDeleted: true }, // previously assigned in day 1 -> valid
+      ])
+      .mockResolvedValueOnce([
+        { id: 1, shortName: 'M.Quân', fullName: 'Nguyễn Minh Quân' },
+        { id: 2, shortName: 'T.An', fullName: 'Trần An' },
+      ]);
+    harness.tx.workSchedule.deleteMany.mockResolvedValue({ count: 1 });
+    harness.tx.workSchedule.upsert.mockResolvedValue({});
+
+    const fullWeekCells = (firstDayEmployees: number[], attendances?: Array<{ employeeId: number; mode?: 'FULL_SHIFT' | 'CUSTOM_HOURS'; startTime?: string; endTime?: string }>) =>
+      Array.from({ length: 7 }, (_, dayOfWeek) => ({
+        dayOfWeek,
+        timeSlot: 'Full-time',
+        employeeIds: dayOfWeek === 0 ? firstDayEmployees : [],
+        ...(dayOfWeek === 0 && attendances ? { attendances } : {}),
+      }));
+
+    const saveRes = await scheduleSvc.bulkSaveSchedule(
+      {
+        weekStartDate: '2026-11-16',
+        cells: fullWeekCells([1, 2], [
+          { employeeId: 1, mode: 'FULL_SHIFT' },
+          { employeeId: 2, mode: 'CUSTOM_HOURS', startTime: '09:00', endTime: '13:00' },
+        ]),
+      },
+      1,
+    );
+    expect(saveRes).toEqual({ weekStartDate: '2026-11-16', savedCells: 7 });
+    expect(harness.tx.workSchedule.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [11] } } });
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        module: 'SCHEDULES',
+        action: 'Lưu lịch tuần',
+        metadata: expect.objectContaining({
+          changes: expect.arrayContaining([
+            expect.objectContaining({ field: 'Thứ 2 (Full-time)' }),
+            expect.objectContaining({ field: 'Thứ 3 (Part-time)', to: 'Chưa xếp' }),
+          ]),
+        }),
+      }),
+    );
+    expect(posSocketGateway.emitScheduleUpdated).toHaveBeenCalledWith({ weekStartDate: '2026-11-16' });
+
+    // Reject unassigned deleted employee inside transaction validation
+    harness.tx.workSchedule.findMany.mockResolvedValueOnce([]);
+    harness.tx.employee.findMany.mockResolvedValueOnce([{ id: 99, isDeleted: true }]);
+    await expect(
+      scheduleSvc.bulkSaveSchedule(
+        { weekStartDate: '2026-11-16', cells: fullWeekCells([99]) },
+        1,
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        message: 'Không thể phân ca cho nhân viên không tồn tại hoặc đã nghỉ việc',
+      },
+    });
+
+    // Reject invalid week start / incomplete week cells via Zod schema
+    await expect(
+      scheduleSvc.bulkSaveSchedule(
+        { weekStartDate: '2026-11-16', cells: [{ dayOfWeek: 0, timeSlot: 'Full-time', employeeIds: [1] }] },
+        1,
+      ),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    // copyPreviousWeek keeps only active employees & preserves attendance entries
+    harness.tx.workSchedule.findMany
+      .mockResolvedValueOnce([
+        {
+          dayOfWeek: 0,
+          timeSlot: 'Full-time',
+          employeeIds: [
+            { employeeId: 1, mode: 'FULL_SHIFT' },
+            { employeeId: 2, mode: 'CUSTOM_HOURS', startTime: '08:00', endTime: '12:00' },
+          ],
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    harness.tx.employee.findMany.mockResolvedValueOnce([{ id: 1 }]); // only #1 active
+
+    const copyRes = await scheduleSvc.copyPreviousWeek(
+      { sourceWeekStartDate: '2026-11-16', targetWeekStartDate: '2026-11-23' },
+      1,
+    );
+    expect(copyRes.copiedCells).toBe(1);
+    expect(harness.tx.workSchedule.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          employeeIds: [{ employeeId: 1, mode: 'FULL_SHIFT' }],
+        }),
+      }),
+    );
+  });
 });
 

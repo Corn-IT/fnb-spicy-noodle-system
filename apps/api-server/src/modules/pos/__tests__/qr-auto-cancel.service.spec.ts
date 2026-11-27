@@ -260,5 +260,77 @@ describe('QrAutoCancelService (12-minute auto-cancel & row-lock safety)', () => 
         }),
       }),
     );
+
+    // 3. sweepOverdueQrPushReminders notifies overdue NEW (takeaway) & ADDON (table), dedupes same stage, and clears when disabled
+    const webPush = { notifyQrOverdueReminder: vi.fn().mockResolvedValue(undefined) };
+    const svcPush = new QrAutoCancelService(h.prisma as never, h.gateway as never, undefined, webPush as never);
+    h.prisma.masterData.findUnique.mockResolvedValueOnce({
+      isActive: true,
+      metadata: {
+        messages: {
+          'pos.voice.reminderConfig': {
+            title: 'rem=1|remDelay=2|remInt=30|remMax=2|autoCancel=1|autoCancelMin=10',
+          },
+        },
+      },
+    });
+    h.prisma.order.findMany.mockResolvedValueOnce([
+      {
+        id: 301,
+        orderCode: 'HD-301',
+        orderType: 'TAKEAWAY',
+        takeawayNumber: 4,
+        takeawayLabelFormat: null,
+        createdAt: new Date(now.getTime() - 4 * 60_000),
+        table: null,
+      },
+    ]);
+    h.prisma.orderItem.findMany.mockResolvedValueOnce([
+      {
+        orderId: 302,
+        createdAt: new Date(now.getTime() - 3 * 60_000),
+        order: { id: 302, orderCode: 'HD-302', orderType: 'DINE_IN', takeawayNumber: null, takeawayLabelFormat: null, table: { name: 'Bàn 02' } },
+      },
+    ]);
+    const due = await svcPush.sweepOverdueQrPushReminders(now);
+    expect(due).toHaveLength(2);
+    expect(webPush.notifyQrOverdueReminder).toHaveBeenCalledTimes(1);
+
+    // Next tick with same elapsed stage dedupes; disabled clears cache
+    h.prisma.masterData.findUnique.mockResolvedValueOnce({
+      isActive: true,
+      metadata: { messages: { 'pos.voice.reminderConfig': { title: 'rem=0|remDelay=2|remInt=30|remMax=2|autoCancel=0|autoCancelMin=10' } } },
+    });
+    await expect(svcPush.sweepOverdueQrPushReminders(now)).resolves.toEqual([]);
+
+    // 4. sweepExpiredQrRequests voids TAKEAWAY QR order beyond cutoff
+    h.prisma.masterData.findUnique.mockResolvedValueOnce({
+      isActive: true,
+      metadata: {
+        messages: {
+          'pos.voice.reminderConfig': {
+            title: 'rem=1|remDelay=3|remInt=30|remMax=2|autoCancel=1|autoCancelMin=10',
+          },
+        },
+      },
+    });
+    const staleDate = new Date(now.getTime() - 15 * 60_000);
+    h.prisma.order.findMany.mockResolvedValueOnce([{ id: 401 }]);
+    h.tx.order.findUnique.mockResolvedValueOnce({
+      id: 401,
+      orderCode: 'HD-401',
+      status: 'PENDING',
+      orderSource: 'QR_CODE',
+      orderType: 'TAKEAWAY',
+      takeawayNumber: 7,
+      takeawayLabelFormat: null,
+      tableId: null,
+      createdAt: staleDate,
+      table: null,
+      _count: { items: 2 },
+    });
+    const voidEvents = await service.sweepExpiredQrRequests(now);
+    expect(voidEvents).toHaveLength(1);
+    expect(voidEvents[0]).toMatchObject({ orderId: 401, kind: 'NEW', cancelledItemCount: 2 });
   });
 });

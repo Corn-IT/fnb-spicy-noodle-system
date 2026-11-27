@@ -317,4 +317,213 @@ describe('InventoryService', () => {
       }),
     }));
   });
+
+  it('resolves ingredient & supplier by MDM ID, rejects deleted/missing updateImport, and enforces NUMERIC(12,2) ceiling', async () => {
+    const harness = createHarness();
+    const service = new InventoryService(harness.prisma as never, harness.mdm as unknown as MdmService);
+
+    harness.tx.masterData.findUnique
+      .mockResolvedValueOnce({ id: 30, category: MdmCategory.SUPPLIER, name: 'NCC Mì', isActive: true })
+      .mockResolvedValueOnce({ id: 40, category: MdmCategory.INGREDIENT, name: 'Mì Trứng', isActive: true });
+    harness.tx.inventoryImport.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: 88,
+      ...data,
+    }));
+
+    const batch = await service.createBatch(
+      {
+        supplierMdmId: 30,
+        importDate: '2026-11-27',
+        paymentSource: PaymentSource.CASH_DRAWER,
+        items: [{ ingredientMdmId: 40, unitName: 'Thùng', unitPrice: 250000, quantity: 2 }],
+      },
+      1,
+    );
+    expect(batch.totalCost).toBe(500000);
+
+    // Inactive/missing ingredient MDM fails 404
+    harness.tx.masterData.findUnique
+      .mockResolvedValueOnce({ id: 30, category: MdmCategory.SUPPLIER, name: 'NCC Mì', isActive: true })
+      .mockResolvedValueOnce(null);
+    await expect(
+      service.createBatch(
+        {
+          supplierMdmId: 30,
+          importDate: '2026-11-27',
+          paymentSource: PaymentSource.CASH_DRAWER,
+          items: [{ ingredientMdmId: 999, unitName: 'Thùng', unitPrice: 1000, quantity: 1 }],
+        },
+        1,
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    // updateImport missing -> 404, deleted -> 409
+    harness.tx.inventoryImport.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      service.updateImport(
+        999,
+        {
+          supplierName: 'NCC',
+          ingredientName: 'Bò',
+          unitName: 'kg',
+          unitPrice: 10000,
+          quantity: 1,
+          paymentSource: PaymentSource.CASH_DRAWER,
+          importDate: '2026-11-27',
+        },
+        cashier(),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    harness.tx.inventoryImport.findUnique.mockResolvedValueOnce({ id: 20, isDeleted: true });
+    await expect(
+      service.updateImport(
+        20,
+        {
+          supplierName: 'NCC',
+          ingredientName: 'Bò',
+          unitName: 'kg',
+          unitPrice: 10000,
+          quantity: 1,
+          paymentSource: PaymentSource.CASH_DRAWER,
+          importDate: '2026-11-27',
+        },
+        cashier(),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    // Full field-change audit diff on updateImport
+    const now = new Date();
+    const diffTx = {
+      inventoryImport: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 21,
+          isDeleted: false,
+          createdAt: now,
+          itemNameSnapshot: 'Mì Trứng',
+          supplierNameSnapshot: 'NCC Cũ',
+          unitName: 'Thùng',
+          quantity: new Prisma.Decimal('2'),
+          unitPrice: new Prisma.Decimal('100000'),
+          totalCost: new Prisma.Decimal('200000'),
+          paymentSource: PaymentSource.CASH_DRAWER,
+          importDate: new Date('2026-11-20T00:00:00.000Z'),
+          note: 'Ghi chú cũ',
+        }),
+        update: vi.fn().mockResolvedValue({
+          id: 21,
+          ingredientMdmId: 101,
+          supplierMdmId: 103,
+          itemNameSnapshot: 'Bò Mỹ',
+          supplierNameSnapshot: 'NCC Mới',
+          unitName: 'Kg',
+          quantity: new Prisma.Decimal('3'),
+          unitPrice: new Prisma.Decimal('150000'),
+          totalCost: new Prisma.Decimal('450000'),
+          paymentSource: PaymentSource.EXTERNAL,
+          importDate: new Date('2026-11-27T00:00:00.000Z'),
+          note: 'Ghi chú mới',
+          createdBy: 1,
+          isDeleted: false,
+          createdAt: now,
+        }),
+      },
+      $queryRaw: vi.fn(),
+    };
+    const mdm = {
+      findOrCreate: vi
+        .fn()
+        .mockResolvedValueOnce({ id: 101, name: 'Bò Mỹ' })
+        .mockResolvedValueOnce({ id: 102, name: 'Kg' })
+        .mockResolvedValueOnce({ id: 103, name: 'NCC Mới' }),
+    };
+    const auditLog = { record: vi.fn() };
+    const diffPrisma = {
+      ...diffTx,
+      $transaction: vi.fn(async (op: (tx: typeof diffTx) => Promise<unknown>) => op(diffTx)),
+    };
+    const svcDiff = new InventoryService(diffPrisma as never, mdm as never, auditLog as never);
+    await svcDiff.updateImport(
+      21,
+      {
+        ingredientName: 'Bò Mỹ',
+        supplierName: 'NCC Mới',
+        unitName: 'Kg',
+        quantity: 3,
+        unitPrice: 150000,
+        paymentSource: PaymentSource.EXTERNAL,
+        importDate: '2026-11-27',
+        note: 'Ghi chú mới',
+      },
+      cashier(),
+    );
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        module: 'INVENTORY',
+        action: 'Chỉnh sửa phiếu nhập kho',
+        metadata: expect.objectContaining({
+          changes: expect.arrayContaining([
+            expect.objectContaining({ field: 'Nguyên liệu' }),
+            expect.objectContaining({ field: 'Nhà cung cấp' }),
+            expect.objectContaining({ field: 'Đơn vị tính' }),
+            expect.objectContaining({ field: 'Số lượng' }),
+            expect.objectContaining({ field: 'Đơn giá' }),
+            expect.objectContaining({ field: 'Thành tiền' }),
+            expect.objectContaining({ field: 'Nguồn tiền' }),
+            expect.objectContaining({ field: 'Ngày nhập' }),
+            expect.objectContaining({ field: 'Ghi chú' }),
+          ]),
+        }),
+      }),
+    );
+
+    // listImports keyword unaccent/fallback + paymentSource + ingredientMdmId + date filters + groupTotal
+    const listPrisma = {
+      $queryRaw: vi.fn().mockResolvedValueOnce([{ id: 21 }]).mockRejectedValueOnce(new Error('no unaccent')),
+      inventoryImport: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 21,
+            ingredientMdmId: 101,
+            supplierMdmId: 103,
+            itemNameSnapshot: 'Bò Mỹ',
+            supplierNameSnapshot: 'NCC Mới',
+            unitName: 'Kg',
+            quantity: new Prisma.Decimal('3'),
+            unitPrice: new Prisma.Decimal('150000'),
+            totalCost: new Prisma.Decimal('450000'),
+            paymentSource: PaymentSource.EXTERNAL,
+            importDate: new Date('2026-11-27T00:00:00.000Z'),
+            note: null,
+            createdBy: 1,
+            isDeleted: false,
+            createdAt: now,
+          },
+        ]),
+        count: vi.fn().mockResolvedValue(1),
+        groupBy: vi.fn().mockResolvedValue([
+          { paymentSource: 'CASH_DRAWER', _sum: { totalCost: new Prisma.Decimal('100000') } },
+          { paymentSource: 'EXTERNAL', _sum: { totalCost: new Prisma.Decimal('450000') } },
+        ]),
+      },
+    };
+    const svcList = new InventoryService(listPrisma as never, mdm as never, auditLog as never);
+    const listUnaccent = await svcList.list({
+      page: 1,
+      limit: 20,
+      keyword: 'bo my',
+      paymentSource: PaymentSource.EXTERNAL,
+      ingredientMdmId: 101,
+      fromDate: '2026-11-01',
+      toDate: '2026-11-30',
+    });
+    expect(listUnaccent.summary.totalImportCost).toBe(550000);
+
+    const listFallback = await svcList.list({
+      page: 1,
+      limit: 20,
+      keyword: 'bo my',
+    });
+    expect(listFallback.items).toHaveLength(1);
+  });
 });

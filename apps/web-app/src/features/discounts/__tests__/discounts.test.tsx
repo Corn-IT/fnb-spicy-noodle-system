@@ -308,4 +308,78 @@ describe('Story 18 — Discounts Management Page (/discounts)', () => {
       expect(deleteSpy).toHaveBeenCalledWith('/api/v1/discounts/4');
     });
   });
+
+  it('supports scope/status filtering, CATEGORY/PRODUCT editing with weekdays & target search, validation errors, and error retry', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('Discounts fetch failed'));
+    render(
+      <QueryProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
+          <DiscountsPage />
+        </MemoryRouter>
+      </QueryProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('system-error-view')).toBeInTheDocument());
+
+    const inactiveProductDiscount = {
+      ...mockDiscountsResponse.items[1],
+      id: 5,
+      code: 'PROD15',
+      isActive: false,
+      isArchived: false,
+      usedCount: 0,
+    };
+    getSpy.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/v1/discounts')) {
+        return { ...mockDiscountsResponse, total: 1, items: [inactiveProductDiscount] };
+      }
+      if (url.startsWith('/api/v1/mdm/lookup')) return mockCategories;
+      if (url.startsWith('/api/v1/menu/products')) return mockProducts;
+      return {};
+    });
+    const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValue(inactiveProductDiscount);
+
+    fireEvent.click(screen.getByTestId('error-retry-btn'));
+    await waitFor(() => expect(screen.getByText('PROD15')).toBeInTheDocument());
+
+    // Filter tabs & scope selector
+    fireEvent.click(screen.getByRole('button', { name: 'Đang tắt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hết hạn' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu trữ' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tất cả' }));
+
+    // Edit inactive PRODUCT discount
+    fireEvent.click(screen.getByTestId('edit-discount-5'));
+    await waitFor(() => expect(screen.getByTestId('discount-form-drawer')).toBeInTheDocument());
+
+    // Switch scope CATEGORY -> PRODUCT and exercise target filtering & weekdays toggle
+    fireEvent.click(screen.getByTestId('discount-scope-CATEGORY'));
+    fireEvent.click(screen.getByText('Mì Cay Hàn Quốc'));
+    fireEvent.click(screen.getByTestId('discount-scope-PRODUCT'));
+    fireEvent.change(screen.getByPlaceholderText('Lọc nhanh tên món...'), { target: { value: 'bo my' } });
+    expect(screen.getAllByText('Mì Cay Bò Mỹ').length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(screen.getByRole('button', { name: 'CN' }));
+
+    // Negative validation inside drawer: invalid value <= 0
+    const valInput = screen.getByTestId('discount-value-input');
+    fireEvent.change(valInput, { target: { value: '0' } });
+    fireEvent.click(screen.getByTestId('submit-discount-btn'));
+    expect(screen.getByTestId('discount-form-error')).toBeInTheDocument();
+
+    fireEvent.change(valInput, { target: { value: '15000' } });
+    fireEvent.click(screen.getByTestId('submit-discount-btn'));
+
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith(
+        '/api/v1/discounts/5',
+        expect.objectContaining({
+          code: 'PROD15',
+          scope: 'PRODUCT',
+          activeWeekdays: [1, 3, 5, 7],
+        }),
+      );
+    });
+  });
 });

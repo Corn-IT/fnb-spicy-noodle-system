@@ -902,4 +902,121 @@ describe('StoreSettingsPage (Story 14)', () => {
       );
     });
   });
+
+  it('hides cash drawer kick button on Settings Hardware tab for read-only settings.view users and shows it when pos.openCashDrawer is granted', async () => {
+    const user = userEvent.setup();
+    useAuthStore.getState().setAuth({
+      accessToken: 'viewer-token',
+      user: {
+        id: 8,
+        employeeId: 8,
+        username: 'adminview',
+        fullName: 'Quản lý chỉ xem',
+        isSuperAdmin: false,
+        permissions: UserPermissionsSchema.parse({
+          settings: { view: true, update: false },
+          pos: { openCashDrawer: false },
+        }),
+      },
+    });
+
+    const firstRender = renderStoreSettingsPage();
+    await waitFor(() => {
+      expect(screen.getByTestId('input-store-name')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('tab', { name: /Phiếu in/i }));
+    expect(await screen.findByTestId('printer-hardware-settings-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-test-thermal-print')).toBeInTheDocument();
+    expect(screen.queryByTestId('btn-test-cash-drawer-kick')).not.toBeInTheDocument();
+    firstRender.unmount();
+
+    // Now grant pos.openCashDrawer explicitly while settings.update stays false
+    useAuthStore.getState().setAuth({
+      accessToken: 'drawer-token',
+      user: {
+        id: 12,
+        employeeId: 12,
+        username: 'cashier_drawer',
+        fullName: 'Thu Ngân Két',
+        isSuperAdmin: false,
+        permissions: UserPermissionsSchema.parse({
+          settings: { view: true, update: false },
+          pos: { openCashDrawer: true },
+        }),
+      },
+    });
+
+    renderStoreSettingsPage();
+    await waitFor(() => {
+      expect(screen.getByTestId('input-store-name')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('tab', { name: /Phiếu in/i }));
+    expect(await screen.findByTestId('btn-test-cash-drawer-kick')).toBeInTheDocument();
+  });
+
+  it('configures DisplayScalePanel global/QR/perPath overrides, resets to 100%, and customizes kitchen thermal font size warning (>12pt)', async () => {
+    const user = userEvent.setup();
+    const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValue(
+      makeServerSettings({
+        updatedAt: '2026-11-27T11:30:00.000Z',
+        displayScale: {
+          globalPercent: 125,
+          qrOrderPercent: 110,
+          perPath: { '/pos': 140 },
+        },
+      }),
+    );
+
+    renderStoreSettingsPage();
+    await waitFor(() => {
+      expect(screen.getByTestId('store-settings-save-btn')).toBeEnabled();
+    });
+
+    // Switch to Menu & Tiêu đề trang -> configure DisplayScalePanel
+    await user.click(screen.getByRole('tab', { name: /Menu & Tiêu đề trang/i }));
+    expect(screen.getByTestId('display-scale-panel')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('display-scale-global-preset-125'));
+    expect(screen.getByTestId('display-scale-global-value')).toHaveTextContent('125%');
+
+    fireEvent.change(screen.getByTestId('display-scale-qr-select'), { target: { value: '110' } });
+    fireEvent.change(screen.getByTestId('display-scale-path-pos'), { target: { value: '140' } });
+
+    await user.click(screen.getByTestId('store-settings-save-btn'));
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith(
+        '/api/v1/settings',
+        expect.objectContaining({
+          displayScale: {
+            globalPercent: 125,
+            qrOrderPercent: 110,
+            perPath: { '/pos': 140 },
+          },
+        }),
+      );
+    });
+
+    // Reset reverts everything back to 100% and empty perPath
+    await user.click(screen.getByTestId('btn-reset-display-scale'));
+    expect(screen.getByTestId('display-scale-global-value')).toHaveTextContent('100%');
+    expect(screen.getByTestId('display-scale-qr-select')).toHaveValue('100');
+
+    // Switch to Phiếu in & Phần cứng -> verify out-of-range kitchen font size clamp warning & preset/reset
+    await user.click(screen.getByRole('tab', { name: /Phiếu in/i }));
+    await user.click(screen.getByTestId('print-template-tab-kitchen'));
+    const fontInput = screen.getByTestId('print-fontsize-input-kitchen');
+    fireEvent.change(fontInput, { target: { value: '99' } });
+    fireEvent.blur(fontInput);
+    expect(screen.getByTestId('print-fontsize-warning-kitchen')).toHaveTextContent(
+      /Đã giới hạn về cỡ tối đa/,
+    );
+
+    await user.click(screen.getByTestId('print-fontsize-preset-kitchen-14'));
+    expect(screen.queryByTestId('print-fontsize-warning-kitchen')).not.toBeInTheDocument();
+    expect(fontInput).toHaveValue(14);
+
+    await user.click(screen.getByTestId('reset-print-template-kitchen'));
+    expect(fontInput).not.toHaveValue(14);
+  });
 });

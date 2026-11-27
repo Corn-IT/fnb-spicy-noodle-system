@@ -144,6 +144,9 @@ describe('DailyItemSalesSection (Thống kê món bán được trong ngày)', (
     });
     fireEvent.change(searchInput, { target: { value: '' } });
     fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => {
+      expect(screen.getByText('Trà Đào Cam Sả')).toBeInTheDocument();
+    });
 
     // Station filter
     fireEvent.change(screen.getByTestId('daily-item-sales-station-filter'), {
