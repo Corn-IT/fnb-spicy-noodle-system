@@ -42,6 +42,25 @@ export const LEGACY_THERMAL_FONT_SIZE_PT_MAP = {
   lg: 9.5,
 } as const;
 
+export const ThermalFontFamilySchema = z.enum([
+  'noto-sans', 'roboto', 'roboto-mono', 'be-vietnam-pro', 'monospace', 'sans-serif', 'serif',
+]);
+export type ThermalFontFamily = z.infer<typeof ThermalFontFamilySchema>;
+
+export const THERMAL_FONT_OPTIONS: readonly { key: ThermalFontFamily; label: string; cssFamily: string; bundled: boolean }[] = [
+  { key: 'noto-sans', label: 'Noto Sans', cssFamily: '"Noto Sans", sans-serif', bundled: true },
+  { key: 'roboto', label: 'Roboto', cssFamily: '"Roboto", sans-serif', bundled: true },
+  { key: 'roboto-mono', label: 'Roboto Mono', cssFamily: '"Roboto Mono", monospace', bundled: true },
+  { key: 'be-vietnam-pro', label: 'Be Vietnam Pro', cssFamily: '"Be Vietnam Pro", sans-serif', bundled: true },
+  { key: 'monospace', label: 'Monospace', cssFamily: 'monospace', bundled: false },
+  { key: 'sans-serif', label: 'Sans-serif', cssFamily: 'sans-serif', bundled: false },
+  { key: 'serif', label: 'Serif', cssFamily: 'serif', bundled: false },
+];
+
+export function resolveThermalFontFamily(key: ThermalFontFamily): string {
+  return THERMAL_FONT_OPTIONS.find((option) => option.key === key)!.cssFamily;
+}
+
 export const ThermalFontSizeSchema = z.enum(['sm', 'md', 'lg']);
 export type ThermalFontSize = z.infer<typeof ThermalFontSizeSchema>;
 
@@ -84,6 +103,7 @@ export const PrintTemplatesSchema = z
         title: PlainText(60),
         footerNote: PlainText(200),
         fontSizePt: ThermalFontSizePtSchema,
+        fontFamily: ThermalFontFamilySchema,
         blocks: z
           .object({
             logo: z.boolean(),
@@ -104,6 +124,7 @@ export const PrintTemplatesSchema = z
         title: PlainText(60),
         footerNote: PlainText(200),
         fontSizePt: ThermalFontSizePtSchema,
+        fontFamily: ThermalFontFamilySchema,
         blocks: z
           .object({
             logo: z.boolean(),
@@ -123,6 +144,7 @@ export const PrintTemplatesSchema = z
         title: PlainText(60),
         footerNote: PlainText(200),
         fontSizePt: ThermalFontSizePtSchema,
+        fontFamily: ThermalFontFamilySchema,
         priceCategoryIds: z.array(z.number().int().positive()).max(50),
         blocks: z
           .object({
@@ -139,6 +161,7 @@ export const PrintTemplatesSchema = z
         title: PlainText(60),
         footerNote: PlainText(200),
         fontSizePt: ThermalFontSizePtSchema,
+        fontFamily: ThermalFontFamilySchema,
         blocks: z
           .object({
             time: z.boolean(),
@@ -152,6 +175,7 @@ export const PrintTemplatesSchema = z
         title: PlainText(60),
         footerNote: PlainText(200),
         fontSizePt: ThermalFontSizePtSchema,
+        fontFamily: ThermalFontFamilySchema,
         blocks: z
           .object({
             time: z.boolean(),
@@ -188,6 +212,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
     title: '',
     footerNote: '',
     fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
+    fontFamily: 'roboto',
     blocks: {
       logo: true,
       address: true,
@@ -204,6 +229,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
     title: '',
     footerNote: '',
     fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
+    fontFamily: 'noto-sans',
     blocks: {
       logo: true,
       address: true,
@@ -219,6 +245,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
     title: '',
     footerNote: '',
     fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
+    fontFamily: 'roboto-mono',
     priceCategoryIds: [],
     blocks: {
       stationLogo: true,
@@ -231,6 +258,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
     title: '',
     footerNote: '',
     fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
+    fontFamily: 'noto-sans',
     blocks: {
       time: true,
       reason: true,
@@ -240,6 +268,7 @@ export const DEFAULT_PRINT_TEMPLATES: PrintTemplates = {
     title: '',
     footerNote: '',
     fontSizePt: DEFAULT_THERMAL_FONT_SIZE_PT,
+    fontFamily: 'roboto',
     blocks: {
       time: true,
       cashier: true,

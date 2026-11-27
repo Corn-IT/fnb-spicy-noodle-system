@@ -193,3 +193,48 @@ test.describe('Thermal Provisional VietQR Raster & Scannability Verification (Ch
     expect(consoleErrors).toEqual([]);
   });
 });
+
+test('loads each bundled thermal font locally with Vietnamese glyphs and applies independent template defaults', async ({ page }) => {
+  await setupMockApi(page);
+  const fontRequests: string[] = [];
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('.woff2')) fontRequests.push(url.href);
+    if (url.protocol.startsWith('http') && !['127.0.0.1', 'localhost'].includes(url.hostname)) {
+      await route.abort();
+    } else {
+      await route.fallback();
+    }
+  });
+  await page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('tab', { name: /Phiếu in/i }).click();
+  for (const [template, font] of Object.entries({ official: 'noto-sans', provisional: 'roboto', kitchen: 'roboto-mono', kitchenCancel: 'noto-sans', tableTransfer: 'roboto' })) {
+    await page.getByTestId(`print-template-tab-${template}`).click();
+    await expect(page.getByTestId('receipt-live-preview').locator('[data-thermal-font]').first()).toHaveAttribute('data-thermal-font', font);
+    if (['official', 'provisional', 'kitchen'].includes(template)) {
+      await page.evaluate(() => document.fonts.ready);
+      await page.getByTestId('receipt-live-preview').screenshot({ path: `/tmp/thermal-font-preview-${template}.png` });
+    }
+  }
+  await page.getByTestId('print-font-family-tableTransfer').click();
+  await page.getByRole('option', { name: 'Be Vietnam Pro', exact: true }).click();
+  const result = await page.evaluate(async () => {
+    const { waitForThermalFont } = await import('/src/components/print-slips/thermal-font.util.ts');
+    const { renderTicketPageToMonochrome } = await import('/src/components/print-slips/escpos-encoder.util.ts');
+    const fonts = ['noto-sans', 'roboto', 'roboto-mono', 'be-vietnam-pro'] as const;
+    for (const font of fonts) await waitForThermalFont(font);
+    const ticket = document.querySelector('[data-testid="receipt-live-preview"] [data-thermal-font]') as HTMLElement;
+    const raster = await renderTicketPageToMonochrome(ticket);
+    const named = ['Noto Sans', 'Roboto', 'Roboto Mono', 'Be Vietnam Pro'];
+    return {
+      family: getComputedStyle(ticket).fontFamily,
+      loaded: named.every((font) => [400, 700].every((weight) => document.fonts.check(`${weight} 16px "${font}"`, 'Mì cay Đặng Ắ ặ ễ ộ ự'))),
+      ink: raster.monoBytes.some((byte) => byte !== 0),
+    };
+  });
+  expect(result.family).toContain('Be Vietnam Pro');
+  expect(result.loaded).toBe(true);
+  expect(result.ink).toBe(true);
+  expect(fontRequests.length).toBeGreaterThan(0);
+  expect(fontRequests.every((url) => ['127.0.0.1', 'localhost'].includes(new URL(url).hostname))).toBe(true);
+});

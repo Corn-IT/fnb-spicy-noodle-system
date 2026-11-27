@@ -504,3 +504,28 @@ describe('@fnb/shared store-settings contracts', () => {
     }
   });
 });
+
+
+describe('thermal font families', () => {
+  it('fills legacy branches with independent defaults without changing sizes or text', () => {
+    const legacy = JSON.parse(JSON.stringify(contracts.DEFAULT_STORE_SETTINGS));
+    for (const branch of Object.values(legacy.printTemplates) as Record<string, unknown>[]) delete branch.fontFamily;
+    legacy.printTemplates.provisional.title = 'Tạm tính riêng';
+    legacy.printTemplates.provisional.fontSizePt = 11.5;
+    const settings = contracts.StoreSettingsSchema.parse(contracts.mergeStoreSettingsWithDefaults(legacy));
+    expect(Object.fromEntries(Object.entries(settings.printTemplates).map(([key, branch]) => [key, branch.fontFamily])))
+      .toEqual({ provisional: 'roboto', official: 'noto-sans', kitchen: 'roboto-mono', kitchenCancel: 'noto-sans', tableTransfer: 'roboto' });
+    expect(settings.printTemplates.provisional).toMatchObject({ title: 'Tạm tính riêng', fontSizePt: 11.5 });
+  });
+
+  it('persists each allowed key and rejects unknown font input', () => {
+    for (const option of contracts.THERMAL_FONT_OPTIONS) {
+      const settings = structuredClone(contracts.DEFAULT_STORE_SETTINGS);
+      settings.printTemplates.official.fontFamily = option.key;
+      const parsed = contracts.UpdateStoreSettingsSchema.parse({ ...settings, expectedUpdatedAt: null });
+      expect(parsed.printTemplates.official.fontFamily).toBe(option.key);
+      expect(parsed.printTemplates.kitchen.fontFamily).toBe('roboto-mono');
+    }
+    expect(contracts.ThermalFontFamilySchema.safeParse('remote-font').success).toBe(false);
+  });
+});

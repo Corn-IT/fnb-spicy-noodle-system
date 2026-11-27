@@ -61,8 +61,9 @@ export function TableTransferNoticeSlip({
     <div
       data-testid="table-transfer-notice-slip"
       data-font-size-pt={fontSizePt}
+      data-thermal-font={tpl.fontFamily}
       className="ticket-page break-words bg-white px-0 py-0 font-mono text-black"
-      style={getThermalSlipRootStyle(fontSizePt)}
+      style={getThermalSlipRootStyle(fontSizePt, tpl.fontFamily)}
     >
       <div className="border-b-2 border-black pb-1 text-center">
         <div
