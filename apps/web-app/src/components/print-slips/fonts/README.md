@@ -1,0 +1,1 @@
+Bundled from Google Fonts (google/fonts), normal weights 400 and 700, Latin, Latin Extended and Vietnamese subsets. See each family’s OFL license. Fonts are served locally; no runtime font service is used.

@@ -1,3 +1,4 @@
+import { getTicketFontFamily, resolveThermalFontFamily, waitForThermalFont } from './thermal-font.util';
 import { DEFAULT_THERMAL_FONT_SIZE_PT, type ThermalPaperWidthDots } from '@fnb/shared';
 
 export const ESC_POS_COMMANDS = {
@@ -490,6 +491,7 @@ function layoutAndDrawLines(
   baseDots: number,
   draw: boolean,
   offsetX = 0,
+  fontFamily = 'monospace',
 ): number {
   const paddingX = offsetX;
   const rightEdgeX = paddingX + contentWidth;
@@ -498,7 +500,7 @@ function layoutAndDrawLines(
 
   const setFont = (scale: number, bold: boolean) => {
     const px = Math.max(10, Math.round(baseDots * scale));
-    ctx.font = `${bold ? 'bold ' : ''}${px}px monospace`;
+    ctx.font = `${bold ? 'bold ' : ''}${px}px ${fontFamily}`;
     return px;
   };
 
@@ -645,7 +647,7 @@ function layoutAndDrawLines(
             const cw = colWidths[colIdx] ?? 40;
             let textY = cursorY + cellPadY;
             for (const rl of cell.renderedLines) {
-              ctx.font = `${rl.bold ? 'bold ' : ''}${rl.px}px monospace`;
+              ctx.font = `${rl.bold ? 'bold ' : ''}${rl.px}px ${fontFamily}`;
               ctx.textAlign = cell.align;
               const tx =
                 cell.align === 'right'
@@ -700,6 +702,32 @@ function layoutAndDrawLines(
   return cursorY + 4;
 }
 
+async function waitForQrImage(image: HTMLImageElement): Promise<void> {
+  if (image.complete && image.naturalWidth > 0) return;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let removeListeners = () => {};
+  const failure = () => new Error('Không thể dựng mã QR lên phiếu in: ảnh QR chưa tải xong hoặc không hợp lệ.');
+  try {
+    const ready = typeof image.decode === 'function' ? image.decode() : new Promise<void>((resolve, reject) => {
+      if (image.complete) { reject(failure()); return; }
+      const onLoad = () => image.naturalWidth > 0 ? resolve() : reject(failure());
+      const onError = () => reject(failure());
+      image.addEventListener('load', onLoad, { once: true });
+      image.addEventListener('error', onError, { once: true });
+      removeListeners = () => { image.removeEventListener('load', onLoad); image.removeEventListener('error', onError); };
+    });
+    await Promise.race([ready, new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(failure()), 10000);
+    })]);
+    if (!image.complete || image.naturalWidth === 0) throw failure();
+  } catch {
+    throw failure();
+  } finally {
+    clearTimeout(timeout);
+    removeListeners();
+  }
+}
+
 /**
  * Renders a single `.ticket-page` DOM element into a 1-bit monochrome bitmap array.
  * Throws a clear error if canvas pixel reading fails (e.g. tainted canvas) instead of printing garbage noise.
@@ -720,6 +748,9 @@ export async function renderTicketPageToMonochrome(
     0,
     Math.min(safeRasterWidth - safeContentWidth, Math.round(leftMarginDots)),
   );
+  const font = getTicketFontFamily(ticketEl);
+  await waitForThermalFont(font);
+  const fontFamily = resolveThermalFontFamily(font);
   const visualLines = extractTicketVisualLines(ticketEl);
   const rawPt = Number(ticketEl.getAttribute('data-font-size-pt'));
   const baseDots = ptToThermalDots(
@@ -736,11 +767,15 @@ export async function renderTicketPageToMonochrome(
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (ctx && typeof ctx.getImageData === 'function') {
+      await Promise.all(visualLines.filter((line) => line.kind === 'qr').map((line) => {
+        if (!line.qrImg) throw new Error('Không tìm thấy ảnh QR trên phiếu in.');
+        return waitForQrImage(line.qrImg);
+      }));
       canvas.width = safeRasterWidth;
       // Pass 1: measure exact height
       const measuredHeight = Math.max(
         32,
-        layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, false, safeOffsetX),
+        layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, false, safeOffsetX, fontFamily),
       );
       canvas.height = measuredHeight;
 
@@ -750,7 +785,7 @@ export async function renderTicketPageToMonochrome(
       ctx.textBaseline = 'top';
 
       // Pass 2: draw onto sized canvas
-      layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, true, safeOffsetX);
+      layoutAndDrawLines(ctx, visualLines, safeContentWidth, baseDots, true, safeOffsetX, fontFamily);
 
       let imageData: ImageData;
       try {

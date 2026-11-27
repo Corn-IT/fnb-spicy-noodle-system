@@ -382,6 +382,7 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
 
     it('renders ticket visual elements through 2D Canvas context when getContext("2d") is available', async () => {
       const fillTextCalls: string[] = [];
+      const fontsUsed: string[] = [];
       const mockCtx = {
         fillStyle: '#FFFFFF',
         strokeStyle: '#000000',
@@ -397,8 +398,9 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
         stroke: vi.fn(),
         setLineDash: vi.fn(),
         drawImage: vi.fn(),
-        measureText: (txt: string) => ({ width: txt.length * 10 }),
+        measureText: (txt: string) => { fontsUsed.push(mockCtx.font); return { width: txt.length * 10 }; },
         fillText: vi.fn((txt: string) => {
+          fontsUsed.push(mockCtx.font);
           fillTextCalls.push(txt);
         }),
         getImageData: vi.fn((_x: number, _y: number, w: number, h: number) => ({
@@ -412,10 +414,12 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
 
       const ticketDiv = document.createElement('div');
       ticketDiv.className = 'ticket-page';
+      ticketDiv.dataset.thermalFont = 'roboto';
       ticketDiv.innerHTML = `
         <div class="text-base font-extrabold">MÌ CAY SƠN BẢO</div>
         <div class="border-2 border-black">[GỌI THÊM - LƯỢT 2]</div>
         <div class="flex justify-between border-b"><span>Mì Cay Bò Mỹ</span><span>55.000 đ</span></div>
+        <table><tbody><tr><td class="font-bold">Mì cay Đặng</td><td>60.000 đ</td></tr></tbody></table>
         <img data-testid="provisional-vietqr-image" alt="VietQR" width="176" height="176" />
       `;
       const img = ticketDiv.querySelector('img')!;
@@ -429,6 +433,8 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
       expect(fillTextCalls).toContain('[GỌI THÊM - LƯỢT 2]');
       expect(fillTextCalls).toContain('Mì Cay Bò Mỹ');
       expect(fillTextCalls).toContain('55.000 đ');
+      expect(fontsUsed.length).toBeGreaterThan(0);
+      expect(fontsUsed.every((font) => font.includes('"Roboto", sans-serif'))).toBe(true);
     });
   });
 
