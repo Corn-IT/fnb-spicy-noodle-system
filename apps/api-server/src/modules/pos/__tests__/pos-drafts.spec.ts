@@ -19,6 +19,7 @@ function createHarness() {
     posDraft: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
     },
     order: {
       findUnique: vi.fn(),
@@ -58,6 +59,27 @@ function createHarness() {
 }
 
 describe('POS parked drafts', () => {
+  it('deletes only the draft when a QR order now occupies its saved table', async () => {
+    const harness = createHarness();
+    harness.tx.posDraft.findUnique.mockResolvedValue(storedDraft);
+    harness.tx.diningTable.findUnique.mockResolvedValue({ id: 7, name: 'Bàn 07', status: 'PENDING', activeOrderId: 99 });
+    await expect(harness.service.deletePosDraft('draft-1', 2, 3)).resolves.toEqual({ id: 'draft-1', deleted: true });
+    expect(harness.tx.posDraft.delete).toHaveBeenCalledWith({ where: { id: 'draft-1' } });
+    expect(harness.tx.order.create).not.toHaveBeenCalled();
+    expect(harness.tx.order.findUnique).not.toHaveBeenCalled();
+    expect(harness.tx.diningTable.update).not.toHaveBeenCalled();
+    expect(harness.tx.diningTable.findUnique).not.toHaveBeenCalled();
+    expect(harness.gateway.emitTableGridSync).not.toHaveBeenCalled();
+  });
+
+  it('preserves a saved draft and table state when deletion uses a stale revision', async () => {
+    const harness = createHarness();
+    harness.tx.posDraft.findUnique.mockResolvedValue(storedDraft);
+    await expect(harness.service.deletePosDraft('draft-1', 1, 3)).rejects.toBeInstanceOf(ConflictException);
+    expect(harness.tx.posDraft.delete).not.toHaveBeenCalled();
+    expect(harness.tx.diningTable.update).not.toHaveBeenCalled();
+  });
+
   it('keeps a stale draft revision unchanged and reports a conflict', async () => {
     const harness = createHarness();
     harness.tx.posDraft.findUnique.mockResolvedValue(storedDraft);

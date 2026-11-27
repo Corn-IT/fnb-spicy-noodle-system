@@ -32,6 +32,7 @@ export interface TouchTableBoardProps {
   nowMs: number;
   canCreateOrder: boolean;
   canDeleteDraft: boolean;
+  isDraftPending?: boolean;
   addonBadgesByOrderId: Record<number, number>;
   onSelectTable: (table: PosTable) => void;
   onSelectTakeaway: (order: PosOrderSummary) => void;
@@ -92,6 +93,7 @@ export function TouchTableBoard({
   nowMs,
   canCreateOrder,
   canDeleteDraft,
+  isDraftPending,
   addonBadgesByOrderId,
   onSelectTable,
   onSelectTakeaway,
@@ -276,6 +278,8 @@ export function TouchTableBoard({
             drafts={drafts}
             activeDraftId={activeDraftId}
             canDelete={canDeleteDraft}
+            disabled={isDraftPending}
+            gridStyle={grid.style}
             onResume={onResumeDraft}
             onDelete={onDeleteDraft}
           />

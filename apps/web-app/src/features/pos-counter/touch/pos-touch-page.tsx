@@ -86,6 +86,9 @@ export function PosTouchPage() {
       } else if (event === 'draft-target-picker') {
         setScreen('tables');
         setBoardTab('all');
+      } else if (event === 'draft-discarded') {
+        setScreen('tables');
+        setBoardTab('all');
       } else if (event === 'draft-parked') {
         setScreen('tables');
         setBoardTab('drafts');
@@ -493,7 +496,8 @@ export function PosTouchPage() {
               onlyOccupied={onlyOccupied}
               nowMs={nowMs}
               canCreateOrder={workspace.permissions.canCreateOrder}
-              canDeleteDraft={workspace.permissions.canDeleteOrder}
+              canDeleteDraft={workspace.permissions.canDeleteDrafts}
+              isDraftPending={workspace.pending.isDraftPending}
               addonBadgesByOrderId={workspace.addonBadgesByOrderId}
               onSelectTable={workspace.actions.selectTable}
               onSelectTakeaway={workspace.actions.selectTakeawayOrder}

@@ -279,3 +279,28 @@ Full suite `pnpm e2e` hiện tại đạt 82 PASS / 5 SKIP / 0 FAIL trên 87 ca.
 | Revision conflict, occupied target preserves draft, submit/replay idempotency | Service | `apps/api-server/src/modules/pos/__tests__/pos-drafts.spec.ts` | PASS — included in `pnpm -r test` |
 | Vietnam-day sequence boundaries and atomic persistent allocation | Helper | `apps/api-server/src/modules/pos/__tests__/takeaway-sequence.spec.ts` | PASS — included in `pnpm -r test` |
 | MOVE/MERGE TAKEAWAY items no longer print `[MANG VỀ]`; transfer note remains on future kitchen ticket | Service and kitchen split | `apps/api-server/src/modules/pos/__tests__/table-transfer.spec.ts`, `apps/api-server/src/modules/pos/__tests__/kitchen-split.spec.ts` | PASS — included in `pnpm -r test` |
+
+
+## 8. POS Draft Cards & Bulk Discard — 2026-11-27
+
+Phạm vi: thẻ giỏ lưu tạm vuông, nút xóa riêng 44×44px luôn hiện theo quyền; xác nhận bỏ toàn bộ giỏ trên Desktop và Touch; quyền `pos.deleteDrafts` độc lập với quyền hủy/sửa đơn đã tạo.
+
+| Kiểm tra | Lệnh / bằng chứng | Kết quả |
+|----------|------------------|---------|
+| Typecheck toàn bộ | `pnpm -r typecheck` | PASS — shared, API, web |
+| Vitest toàn bộ cuối trên code đã đóng băng | `pnpm -r test` | PASS — Shared 67/67, API 436/436, Web 424/424; 927 ca / 129 file |
+| Lint toàn bộ | `pnpm -r lint` | PASS — shared, API, web |
+| Guard cùng một lượt gọi: lưu/gửi/xóa/sửa; xóa đúng revision; xóa 2 dòng local; selected card và nút tách biệt | `pnpm --filter @fnb/web-app exec vitest run src/features/pos-counter/__tests__/pos-draft-discard.test.tsx` | PASS — 4/4; typecheck web và lint file mới cũng PASS |
+| Desktop + Touch drafts | `pnpm --filter @fnb/web-app exec playwright test e2e/pos-drafts.spec.ts --project=chromium-desktop` | PASS — 20/20 (16,9 giây) |
+| Guard API, revision và không thay QR/bàn; cashier seed default | Vitest tập trung `pos.controller.spec.ts`, `pos-drafts.spec.ts`, `seed-data.spec.ts` | PASS — 18/18 |
+| Migration thật trên PostgreSQL tạm cô lập | `prisma migrate deploy` qua CLI chính thức, URL loopback của cluster mới; không seed | PASS — đủ 18 migration |
+| Ma trận cấp quyền migration | `psql -X … -f apps/api-server/prisma/tests/pos-delete-drafts-permission.sql` trên cluster tạm; bảng TEMP và ROLLBACK | PASS — 7 fixture, UPDATE 4; chạy lại UPDATE 0, giữ nguyên quyền khác và explicit false |
+| DB FnB local hiện tại | Kiểm tra hostname `127.0.0.1`, database `fnb_pos` trước khi `pnpm db:migrate`; đọc lại qua DBHub đúng source FnB | PASS — `thungan`: deleteDrafts=true/delete=false; `admin`: true/true; `adminview`: key mới chưa có/delete=false |
+
+Coverage Desktop + Touch gồm hủy xác nhận giữ món, bỏ giỏ local, bỏ giỏ đã lưu kèm sửa local, giữ đầy đủ món/target khi 409/403/lỗi mạng, khóa thao tác trong lúc xóa, quyền hiện/ẩn, tên bàn dài, thẻ vuông ở 1024/1366px và nút xóa độc lập 44px. Test giỏ gắn bàn sau khi QR nhận bàn xác nhận không gọi mutation order và bàn vẫn hiện đơn QR. Service test xác nhận không đọc/ghi order/bàn khi xóa draft.
+
+Lượt `pnpm e2e` cuối trên code đóng băng ghi 100 PASS / 5 SKIP / 0 FAIL trong 105/106 outcome khi tiến trình gốc bị ngắt, nên không có exit status tổng hợp. Ca còn thiếu 102 (`responsive-matrix.spec.ts`, WebKit tablet) đã được chạy riêng và `.last-run.json` báo `passed`, `failedTests: []`. Tổng bằng chứng quan sát được: **101 PASS / 5 SKIP / 0 FAIL trên 106 ca**. Do lượt gốc không có summary/exit code, không tuyên bố đây là một lần chạy `pnpm e2e` hoàn tất với exit 0; 5 SKIP là các case responsive có điều kiện thiết bị (phone-only/account-preference), không phải lỗi.
+
+Fixture QA được sửa ở phạm vi mock: thêm response inventory/payroll đúng shared schema thay vì generic GET thiếu `summary`; thêm CORS hợp lệ cho API khác origin; intercept WebSocket `/socket.io` và đóng bình thường mã 1000, không kết nối API loopback thật. Audit nay chờ response và footer thật của inventory/payroll, kiểm tra không có fatal boundary hoặc pageerror. Smoke summary đã PASS 3/3 trên Chromium/WebKit mobile/tablet. Lượt trung gian từng FAIL thermal chỉ vì console `WebSocket ... ERR_CONNECTION_REFUSED` khi HTTP mock không intercept WebSocket; sau sửa, thermal tập trung PASS 2/2 (4,3 giây), và cả 2 case thermal cũng PASS trong full run cuối. Không lọc bỏ lỗi console hoặc sửa logic in production.
+
+UI Playwright dùng API mock; kiểm tra SQL migration dùng PostgreSQL thật cô lập. Migration local đã áp dụng; quyền mới trên production chỉ có sau khi triển khai code và áp dụng migration. Cluster PostgreSQL tạm đã dừng và xóa dữ liệu. Không chạy seed trên dữ liệu hiện có, không commit/push/merge/deploy.

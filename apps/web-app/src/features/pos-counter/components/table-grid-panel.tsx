@@ -34,6 +34,7 @@ export interface TableGridPanelProps {
     | null;
   drafts: PosDraftResponse[];
   activeDraftId: string | null;
+  isDraftPending?: boolean;
   addonBadgesByOrderId: Record<number, number>;
   onSelectTable: (table: PosTableGridResponse['tables'][number]) => void;
   onSelectTakeawayOrder: (order: PosOrderSummary) => void;
@@ -51,6 +52,7 @@ export function TableGridPanel({
   draftTarget,
   drafts,
   activeDraftId,
+  isDraftPending,
   addonBadgesByOrderId,
   onSelectTable,
   onSelectTakeawayOrder,
@@ -61,7 +63,7 @@ export function TableGridPanel({
 }: TableGridPanelProps) {
   const user = useAuthStore((s) => s.user);
   const canCreateOrder = Boolean(user?.isSuperAdmin || user?.permissions.pos.create);
-  const canDeleteDraft = Boolean(user?.isSuperAdmin || user?.permissions.pos.delete);
+  const canDeleteDraft = Boolean(user?.isSuperAdmin || user?.permissions.pos.deleteDrafts);
   const canManageTables = Boolean(user?.isSuperAdmin || user?.permissions.pos.update);
   const canManageQrSecurity = Boolean(user?.isSuperAdmin || user?.permissions.pos.qrSecurity);
   const [tableManageOpen, setTableManageOpen] = React.useState(false);
@@ -489,6 +491,7 @@ export function TableGridPanel({
         drafts={drafts}
         activeDraftId={activeDraftId}
         canDelete={canDeleteDraft}
+        disabled={isDraftPending}
         onResume={onResumeDraft}
         onDelete={onDeleteDraft}
       />

@@ -21,6 +21,7 @@ import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/utils/cn';
+import { DraftDiscardButton } from '../components/draft-discard-button';
 import { CancelOrderConfirmDialog } from '../components/cancel-order-confirm-dialog';
 import type { PosMenuSelectedItem } from '../components/pos-menu-types';
 import type { PosWorkspace } from '../hooks/use-pos-workspace';
@@ -99,17 +100,20 @@ function DraftCart({ workspace, askConfirm }: { workspace: PosWorkspace; askConf
       <div className="shrink-0 space-y-3 border-t p-3">
         <TotalRow amount={total} />
         {draftItems.length > 0 ? (
-          <Button type="button" variant="outline" className="w-full" onClick={actions.chooseDraftTarget}>
+          <Button type="button" variant="outline" className="w-full" disabled={pending.isDraftPending} onClick={actions.chooseDraftTarget}>
             {draftTarget?.orderType === null || (draftTarget?.orderType === 'DINE_IN' && draftTarget.tableId === null)
               ? 'Gán bàn hoặc chọn Mang về'
               : 'Đổi bàn hoặc chọn Mang về'}
           </Button>
         ) : null}
+        {permissions.canDiscardDraft && draftTarget ? (
+          <DraftDiscardButton testId="touch-discard-draft" disabled={false} pending={pending.isDraftPending} onDiscard={actions.discardDraft} />
+        ) : null}
         <Button
           type="button"
           variant="outline"
           data-testid="touch-save-draft"
-          disabled={!permissions.canSaveDraft || draftItems.length === 0 || pending.isSavingDraft}
+          disabled={!permissions.canSaveDraft || draftItems.length === 0 || pending.isDraftPending || pending.isSavingDraft}
           onClick={() => void actions.saveDraft()}
           className={cn('w-full font-bold', isShortScreen ? 'h-11 text-sm' : 'h-12 text-base')}
         >
@@ -119,7 +123,7 @@ function DraftCart({ workspace, askConfirm }: { workspace: PosWorkspace; askConf
           type="button"
           data-testid="touch-submit-draft"
           disabled={
-            !permissions.canCreateOrder || draftItems.length === 0 || pending.isSubmittingDraft
+            !permissions.canCreateOrder || draftItems.length === 0 || pending.isDraftPending || pending.isSubmittingDraft
             || !draftTarget || draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)
           }
           onClick={() => void actions.submitDraftOrder()}

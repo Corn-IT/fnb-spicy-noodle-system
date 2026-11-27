@@ -162,6 +162,8 @@ Mật khẩu mặc định chung sau khi seed: **`Password@123`**
 - Bấm **`Lưu tạm`** để lưu giỏ vào danh sách giỏ tạm của POS. Giỏ đã lưu xuất hiện trên các máy POS khác; thu ngân có thể mở lại, tiếp tục gọi món hoặc xoá.
 - Giỏ tạm không tạo hoá đơn, không chiếm bàn, không gửi phiếu bếp và không thể thanh toán. Khi bấm gửi, hệ thống dùng giá món hiện hành. Bàn phải còn trống; nếu bàn đã có khách hoặc món không còn hợp lệ, giỏ vẫn được giữ để sửa/đổi đích.
 - Draft được đồng bộ bằng thông báo staff POS. Khách QR không xem được danh sách giỏ tạm.
+- Trong tab **Lưu tạm**, các giỏ hiển thị thành ô vuông. Chạm vào ô để mở lại; nút thùng rác riêng dùng để xóa giỏ. Nút này yêu cầu quyền **Xóa giỏ lưu tạm** (`pos.deleteDrafts`), được cấp mặc định cho thu ngân; quyền này không cho phép hủy đơn đã xác nhận.
+- Trước **Xác nhận tạo đơn**, bấm **Bỏ toàn bộ giỏ** rồi xác nhận để bỏ tất cả món cùng lúc. Với giỏ đã lưu, hệ thống chỉ xóa nội dung trên máy sau khi server xóa thành công đúng phiên bản. Nếu lỗi mạng hoặc giỏ đã được sửa ở máy khác, món và bàn đã chọn vẫn được giữ lại. Xóa giỏ không giải phóng hoặc thay đổi bàn đang có đơn QR.
 
 ---
 

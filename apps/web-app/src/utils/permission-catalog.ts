@@ -24,6 +24,7 @@ export const RBAC_MODULE_CONFIGS: RbacModuleConfig[] = [
       { key: 'create', label: 'Tạo đơn' },
       { key: 'update', label: 'Sửa đơn' },
       { key: 'delete', label: 'Xoá đơn' },
+      { key: 'deleteDrafts', label: 'Xóa giỏ lưu tạm' },
       { key: 'splitKitchen', label: 'Tách bếp' },
       { key: 'tableAction', label: 'Đổi/Gộp bàn' },
       { key: 'checkout', label: 'Thanh toán' },

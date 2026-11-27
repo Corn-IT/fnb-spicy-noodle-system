@@ -1,4 +1,4 @@
-import { DEFAULT_STORE_SETTINGS } from '@fnb/shared';
+import { DEFAULT_STORE_SETTINGS, InventoryImportListResponseSchema, PayrollSummaryResponseSchema } from '@fnb/shared';
 import type { Page } from '@playwright/test';
 
 export const MOCK_QR_TOKEN = 'a'.repeat(64);
@@ -42,6 +42,7 @@ export async function setupMockApi(page: Page, options: MockApiOptions = {}): Pr
     );
   }, MOCK_SUPER_ADMIN);
 
+  await page.routeWebSocket('**/socket.io/**', (socket) => socket.close({ code: 1000, reason: 'Mock API: realtime disabled' }));
   await page.route('**/socket.io/**', (route) => route.abort());
 
   await page.route('**/api/v1/**', async (route) => {
@@ -53,6 +54,12 @@ export async function setupMockApi(page: Page, options: MockApiOptions = {}): Pr
       route.fulfill({
         status,
         contentType: 'application/json',
+        headers: {
+          'access-control-allow-origin': route.request().headers().origin ?? '*',
+          'access-control-allow-credentials': 'true',
+          'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+          'access-control-allow-headers': route.request().headers()['access-control-request-headers'] ?? 'content-type, authorization',
+        },
         body: JSON.stringify(data),
       });
 
@@ -254,6 +261,22 @@ export async function setupMockApi(page: Page, options: MockApiOptions = {}): Pr
         paymentBreakdown: { cash: 7000000, transfer: 5500000 },
         alerts: [],
       });
+    }
+
+    if (method === 'GET' && pathname.endsWith('/inventory-imports')) {
+      return json(InventoryImportListResponseSchema.parse({
+        items: [], total: 0, page: 1, limit: 20,
+        summary: { totalImportCost: 0, totalCashDrawerCost: 0, totalExternalCost: 0 },
+      }));
+    }
+
+    if (method === 'GET' && pathname.endsWith('/payroll')) {
+      return json(PayrollSummaryResponseSchema.parse({
+        fromDate: url.searchParams.get('fromDate') ?? '2026-11-01',
+        toDate: url.searchParams.get('toDate') ?? '2026-11-30',
+        config: {}, items: [],
+        summary: { totalEmployees: 0, totalFullShiftDays: 0, totalCustomHours: 0, totalSalary: 0 },
+      }));
     }
 
     if (method === 'GET') {
