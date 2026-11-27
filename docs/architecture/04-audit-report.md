@@ -104,7 +104,7 @@ Trong quá trình rà soát toàn bộ mã nguồn so với hồ sơ Phase 2, ph
    - Bảng tính lương tự động tổng hợp từ `work_schedules` (`FULL_SHIFT` / `CUSTOM_HOURS`), hỗ trợ `FULL_TIME` & `PART_TIME`.
    - Dashboard tổng quan lọc phạm vi theo quyền RBAC (`DashboardScope`), tích hợp KPI doanh thu, két tiền (Blind Mode), chuyển khoản theo QR, bếp/cấp cay, tồn kho, nhân sự trực ca và cảnh báo thời gian thực.
 7. **Bổ sung Giao diện POS Cảm ứng Toàn màn hình (`/pos/touch/*` — Stories 20 & 21) & In vật lý đa nền tảng (Story 19):**
-   - Touch Shell 4 nút đáy (`Bán hàng · Hoá đơn · Kết ca · Quản lý`), sơ đồ bàn 3 tab (`Tất cả / Phòng bàn / Mang về`), màn Báo hết món 1 chạm (`/pos/touch/stock-status`), màn Máy in & Két tiền (`/pos/touch/printer`) và endpoint `POST /api/v1/pos/print/lan-escpos`.
+   - Touch Shell 4 nút đáy (`Bán hàng · Hoá đơn · Kết ca · Quản lý`), sơ đồ bàn 4 tab (`Tất cả / Phòng bàn / Mang về / Lưu tạm`); thẻ `Giỏ chưa gán bàn` có một lần trong Tất cả, Mang về, Lưu tạm để bắt đầu giỏ mới. Bao gồm màn Báo hết món 1 chạm (`/pos/touch/stock-status`), màn Máy in & Két tiền (`/pos/touch/printer`) và endpoint `POST /api/v1/pos/print/lan-escpos`.
 
 ---
 

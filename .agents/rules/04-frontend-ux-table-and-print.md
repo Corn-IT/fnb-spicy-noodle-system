@@ -46,11 +46,11 @@ Khi bấm Đăng xuất, thực hiện **ĐÚNG** thứ tự:
 ### 4.2. POS Cảm ứng Toàn màn hình kiểu iPOS (`/pos/touch/*` — Stories 20 & 21)
 - Kích hoạt chế độ kiosk (`data-pos-touch="true"`, Tailwind variant `touch-ui:`, Screen Wake Lock), ẩn Sidebar/Navbar của `AppShell`.
 - **Sơ đồ 4 Tab trên `/pos/touch`:**
-  - `Tất cả` *(mặc định)*: Ô `+ Đơn mang về mới` → các thẻ `Mang về #NN` → các thẻ `Bàn 01..N`.
+  - `Tất cả` *(mặc định)*: Ô `+ Đơn mang về mới`, một ô `Giỏ chưa gán bàn` → các thẻ `Mang về #NN` → các thẻ `Bàn 01..N`. Ô `Giỏ chưa gán bàn` chỉ xuất hiện một lần trong lưới.
   - `Phòng bàn`: Chỉ lưới bàn vật lý.
-  - `Mang về`: Ô `+ Đơn mang về mới` + đơn mang về đang phục vụ.
-  - `Lưu tạm`: Chỉ danh sách giỏ đã lưu; hiển thị số lượng và empty state, chọn thẻ để resume hoặc xoá theo quyền.
-- Các tab sơ đồ hiển thị giỏ chưa gán bàn đang thao tác; chỉ tab `Lưu tạm` hiển thị các giỏ đã lưu. Sau khi lưu thành công, POS Touch tự chuyển sang tab này. Draft dùng cùng state hook với Desktop và không tạo `orders` trước khi bấm gửi.
+  - `Mang về`: Ô `+ Đơn mang về mới`, một ô `Giỏ chưa gán bàn` + đơn mang về đang phục vụ. Ô `Giỏ chưa gán bàn` chỉ xuất hiện một lần trong lưới.
+  - `Lưu tạm`: Ô `Giỏ chưa gán bàn` ở đầu lưới, sau đó là danh sách giỏ đã lưu; hiển thị số lượng và empty state, chọn thẻ để resume hoặc xoá theo quyền. Ô tạo giỏ chỉ xuất hiện một lần.
+- `Giỏ chưa gán bàn` mở giỏ mới chưa gán đích; có ở `Tất cả`, `Mang về` và `Lưu tạm`, không có ở `Phòng bàn`. Sau khi lưu thành công, POS Touch tự chuyển sang tab `Lưu tạm`. Draft dùng cùng state hook với Desktop và không tạo `orders` trước khi bấm gửi.
 - **TouchShellLayout & Thanh đáy 4 nút (`Bán hàng · Hoá đơn · Kết ca · Quản lý`):** Tự động ẩn khi ở màn gọi món/tính tiền (`TouchOrderScreen`).
 - **Trung tâm Quản lý (`/pos/touch/hub`) & 2 màn cảm ứng chuyên biệt:**
   - `/pos/touch/stock-status`: Báo hết món & topping 1 chạm (`menu` permission).

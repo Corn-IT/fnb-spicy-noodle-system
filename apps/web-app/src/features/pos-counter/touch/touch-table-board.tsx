@@ -222,7 +222,7 @@ export function TouchTableBoard({
 
   const boardCards =
     tab === 'drafts'
-      ? []
+      ? [renderUntargetedDraftTile()]
       : tab === 'tables'
       ? visibleTables.map(renderTableCard)
       : tab === 'takeaway'

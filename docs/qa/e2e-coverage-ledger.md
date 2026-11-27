@@ -304,3 +304,13 @@ Lượt `pnpm e2e` cuối trên code đóng băng ghi 100 PASS / 5 SKIP / 0 FAIL
 Fixture QA được sửa ở phạm vi mock: thêm response inventory/payroll đúng shared schema thay vì generic GET thiếu `summary`; thêm CORS hợp lệ cho API khác origin; intercept WebSocket `/socket.io` và đóng bình thường mã 1000, không kết nối API loopback thật. Audit nay chờ response và footer thật của inventory/payroll, kiểm tra không có fatal boundary hoặc pageerror. Smoke summary đã PASS 3/3 trên Chromium/WebKit mobile/tablet. Lượt trung gian từng FAIL thermal chỉ vì console `WebSocket ... ERR_CONNECTION_REFUSED` khi HTTP mock không intercept WebSocket; sau sửa, thermal tập trung PASS 2/2 (4,3 giây), và cả 2 case thermal cũng PASS trong full run cuối. Không lọc bỏ lỗi console hoặc sửa logic in production.
 
 UI Playwright dùng API mock; kiểm tra SQL migration dùng PostgreSQL thật cô lập. Migration local đã áp dụng; quyền mới trên production chỉ có sau khi triển khai code và áp dụng migration. Cluster PostgreSQL tạm đã dừng và xóa dữ liệu. Không chạy seed trên dữ liệu hiện có, không commit/push/merge/deploy.
+
+## 9. Touch POS — Giỏ chưa gán bàn trong tab Lưu tạm — 2026-11-27
+
+| Kiểm tra | Lệnh / bằng chứng | Kết quả |
+|----------|------------------|---------|
+| Unit: tile nằm đầu tab Lưu tạm, xuất hiện đúng một lần ở Tất cả/Mang về/Lưu tạm, vắng ở Phòng bàn và mở cùng luồng giỏ mới | `pnpm --filter @fnb/web-app exec vitest run src/features/pos-counter/touch/__tests__/pos-touch-page.test.tsx` | PASS — 30/30 |
+| POS drafts Desktop + Touch | `pnpm --filter @fnb/web-app exec playwright test e2e/pos-drafts.spec.ts --project=chromium-desktop` | PASS — 21/21 |
+| Smoke riêng cho thay đổi | Playwright `--grep "shows one unassigned-cart tile"` trên `chromium-desktop` | PASS — 1/1; kiểm tra chuyển All → Mang về → Lưu tạm, không duplicate và mở được giỏ mới |
+| Full suite trên commit `a0f47929de276fe57e6ceed63644dc2f5200b579` | `pnpm e2e` | PASS — 113 passed, 7 skipped, 0 failed; Playwright exit code 0. Skip theo cấu hình/project của suite. |
+| Toàn workspace | `pnpm -r typecheck && pnpm -r test && pnpm -r lint` | PASS — 968 unit tests, typecheck và lint đều pass |

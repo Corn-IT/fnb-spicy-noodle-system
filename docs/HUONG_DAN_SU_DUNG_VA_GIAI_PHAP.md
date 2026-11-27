@@ -19,7 +19,7 @@ Quán mì cay quy mô **20–30 bàn, 3+ khu vực chế biến (Bếp Nấu, B�
 | **3. Khách xin xem bill kiểm tra tiền nhưng bấm nhầm thành Thanh toán** | **Tách bạch "In tạm tính (Kèm VietQR động xoay vòng)" vs "Thanh toán 2 bước / Tách thanh toán"** | In tạm tính thoải mái (tự xoay vòng mã QR ngân hàng theo hạn mức Ngày/Tháng/Năm) mà bàn vẫn giữ **Đang phục vụ (`SERVING`)**; chỉ khi xác nhận thu tiền 2 bước mới đóng đơn & bung két tiền `RJ11`. |
 | **4. Lệch tiền két cuối ca do lẫn lộn Chuyển khoản QR, tiền chi két và thiếu minh bạch** | **Công thức Kết ca Chuẩn xác + Blind Mode + Bù chênh lệch** | Tự động bóc tách riêng Tiền mặt (`CASH` + phần mặt của `SPLIT`) và trừ phiếu nhập từ két (`CASH_DRAWER`). Tiền chuyển khoản QR không làm sai lệch két; thu ngân đếm tiền theo bảng 9 mệnh giá ở chế độ ẩn số lý thuyết (**Blind Mode**). |
 | **5. Dễ bỏ sót đơn khách quét QR trên điện thoại/tablet khi thu ngân bận** | **Cảnh báo Đa kênh (Socket.io + Giọng nói tiếng Việt + Web Push + Tự động huỷ quá hạn) & Bảo mật QR Wi-Fi/GPS** | Báo chuông + đọc giọng nói tiếng Việt + đẩy thông báo Web Push kể cả khi tắt màn hình (có kiểm tra chống báo lại đơn cũ khi tỉnh giấc), kèm khoá Wi-Fi/GPS chống đặt ảo từ xa. |
-| **6. Khó thao tác nhanh trên máy POS cảm ứng tại quầy** | **Chế độ POS Cảm ứng Toàn màn hình (`/pos/touch` + Trung tâm Quản lý `/pos/touch/hub`)** | Giao diện kiểu iPOS với sơ đồ 3 tab (**Tất cả / Phòng bàn / Mang về**), thanh đáy 4 nút, báo hết món 1 chạm và cấu hình máy in/két tiền ngay tại quầy. |
+| **6. Khó thao tác nhanh trên máy POS cảm ứng tại quầy** | **Chế độ POS Cảm ứng Toàn màn hình (`/pos/touch` + Trung tâm Quản lý `/pos/touch/hub`)** | Giao diện kiểu iPOS với sơ đồ 4 tab (**Tất cả / Phòng bàn / Mang về / Lưu tạm**), thanh đáy 4 nút, báo hết món 1 chạm và cấu hình máy in/két tiền ngay tại quầy. |
 
 ---
 
@@ -74,7 +74,7 @@ Bạn có thể chuyển nhanh giữa các màn hình bằng **Thanh menu bên t
 | :-: | :--- | :--- | :--- | :--- | :--- |
 | **1** | **Bảng điều khiển Tổng quan** | `/dashboard` | `/pos/touch/dashboard` | Chủ quán, Quản lý, Thu ngân | KPI doanh thu, két tiền, chuyển khoản theo QR, bếp/cấp cay, lợi nhuận ước tính, cảnh báo quá hạn & rủi ro. |
 | **2** | **Bán hàng POS (Desktop)** | `/pos` | — | Thu ngân, Quản lý | Màn hình Split-View: sơ đồ bàn + mang về, gọi món nhanh, tách bếp, chuyển/ghép/đổi bàn/chuyển mang về, giảm giá, tạm tính, thanh toán/tách bill. |
-| **3** | **POS Cảm ứng & Hub (iPOS)** | — | `/pos/touch`, `/pos/touch/hub`, `/pos/touch/stock-status`, `/pos/touch/printer` | Thu ngân quầy cảm ứng | Toàn màn hình kiosk, 3 tab sơ đồ (**Tất cả / Phòng bàn / Mang về**), thanh đáy 4 nút, báo hết món 1 chạm, máy in & mở két RJ11. |
+| **3** | **POS Cảm ứng & Hub (iPOS)** | — | `/pos/touch`, `/pos/touch/hub`, `/pos/touch/stock-status`, `/pos/touch/printer` | Thu ngân quầy cảm ứng | Toàn màn hình kiosk, 4 tab sơ đồ (**Tất cả / Phòng bàn / Mang về / Lưu tạm**), thanh đáy 4 nút, báo hết món 1 chạm, máy in & mở két RJ11. |
 | **4** | **Gọi món QR Khách hàng** | `/q/:token` hoặc `/qr/:token` | *(Mobile khách)* | Khách tại bàn & khách Mang về | Khách tự quét QR gọi món, chọn tuỳ chọn, theo dõi trạng thái realtime, nhận thông báo tức thời (có bảo mật Wi-Fi/GPS). |
 | **5** | **Quản trị Thực đơn** | `/menu` | `/pos/touch/menu` | Chủ quán, Quản lý, Thu ngân | Thực đơn 3 tầng động, 4 nhóm tuỳ chọn thông minh, Size M/L, bật/tắt tạm hết món/topping, nhập/xuất Excel, quản lý trạm bếp & danh mục con. |
 | **6** | **Quản lý Mã giảm giá** | `/discounts` | `/pos/touch/discounts` | Chủ quán, Quản lý | Tạo mã `%` / số tiền cố định theo toàn đơn, danh mục hoặc món; đặt khung giờ vàng, thứ trong tuần, giới hạn lượt dùng. |
@@ -140,10 +140,11 @@ Mật khẩu mặc định chung sau khi seed: **`Password@123`**
 
 #### 3.1. Chế độ POS Cảm ứng Toàn màn hình kiểu iPOS (`/pos/touch/*`)
 - Chuyển nhanh từ Navbar hoặc đăng nhập thẳng vào `/pos/touch` trên máy tính bảng / máy POS `iMin D3-505`.
-- **Sơ đồ 3 Tab trên thanh trên cùng:**
-  - **Tất cả (Mặc định):** Ô **`+ Đơn mang về mới`** và các thẻ **`Mang về #NN`** đang phục vụ nằm ngay đầu tiên trước `Bàn 01`, giúp thu ngân nhận đơn mang về ngay không cần cuộn.
+- **Sơ đồ 4 Tab trên thanh trên cùng:**
+  - **Tất cả (Mặc định):** Ô **`+ Đơn mang về mới`**, một thẻ **`Giỏ chưa gán bàn`**, các thẻ **`Mang về #NN`** đang phục vụ rồi đến `Bàn 01`. Thẻ `Giỏ chưa gán bàn` chỉ xuất hiện một lần.
   - **Phòng bàn:** Chỉ hiển thị lưới bàn vật lý (`Bàn 01`..`Bàn N`).
-  - **Mang về:** Ô `+ Đơn mang về mới` và danh sách đơn mang về đang mở.
+  - **Mang về:** Ô `+ Đơn mang về mới`, một thẻ `Giỏ chưa gán bàn` và danh sách đơn mang về đang mở.
+  - **Lưu tạm:** Thẻ `Giỏ chưa gán bàn` ở đầu lưới để bắt đầu giỏ mới, sau đó là danh sách các giỏ đã lưu. Thẻ tạo giỏ cũng có một lần xuất hiện ở tab này.
 - **Thanh điều hướng đáy 4 nút (`Bán hàng · Hoá đơn · Kết ca · Quản lý`):** Tự ẩn khi vào màn gọi món/tính tiền (`TouchOrderScreen`). Bấm **Quản lý** mở **Hub (`/pos/touch/hub`)** gồm 4 thẻ nổi bật (**Tổng quan**, **Cài đặt**, **Mã giảm giá**, **Thực đơn**) và lưới ô quầy (**Báo hết món 1 chạm**, **Máy in & Két tiền**, **Hoá đơn**, **Kết ca**, **Nhập hàng**, **Mã QR TT**, **Hồ sơ**).
 
 #### 3.2. Trạng thái Bàn, Gọi món, Tách Bếp & Thao tác Bàn
@@ -163,6 +164,7 @@ Mật khẩu mặc định chung sau khi seed: **`Password@123`**
 - Giỏ tạm không tạo hoá đơn, không chiếm bàn, không gửi phiếu bếp và không thể thanh toán. Khi bấm gửi, hệ thống dùng giá món hiện hành. Bàn phải còn trống; nếu bàn đã có khách hoặc món không còn hợp lệ, giỏ vẫn được giữ để sửa/đổi đích.
 - Draft được đồng bộ bằng thông báo staff POS. Khách QR không xem được danh sách giỏ tạm.
 - Trong tab **Lưu tạm**, các giỏ hiển thị thành ô vuông. Chạm vào ô để mở lại; nút thùng rác riêng dùng để xóa giỏ. Nút này yêu cầu quyền **Xóa giỏ lưu tạm** (`pos.deleteDrafts`), được cấp mặc định cho thu ngân; quyền này không cho phép hủy đơn đã xác nhận.
+- Thẻ **Giỏ chưa gán bàn** có cùng hành vi ở các tab **Tất cả**, **Mang về** và **Lưu tạm**: mở một giỏ mới để gọi món trước, rồi chọn bàn hoặc Mang về sau. Tab **Phòng bàn** chỉ hiển thị bàn vật lý.
 - Trước **Xác nhận tạo đơn**, bấm **Bỏ toàn bộ giỏ** rồi xác nhận để bỏ tất cả món cùng lúc. Với giỏ đã lưu, hệ thống chỉ xóa nội dung trên máy sau khi server xóa thành công đúng phiên bản. Nếu lỗi mạng hoặc giỏ đã được sửa ở máy khác, món và bàn đã chọn vẫn được giữ lại. Xóa giỏ không giải phóng hoặc thay đổi bàn đang có đơn QR.
 
 ---
