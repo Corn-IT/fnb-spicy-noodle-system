@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
-import { setupMockApi } from './fixtures/api-mock';
+import { MOCK_SUPER_ADMIN, setupMockApi } from './fixtures/api-mock';
 
 type DraftState = {
   id: string;
@@ -17,6 +17,10 @@ type DraftState = {
 async function mockDraftApi(page: Page) {
   let draft: DraftState | null = null;
   let occupiedTableId: number | null = null;
+  let tableNameOverride: string | null = null;
+  let deleteStatus: number | 'network' = 200;
+  let deleteWait: Promise<void> | null = null;
+  const deletionRevisions: string[] = [];
   const submittedBodies: Array<Record<string, unknown>> = [];
   const submitAttempts: Array<Record<string, unknown>> = [];
 
@@ -31,7 +35,7 @@ async function mockDraftApi(page: Page) {
     });
     const withTableName = (state: DraftState): DraftState => ({
       ...state,
-      tableName: state.tableId === null ? null : `Bàn ${String(state.tableId).padStart(2, '0')}`,
+      tableName: state.tableId === null ? null : tableNameOverride ?? `Bàn ${String(state.tableId).padStart(2, '0')}`,
     });
 
     if (path.endsWith('/pos/drafts') && method === 'GET') {
@@ -52,7 +56,7 @@ async function mockDraftApi(page: Page) {
       draft = {
         ...draft,
         ...state,
-        tableName: state.tableId === null ? null : `Bàn ${String(state.tableId).padStart(2, '0')}`,
+        tableName: state.tableId === null ? null : tableNameOverride ?? `Bàn ${String(state.tableId).padStart(2, '0')}`,
         revision: draft.revision + 1,
         updatedAt: new Date().toISOString(),
       };
@@ -86,6 +90,14 @@ async function mockDraftApi(page: Page) {
       });
     }
     if (path.endsWith('/pos/drafts/draft-e2e-1') && method === 'DELETE') {
+      deletionRevisions.push(url.searchParams.get('revision') ?? '');
+      if (deleteWait) await deleteWait;
+      if (deleteStatus === 'network') return route.abort('failed');
+      if (deleteStatus !== 200) return json({
+        code: deleteStatus === 409 ? 'POS_DRAFT_CONCURRENT_MODIFICATION' : 'RBAC_PERMISSION_DENIED',
+        message: deleteStatus === 409 ? 'Giỏ nháp đã được cập nhật ở thiết bị khác' : 'Bạn không có quyền xóa giỏ tạm',
+      }, deleteStatus);
+      if (Number(url.searchParams.get('revision')) !== draft?.revision) return json({ code: 'POS_DRAFT_CONCURRENT_MODIFICATION' }, 409);
       draft = null;
       return json({ id: 'draft-e2e-1', deleted: true });
     }
@@ -99,6 +111,10 @@ async function mockDraftApi(page: Page) {
   });
 
   return {
+    setTableName: (name: string) => { tableNameOverride = name; },
+    deletionRevisions,
+    setDeleteStatus: (status: number | 'network') => { deleteStatus = status; },
+    setDeleteWait: (wait: Promise<void>) => { deleteWait = wait; },
     submittedBodies,
     submitAttempts,
     setOccupiedTableId: (tableId: number | null) => { occupiedTableId = tableId; },
@@ -244,3 +260,178 @@ test.describe('POS drafts — Touch', () => {
     expect(draftApi.getOrderCreateCalls()).toBe(0);
   });
 });
+
+async function setupCashierDraftApi(page: Page, canDeleteDrafts = true) {
+  await setupMockApi(page);
+  const user = {
+    ...MOCK_SUPER_ADMIN,
+    isSuperAdmin: false,
+    permissions: {
+      ...MOCK_SUPER_ADMIN.permissions,
+      pos: { view: true, create: true, update: true, delete: false, deleteDrafts: canDeleteDrafts },
+    },
+  };
+  await page.addInitScript((cashier) => {
+    localStorage.setItem('fnb-auth', JSON.stringify({ state: { user: cashier }, version: 0 }));
+  }, user);
+  await page.route('**/api/v1/auth/*', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ accessToken: 'cashier-token', user }),
+  }));
+  return mockDraftApi(page);
+}
+
+for (const touch of [false, true]) {
+  test.describe(`POS bulk discard — ${touch ? 'Touch' : 'Desktop'}`, () => {
+    test.use({ viewport: { width: 1366, height: 900 }, hasTouch: true });
+    const ids = {
+      start: touch ? 'touch-new-untargeted-draft' : 'create-untargeted-draft-btn',
+      product: touch ? 'touch-product-1' : 'pos-quick-add-product-1',
+      item: touch ? 'touch-draft-item-0' : 'draft-item-0',
+      save: touch ? 'touch-save-draft' : 'pos-save-draft-btn',
+      discard: touch ? 'touch-discard-draft' : 'pos-discard-draft-btn',
+      submit: touch ? 'touch-submit-draft' : 'pos-submit-new-order-btn',
+    };
+    const goto = async (page: Page) => page.goto(touch ? '/pos/touch' : '/pos', { waitUntil: 'domcontentloaded' });
+    const startCart = async (page: Page) => {
+      await page.getByTestId(ids.start).tap();
+      await page.getByTestId(ids.product).tap();
+      await page.getByTestId(ids.product).tap();
+      await expect(page.getByTestId(ids.item)).toBeVisible();
+    };
+    const saveAndResume = async (page: Page) => {
+      await page.getByTestId(ids.save).tap();
+      await page.getByTestId('pos-resume-draft-draft-e2e-1').tap();
+      await expect(page.getByTestId(ids.item)).toBeVisible();
+    };
+
+    test('confirms before clearing all local items and returns to the board without a server write', async ({ page }) => {
+      const api = await setupCashierDraftApi(page);
+      await goto(page);
+      await startCart(page);
+      await page.getByTestId(ids.discard).tap();
+      await page.getByRole('button', { name: 'Quay lại', exact: true }).tap();
+      await expect(page.getByTestId(ids.item)).toBeVisible();
+      await page.getByTestId(ids.discard).tap();
+      await page.getByTestId('confirm-discard-draft').tap();
+      await expect(page.getByTestId(ids.item)).toHaveCount(0);
+      await expect(page.getByTestId(ids.start)).toBeVisible();
+      expect(api.getDraft()).toBeNull();
+      expect(api.deletionRevisions).toEqual([]);
+      expect(api.getOrderCreateCalls()).toBe(0);
+    });
+
+    test('deletes the saved revision before clearing local edits and blocks repeated destructive operations', async ({ page }) => {
+      const api = await setupCashierDraftApi(page);
+      await goto(page);
+      await startCart(page);
+      await saveAndResume(page);
+      await page.getByTestId(ids.product).tap();
+      let release!: () => void;
+      api.setDeleteWait(new Promise<void>((resolve) => { release = resolve; }));
+      await page.getByTestId(ids.discard).tap();
+      await page.getByTestId('confirm-discard-draft').tap();
+      await expect.poll(() => api.deletionRevisions.length).toBe(1);
+      await expect(page.getByTestId('confirm-discard-draft')).toBeDisabled();
+      await expect(page.getByTestId(ids.save)).toBeDisabled();
+      await expect(page.getByTestId(ids.item)).toBeVisible();
+      expect(api.getDraft()).not.toBeNull();
+      release();
+      await expect(page.getByTestId(ids.item)).toHaveCount(0);
+      await expect(page.getByTestId(ids.start)).toBeVisible();
+      expect(api.deletionRevisions).toEqual(['1']);
+      expect(api.getDraft()).toBeNull();
+      expect(api.submittedBodies).toHaveLength(0);
+      expect(api.getOrderCreateCalls()).toBe(0);
+    });
+
+    for (const status of [409, 403, 'network'] as const) {
+      test(`retains the entire editable saved cart and target when deletion fails (${status})`, async ({ page }) => {
+        const api = await setupCashierDraftApi(page);
+        await goto(page);
+        await page.getByTestId(touch ? 'touch-table-card-3' : 'table-card-3').tap();
+        await page.getByTestId(ids.product).tap();
+        await saveAndResume(page);
+        await page.getByTestId(ids.product).tap();
+        const before = await page.getByTestId(ids.item).innerText();
+        api.setDeleteStatus(status);
+        await page.getByTestId(ids.discard).tap();
+        await page.getByTestId('confirm-discard-draft').tap();
+        await expect.poll(() => api.deletionRevisions.length).toBe(1);
+        await expect(page.getByRole('button', { name: 'Quay lại', exact: true })).toBeEnabled();
+        await page.getByRole('button', { name: 'Quay lại', exact: true }).tap();
+        await expect(page.getByTestId(ids.item)).toHaveText(before, { useInnerText: true });
+        await expect(page.getByTestId(touch ? 'touch-order-title' : 'invoice-header-label')).toContainText('Bàn 03');
+        await expect(page.getByTestId(ids.save)).toBeEnabled();
+        expect(api.getDraft()).toMatchObject({ tableId: 3, revision: 1 });
+        expect(api.getOrderCreateCalls()).toBe(0);
+      });
+    }
+
+    test('discards a saved table draft while leaving the later QR order and table occupancy intact', async ({ page }) => {
+      const api = await setupCashierDraftApi(page);
+      const tableState = await mockTablesWithQrOccupiedTable10(page);
+      const orderWrites: string[] = [];
+      await page.route('**/api/v1/pos/orders/**', async (route) => {
+        if (route.request().method() !== 'GET') orderWrites.push(route.request().url());
+        await route.fallback();
+      });
+      await goto(page);
+      await page.getByTestId(touch ? 'touch-table-card-10' : 'table-card-10').tap();
+      await page.getByTestId(ids.product).tap();
+      await page.getByTestId(ids.save).tap();
+      tableState.acceptQrOrderForTable10();
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      if (touch) await page.getByRole('tab', { name: /Lưu tạm/ }).tap();
+      await page.getByTestId('pos-resume-draft-draft-e2e-1').tap();
+      await page.getByTestId(ids.discard).tap();
+      await page.getByTestId('confirm-discard-draft').tap();
+      await expect(page.getByTestId(touch ? 'touch-table-card-10' : 'table-card-10')).toContainText('45.000');
+      expect(api.getDraft()).toBeNull();
+      expect(orderWrites).toEqual([]);
+      expect(api.getOrderCreateCalls()).toBe(0);
+    });
+
+    test('hides saved deletion without the dedicated permission while allowing local discard', async ({ page }) => {
+      await setupCashierDraftApi(page, false);
+      await goto(page);
+      await startCart(page);
+      await expect(page.getByTestId(ids.discard)).toBeVisible();
+      await page.getByTestId(ids.save).tap();
+      await expect(page.getByTestId('pos-delete-draft-draft-e2e-1')).toHaveCount(0);
+      await page.getByTestId('pos-resume-draft-draft-e2e-1').tap();
+      await expect(page.getByTestId(ids.discard)).toHaveCount(0);
+    });
+
+    test('renders a square saved card with a separate visible 44px delete target', async ({ page }) => {
+      const api = await setupCashierDraftApi(page);
+      api.setTableName('Bàn khu vực phục vụ có nhãn rất dài để kiểm tra tràn chữ và nút xóa');
+      if (touch) await page.addInitScript(() => localStorage.setItem('fnb-pos-touch-layout', JSON.stringify({ tableColumns: 4, menuColumns: 'auto' })));
+      await goto(page);
+      await page.getByTestId(touch ? 'touch-table-card-3' : 'table-card-3').tap();
+      await page.getByTestId(ids.product).tap();
+      await page.getByTestId(ids.save).tap();
+      const card = page.getByTestId('pos-draft-card-draft-e2e-1');
+      const resume = page.getByTestId('pos-resume-draft-draft-e2e-1');
+      const remove = page.getByTestId('pos-delete-draft-draft-e2e-1');
+      await expect(remove).toBeVisible();
+      for (const width of [1024, 1366]) {
+        await page.evaluate(async () => { if (document.fullscreenElement) await document.exitFullscreen(); });
+        await page.setViewportSize({ width, height: 900 });
+        await expect.poll(async () => {
+          const box = await card.boundingBox();
+          return box ? Math.abs(box.width - box.height) : 100;
+        }).toBeLessThan(2);
+        const target = await remove.boundingBox();
+        expect(target?.width).toBeGreaterThanOrEqual(44);
+        expect(target?.height).toBeGreaterThanOrEqual(44);
+      }
+      expect(await resume.locator('button').count()).toBe(0);
+      const resumeBox = await resume.boundingBox();
+      const deleteBox = await remove.boundingBox();
+      expect(resumeBox!.y + resumeBox!.height).toBeLessThanOrEqual(deleteBox!.y);
+      if (touch) await expect(page.getByTestId('touch-table-grid')).toHaveAttribute('data-columns', '4');
+      await remove.tap();
+      await expect(card).toHaveCount(0);
+    });
+  });
+}

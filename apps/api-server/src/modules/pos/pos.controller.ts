@@ -269,7 +269,7 @@ export class PosController {
 
   @Delete('pos/drafts/:id')
   @UseGuards(JwtAuthGuard, RbacGuard)
-  @RequirePermission('pos', 'delete')
+  @RequirePermission('pos', 'deleteDrafts')
   deletePosDraft(
     @Param('id') id: string,
     @Query('revision', ParseIntPipe) revision: number,

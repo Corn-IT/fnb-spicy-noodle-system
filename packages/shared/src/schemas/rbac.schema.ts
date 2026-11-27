@@ -42,6 +42,7 @@ const InvoicesPermissionsSchema = z.object({
 }).strict();
 
 const PosPermissionsSchema = ModulePermissionsSchema.extend({
+  deleteDrafts: z.boolean().default(false),
   splitKitchen: z.boolean().default(false),
   tableAction: z.boolean().default(false),
   checkout: z.boolean().default(false),
@@ -53,6 +54,7 @@ const PosPermissionsSchema = ModulePermissionsSchema.extend({
   create: false,
   update: false,
   delete: false,
+  deleteDrafts: false,
   splitKitchen: false,
   tableAction: false,
   checkout: false,
@@ -273,7 +275,7 @@ export type UserPermissions = z.infer<typeof UserPermissionsSchema>;
 
 export const defaultUserPermissions: UserPermissions = {
   dashboard: { view: false, viewProfit: false, export: false },
-  pos: { view: false, create: false, update: false, delete: false, splitKitchen: false, tableAction: false, checkout: false, qrSecurity: false, manualDiscount: false, openCashDrawer: false },
+  pos: { view: false, create: false, update: false, delete: false, deleteDrafts: false, splitKitchen: false, tableAction: false, checkout: false, qrSecurity: false, manualDiscount: false, openCashDrawer: false },
   menu: { view: false, create: false, update: false, delete: false, manageStations: false, manageCategories: false, import: false, export: false },
   invoices: { view: false, reprint: false, update: false, approve: false, void: false, export: false },
   inventory: { view: false, create: false, update: false, delete: false, export: false },

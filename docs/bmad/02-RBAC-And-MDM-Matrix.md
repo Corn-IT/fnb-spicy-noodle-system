@@ -85,7 +85,7 @@ Hệ thống áp dụng xác thực JWT kết hợp **Chính sách Một Phiên 
 | # | Module Key | Các Quyền Con (Boolean Flags) | Ghi chú Nghiệp vụ |
 |:-:|:---|:---|:---|
 | 1 | `dashboard` | `view`, `viewProfit`, `export` | `viewProfit` mở KPI lợi nhuận gộp & chi phí lương ước tính |
-| 2 | `pos` | `view`, `create`, `update`, `delete`, `splitKitchen`, `tableAction`, `checkout`, `qrSecurity`, `manualDiscount`, `openCashDrawer` | `manualDiscount`, `qrSecurity`, `openCashDrawer` kiểm tra nghiêm ngặt không fallback |
+| 2 | `pos` | `view`, `create`, `update`, `delete`, `deleteDrafts`, `splitKitchen`, `tableAction`, `checkout`, `qrSecurity`, `manualDiscount`, `openCashDrawer` | `deleteDrafts`, `manualDiscount`, `qrSecurity`, `openCashDrawer` kiểm tra nghiêm ngặt không fallback |
 | 3 | `menu` | `view`, `create`, `update`, `delete`, `manageStations`, `manageCategories`, `import`, `export` | Tách riêng quyền quản lý trạm bếp, danh mục con và nhập/xuất Excel |
 | 4 | `invoices` | `view`, `reprint`, `update`, `approve`, `void`, `export` | `update` gửi yêu cầu sửa PTTT; `approve` duyệt/từ chối sửa PTTT; `void` huỷ hoá đơn đã thu tiền |
 | 5 | `inventory` | `view`, `create`, `update`, `delete`, `export` | Nhập hàng kho nguyên vật liệu & xoá mềm phiếu nhập |
@@ -114,6 +114,7 @@ Hệ thống áp dụng xác thực JWT kết hợp **Chính sách Một Phiên 
 | **Dashboard** | `view` / `viewProfit` / `export` | ✅ / ✅ / ✅ | ✅ / ✅ / ✅ | ✅ / ✅ / ✅ | ✅ / ❌ / ❌ |
 | **POS** | `view, create, update, splitKitchen, tableAction, checkout` | ✅ | ✅ | Chỉ `view` | ✅ |
 | **POS (Nhạy cảm)** | `delete`, `qrSecurity`, `manualDiscount`, `openCashDrawer` | ✅ | ✅ | ❌ | ❌ |
+| **Giỏ lưu tạm POS** | `deleteDrafts` — Xóa giỏ lưu tạm; độc lập với hủy đơn đã tạo | ✅ | ✅ | ❌ | ✅ |
 | **Menu** | `view` / `update` / `create, delete, stations, categories, import, export` | ✅ / ✅ / ✅ | ✅ / ✅ / ✅ | ✅ / ❌ / chỉ `export` | ✅ / ✅ / ❌ |
 | **Hoá đơn** | `view` / `reprint` / `update` / `approve` / `void` / `export` | ✅ tất cả | ✅ (trừ `void` ❌) | Chỉ `view`, `export` | ✅ `view, reprint, update` |
 | **Nhập hàng** | `view` / `create` / `update` / `delete` / `export` | ✅ tất cả | ✅ tất cả | Chỉ `view`, `export` | ✅ `view, create, delete` |

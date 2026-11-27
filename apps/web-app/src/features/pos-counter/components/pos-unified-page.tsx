@@ -31,7 +31,7 @@ export function PosUnifiedPage() {
     onViewChange: (event) => {
       if (event === 'draft-started') {
         setPosTab('menu');
-      } else if (event === 'draft-target-picker' || event === 'draft-parked') {
+      } else if (event === 'draft-target-picker' || event === 'draft-parked' || event === 'draft-discarded') {
         setPosTab('tables');
       } else if (event === 'draft-submitted') {
         setPosTab('tables');
@@ -176,6 +176,7 @@ export function PosUnifiedPage() {
               takeaways={gridData?.takeaways ?? []}
               drafts={workspace.parkedDrafts}
               activeDraftId={workspace.activeDraftId}
+              isDraftPending={pending.isDraftPending}
               takeawayQrToken={gridData?.takeawayQrToken}
               selectedOrderId={selectedOrderId}
               draftTarget={draftTarget}
@@ -255,6 +256,9 @@ export function PosUnifiedPage() {
           isApprovingQr={pending.isApprovingQr}
           isSubmittingDraft={pending.isSubmittingDraft}
           isSavingDraft={pending.isSavingDraft}
+          isDraftPending={pending.isDraftPending}
+          canDiscardDraft={workspace.permissions.canDiscardDraft}
+          onDiscardDraft={actions.discardDraft}
           isCancellingOrder={pending.isCancellingOrder}
           isReprintPending={pending.isReprintPending}
           isDiscountPending={pending.isDiscountPending}

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cashierPermissions,
+  adminPermissions,
   defaultOpeningBudgetSeed,
   defaultPaymentAccountsSeed,
   defaultQrSecurityConfigSeed,
@@ -11,6 +13,12 @@ import {
 } from '../../../prisma/seed-data';
 
 describe('restaurant seed data', () => {
+  it('grants cashiers draft deletion without confirmed-order deletion', () => {
+    expect(cashierPermissions.pos.deleteDrafts).toBe(true);
+    expect(cashierPermissions.pos.delete).toBe(false);
+    expect(adminPermissions.pos.deleteDrafts).toBe(true);
+  });
+
   it('should create only the thirty physical dining tables', () => {
     expect(tableNames).toHaveLength(30);
     expect(tableNames[0]).toBe('Bàn 01');
