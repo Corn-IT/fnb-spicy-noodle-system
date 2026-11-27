@@ -976,7 +976,14 @@ export function StoreSettingsPage() {
         </TabsContent>
 
         <TabsContent value="receipt" className="mt-4 min-w-0 w-full">
-          <PrinterHardwareSettingsPanel storeSettings={livePreviewSettings} />
+          <PrinterHardwareSettingsPanel
+            storeSettings={livePreviewSettings}
+            canKickCashDrawer={Boolean(
+              user?.isSuperAdmin ||
+                user?.permissions?.pos?.openCashDrawer ||
+                user?.permissions?.settings?.update,
+            )}
+          />
           <PrintTemplateCustomizer
             draft={draft}
             livePreviewSettings={livePreviewSettings}

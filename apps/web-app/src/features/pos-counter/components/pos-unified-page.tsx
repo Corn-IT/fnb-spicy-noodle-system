@@ -115,15 +115,15 @@ export function PosUnifiedPage() {
           className="flex flex-1 min-h-0 h-full flex-col"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-2.5 sm:px-4 py-2 sm:py-2.5 shrink-0">
-            <TabsList className="grid w-full min-w-0 flex-auto min-[820px]:w-auto min-[820px]:flex-1 grid-cols-3 min-[820px]:grid-cols-2 h-auto p-1">
+            <TabsList className="grid w-full min-w-0 max-w-full flex-auto min-[820px]:basis-full xl:basis-auto xl:w-auto xl:flex-1 grid-cols-3 min-[820px]:grid-cols-2 h-auto p-1">
               <TabsTrigger
                 value="tables"
                 data-testid="pos-tab-tables"
                 className="min-w-0 min-h-9 min-[820px]:min-h-8 gap-1 px-1 sm:px-3 text-xs sm:text-sm"
               >
                 <LayoutGrid className="h-3.5 w-3.5 shrink-0 sm:hidden" />
-                <span className="sm:hidden">Bàn</span>
-                <span className="hidden sm:inline xl:hidden">Sơ đồ Bàn</span>
+                <span className="lg:hidden">Bàn</span>
+                <span className="hidden lg:inline xl:hidden">Sơ đồ Bàn</span>
                 <span className="hidden xl:inline">Sơ đồ Bàn &amp; Mang về</span>
               </TabsTrigger>
               <TabsTrigger
@@ -132,8 +132,8 @@ export function PosUnifiedPage() {
                 className="min-w-0 min-h-9 min-[820px]:min-h-8 gap-1 px-1 sm:px-3 text-xs sm:text-sm"
               >
                 <UtensilsCrossed className="h-3.5 w-3.5 shrink-0 sm:hidden" />
-                <span className="sm:hidden">Món</span>
-                <span className="hidden sm:inline xl:hidden">Thực đơn</span>
+                <span className="lg:hidden">Món</span>
+                <span className="hidden lg:inline xl:hidden">Thực đơn</span>
                 <span className="hidden xl:inline">Thực đơn Gọi món nhanh</span>
               </TabsTrigger>
               <TabsTrigger
@@ -210,7 +210,7 @@ export function PosUnifiedPage() {
       {/* Right Panel: Live Electronic Invoice (Split-view from 820px+) */}
       <div
         className={cn(
-          'flex min-h-0 h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm min-[820px]:w-[310px] lg:w-[330px] xl:w-[350px] 2xl:w-[380px] min-[820px]:flex-none shrink-0',
+          'flex min-h-0 h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm min-[820px]:w-[clamp(210px,42%,310px)] lg:w-[clamp(230px,43%,330px)] xl:w-[clamp(290px,38%,350px)] 2xl:w-[380px] min-[820px]:flex-none shrink-0',
           posTab !== 'invoice' && 'hidden min-[820px]:flex',
         )}
       >

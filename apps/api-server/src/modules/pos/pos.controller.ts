@@ -477,6 +477,23 @@ export class PosController {
       });
     }
 
+    const decoded = Buffer.from(body.payloadBase64.replace(/\s+/g, ''), 'base64');
+    const containsCashDrawerKick = decoded.includes(Buffer.from([0x1b, 0x70]));
+    if (containsCashDrawerKick) {
+      const canTriggerCashDrawer = Boolean(
+        user?.isSuperAdmin ||
+        user?.permissions?.pos?.openCashDrawer ||
+        user?.permissions?.pos?.checkout ||
+        user?.permissions?.settings?.update,
+      );
+      if (!canTriggerCashDrawer) {
+        throw new ForbiddenException({
+          code: ErrorCodes.RBAC_PERMISSION_DENIED,
+          message: 'Tài khoản không có quyền mở két tiền qua máy in nhiệt',
+        });
+      }
+    }
+
     const service = this.thermalLanPrintService ?? new ThermalLanPrintService();
     return service.sendEscPosPayload(body);
   }

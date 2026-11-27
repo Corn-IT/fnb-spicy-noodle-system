@@ -20,6 +20,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAppMessages } from '@/hooks/use-app-messages';
+import { parseStationOptions, useKitchenStationsLookup } from '@/lib/menu-sync';
 import { useAuthStore } from '@/stores/auth.store';
 import { normalizeVietnameseText } from '@/utils/search';
 
@@ -51,7 +52,11 @@ function sanitizeNormalizedInput(raw: string): string {
   return normalizeVietnameseText(raw).replace(/\s+/g, ' ');
 }
 
-function renderMetadataSummary(category: MdmCategory, meta: Record<string, unknown> | undefined) {
+function renderMetadataSummary(
+  category: MdmCategory,
+  meta: Record<string, unknown> | undefined,
+  stationLabels: Record<string, string> = STATION_LABELS,
+) {
   if (!meta || Object.keys(meta).length === 0) {
     return <span className="text-muted-foreground">—</span>;
   }
@@ -60,7 +65,7 @@ function renderMetadataSummary(category: MdmCategory, meta: Record<string, unkno
 
   if (category === 'MENU_CATEGORY') {
     const stationKey = typeof meta.defaultStation === 'string' ? meta.defaultStation : '';
-    const stationLabel = STATION_LABELS[stationKey] ?? stationKey;
+    const stationLabel = stationLabels[stationKey] ?? stationKey;
     const isHidden = meta.isHidden === true;
     const description = typeof meta.description === 'string' ? meta.description.trim() : '';
 
@@ -189,6 +194,19 @@ export function MasterDataPage() {
     activeOnly: false,
   });
   const { data, isLoading } = mdmQuery;
+
+  const { data: rawStations } = useKitchenStationsLookup();
+  const stationOptions = React.useMemo(() => {
+    const parsed = parseStationOptions(rawStations).filter((st) => !st.isHidden);
+    return parsed.length > 0 ? parsed : parseStationOptions(undefined);
+  }, [rawStations]);
+  const stationLabelMap = React.useMemo(() => {
+    const map: Record<string, string> = { ...STATION_LABELS };
+    for (const st of stationOptions) {
+      map[st.code] = st.name;
+    }
+    return map;
+  }, [stationOptions]);
 
   const createMutation = useCreateMdmMutation();
   const updateMutation = useUpdateMdmMutation(editingItem?.id ?? 0);
@@ -423,7 +441,7 @@ export function MasterDataPage() {
         id: 'metadata',
         header: 'Thông tin phụ',
         size: 200,
-        cell: ({ row }) => renderMetadataSummary(row.original.category ?? activeTab, row.original.metadata),
+        cell: ({ row }) => renderMetadataSummary(row.original.category ?? activeTab, row.original.metadata, stationLabelMap),
       },
       {
         id: 'status',
@@ -505,7 +523,7 @@ export function MasterDataPage() {
           ]
         : []),
     ],
-    [activeTab, page, limit, canModifyAny, canUpdate, canDelete, togglingId, handleToggleStatus],
+    [activeTab, page, limit, canModifyAny, canUpdate, canDelete, togglingId, handleToggleStatus, stationLabelMap],
   );
 
   const totalPages = data ? Math.ceil(data.total / limit) : 1;
@@ -650,19 +668,19 @@ export function MasterDataPage() {
                     Thông tin phụ — Khu vực Bếp mặc định
                   </label>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {Object.entries(STATION_LABELS).map(([stationKey, stationLabel]) => (
+                    {stationOptions.map((st) => (
                       <button
-                        key={stationKey}
+                        key={st.code}
                         type="button"
-                        data-testid={`mdm-station-btn-${stationKey}`}
-                        onClick={() => setFormStation(stationKey)}
+                        data-testid={`mdm-station-btn-${st.code}`}
+                        onClick={() => setFormStation(st.code)}
                         className={`h-9 rounded-lg border px-2.5 text-xs font-semibold transition-colors ${
-                          formStation === stationKey
+                          formStation === st.code
                             ? 'border-primary bg-primary text-primary-foreground shadow-xs'
                             : 'border-border bg-card text-foreground hover:bg-accent'
                         }`}
                       >
-                        {stationLabel}
+                        {st.name}
                       </button>
                     ))}
                   </div>

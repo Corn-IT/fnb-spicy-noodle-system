@@ -303,12 +303,12 @@ export class InvoicesService {
       });
     }
 
-    const order = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} ORDER BY id ASC FOR UPDATE`;
       const existing = await tx.order.findUnique({
         where: { id },
-        select: { id: true, status: true, discountId: true, discountAmount: true },
-      }) as { id: number; status: string; discountId?: number | null; discountAmount?: Prisma.Decimal | null } | null;
+        select: { id: true, status: true, paidAt: true, discountId: true, discountAmount: true },
+      }) as { id: number; status: string; paidAt?: Date | null; discountId?: number | null; discountAmount?: Prisma.Decimal | null } | null;
       if (!existing) throw new NotFoundException({ message: 'Không tìm thấy hoá đơn' });
       if (existing.status !== 'PAID') {
         throw new ConflictException({ code: 'POS_ORDER_NOT_ACTIVE', message: 'Chỉ có thể huỷ hoá đơn đã thanh toán' });
@@ -321,27 +321,36 @@ export class InvoicesService {
           WHERE id = ${existing.discountId}
         `;
       }
-      return tx.order.update({
+      const voided = await tx.order.update({
         where: { id },
         data: { status: 'VOIDED', voidReason: parsed.data.voidReason },
         select: { id: true, orderCode: true, status: true, voidReason: true },
       });
+      const syncedSettlementIds = await recalculateSettledCashflowsForTimestamp(tx, existing.paidAt);
+      return { order: voided, syncedSettlementIds };
     });
 
     await this.auditLogService?.record({
       module: 'INVOICES',
       action: 'Huỷ hoá đơn',
-      detail: `${order.orderCode} (Lý do: ${parsed.data.voidReason})`,
-      message: `huỷ hoá đơn đã thanh toán ${order.orderCode} (Lý do: ${parsed.data.voidReason})`,
+      detail: `${result.order.orderCode} (Lý do: ${parsed.data.voidReason})`,
+      message: `huỷ hoá đơn đã thanh toán ${result.order.orderCode} (Lý do: ${parsed.data.voidReason})`,
       actor: actorId,
       metadata: {
-        orderId: order.id,
-        orderCode: order.orderCode,
+        orderId: result.order.id,
+        orderCode: result.order.orderCode,
         voidReason: parsed.data.voidReason,
+        syncedSettlementIds: result.syncedSettlementIds,
       },
     });
 
-    return { orderId: order.id, orderCode: order.orderCode, status: order.status, voidReason: order.voidReason };
+    return {
+      orderId: result.order.id,
+      orderCode: result.order.orderCode,
+      status: result.order.status,
+      voidReason: result.order.voidReason,
+      syncedSettlementIds: result.syncedSettlementIds,
+    };
   }
 
   async requestPaymentMethodEdit(id: number, input: UpdateInvoicePaymentMethodInput, actor: AuthPrincipal) {

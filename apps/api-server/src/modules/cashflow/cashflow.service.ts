@@ -340,7 +340,7 @@ export class CashflowService {
         typeof (existing.actualCountedCash as { toNumber?: () => number })?.toNumber === 'function'
           ? (existing.actualCountedCash as { toNumber: () => number }).toNumber()
           : Number(existing.actualCountedCash ?? 0);
-      const newActualNum = oldActualNum + compDecimal.toNumber();
+      const newActualNum = newActualCash.toNumber();
       const oldActualFormatted = `${oldActualNum.toLocaleString('vi-VN')}đ`;
       const newActualFormatted = `${newActualNum.toLocaleString('vi-VN')}đ`;
       const changes = [

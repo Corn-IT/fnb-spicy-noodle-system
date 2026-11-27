@@ -481,7 +481,7 @@ export function PaymentQrFormDrawer({
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Khi in phiếu tạm tính, nếu <code>Đã thu + Tiền phiếu tạm tính &gt; Hạn mức</code> ở bất kỳ chu kỳ nào, hệ thống sẽ tự động chuyển sang mã QR ưu tiên kế tiếp.
+              Khi tổng tiền đã thu chạm hoặc vượt hạn mức (<code>Đã thu &ge; Hạn mức</code>) ở bất kỳ chu kỳ nào, hệ thống sẽ tự động chuyển sang mã QR ưu tiên kế tiếp.
             </p>
           </div>
 
