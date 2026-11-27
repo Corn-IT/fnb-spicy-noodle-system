@@ -6,6 +6,7 @@ import {
   OrderTypeSchema,
   PaymentMethodSchema,
   TableActionTypeSchema,
+  TakeawayLabelFormatSchema,
 } from '../enums/order.enum';
 import { IdSchema, IsoDateTimeSchema, MoneyAmountSchema, PaginationFields, QrTokenSchema } from './common.schema';
 import { DiscountWarningCodeSchema } from '../enums/discount.enum';
@@ -17,6 +18,9 @@ export const OrderItemModifierSnapshotSchema = z.object({
   modifierId: IdSchema,
   name: z.string().trim().min(1),
   extraPrice: MoneyAmountSchema,
+  action: z.enum(['SELECTED', 'REMOVED_DEFAULT', 'SUBSTITUTED']).optional(),
+  substituteModifierId: IdSchema.optional(),
+  substituteName: z.string().trim().max(120).optional(),
 }).strict();
 export type OrderItemModifierSnapshot = z.infer<typeof OrderItemModifierSnapshotSchema>;
 
@@ -123,6 +127,7 @@ export const SubmitPosDraftResponseSchema = z.object({
     orderType: OrderTypeSchema,
     tableId: IdSchema.nullable(),
     takeawayNumber: IdSchema.nullable(),
+    takeawayLabelFormat: TakeawayLabelFormatSchema.nullable().optional(),
     tableLabel: z.string().min(1).nullable(),
     status: OrderStatusSchema,
     subtotalAmount: MoneyAmountSchema.optional(),
@@ -147,6 +152,7 @@ export const UpdateOrderItemSchema = z.object({
   modifiers: z.array(OrderItemModifierSelectionSchema).optional(),
   itemNote: z.string().trim().max(500).nullable().optional(),
   isTakeaway: z.boolean().optional(),
+  expectedKitchenStatus: z.literal('NEW').optional(),
 }).strict().refine((value) => value.quantity !== undefined || value.modifiers !== undefined || value.itemNote !== undefined || value.isTakeaway !== undefined, {
   message: 'Phải cung cấp ít nhất một trường cần cập nhật',
 });
@@ -176,6 +182,7 @@ export const PosOrderCreationResponseSchema = z.object({
   orderType: OrderTypeSchema,
   tableId: IdSchema.nullable(),
   takeawayNumber: IdSchema.nullable(),
+  takeawayLabelFormat: TakeawayLabelFormatSchema.nullable().optional(),
   tableLabel: z.string().min(1).nullable(),
   status: OrderStatusSchema,
   subtotalAmount: MoneyAmountSchema.optional(),
@@ -194,6 +201,7 @@ export const QrOrderResponseSchema = z.object({
   orderCode: z.string().min(1),
   orderType: OrderTypeSchema.optional(),
   takeawayNumber: IdSchema.nullable().optional(),
+  takeawayLabelFormat: TakeawayLabelFormatSchema.nullable().optional(),
   guestSessionToken: z.string().min(16).optional(),
   currentTableLabel: z.string().min(1),
   status: OrderStatusSchema,
@@ -212,6 +220,7 @@ export const PosOrderSummarySchema = z.object({
   tableId: IdSchema.nullable(),
   tableLabel: z.string().min(1).nullable(),
   takeawayNumber: IdSchema.nullable(),
+  takeawayLabelFormat: TakeawayLabelFormatSchema.nullable().optional(),
   status: OrderStatusSchema,
   subtotalAmount: MoneyAmountSchema.optional(),
   discountAmount: MoneyAmountSchema.optional(),
@@ -319,6 +328,7 @@ const OrderDetailItemSchema = z.object({
   lineTotal: MoneyAmountSchema,
   modifiers: z.array(z.string()),
   pricedModifiers: z.array(z.string()).optional(),
+  modifierSelections: z.array(OrderItemModifierSelectionSchema).optional(),
   itemNote: z.string().nullable(),
   batchNo: z.number().int().positive(),
   kitchenStatus: z.enum(['NEW', 'PRINTED', 'CANCELLED']),
@@ -333,6 +343,7 @@ export const OrderDetailResponseSchema = z.object({
   tableId: IdSchema.nullable(),
   tableLabel: z.string().min(1).nullable(),
   takeawayNumber: IdSchema.nullable(),
+  takeawayLabelFormat: TakeawayLabelFormatSchema.nullable().optional(),
   status: OrderStatusSchema,
   paymentMethod: PaymentMethodSchema.nullable(),
   cashAmount: MoneyAmountSchema,
@@ -444,6 +455,7 @@ export const TableActionResponseSchema = z.object({
   sourceTableId: IdSchema.nullable(),
   targetTableId: IdSchema.nullable(),
   takeawayNumber: IdSchema.nullable().optional(),
+  takeawayLabelFormat: TakeawayLabelFormatSchema.nullable().optional(),
   requireKitchenNoticePrint: z.boolean(),
   kitchenTransferSlip: z.object({
     orderCode: z.string().min(1),
@@ -460,6 +472,7 @@ export const ProvisionalBillResponseSchema = z.object({
   orderType: OrderTypeSchema,
   tableId: IdSchema.nullable(),
   takeawayNumber: IdSchema.nullable(),
+  takeawayLabelFormat: TakeawayLabelFormatSchema.nullable().optional(),
   items: z.array(z.object({
     name: z.string().min(1),
     quantity: z.number().int().positive(),

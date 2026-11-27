@@ -1,4 +1,4 @@
-import { type PosDraftResponse, type PosOrderSummary, type PosTableGridResponse } from '@fnb/shared';
+import { formatTakeawayLabel, type PosDraftResponse, type PosOrderSummary, type PosTableGridResponse } from '@fnb/shared';
 import {
   AlertTriangle,
   BellRing,
@@ -111,7 +111,7 @@ export function TableGridPanel({
       order,
       label:
         order.tableLabel ??
-        `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`,
+        formatTakeawayLabel(order.takeawayNumber, order.takeawayLabelFormat),
       alert: evaluateOrderPendingAlert(
         order,
         order.status === 'PENDING' ? 'PENDING' : 'OCCUPIED',

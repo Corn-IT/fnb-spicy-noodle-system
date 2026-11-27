@@ -35,8 +35,8 @@ export const DEFAULT_DRINK_SIZE_MODIFIER_GROUP = {
   isAutoSelect: false,
   allowSubstitution: false,
   modifiers: [
-    { name: 'Size M', extraPrice: 0, isDefaultChecked: true, isAvailable: true, defaultSubstituteName: null },
-    { name: 'Size L', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: null },
+    { name: 'Size M', extraPrice: 0, isDefaultChecked: true, isAvailable: true, defaultSubstituteName: null, allowedSubstituteNames: null },
+    { name: 'Size L', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: null, allowedSubstituteNames: null },
   ],
 } as const;
 

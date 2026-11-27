@@ -4,6 +4,7 @@ import {
   OrderSourceSchema,
   OrderTypeSchema,
   PaymentMethodSchema,
+  TakeawayLabelFormatSchema,
 } from '../enums/order.enum';
 import { KitchenStationSchema, ProductStationSchema } from '../enums/station.enum';
 import { AuditLogItemSchema } from './audit-log.schema';
@@ -14,31 +15,52 @@ import { PaymentAccountSchema, PaymentAccountStatusSchema } from './payment-qr.s
 export const DashboardPresetSchema = z.enum(['today', 'yesterday', '7d', 'month', 'custom']);
 export type DashboardPreset = z.infer<typeof DashboardPresetSchema>;
 
-export const DashboardQuerySchema = z.object({
+const DashboardPeriodShape = {
   preset: DashboardPresetSchema.optional(),
   fromDate: IsoDateSchema.optional(),
   toDate: IsoDateSchema.optional(),
-})
-  .strict()
-  .refine(
-    (q) => q.fromDate === undefined || q.toDate === undefined || q.fromDate <= q.toDate,
-    {
-      message: 'Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc',
-      path: ['toDate'],
-    },
-  )
-  .refine(
-    (q) => {
-      if (!q.fromDate || !q.toDate) return true;
-      const diffMs = Date.parse(`${q.toDate}T00:00:00Z`) - Date.parse(`${q.fromDate}T00:00:00Z`);
-      return diffMs <= 366 * 24 * 60 * 60 * 1000;
-    },
-    {
-      message: 'Khoảng thời gian thống kê tối đa 366 ngày',
-      path: ['toDate'],
-    },
-  );
+};
+
+function withValidDashboardDateRange<T extends z.ZodTypeAny>(schema: T): T {
+  return schema
+    .refine(
+      (raw) => {
+        const q = raw as { fromDate?: string; toDate?: string };
+        return q.fromDate === undefined || q.toDate === undefined || q.fromDate <= q.toDate;
+      },
+      {
+        message: 'Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc',
+        path: ['toDate'],
+      },
+    )
+    .refine(
+      (raw) => {
+        const q = raw as { fromDate?: string; toDate?: string };
+        if (!q.fromDate || !q.toDate) return true;
+        const diffMs = Date.parse(`${q.toDate}T00:00:00Z`) - Date.parse(`${q.fromDate}T00:00:00Z`);
+        return diffMs <= 366 * 24 * 60 * 60 * 1000;
+      },
+      {
+        message: 'Khoảng thời gian thống kê tối đa 366 ngày',
+        path: ['toDate'],
+      },
+    ) as unknown as T;
+}
+
+export const DashboardQuerySchema = withValidDashboardDateRange(
+  z.object(DashboardPeriodShape).strict(),
+);
 export type DashboardQuery = z.infer<typeof DashboardQuerySchema>;
+
+export const DashboardItemSalesQuerySchema = withValidDashboardDateRange(
+  z.object({
+    ...DashboardPeriodShape,
+    station: z.string().trim().min(1).max(32).optional(),
+    categoryId: z.coerce.number().int().positive().optional(),
+    search: z.string().trim().max(120).optional(),
+  }).strict(),
+);
+export type DashboardItemSalesQuery = z.infer<typeof DashboardItemSalesQuerySchema>;
 
 export const DashboardScopeSchema = z.object({
   canPos: z.boolean(),
@@ -254,6 +276,7 @@ export const DashboardRecentInvoiceItemSchema = z.object({
   orderType: OrderTypeSchema,
   tableLabel: z.string().nullable(),
   takeawayNumber: z.number().int().positive().nullable(),
+  takeawayLabelFormat: TakeawayLabelFormatSchema.nullable().optional(),
   orderSource: OrderSourceSchema,
   paymentMethod: PaymentMethodSchema.nullable(),
   paymentAccountLabel: z.string().nullable(),
@@ -339,6 +362,45 @@ export const DashboardOverviewResponseSchema = z.object({
   recentInvoices: z.array(DashboardRecentInvoiceItemSchema),
   recentAuditLogs: z.array(AuditLogItemSchema),
 }).strict();
+
+export const DashboardDailyItemSaleRowSchema = z.object({
+  productId: IdSchema,
+  name: z.string().min(1),
+  categoryId: IdSchema.nullable(),
+  categoryName: z.string().nullable(),
+  station: ProductStationSchema,
+  qty: z.number().int().nonnegative(),
+  orderCount: z.number().int().nonnegative(),
+  revenue: MoneyAmountSchema,
+  avgUnitPrice: MoneyAmountSchema,
+  sharePercent: z.number().nonnegative(),
+}).strict();
+export type DashboardDailyItemSaleRow = z.infer<typeof DashboardDailyItemSaleRowSchema>;
+
+export const DashboardDailyItemSalesResponseSchema = z.object({
+  meta: z.object({
+    preset: DashboardPresetSchema,
+    fromDate: IsoDateSchema,
+    toDate: IsoDateSchema,
+    generatedAt: IsoDateTimeSchema,
+    blindMode: z.boolean(),
+    canViewProfit: z.boolean(),
+    canViewSales: z.boolean(),
+  }).strict(),
+  summary: z.object({
+    totalProductsSold: z.number().int().nonnegative(),
+    totalQuantity: z.number().int().nonnegative(),
+    totalRevenue: MoneyAmountSchema,
+    totalOrders: z.number().int().nonnegative(),
+  }).strict(),
+  categories: z.array(z.object({
+    id: IdSchema,
+    name: z.string().min(1),
+  }).strict()),
+  stations: z.array(z.string().min(1)),
+  items: z.array(DashboardDailyItemSaleRowSchema),
+}).strict();
+export type DashboardDailyItemSalesResponse = z.infer<typeof DashboardDailyItemSalesResponseSchema>;
 
 export type DashboardOverviewResponse = z.infer<typeof DashboardOverviewResponseSchema>;
 export type DashboardRevenueKpi = z.infer<typeof DashboardRevenueKpiSchema>;

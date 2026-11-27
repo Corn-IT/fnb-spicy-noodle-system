@@ -58,4 +58,62 @@ describe('@fnb/shared dashboard contracts', () => {
     });
     expect(explicitOverride.dashboard).toEqual({ view: false, viewProfit: false, export: false });
   });
+
+  it('validates DashboardItemSalesQuerySchema and DashboardDailyItemSalesResponseSchema', () => {
+    expect(contracts.DashboardItemSalesQuerySchema.parse({
+      preset: 'today',
+      station: 'BEP_NAU',
+      categoryId: '3',
+      search: 'mi cay',
+    })).toEqual({
+      preset: 'today',
+      station: 'BEP_NAU',
+      categoryId: 3,
+      search: 'mi cay',
+    });
+
+    expect(
+      contracts.DashboardItemSalesQuerySchema.safeParse({
+        preset: 'custom',
+        fromDate: '2026-11-20',
+        toDate: '2026-11-18',
+      }).success,
+    ).toBe(false);
+
+    expect(
+      contracts.DashboardDailyItemSalesResponseSchema.safeParse({
+        meta: {
+          preset: 'today',
+          fromDate: '2026-11-27',
+          toDate: '2026-11-27',
+          generatedAt: '2026-11-27T06:00:00.000Z',
+          blindMode: false,
+          canViewProfit: true,
+          canViewSales: true,
+        },
+        summary: {
+          totalProductsSold: 1,
+          totalQuantity: 2,
+          totalRevenue: 80000,
+          totalOrders: 1,
+        },
+        categories: [{ id: 1, name: 'Mì Cay' }],
+        stations: ['BEP_NAU'],
+        items: [
+          {
+            productId: 10,
+            name: 'Mì cay xúc xích',
+            categoryId: 1,
+            categoryName: 'Mì Cay',
+            station: 'BEP_NAU',
+            qty: 2,
+            orderCount: 1,
+            revenue: 80000,
+            avgUnitPrice: 40000,
+            sharePercent: 100,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
 });

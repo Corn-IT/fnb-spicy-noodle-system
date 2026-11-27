@@ -61,3 +61,13 @@ export const TableActionTypeSchema = z.enum([
   TableActionType.SWAP,
   TableActionType.TO_TAKEAWAY,
 ]);
+
+export const TakeawayLabelFormat = {
+  NUMBER: 'NUMBER',
+  LETTER: 'LETTER',
+} as const;
+export type TakeawayLabelFormat = (typeof TakeawayLabelFormat)[keyof typeof TakeawayLabelFormat];
+export const TakeawayLabelFormatSchema = z.enum([
+  TakeawayLabelFormat.NUMBER,
+  TakeawayLabelFormat.LETTER,
+]);

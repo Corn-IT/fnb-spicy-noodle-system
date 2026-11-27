@@ -8,6 +8,7 @@ import {
 } from '@fnb/shared';
 import { AuditLogService } from '../../common/audit/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { formatOrderTakeawayLabel } from '../../common/utils/takeaway-format.util';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 import { recomputeOrderTotals } from './order-totals.helper';
 import { WebPushService, type OverdueReminderPushItem } from './web-push.service';
@@ -189,7 +190,7 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
         const tableLabel =
           current.table?.name ??
           (current.orderType === 'TAKEAWAY'
-            ? `Mang về #${String(current.takeawayNumber ?? 0).padStart(2, '0')}`
+            ? formatOrderTakeawayLabel(current.takeawayNumber, (current as { takeawayLabelFormat?: unknown }).takeawayLabelFormat)
             : null);
 
         await this.auditLogService?.record({
@@ -301,7 +302,7 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
         const tableLabel =
           order.table?.name ??
           (order.orderType === 'TAKEAWAY'
-            ? `Mang về #${String(order.takeawayNumber ?? 0).padStart(2, '0')}`
+            ? formatOrderTakeawayLabel(order.takeawayNumber, (order as { takeawayLabelFormat?: unknown }).takeawayLabelFormat)
             : null);
         const reason = `Tự động huỷ ${cancelledItemCount} món gọi thêm QR do quá ${autoCancelMinutes} phút chưa xác nhận`;
 
@@ -384,6 +385,7 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
             orderCode: true,
             orderType: true,
             takeawayNumber: true,
+            takeawayLabelFormat: true,
             createdAt: true,
             table: { select: { name: true } },
           },
@@ -405,7 +407,7 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
             const tableLabel =
               order.table?.name ??
               (order.orderType === 'TAKEAWAY'
-                ? `Mang về #${String(order.takeawayNumber ?? 0).padStart(2, '0')}`
+                ? formatOrderTakeawayLabel(order.takeawayNumber, (order as { takeawayLabelFormat?: unknown }).takeawayLabelFormat)
                 : 'Bàn QR');
             dueEntries.push({
               orderId: order.id,
@@ -435,6 +437,7 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
                 orderCode: true,
                 orderType: true,
                 takeawayNumber: true,
+                takeawayLabelFormat: true,
                 table: { select: { name: true } },
               },
             },
@@ -458,7 +461,7 @@ export class QrAutoCancelService implements OnModuleInit, OnModuleDestroy {
             const tableLabel =
               item.order.table?.name ??
               (item.order.orderType === 'TAKEAWAY'
-                ? `Mang về #${String(item.order.takeawayNumber ?? 0).padStart(2, '0')}`
+                ? formatOrderTakeawayLabel(item.order.takeawayNumber, (item.order as { takeawayLabelFormat?: unknown }).takeawayLabelFormat)
                 : 'Bàn QR');
             earliestByOrder.set(item.orderId, {
               orderId: item.orderId,

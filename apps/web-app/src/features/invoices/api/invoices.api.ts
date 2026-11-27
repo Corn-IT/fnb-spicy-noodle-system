@@ -7,6 +7,7 @@ import {
   type PaymentMethod,
   type PendingPaymentEdit,
   type ReviewInvoicePaymentEditInput,
+  type TakeawayLabelFormat,
   type UpdateInvoicePaymentMethodInput,
   type VoidInvoiceRequest,
   type DiscountSnapshot,
@@ -21,6 +22,7 @@ export interface InvoiceListItem {
   tableId: number | null;
   tableLabel: string | null;
   takeawayNumber: number | null;
+  takeawayLabelFormat?: TakeawayLabelFormat | null;
   status: OrderStatus;
   paymentMethod: PaymentMethod | null;
   cashAmount: number;

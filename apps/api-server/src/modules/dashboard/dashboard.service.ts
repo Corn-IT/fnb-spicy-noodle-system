@@ -2,6 +2,8 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   AuditModuleValues,
+  DashboardDailyItemSalesResponseSchema,
+  DashboardItemSalesQuerySchema,
   DashboardOverviewResponseSchema,
   DashboardQuerySchema,
   DiscountSnapshotSchema,
@@ -10,6 +12,8 @@ import {
   type AuditLogItem,
   type AuditModule,
   type AuthPrincipal,
+  type DashboardDailyItemSalesResponse,
+  type DashboardItemSalesQuery,
   type DashboardOverviewResponse,
   type DashboardPreset,
   type DashboardQuery,
@@ -31,6 +35,11 @@ import {
   dateOnly,
   nextDateOnly,
 } from '../../common/utils/business-date.util';
+import { normalizeSearchTerm } from '../../common/utils/search-normalize.util';
+import {
+  formatOrderTakeawayLabel,
+  normalizeTakeawayLabelFormat,
+} from '../../common/utils/takeaway-format.util';
 import { CashflowService } from '../cashflow/cashflow.service';
 import { PayrollService } from '../hr-schedule/payroll.service';
 import { SchedulesService } from '../hr-schedule/schedules.service';
@@ -107,6 +116,7 @@ type PaidOrderRow = {
   orderSource: string;
   tableId: number | null;
   takeawayNumber: number | null;
+  takeawayLabelFormat?: string | null;
   paymentMethod: string | null;
   paymentAccountId: number | null;
   cashAmount: Prisma.Decimal;
@@ -134,7 +144,8 @@ type PaidOrderItemRow = {
     name: string;
     station: string;
     price: Prisma.Decimal;
-    category: { name: string } | null;
+    categoryId?: number | null;
+    category: { id?: number; name: string } | null;
   };
 };
 
@@ -168,9 +179,10 @@ function formatTableOrTakeawayLabel(
   orderType: string,
   tableName: string | null | undefined,
   takeawayNumber: number | null,
+  takeawayLabelFormat?: unknown,
 ): string | null {
   if (orderType === 'TAKEAWAY' && takeawayNumber !== null) {
-    return `Mang về #${String(takeawayNumber).padStart(2, '0')}`;
+    return formatOrderTakeawayLabel(takeawayNumber, takeawayLabelFormat);
   }
   return tableName ?? null;
 }
@@ -361,6 +373,174 @@ export class DashboardService {
     });
   }
 
+  async getDailyItemSales(
+    rawQuery: DashboardItemSalesQuery,
+    user: AuthPrincipal,
+    now = new Date(),
+  ): Promise<DashboardDailyItemSalesResponse> {
+    const query = DashboardItemSalesQuerySchema.parse(rawQuery ?? {});
+    const period = this.resolvePeriod(query, now);
+    const scope = this.resolveScope(user);
+    const blindMode = !user.isSuperAdmin && !scope.canViewProfit;
+    const canViewSales = scope.canInvoices || scope.canCashflow || scope.canViewProfit || scope.canPos;
+
+    if (!canViewSales) {
+      return DashboardDailyItemSalesResponseSchema.parse({
+        meta: {
+          preset: period.preset,
+          fromDate: period.fromDate,
+          toDate: period.toDate,
+          generatedAt: now.toISOString(),
+          blindMode,
+          canViewProfit: scope.canViewProfit,
+          canViewSales: false,
+        },
+        summary: {
+          totalProductsSold: 0,
+          totalQuantity: 0,
+          totalRevenue: 0,
+          totalOrders: 0,
+        },
+        categories: [],
+        stations: [],
+        items: [],
+      });
+    }
+
+    const paidOrders = await this.loadPaidOrders(period.startUtc, period.endUtc);
+    const orderItems = paidOrders.length > 0
+      ? await this.loadPaidOrderItems(paidOrders.map((o) => o.id))
+      : [];
+
+    const productAgg = new Map<
+      number,
+      {
+        productId: number;
+        name: string;
+        categoryId: number | null;
+        categoryName: string | null;
+        station: ProductStation;
+        qty: number;
+        revenueDecimal: Prisma.Decimal;
+        orderIds: Set<number>;
+      }
+    >();
+    const categoryMap = new Map<number, string>();
+    const stationSet = new Set<string>();
+
+    for (const item of orderItems) {
+      const catId = item.product.categoryId ?? item.product.category?.id ?? null;
+      const catName = item.product.category?.name ?? null;
+      if (catId !== null && catName) {
+        categoryMap.set(catId, catName);
+      }
+      stationSet.add(item.product.station);
+
+      const lineTotalDec = item.unitPrice.mul(item.quantity);
+      const existing = productAgg.get(item.productId) ?? {
+        productId: item.productId,
+        name: item.product.name,
+        categoryId: catId,
+        categoryName: catName,
+        station: item.product.station as ProductStation,
+        qty: 0,
+        revenueDecimal: new Prisma.Decimal(0),
+        orderIds: new Set<number>(),
+      };
+      existing.qty += item.quantity;
+      existing.revenueDecimal = existing.revenueDecimal.add(lineTotalDec);
+      existing.orderIds.add(item.orderId);
+      productAgg.set(item.productId, existing);
+    }
+
+    const stationFilter = query.station?.trim();
+    const searchNorm = query.search ? normalizeSearchTerm(query.search) : '';
+
+    const filteredEntries = [...productAgg.values()].filter((entry) => {
+      if (stationFilter && stationFilter !== 'ALL' && entry.station !== stationFilter) {
+        return false;
+      }
+      if (query.categoryId !== undefined && entry.categoryId !== query.categoryId) {
+        return false;
+      }
+      if (searchNorm && !normalizeSearchTerm(entry.name).includes(searchNorm)) {
+        return false;
+      }
+      return true;
+    });
+
+    let totalQuantity = 0;
+    let totalGrossDec = new Prisma.Decimal(0);
+    const matchingOrderIds = new Set<number>();
+    for (const entry of filteredEntries) {
+      totalQuantity += entry.qty;
+      totalGrossDec = totalGrossDec.add(entry.revenueDecimal);
+      for (const orderId of entry.orderIds) {
+        matchingOrderIds.add(orderId);
+      }
+    }
+    const totalGrossRevenue = roundMoney(totalGrossDec.toNumber());
+
+    const sortedItems = filteredEntries
+      .map((entry) => {
+        const grossRevenue = roundMoney(entry.revenueDecimal.toNumber());
+        const avgPrice = entry.qty > 0 ? roundMoney(grossRevenue / entry.qty) : 0;
+        const sharePercent =
+          !blindMode && totalGrossRevenue > 0
+            ? Number(((grossRevenue / totalGrossRevenue) * 100).toFixed(1))
+            : 0;
+        return {
+          row: {
+            productId: entry.productId,
+            name: entry.name,
+            categoryId: entry.categoryId,
+            categoryName: entry.categoryName,
+            station: entry.station,
+            qty: entry.qty,
+            orderCount: entry.orderIds.size,
+            revenue: blindMode ? 0 : grossRevenue,
+            avgUnitPrice: blindMode ? 0 : avgPrice,
+            sharePercent,
+          },
+          sortRevenue: grossRevenue,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.sortRevenue - a.sortRevenue ||
+          b.row.qty - a.row.qty ||
+          a.row.name.localeCompare(b.row.name, 'vi'),
+      )
+      .map((entry) => entry.row);
+
+    const categories = [...categoryMap.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+
+    const stations = [...stationSet].sort();
+
+    return DashboardDailyItemSalesResponseSchema.parse({
+      meta: {
+        preset: period.preset,
+        fromDate: period.fromDate,
+        toDate: period.toDate,
+        generatedAt: now.toISOString(),
+        blindMode,
+        canViewProfit: scope.canViewProfit,
+        canViewSales: true,
+      },
+      summary: {
+        totalProductsSold: sortedItems.length,
+        totalQuantity,
+        totalRevenue: blindMode ? 0 : totalGrossRevenue,
+        totalOrders: matchingOrderIds.size,
+      },
+      categories,
+      stations,
+      items: sortedItems,
+    });
+  }
+
   private resolvePeriod(query: DashboardQuery, now: Date): ResolvedPeriod {
     const todayDate = businessDateString(now);
     let fromDate = todayDate;
@@ -433,6 +613,7 @@ export class DashboardService {
         orderSource: true,
         tableId: true,
         takeawayNumber: true,
+        takeawayLabelFormat: true,
         paymentMethod: true,
         paymentAccountId: true,
         cashAmount: true,
@@ -507,7 +688,8 @@ export class DashboardService {
             name: true,
             station: true,
             price: true,
-            category: { select: { name: true } },
+            categoryId: true,
+            category: { select: { id: true, name: true } },
           },
         },
       },
@@ -596,6 +778,7 @@ export class DashboardService {
         orderCode: true,
         orderType: true,
         takeawayNumber: true,
+        takeawayLabelFormat: true,
         paymentMethod: true,
         totalAmount: true,
         pendingPaymentEdit: true,
@@ -680,7 +863,12 @@ export class DashboardService {
       ? pendingEditOrders.flatMap((order) => {
           const parsed = PendingPaymentEditSchema.safeParse(order.pendingPaymentEdit);
           if (!parsed.success) return [];
-          const label = formatTableOrTakeawayLabel(order.orderType, order.table?.name, order.takeawayNumber) ?? order.orderCode;
+          const label = formatTableOrTakeawayLabel(
+            order.orderType,
+            order.table?.name,
+            order.takeawayNumber,
+            (order as { takeawayLabelFormat?: unknown }).takeawayLabelFormat,
+          ) ?? order.orderCode;
           return [{
             orderId: order.id,
             orderCode: order.orderCode,
@@ -1434,8 +1622,17 @@ export class DashboardService {
       orderId: order.id,
       orderCode: order.orderCode,
       orderType: (order.orderType === 'TAKEAWAY' ? 'TAKEAWAY' : 'DINE_IN') as OrderType,
-      tableLabel: formatTableOrTakeawayLabel(order.orderType, order.table?.name, order.takeawayNumber),
+      tableLabel: formatTableOrTakeawayLabel(
+        order.orderType,
+        order.table?.name,
+        order.takeawayNumber,
+        order.takeawayLabelFormat,
+      ),
       takeawayNumber: order.takeawayNumber,
+      takeawayLabelFormat:
+        order.orderType === 'TAKEAWAY'
+          ? (normalizeTakeawayLabelFormat(order.takeawayLabelFormat) ?? 'NUMBER')
+          : null,
       orderSource: (order.orderSource === 'QR_CODE' ? 'QR_CODE' : 'POS_COUNTER') as OrderSource,
       paymentMethod: (order.paymentMethod as PaymentMethod | null) ?? null,
       paymentAccountLabel: order.paymentAccount?.label ?? null,

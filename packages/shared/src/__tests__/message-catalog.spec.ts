@@ -50,7 +50,7 @@ describe('MESSAGE_CATALOG & Store Messages Contracts (Story 17)', () => {
     }
 
     const allErrorCodes = Object.values(ErrorCodes);
-    expect(allErrorCodes).toHaveLength(49);
+    expect(allErrorCodes).toHaveLength(50);
     for (const code of allErrorCodes) {
       const entry = MESSAGE_CATALOG_BY_KEY.get(`error.${code}`);
       expect(entry).toBeDefined();

@@ -247,6 +247,57 @@ export async function setupMockApi(page: Page, options: MockApiOptions = {}): Pr
       return json(mockProducts);
     }
 
+    if (pathname.endsWith('/dashboard/daily-item-sales')) {
+      return json({
+        meta: {
+          preset: url.searchParams.get('preset') ?? 'today',
+          fromDate: url.searchParams.get('fromDate') ?? '2026-11-23',
+          toDate: url.searchParams.get('toDate') ?? '2026-11-23',
+          generatedAt: '2026-11-23T12:00:00.000Z',
+          blindMode: false,
+          canViewProfit: true,
+          canViewSales: true,
+        },
+        summary: {
+          totalProductsSold: 2,
+          totalQuantity: 3,
+          totalRevenue: 110000,
+          totalOrders: 2,
+        },
+        categories: [
+          { id: 1, name: 'Mì Cay 7 Cấp Độ' },
+          { id: 3, name: 'Đồ Uống' },
+        ],
+        stations: ['BEP_NAU', 'PHA_CHE'],
+        items: [
+          {
+            productId: 1,
+            name: 'Mì Cay Hải Sản Thập Cẩm',
+            categoryId: 1,
+            categoryName: 'Mì Cay 7 Cấp Độ',
+            station: 'BEP_NAU',
+            qty: 2,
+            orderCount: 2,
+            revenue: 80000,
+            avgUnitPrice: 40000,
+            sharePercent: 72.7,
+          },
+          {
+            productId: 2,
+            name: 'Trà Đào Cam Sả',
+            categoryId: 3,
+            categoryName: 'Đồ Uống',
+            station: 'PHA_CHE',
+            qty: 1,
+            orderCount: 1,
+            revenue: 30000,
+            avgUnitPrice: 30000,
+            sharePercent: 27.3,
+          },
+        ],
+      });
+    }
+
     if (pathname.includes('/dashboard')) {
       return json({
         kpis: {

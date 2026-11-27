@@ -31,6 +31,7 @@ import {
 } from '@fnb/shared';
 import { AuditLogService } from '../../common/audit/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { formatOrderTakeawayLabel } from '../../common/utils/takeaway-format.util';
 import { normalizeVietnameseString } from '../../common/utils/normalized-string.util';
 
 const ZERO = new Prisma.Decimal(0);
@@ -590,7 +591,7 @@ export class PaymentQrService {
         const tableLabel =
           row.table?.name ??
           (row.orderType === 'TAKEAWAY'
-            ? `Mang về #${String(row.takeawayNumber ?? 1).padStart(2, '0')}`
+            ? formatOrderTakeawayLabel(row.takeawayNumber, (row as { takeawayLabelFormat?: unknown }).takeawayLabelFormat)
             : null);
         const effectiveTransfer =
           row.paymentMethod === 'SPLIT' ? row.transferAmount.toNumber() : row.totalAmount.toNumber();

@@ -8,6 +8,10 @@ import {
 } from '@fnb/shared';
 import type { ErrorCode, KitchenStation, TableActionRequest, TableActionResponse } from '@fnb/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import {
+  formatOrderTakeawayLabel,
+  resolveStoreTakeawayLabelFormat,
+} from '../../common/utils/takeaway-format.util';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 import { recomputeOrderTotals } from './order-totals.helper';
 import { allocateTakeawayNumber } from './takeaway-sequence.helper';
@@ -89,7 +93,7 @@ export class TableTransferService {
 
       const sourceStations = this.printedStations(source.items);
       const sourceLabel = source.orderType === 'TAKEAWAY'
-        ? `Mang về #${String(source.takeawayNumber ?? 1).padStart(2, '0')}`
+        ? formatOrderTakeawayLabel(source.takeawayNumber, (source as { takeawayLabelFormat?: unknown }).takeawayLabelFormat)
         : (sourceTable?.name ?? `Bàn #${source.tableId}`);
       const sourceNoticeStatus: 'PENDING' | 'SERVING' = source.status === 'PENDING' ? 'PENDING' : 'SERVING';
 
@@ -100,7 +104,8 @@ export class TableTransferService {
         }
         const now = new Date();
         const takeawayNumber = await allocateTakeawayNumber(tx, now);
-        const toLabel = `Mang về #${String(takeawayNumber).padStart(2, '0')}`;
+        const takeawayLabelFormat = await resolveStoreTakeawayLabelFormat(tx);
+        const toLabel = formatOrderTakeawayLabel(takeawayNumber, takeawayLabelFormat);
         const logEntry = {
           action: parsed.action,
           fromTable: sourceLabel,
@@ -121,6 +126,7 @@ export class TableTransferService {
             orderType: 'TAKEAWAY',
             tableId: null,
             takeawayNumber,
+            takeawayLabelFormat,
             tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry),
           },
         });
@@ -142,6 +148,7 @@ export class TableTransferService {
             sourceTableId: sourceTable.id,
             targetTableId: null,
             takeawayNumber,
+            takeawayLabelFormat,
             requireKitchenNoticePrint: kitchenTransferSlip !== undefined,
             kitchenTransferSlip,
           }),
@@ -198,6 +205,7 @@ export class TableTransferService {
               orderType: 'DINE_IN',
               tableId: targetTable.id,
               takeawayNumber: null,
+              takeawayLabelFormat: null,
               tableTransferLogs: this.appendLog(source.tableTransferLogs, logEntry),
             },
           });

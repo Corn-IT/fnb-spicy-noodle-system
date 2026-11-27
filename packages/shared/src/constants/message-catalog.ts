@@ -390,6 +390,24 @@ export const MESSAGE_CATALOG: readonly MessageCatalogItem[] = [
     variables: ['reason'],
   }),
   defineMessage({
+    key: 'pos.order.editItemSuccess',
+    module: 'POS',
+    kind: 'toast',
+    label: 'Cập nhật tuỳ chọn món trong đơn',
+    defaultTitle: 'Đã cập nhật món trong đơn',
+    defaultDescription: '{quantity}x {itemName}',
+    variables: ['quantity', 'itemName'],
+  }),
+  defineMessage({
+    key: 'pos.order.editItemError',
+    module: 'POS',
+    kind: 'toast',
+    label: 'Lỗi sửa tuỳ chọn món trong đơn',
+    defaultTitle: 'Không thể cập nhật món',
+    defaultDescription: '{reason}',
+    variables: ['reason'],
+  }),
+  defineMessage({
     key: 'pos.order.createSuccess',
     module: 'POS',
     kind: 'toast',
@@ -2519,6 +2537,13 @@ export const MESSAGE_CATALOG: readonly MessageCatalogItem[] = [
     key: `error.${ErrorCodes.POS_DRAFT_ALREADY_SUBMITTED}`,
     module: 'SYSTEM_ERROR', kind: 'error', label: 'Giỏ nháp đã được gửi',
     defaultTitle: 'Giỏ nháp này đã được tạo thành đơn',
+  }),
+  defineMessage({
+    key: `error.${ErrorCodes.POS_ITEM_ALREADY_PRINTED}`,
+    module: 'SYSTEM_ERROR',
+    kind: 'error',
+    label: 'Món đã tách bếp (POS_ITEM_ALREADY_PRINTED)',
+    defaultTitle: 'Món này đã được tách xuống bếp, không thể sửa trực tiếp tuỳ chọn nữa',
   }),
   defineMessage({
     key: `error.${ErrorCodes.CASHFLOW_ALREADY_SETTLED}`,

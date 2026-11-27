@@ -1,7 +1,7 @@
 import {
   PRINT_TEMPLATE_DEFAULTS,
   StoreAssetKind,
-  formatProductNameWithSize,
+  formatTakeawayLabel,
   type ProvisionalBillResponse,
   type PublicStoreSettingsResponse,
 } from '@fnb/shared';
@@ -9,8 +9,8 @@ import * as React from 'react';
 import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings';
 
 import {
+  consolidateReceiptPrintItems,
   getThermalSlipRootStyle,
-  resolvePricedModifiers,
   resolveThermalFontSizePt,
 } from './print-template.util';
 import { generateVietQrDataUrl } from './vietqr-emv.util';
@@ -57,8 +57,9 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
         tableId: bill.tableId,
         orderType: bill.orderType,
         takeawayNumber: bill.takeawayNumber,
+        takeawayLabelFormat: bill.takeawayLabelFormat,
       }),
-    [bill.orderCode, bill.tableLabel, bill.tableId, bill.orderType, bill.takeawayNumber],
+    [bill.orderCode, bill.tableLabel, bill.tableId, bill.orderType, bill.takeawayNumber, bill.takeawayLabelFormat],
   );
 
   const [qrDataUrl, setQrDataUrl] = React.useState<string | null>(null);
@@ -150,10 +151,10 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
   const resolvedTableDisplay = React.useMemo(() => {
     if (bill.tableLabel) return bill.tableLabel.toUpperCase();
     if (bill.orderType === 'TAKEAWAY') {
-      return `MANG VỀ #${String(bill.takeawayNumber ?? 1).padStart(2, '0')}`;
+      return formatTakeawayLabel(bill.takeawayNumber, bill.takeawayLabelFormat, { uppercase: true });
     }
     return `BÀN ${String(bill.tableId ?? 1).padStart(2, '0')}`;
-  }, [bill.tableLabel, bill.orderType, bill.takeawayNumber, bill.tableId]);
+  }, [bill.tableLabel, bill.orderType, bill.takeawayNumber, bill.takeawayLabelFormat, bill.tableId]);
 
   const resolvedStatusLabel = ORDER_STATUS_LABELS[bill.status] ?? bill.status;
 
@@ -262,18 +263,16 @@ export function ProvisionalVietQrSlip({ bill, onReadyToPrint, storeSettings }: P
           </tr>
         </thead>
         <tbody>
-          {bill.items.map((item, idx) => {
-            const { displayName, remainingModifiers, remainingPricedModifiers } =
-              formatProductNameWithSize(item.name, item.modifiers, item.pricedModifiers);
-            const pricedMods = tpl.blocks.itemModifiers
-              ? resolvePricedModifiers(remainingModifiers, remainingPricedModifiers)
-              : [];
+          {consolidateReceiptPrintItems(bill.items, {
+            hideTakeawayBadge: bill.orderType === 'TAKEAWAY',
+          }).map((item, idx) => {
+            const pricedMods = tpl.blocks.itemModifiers ? item.pricedModifiers : [];
             return (
-              <tr key={`${item.name}-${idx}`}>
+              <tr key={`${item.key}-${idx}`}>
                 <td data-print-align="left" className="border border-black px-1 py-0.5 align-top">
                   <div data-print-bold className="font-bold">
-                    {idx + 1}. {displayName}
-                    {bill.orderType !== 'TAKEAWAY' && item.isTakeaway ? ' [Mang về]' : ''}
+                    {idx + 1}. {item.displayName}
+                    {item.isTakeaway ? ' [Mang về]' : ''}
                   </div>
                   {pricedMods.map((mod, mIdx) => (
                     <div

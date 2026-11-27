@@ -84,6 +84,20 @@ describe('@fnb/shared store-settings contracts', () => {
         navLabels: { '/pos': 'Bán hàng' },
       }).success,
     ).toBe(true);
+
+    expect(
+      contracts.StoreSettingsSchema.safeParse({
+        ...contracts.DEFAULT_STORE_SETTINGS,
+        takeawayLabelFormat: 'LETTER',
+      }).success,
+    ).toBe(true);
+
+    expect(
+      contracts.StoreSettingsSchema.safeParse({
+        ...contracts.DEFAULT_STORE_SETTINGS,
+        takeawayLabelFormat: 'CUSTOM',
+      }).success,
+    ).toBe(false);
   });
 
   it('validates StoreAssetKindSchema and blocks SVG mime in UploadStoreAssetSchema', () => {

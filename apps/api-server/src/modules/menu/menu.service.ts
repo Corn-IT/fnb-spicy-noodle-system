@@ -12,6 +12,9 @@ import {
   UpdateProductSchema,
   isDrinkSizeCategoryName,
   normalizeQrToken,
+  normalizeSubstituteNameList,
+  parseAllowedSubstituteNamesFromJson,
+  validateGroupSubstitutionRules,
   type AuthPrincipal,
   type CreateProductInput,
   type ImportMenuExcelRequest,
@@ -24,6 +27,7 @@ import {
   verifyTakeawayGuestSessionToken,
 } from '../../common/security/takeaway-qr.util';
 import { normalizeVietnameseString } from '../../common/utils/normalized-string.util';
+import { formatOrderTakeawayLabel, normalizeTakeawayLabelFormat } from '../../common/utils/takeaway-format.util';
 import { PosSocketGateway } from '../../gateways/pos-socket.gateway';
 
 const productInclude = {
@@ -60,6 +64,7 @@ type ProductRecord = {
       isDefaultChecked?: boolean;
       isAvailable?: boolean;
       defaultSubstituteName?: string | null;
+      allowedSubstituteNames?: Prisma.JsonValue | null;
     }>;
   }>;
   comboParents: Array<{ childProductId: number; quantity: number }>;
@@ -206,7 +211,7 @@ export class MenuService {
             })
           : null;
       const takeawayLabel = loadedTakeaway?.takeawayNumber
-        ? `Mang về #${String(loadedTakeaway.takeawayNumber).padStart(2, '0')}`
+        ? formatOrderTakeawayLabel(loadedTakeaway.takeawayNumber, loadedTakeaway.takeawayLabelFormat)
         : 'Mang về';
 
       return PublicMenuResponseSchema.parse({
@@ -309,6 +314,7 @@ export class MenuService {
         orderType: true,
         orderSource: true,
         takeawayNumber: true,
+        takeawayLabelFormat: true,
         note: true,
         status: true,
         subtotalAmount: true,
@@ -398,6 +404,7 @@ export class MenuService {
 
     return {
       takeawayNumber: order.takeawayNumber ?? null,
+      takeawayLabelFormat: normalizeTakeawayLabelFormat((order as { takeawayLabelFormat?: unknown }).takeawayLabelFormat),
       activeOrder,
     };
   }
@@ -421,7 +428,7 @@ export class MenuService {
         details: { fieldErrors: parsed.error.flatten().fieldErrors },
       });
     }
-    this.assertUniqueModifierNames(parsed.data.modifierGroups);
+    this.assertValidModifierGroups(parsed.data.modifierGroups);
 
     const product = await this.prisma.$transaction(async (tx) => {
       await this.assertPhysicalComboChildren(tx, parsed.data.station, parsed.data.comboItems);
@@ -449,6 +456,7 @@ export class MenuService {
                 isDefaultChecked: m.isDefaultChecked,
                 isAvailable: m.isAvailable,
                 defaultSubstituteName: m.defaultSubstituteName,
+                allowedSubstituteNames: m.allowedSubstituteNames,
               })),
             },
           ];
@@ -470,20 +478,7 @@ export class MenuService {
             })),
           },
           modifierGroups: {
-            create: effectiveModifierGroups.map((group) => ({
-              name: group.name,
-              isRequired: group.isRequired,
-              maxSelect: group.maxSelect,
-              ...(group.isAutoSelect ? { isAutoSelect: true } : {}),
-              ...(group.allowSubstitution ? { allowSubstitution: true } : {}),
-              modifiers: { create: group.modifiers.map((modifier) => ({
-                name: modifier.name,
-                extraPrice: new Prisma.Decimal(modifier.extraPrice),
-                ...(modifier.isDefaultChecked ? { isDefaultChecked: true } : {}),
-                ...(modifier.isAvailable === false ? { isAvailable: false } : {}),
-                ...(modifier.defaultSubstituteName ? { defaultSubstituteName: modifier.defaultSubstituteName } : {}),
-              })) },
-            })),
+            create: this.toModifierGroupsCreateInput(effectiveModifierGroups),
           },
         },
         include: productInclude,
@@ -514,7 +509,7 @@ export class MenuService {
       });
     }
     if (parsed.data.modifierGroups !== undefined) {
-      this.assertUniqueModifierNames(parsed.data.modifierGroups);
+      this.assertValidModifierGroups(parsed.data.modifierGroups);
     }
 
     const outcome = await this.prisma.$transaction(async (tx) => {
@@ -555,20 +550,7 @@ export class MenuService {
       if (parsed.data.modifierGroups !== undefined) {
         data.modifierGroups = {
           deleteMany: {},
-          create: parsed.data.modifierGroups.map((group) => ({
-            name: group.name,
-            isRequired: group.isRequired,
-            maxSelect: group.maxSelect,
-            ...(group.isAutoSelect ? { isAutoSelect: true } : {}),
-            ...(group.allowSubstitution ? { allowSubstitution: true } : {}),
-            modifiers: { create: group.modifiers.map((modifier) => ({
-              name: modifier.name,
-              extraPrice: new Prisma.Decimal(modifier.extraPrice),
-              ...(modifier.isDefaultChecked ? { isDefaultChecked: true } : {}),
-              ...(modifier.isAvailable === false ? { isAvailable: false } : {}),
-              ...(modifier.defaultSubstituteName ? { defaultSubstituteName: modifier.defaultSubstituteName } : {}),
-            })) },
-          })),
+          create: this.toModifierGroupsCreateInput(parsed.data.modifierGroups),
         };
       }
 
@@ -1006,8 +988,8 @@ export class MenuService {
     }
   }
 
-  private assertUniqueModifierNames(
-    groups: Array<{ modifiers: Array<{ name: string }> }>,
+  private assertValidModifierGroups(
+    groups: CreateProductInput['modifierGroups'],
   ): void {
     for (const group of groups) {
       const seen = new Set<string>();
@@ -1026,7 +1008,50 @@ export class MenuService {
         }
         seen.add(normalizedName);
       }
+
+      const substitutionError = validateGroupSubstitutionRules(group);
+      if (substitutionError) {
+        throw new UnprocessableEntityException({
+          code: 'VALIDATION_FAILED',
+          message: substitutionError,
+          details: {
+            fieldErrors: {
+              modifierGroups: [substitutionError],
+            },
+          },
+        });
+      }
     }
+  }
+
+  private toModifierGroupsCreateInput(groups: CreateProductInput['modifierGroups']) {
+    return groups.map((group) => ({
+      name: group.name,
+      isRequired: group.isRequired,
+      maxSelect: group.maxSelect,
+      ...(group.isAutoSelect ? { isAutoSelect: true } : {}),
+      ...(group.allowSubstitution ? { allowSubstitution: true } : {}),
+      modifiers: {
+        create: group.modifiers.map((modifier) => {
+          const normalizedAllowed = group.allowSubstitution
+            ? normalizeSubstituteNameList(modifier.allowedSubstituteNames, modifier.name)
+            : null;
+          const resolvedDefaultSub =
+            group.allowSubstitution && modifier.defaultSubstituteName?.trim()
+              ? modifier.defaultSubstituteName.trim()
+              : null;
+
+          return {
+            name: modifier.name,
+            extraPrice: new Prisma.Decimal(modifier.extraPrice),
+            ...(modifier.isDefaultChecked ? { isDefaultChecked: true } : {}),
+            ...(modifier.isAvailable === false ? { isAvailable: false } : {}),
+            ...(resolvedDefaultSub ? { defaultSubstituteName: resolvedDefaultSub } : {}),
+            ...(normalizedAllowed !== null ? { allowedSubstituteNames: normalizedAllowed } : {}),
+          };
+        }),
+      },
+    }));
   }
 
   private toProduct(record: ProductRecord) {
@@ -1056,6 +1081,9 @@ export class MenuService {
           isDefaultChecked: modifier.isDefaultChecked ?? false,
           isAvailable: modifier.isAvailable ?? true,
           defaultSubstituteName: modifier.defaultSubstituteName ?? null,
+          allowedSubstituteNames: parseAllowedSubstituteNamesFromJson(
+            modifier.allowedSubstituteNames,
+          ),
         })),
       })),
       comboItems: record.comboParents.map(({ childProductId, quantity }) => ({ productId: childProductId, quantity })),
