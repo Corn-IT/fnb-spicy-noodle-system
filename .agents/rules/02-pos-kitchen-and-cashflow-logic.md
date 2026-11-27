@@ -111,7 +111,7 @@ status                  = MATCHED (=0) | SURPLUS (>0) | SHORTAGE (<0)
 
 ---
 
-## 7. WebSocket Events Contract (15 Events — Namespace `/pos`)
+## 7. WebSocket Events Contract (16 Events — Namespace `/pos`)
 
 | Event | Hướng | Room | Khi nào |
 |-------|-------|------|---------|

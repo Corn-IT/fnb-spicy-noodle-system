@@ -51,3 +51,8 @@ cloudflared.exe
 playwright-report/
 test-results/
 apps/web-app/e2e/baseline-audit-output.json
+
+# Graphify local machine sidecars & caches (committed outputs: GRAPH_REPORT.md, graph.json, graph.html, graph.svg, wiki/)
+graphify-out/.graphify_*
+graphify-out/.needs_update
+graphify-out/cache/

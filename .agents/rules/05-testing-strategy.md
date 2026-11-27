@@ -16,12 +16,12 @@ description: Vitest unit/integration testing, coverage thresholds, and Playwrigh
 
 ## 2. Phân loại Test & Coverage Targets
 
-| Loại | Coverage Target | Vị trí | Tools |
-|------|----------------|--------|-------|
-| Shared Unit Tests | ≥ 90% | `packages/shared/src/__tests__/*.spec.ts` | Vitest |
-| Backend Unit & Service Tests | ≥ 90% (business logic) | `apps/api-server/src/**/__tests__/*.spec.ts` | Vitest + Prisma mocks (`vi.mock`) |
-| Frontend Component & Hook Tests | Key interactions & regressions | `apps/web-app/src/**/__tests__/*.{test,spec}.{ts,tsx}` | Vitest + React Testing Library |
-| E2E Regression Tests | Critical user journeys | `apps/web-app/e2e/**` | Playwright CLI (`pnpm e2e` / `npx playwright test`) |
+| Loại | Ngưỡng khóa (Thresholds) | Vị trí | Tools |
+|------|--------------------------|--------|-------|
+| Shared Unit Tests | `90 / 90 / 90 / 90` (Stmts/Branch/Funcs/Lines) | `packages/shared/src/__tests__/*.spec.ts` | Vitest (`pnpm --filter @fnb/shared test:coverage`) |
+| Backend Unit & Service Tests | `88 / 75 / 90 / 90` (core services ≥ 90%) | `apps/api-server/src/**/__tests__/*.spec.ts` | Vitest + Prisma mocks (`pnpm --filter @fnb/api-server test:coverage`) |
+| Frontend Component & Hook Tests | `80 / 72 / 75 / 81` | `apps/web-app/src/**/__tests__/*.{test,spec}.{ts,tsx}` | Vitest + RTL (`pnpm --filter @fnb/web-app test:coverage`) |
+| E2E Regression & Responsive Matrix | Chromium Desktop + WebKit Mobile/Tablet/Desktop (17 viewports × 4 scales × 2 themes + `@real` build suite) | `apps/web-app/e2e/**` | Playwright CLI (`pnpm e2e`, `E2E_REAL_ISOLATED=1`) |
 
 ## 3. Quy ước Đặt tên Test
 

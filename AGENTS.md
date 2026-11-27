@@ -152,3 +152,15 @@ Mọi cột liên quan đến tiền (`price`, `subtotal_amount`, `discount_amou
 - Khi user đã yêu cầu triển khai và thiếu `_bmad/scripts/render_skill.py`, agent **MUST** chạy quy trình `bmad setup` ở phạm vi project rồi render lại; không hỏi user xác nhận setup lần nữa. **NEVER** tự viết hoặc chép tay runtime vào `_bmad/`.
 - Khi renderer báo cú pháp skill cũ như `{{.variable}}`, cập nhật skill project và module record từ cùng nguồn BMAD bằng `npx skills update -p -y`, chạy lại `bmad setup`, rồi render lại skill trong repo. Giữ nguyên các skill retired cho tới khi user duyệt xóa.
 - Version hóa `.agents/skills/bmad/`, các `bmod-*/`, skill đã cập nhật và `skills-lock.json`; `_bmad/` cùng `_bmad-output/` tiếp tục là runtime/artifact local bị ignore.
+
+## 10. GRAPHIFY KNOWLEDGE GRAPH & AGENT ONBOARDING
+
+- Kho lưu trữ đã được lập chỉ mục tri thức toàn hệ thống trong thư mục `graphify-out/` (bởi `graphify` `--mode deep --directed --wiki --svg`, sử dụng `.graphifyignore` để loại trừ BMAD tooling templates, media nhị phân và ảnh chụp báo cáo cũ):
+  - `graphify-out/GRAPH_REPORT.md`: Bản đồ tổng quan kiến trúc, Community Hubs, God Nodes (`cn`, `Button`, `useAuthStore`, `AuthPrincipal`, `RequirePermission()`, `CurrentUser`, `useAppMessages()`), Hyperedges xuyên luồng và Knowledge Gaps.
+  - `graphify-out/wiki/index.md`: Mục lục wiki (`graphify-out/wiki/*.md`) chia theo từng domain/community để agent đọc nhanh theo tính năng trước khi chạm code.
+  - `graphify-out/graph.json`: Đồ thị có hướng NetworkX phục vụ truy vấn qua MCP Graphify (`query_graph`, `get_node`, `get_neighbors`, `get_community`, `god_nodes`, `shortest_path`, `graph_stats`) hoặc CLI (`graphify path`, `graphify explain`).
+  - `graphify-out/graph.html` & `graphify-out/graph.svg`: Sơ đồ đồ thị tương tác và SVG tĩnh nhúng tài liệu.
+- **Quy tắc tra cứu & bảo trì:**
+  1. Bất kỳ agent mới nào (hoặc khi chuyển giao phiên làm việc) **SHOULD** đọc `graphify-out/GRAPH_REPORT.md` hoặc truy vấn Graphify MCP/`wiki/index.md` trước khi scan diện rộng.
+  2. Khi có thay đổi kiến trúc hoặc thêm module mới, cập nhật lại `graphify-out/` với `--directed --wiki --svg`.
+  3. Giữ nguyên cấu hình `.gitignore` để không commit `graphify-out/.graphify_*`, `graphify-out/.needs_update`, hay `graphify-out/cache/` chứa đường dẫn máy cục bộ.

@@ -5,7 +5,7 @@
 > **Phiên bản:** 2.0.0 (Synced with Production Codebase — Stories 01–21)  
 > **Vai trò thực hiện:** BMAD Business Analyst & Product Manager  
 > **Trạng thái:** FINAL & SYNCED  
-> **Ngày phê duyệt gốc:** 2026-11-07 · **Ngày cập nhật đồng bộ:** 2026-11-26  
+> **Ngày phê duyệt gốc:** 2026-11-07 · **Ngày cập nhật đồng bộ:** 2026-11-28  
 > **Phạm vi:** Toàn bộ 16 phân hệ thực tế (Dashboard, POS Quầy & Cảm ứng Touch Shell, QR Mobile, Thực đơn 3 tầng, Mã giảm giá, Hoá đơn, Nhập hàng, Dòng tiền Kết ca, Mã QR Thanh toán, Nhân sự, Lịch làm việc, Bảng tính lương, Master Data, Phân quyền & Phiên, Cài đặt Cửa hàng, Hồ sơ & Giao diện)  
 > **Quy chuẩn tuân thủ:** 10 Hard Invariants tại `AGENTS.md` và `.agents/rules/*.md`
 

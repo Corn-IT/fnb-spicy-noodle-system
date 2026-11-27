@@ -71,7 +71,7 @@ Hiện thực hoá 3 màn hình quản trị tài chính và kho vận hàng ng�
 
 ## 4. TIÊU CHÍ NGHIỆM THU (ACCEPTANCE CRITERIA)
 
-- [x] **AC-11.1 (Module 2 Dual Filter & Void Guard):** Bộ lọc kép trên màn hình Hoá đơn mặc định chọn `Hôm nay` và kết hợp chính xác với tiêu chí tìm kiếm bên phải; nút `Huỷ đơn (Void)` hoàn toàn ẩn đối với `cashier01` nhưng hiển thị và yêu cầu nhập lý do $\ge 10$ ký tự đối với Quản lý / Super Admin.
+- [x] **AC-11.1 (Module 2 Dual Filter & Void Guard):** Bộ lọc kép trên màn hình Hoá đơn mặc định chọn `Hôm nay` và kết hợp chính xác với tiêu chí tìm kiếm bên phải; nút `Huỷ đơn (Void)` hoàn toàn ẩn đối với `thungan` (`seed-data.ts`, spec cũ `cashier01`) nhưng hiển thị và yêu cầu nhập lý do $\ge 10$ ký tự đối với Quản lý / Super Admin.
 - [x] **AC-11.2 (Module 3 9+1 Columns, Supplier & Ingredient MDM Combobox):** Bảng Nhập hàng hiển thị nhà cung cấp và tổng tiền chân bảng; Drawer yêu cầu chọn NCC từ MDM, chọn nguyên liệu tự điền ĐVT & giá gợi ý gần nhất, hoặc gõ tên mới để hệ thống lưu MDM.
 - [x] **AC-11.3 (Module 4 Denomination Grid & Handover Summary):** Nhập số tờ trên lưới 9 mệnh giá tự tính đúng `actual_counted_cash`; không cộng doanh thu QR vào tiền lý thuyết trong két; khi lệch tiền bắt buộc nhập ghi chú giải trình mới cho bấm Kết ca; hiển thị rõ số tiền giữ lại két và số tiền nộp Chủ quán.
 - [x] **AC-11.4 (Feature Isolation Invariant 1):** Không có bất kỳ import trực tiếp nào giữa `invoices`, `inventory`, và `cashflow`; `pnpm -r typecheck` và `pnpm -r test` pass 100%.

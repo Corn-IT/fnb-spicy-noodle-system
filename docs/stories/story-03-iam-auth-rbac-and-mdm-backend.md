@@ -107,8 +107,8 @@ async findOrCreate(category: MdmCategory, rawInput: string, metadata: Record<str
 
 - [x] **AC-03.1 (Strict 401 vs 403):**
   - Gửi request không có token hoặc token hết hạn/sai chữ ký → nhận đúng `401 Unauthorized` (không bao giờ trả 403).
-  - Đăng nhập bằng `cashier01`, gọi `PUT /api/v1/users/1/permissions` hoặc `POST /api/v1/mdm` → nhận đúng `403 Forbidden` (không bao giờ trả 401).
+  - Đăng nhập bằng tài khoản thu ngân (`thungan` trong `seed-data.ts`, spec ban đầu ghi `cashier01`), gọi `PUT /api/v1/users/1/permissions` hoặc `POST /api/v1/mdm` → nhận đúng `403 Forbidden` (không bao giờ trả 401).
 - [x] **AC-03.2 (Super Admin Bypass & Protection):** Tài khoản `superadmin` truy cập mọi endpoint đều được phép; mọi nỗ lực gọi `PUT /api/v1/users/:superAdminId/permissions` để sửa/hạ quyền của Super Admin đều bị chặn với `403 Forbidden`.
-- [x] **AC-03.3 (MDM Lookup Accessible to All Authenticated Users):** Tài khoản `cashier01` (có `mdm.view = false`, `mdm.write = false`) gọi `GET /api/v1/mdm/lookup?category=INGREDIENT` nhận `200 OK` cùng danh sách nguyên liệu; nhưng gọi `GET /api/v1/mdm` nhận `403 Forbidden`.
+- [x] **AC-03.3 (MDM Lookup Accessible to All Authenticated Users):** Tài khoản `thungan` (có `mdm.view = false`, `mdm.write = false`) gọi `GET /api/v1/mdm/lookup?category=INGREDIENT` nhận `200 OK` cùng danh sách nguyên liệu; nhưng gọi `GET /api/v1/mdm` nhận `403 Forbidden`.
 - [x] **AC-03.4 (MDM Normalization Idempotency):** Gọi `MdmService.findOrCreate('INGREDIENT', 'bún bò huế')` và `'  Bún Bò Huế  '` chỉ sinh ra duy nhất 1 dòng trong bảng `master_data` với `name = 'Bún Bò Huế'` và `normalized_name = 'bun bo hue'`.
 - [x] **AC-03.5 (Profile 1-1 Sync & UI Preferences):** Gọi `PUT /api/v1/profile` cập nhật thông tin ngân hàng/địa chỉ lưu thẳng vào bảng `employees`; gọi `PATCH /api/v1/profile/ui-prefs` cập nhật `users.ui_preferences` mà không làm ảnh hưởng `permissions`.
