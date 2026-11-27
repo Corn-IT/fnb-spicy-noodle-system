@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import {
   DEFAULT_STORE_SETTINGS,
+  ErrorCodes,
   QR_CARD_DEFAULTS,
   type OrderDetailResponse,
   type PosTableGridResponse,
@@ -20,7 +21,7 @@ import { QrSecurityConfigDialog } from '../components/qr-security-config-dialog'
 import { TableManageDialog } from '../components/table-manage-dialog';
 import * as qrExportUtils from '@/utils/qr-export';
 import { QrOrderPage } from '@/features/qr-order';
-import { apiClient } from '@/lib/api-client';
+import { ApiClientError, apiClient } from '@/lib/api-client';
 import * as qrVoiceAnnouncer from '@/lib/qr-voice-announcer';
 import * as socketClient from '@/lib/socket-client';
 import { QueryProvider } from '@/providers/query-provider';
@@ -1934,6 +1935,347 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
         expect(screen.getByTestId('input-qr-card-takeaway-headline')).toBeDisabled();
       });
       await screen.findByAltText('Xem trước mã QR');
+    });
+  });
+
+  describe('Direct click-to-edit unprinted (NEW) & draft items + 409 concurrency race', () => {
+    it('edits a draft item options/qty/note on click without opening modal from +/- buttons', async () => {
+      const tableGrid: PosTableGridResponse = {
+        tables: [
+          { id: 1, name: 'Bàn 01', status: 'AVAILABLE', activeOrderId: null, activeOrder: null },
+        ],
+        takeaways: [],
+      };
+      vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue(new MockSocket() as never);
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/pos/tables') return tableGrid;
+        if (url === '/api/v1/pos/drafts') return { drafts: [] };
+        if (url === '/api/v1/menu/products') return mockProducts;
+        return [];
+      });
+
+      useAuthStore.getState().setAuth({
+        accessToken: 'cashier-token',
+        user: {
+          id: 3,
+          employeeId: 3,
+          username: 'thungan01',
+          fullName: 'Thu Ngân',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, create: true, update: true },
+          }),
+        },
+      });
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryProvider client={queryClient}>
+          <SocketProvider>
+            <ThermalPrintProvider>
+              <MemoryRouter future={routerFutureFlags}>
+                <PosUnifiedPage />
+              </MemoryRouter>
+            </ThermalPrintProvider>
+          </SocketProvider>
+        </QueryProvider>,
+      );
+
+      // Select Bàn 01 (draft mode) and add Mì Kim Chi Bò Mỹ (Cấp 0)
+      fireEvent.click(await screen.findByTestId('table-card-1'));
+      fireEvent.click(await screen.findByTestId('pos-menu-product-101'));
+      expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('pos-mod-option-10'));
+      fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+
+      const draftRow = await screen.findByTestId('draft-item-0');
+      expect(draftRow).toHaveTextContent('Mì Kim Chi Bò Mỹ');
+      expect(draftRow).toHaveTextContent('55.000 đ');
+
+      // Quick + button increments quantity without opening edit modal
+      fireEvent.click(screen.getByRole('button', { name: 'Tăng số lượng Mì Kim Chi Bò Mỹ' }));
+      expect(screen.queryByTestId('pos-modifier-modal')).not.toBeInTheDocument();
+      expect(screen.getByTestId('draft-item-0')).toHaveTextContent('110.000 đ');
+
+      // Click directly on draft item -> opens edit modal pre-populated with Cấp 0 & qty 2
+      fireEvent.click(screen.getByTestId('edit-draft-item-0'));
+      expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pos-modal-edit-badge')).toHaveTextContent('Chỉnh sửa món');
+      expect(screen.getByTestId('pos-confirm-modifier-btn')).toHaveTextContent('Lưu thay đổi');
+
+      // Change spice to Cấp 3 (12), add Bò Mỹ (20, +20k), and set note "Không hành"
+      fireEvent.click(screen.getByTestId('pos-mod-option-12'));
+      fireEvent.click(screen.getByTestId('pos-mod-option-20'));
+      fireEvent.change(screen.getByTestId('pos-item-note-input'), {
+        target: { value: 'Không hành' },
+      });
+      fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('pos-modifier-modal')).not.toBeInTheDocument();
+      });
+      const updatedDraftRow = screen.getByTestId('draft-item-0');
+      expect(updatedDraftRow).toHaveTextContent('Cấp 3');
+      expect(updatedDraftRow).toHaveTextContent('Thêm Bò Mỹ');
+      expect(updatedDraftRow).toHaveTextContent('Ghi chú: Không hành');
+      expect(updatedDraftRow).toHaveTextContent('150.000 đ');
+    });
+
+    it('edits NEW live items (including zero-modifier items), blocks PRINTED/CANCELLED & readonly roles, and handles 409 POS_ITEM_ALREADY_PRINTED', async () => {
+      const tableGrid: PosTableGridResponse = {
+        tables: [
+          {
+            id: 2,
+            name: 'Bàn 02',
+            status: 'OCCUPIED',
+            activeOrderId: 502,
+            activeOrder: {
+              orderId: 502,
+              orderCode: 'HD-20261127-0502',
+              orderType: 'DINE_IN',
+              tableId: 2,
+              tableLabel: 'Bàn 02',
+              takeawayNumber: null,
+              status: 'SERVING',
+              totalAmount: 195000,
+              createdAt: '2026-11-27T04:00:00.000Z',
+            },
+          },
+        ],
+        takeaways: [],
+      };
+
+      const orderDetail: OrderDetailResponse = {
+        orderId: 502,
+        orderCode: 'HD-20261127-0502',
+        orderType: 'DINE_IN',
+        orderSource: 'POS_COUNTER',
+        tableId: 2,
+        tableLabel: 'Bàn 02',
+        takeawayNumber: null,
+        takeawayLabelFormat: null,
+        status: 'SERVING',
+        paymentMethod: null,
+        cashAmount: 0,
+        transferAmount: 0,
+        subtotalAmount: 150000,
+        discountAmount: 0,
+        totalAmount: 150000,
+        note: null,
+        createdAt: '2026-11-27T04:00:00.000Z',
+        paidAt: null,
+        tableTransferLogs: [],
+        items: [
+          {
+            id: 9001,
+            productId: 101,
+            name: 'Mì Kim Chi Bò Mỹ',
+            quantity: 1,
+            unitPrice: 55000,
+            lineTotal: 55000,
+            modifiers: ['Cấp 0'],
+            modifierSelections: [{ groupId: 1, modifierId: 10 }],
+            itemNote: null,
+            batchNo: 1,
+            kitchenStatus: 'PRINTED',
+            isTakeaway: false,
+          },
+          {
+            id: 9002,
+            productId: 101,
+            name: 'Mì Kim Chi Bò Mỹ',
+            quantity: 1,
+            unitPrice: 65000,
+            lineTotal: 65000,
+            modifiers: ['Cấp 1', 'Thêm Phô Mai'],
+            modifierSelections: [
+              { groupId: 1, modifierId: 11 },
+              { groupId: 2, modifierId: 21 },
+            ],
+            itemNote: 'Ít hành',
+            batchNo: 2,
+            kitchenStatus: 'NEW',
+            isTakeaway: false,
+          },
+          {
+            id: 9003,
+            productId: 102,
+            name: 'Trà Đào Cam Sả',
+            quantity: 1,
+            unitPrice: 30000,
+            lineTotal: 30000,
+            modifiers: [],
+            modifierSelections: [],
+            itemNote: null,
+            batchNo: 2,
+            kitchenStatus: 'NEW',
+            isTakeaway: false,
+          },
+          {
+            id: 9004,
+            productId: 102,
+            name: 'Trà Đào Cam Sả',
+            quantity: 1,
+            unitPrice: 30000,
+            lineTotal: 0,
+            modifiers: [],
+            modifierSelections: [],
+            itemNote: null,
+            batchNo: 1,
+            kitchenStatus: 'CANCELLED',
+            isTakeaway: false,
+          },
+        ],
+      };
+
+      vi.spyOn(socketClient, 'connectPosSocket').mockReturnValue(new MockSocket() as never);
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/api/v1/pos/tables') return tableGrid;
+        if (url === '/api/v1/pos/drafts') return { drafts: [] };
+        if (url === '/api/v1/menu/products') return mockProducts;
+        if (url === '/api/v1/pos/orders/502') return orderDetail;
+        return [];
+      });
+      const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValue({
+        orderId: 502,
+        totalAmount: 160000,
+        requireCancellationSlip: false,
+        kitchenCancellationSlips: [],
+      });
+
+      useAuthStore.getState().setAuth({
+        accessToken: 'cashier-token',
+        user: {
+          id: 3,
+          employeeId: 3,
+          username: 'thungan01',
+          fullName: 'Thu Ngân',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({
+            pos: { view: true, create: true, update: true, splitKitchen: true },
+          }),
+        },
+      });
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryProvider client={queryClient}>
+          <SocketProvider>
+            <ThermalPrintProvider>
+              <MemoryRouter future={routerFutureFlags}>
+                <PosUnifiedPage />
+              </MemoryRouter>
+            </ThermalPrintProvider>
+          </SocketProvider>
+        </QueryProvider>,
+      );
+
+      fireEvent.click(await screen.findByTestId('table-card-2'));
+      expect(await screen.findByTestId('invoice-item-9002')).toBeInTheDocument();
+
+      // PRINTED and CANCELLED items are NEVER editable
+      expect(screen.queryByTestId('edit-new-item-9001')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-new-item-9004')).not.toBeInTheDocument();
+
+      // "+ Mang về" sibling button triggers isTakeaway update without opening edit modal
+      fireEvent.click(screen.getByTestId('toggle-item-takeaway-9002'));
+      await waitFor(() => {
+        expect(patchSpy).toHaveBeenCalledWith('/api/v1/pos/orders/502/items', {
+          updates: [{ orderItemId: 9002, isTakeaway: true }],
+        });
+      });
+      expect(screen.queryByTestId('pos-modifier-modal')).not.toBeInTheDocument();
+
+      // Click NEW item 9002 -> edit spice level to Cấp 3 (12), swap Phô Mai (21) -> Bò Mỹ (20)
+      fireEvent.click(screen.getByTestId('edit-new-item-9002'));
+      expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pos-item-note-input')).toHaveValue('Ít hành');
+      fireEvent.click(screen.getByTestId('pos-mod-option-12'));
+      fireEvent.click(screen.getByTestId('pos-mod-option-21'));
+      fireEvent.click(screen.getByTestId('pos-mod-option-20'));
+      fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+
+      await waitFor(() => {
+        expect(patchSpy).toHaveBeenCalledWith('/api/v1/pos/orders/502/items', {
+          updates: [
+            {
+              orderItemId: 9002,
+              expectedKitchenStatus: 'NEW',
+              quantity: 1,
+              modifiers: [
+                { groupId: 1, modifierId: 12 },
+                { groupId: 2, modifierId: 20 },
+              ],
+              itemNote: 'Ít hành',
+            },
+          ],
+        });
+      });
+
+      // Zero-modifier NEW item 9003 opens modal cleanly for note/qty update
+      fireEvent.click(screen.getByTestId('edit-new-item-9003'));
+      expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+      expect(
+        screen.getByText(/Món này chưa cấu hình tuỳ chọn thêm/i),
+      ).toBeInTheDocument();
+      fireEvent.change(screen.getByTestId('pos-item-note-input'), {
+        target: { value: 'Ít đường' },
+      });
+      fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+
+      await waitFor(() => {
+        expect(patchSpy).toHaveBeenCalledWith('/api/v1/pos/orders/502/items', {
+          updates: [
+            {
+              orderItemId: 9003,
+              expectedKitchenStatus: 'NEW',
+              quantity: 1,
+              modifiers: [],
+              itemNote: 'Ít đường',
+            },
+          ],
+        });
+      });
+
+      // Simulate 409 POS_ITEM_ALREADY_PRINTED race when saving edit on 9002
+      patchSpy.mockRejectedValueOnce(
+        new ApiClientError({
+          statusCode: 409,
+          error: 'Conflict',
+          code: ErrorCodes.POS_ITEM_ALREADY_PRINTED,
+          message: 'Món đã tách bếp nên không thể sửa',
+          details: null,
+          requestId: 'req-409',
+        }),
+      );
+      fireEvent.click(screen.getByTestId('edit-new-item-9002'));
+      expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('pos-modifier-modal')).not.toBeInTheDocument();
+      });
+      expect(
+        useToastStore
+          .getState()
+          .toasts.some((t) => `${t.title} ${t.description ?? ''}`.includes('Món đã tách bếp')),
+      ).toBe(true);
+
+      // Readonly user (no pos.update) cannot open edit on NEW items
+      useAuthStore.getState().setAuth({
+        accessToken: 'viewer-token',
+        user: {
+          id: 9,
+          employeeId: 9,
+          username: 'viewer',
+          fullName: 'Xem POS',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({ pos: { view: true } }),
+        },
+      });
+      await waitFor(() => {
+        expect(screen.queryByTestId('edit-new-item-9002')).not.toBeInTheDocument();
+      });
     });
   });
 });

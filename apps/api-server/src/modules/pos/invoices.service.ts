@@ -7,6 +7,7 @@ import {
   ReviewInvoicePaymentEditSchema,
   UpdateInvoicePaymentMethodSchema,
   VoidInvoiceRequestSchema,
+  parseTakeawayLabelNumber,
   type AuthPrincipal,
   type InvoiceFilterQuery,
   type ReviewInvoicePaymentEditInput,
@@ -17,6 +18,10 @@ import { AuditLogService, formatPaymentMethodVi } from '../../common/audit/audit
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { buildIyFallbackKeywords, queryMatchingIdsBySearchNorm } from '../../common/utils/search-normalize.util';
 import { recalculateSettledCashflowsForTimestamp } from '../../common/utils/cashflow-settlement.util';
+import {
+  formatOrderTakeawayLabel,
+  normalizeTakeawayLabelFormat,
+} from '../../common/utils/takeaway-format.util';
 import { PaymentQrService } from '../payment-qr/payment-qr.service';
 import { extractDiscountSnapshot } from './order-totals.helper';
 
@@ -87,7 +92,9 @@ export class InvoicesService {
         andConditions.push({ discount: { is: { code: { contains: keyword.trim(), mode: 'insensitive' as const } } } });
       } else {
         const digitsOnly = keyword.replace(/\D/g, '');
-        const parsedNumber = digitsOnly ? parseInt(digitsOnly, 10) : NaN;
+        const parsedDigits = digitsOnly ? parseInt(digitsOnly, 10) : NaN;
+        const parsedLabelNum = parseTakeawayLabelNumber(keyword);
+        const resolvedTakeawayNum = parsedLabelNum ?? (!isNaN(parsedDigits) ? parsedDigits : null);
         const isTakeawayKeyword = /mang\s*v[eề]|takeaway/i.test(keyword);
         const matchedTableIds = await queryMatchingIdsBySearchNorm(
           this.prisma,
@@ -105,7 +112,7 @@ export class InvoicesService {
           OR: [
             ...tableConditions,
             ...(isTakeawayKeyword ? [{ orderType: 'TAKEAWAY' as const }] : []),
-            ...(!isNaN(parsedNumber) ? [{ orderType: 'TAKEAWAY' as const, takeawayNumber: parsedNumber }] : []),
+            ...(resolvedTakeawayNum !== null ? [{ orderType: 'TAKEAWAY' as const, takeawayNumber: resolvedTakeawayNum }] : []),
           ],
         });
       }
@@ -161,7 +168,11 @@ export class InvoicesService {
           discountId?: number | null;
           discountSnapshot?: Prisma.JsonValue | null;
           pendingPaymentEdit?: Prisma.JsonValue | null;
+          takeawayLabelFormat?: string | null;
         };
+        const takeawayLabelFormat = order.orderType === 'TAKEAWAY'
+          ? (normalizeTakeawayLabelFormat(rec.takeawayLabelFormat) ?? 'NUMBER')
+          : null;
         const parsedPending = rec.pendingPaymentEdit ? PendingPaymentEditSchema.safeParse(rec.pendingPaymentEdit) : null;
         return {
           orderId: order.id,
@@ -169,9 +180,10 @@ export class InvoicesService {
           orderType: order.orderType,
           tableId: order.tableId,
           tableLabel: order.orderType === 'TAKEAWAY' && order.takeawayNumber !== null
-            ? `Mang về #${String(order.takeawayNumber).padStart(2, '0')}`
+            ? formatOrderTakeawayLabel(order.takeawayNumber, takeawayLabelFormat)
             : order.table?.name ?? null,
           takeawayNumber: order.takeawayNumber,
+          takeawayLabelFormat,
           status: order.status,
           paymentMethod: order.paymentMethod,
           cashAmount: rec.cashAmount ? rec.cashAmount.toNumber() : 0,
@@ -203,6 +215,10 @@ export class InvoicesService {
     });
     if (!order) throw new NotFoundException({ message: 'Không tìm thấy hoá đơn' });
 
+    const takeawayLabelFormat = order.orderType === 'TAKEAWAY'
+      ? (normalizeTakeawayLabelFormat((order as { takeawayLabelFormat?: unknown }).takeawayLabelFormat) ?? 'NUMBER')
+      : null;
+
     return OrderDetailResponseSchema.parse({
       orderId: order.id,
       orderCode: order.orderCode,
@@ -210,9 +226,10 @@ export class InvoicesService {
       orderSource: order.orderSource,
       tableId: order.tableId,
       tableLabel: order.orderType === 'TAKEAWAY' && order.takeawayNumber !== null
-        ? `Mang về #${String(order.takeawayNumber).padStart(2, '0')}`
+        ? formatOrderTakeawayLabel(order.takeawayNumber, takeawayLabelFormat)
         : order.table?.name ?? null,
       takeawayNumber: order.takeawayNumber,
+      takeawayLabelFormat,
       status: order.status,
       paymentMethod: order.paymentMethod,
       cashAmount: order.cashAmount.toNumber(),

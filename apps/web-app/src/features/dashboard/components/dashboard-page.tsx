@@ -25,6 +25,7 @@ import { DashboardChartsRow } from './dashboard-charts-row';
 import { DashboardInsightsRow } from './dashboard-insights-row';
 import { DashboardKpiGrid } from './dashboard-kpi-grid';
 import { DashboardOperationsRow } from './dashboard-operations-row';
+import { DailyItemSalesSection } from './daily-item-sales-section';
 
 interface PresetOption {
   value: DashboardPreset;
@@ -340,6 +341,13 @@ export function DashboardPage() {
           <DashboardChartsRow data={data} />
           <DashboardOperationsRow data={data} />
           <DashboardInsightsRow data={data} />
+          <DailyItemSalesSection
+            id="daily-item-sales-section"
+            filter={filter}
+            onFilterChange={setFilter}
+            canExport={canExport}
+            todayIso={todayIso}
+          />
         </>
       ) : null}
     </div>

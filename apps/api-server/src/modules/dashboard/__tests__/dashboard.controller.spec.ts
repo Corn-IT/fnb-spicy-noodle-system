@@ -61,4 +61,47 @@ describe('DashboardController & RBAC Guard', () => {
     await expect(controller.getOverview({ preset: '7d' }, user)).resolves.toEqual({ ok: true });
     expect(getOverview).toHaveBeenCalledWith({ preset: '7d' }, user);
   });
+
+  it('protects daily-item-sales route with dashboard.view (401/403) and forwards query + principal', async () => {
+    const req = Reflect.getMetadata(
+      AUTHORIZATION_METADATA,
+      DashboardController.prototype.getDailyItemSales,
+    );
+    expect(req).toEqual({ module: 'dashboard', action: 'view' });
+
+    const guard = new RbacGuard(new Reflector());
+    expect(() =>
+      guard.canActivate(
+        makeGuardContext(DashboardController.prototype.getDailyItemSales as never, undefined),
+      ),
+    ).toThrow(UnauthorizedException);
+
+    const blockedUser = makePrincipal({
+      permissions: UserPermissionsSchema.parse({
+        dashboard: { view: false, viewProfit: false, export: false },
+      }),
+    });
+    expect(() =>
+      guard.canActivate(
+        makeGuardContext(DashboardController.prototype.getDailyItemSales as never, blockedUser),
+      ),
+    ).toThrow(ForbiddenException);
+
+    const allowedUser = makePrincipal();
+    const getDailyItemSales = vi.fn().mockResolvedValue({ items: [] });
+    const controller = new DashboardController({ getDailyItemSales } as never);
+    expect(
+      guard.canActivate(
+        makeGuardContext(DashboardController.prototype.getDailyItemSales as never, allowedUser),
+      ),
+    ).toBe(true);
+
+    await expect(
+      controller.getDailyItemSales({ preset: 'today', station: 'BEP_NAU' }, allowedUser),
+    ).resolves.toEqual({ items: [] });
+    expect(getDailyItemSales).toHaveBeenCalledWith(
+      { preset: 'today', station: 'BEP_NAU' },
+      allowedUser,
+    );
+  });
 });

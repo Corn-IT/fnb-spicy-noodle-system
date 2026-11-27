@@ -854,4 +854,38 @@ describe('StoreSettingsPage (Story 14)', () => {
       );
     });
   });
+
+  it('switches takeawayLabelFormat between NUMBER and LETTER, shows cycle preview, and persists to API', async () => {
+    const user = userEvent.setup();
+    const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValueOnce(
+      makeServerSettings({
+        updatedAt: '2026-11-27T09:00:00.000Z',
+        takeawayLabelFormat: 'LETTER',
+      }),
+    );
+
+    renderStoreSettingsPage(makeServerSettings({ takeawayLabelFormat: 'NUMBER' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('store-settings-save-btn')).toBeEnabled();
+    });
+
+    const letterBtn = screen.getByTestId('takeaway-format-letter');
+    const numberBtn = screen.getByTestId('takeaway-format-number');
+    expect(numberBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(letterBtn).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(letterBtn);
+    expect(letterBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('settings-takeaway-format-section')).toHaveTextContent('#A → #D');
+
+    await user.click(screen.getByTestId('store-settings-save-btn'));
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith(
+        '/api/v1/settings',
+        expect.objectContaining({
+          takeawayLabelFormat: 'LETTER',
+        }),
+      );
+    });
+  });
 });

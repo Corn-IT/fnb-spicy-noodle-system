@@ -446,4 +446,112 @@ test.describe('4 New Features E2E & Full-Size Responsive Verification', () => {
       expect(critical, `/pos/touch layout issue @ ${vp.name}`).toEqual([]);
     }
   });
+
+  test('Receipt Consolidation: merges base-price & same-topping rows while splitting priced toppings and [Mang về] on Provisional VietQR slip', async ({
+    page,
+    isMobile,
+  }) => {
+    test.skip(isMobile, 'Desktop POS provisional bill print check');
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await setupMockApi(page);
+
+    await page.route('**/api/v1/pos/orders/101/provisional-bill', async (route) => {
+      const corsHeaders = {
+        'access-control-allow-origin': route.request().headers().origin ?? '*',
+        'access-control-allow-credentials': 'true',
+        'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+        'access-control-allow-headers':
+          route.request().headers()['access-control-request-headers'] ?? 'content-type, authorization',
+      };
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: corsHeaders });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({
+          orderId: 101,
+          orderCode: 'HD-20261127-0101',
+          orderType: 'DINE_IN',
+          tableId: 1,
+          takeawayNumber: null,
+          status: 'SERVING',
+          subtotalAmount: 185000,
+          discountAmount: 0,
+          totalAmount: 185000,
+          paymentAccount: {
+            id: 1,
+            label: 'BIDV',
+            bankName: 'BIDV',
+            bankCode: 'BIDV',
+            accountNo: '8878564012',
+            accountName: 'TRAN VAN HUNG',
+          },
+          items: [
+            {
+              name: 'Mì Thập Cẩm',
+              quantity: 1,
+              unitPrice: 45000,
+              lineTotal: 45000,
+              modifiers: ['Cấp độ 1'],
+              pricedModifiers: [],
+              note: null,
+              isTakeaway: false,
+            },
+            {
+              name: 'Mì Thập Cẩm',
+              quantity: 1,
+              unitPrice: 45000,
+              lineTotal: 45000,
+              modifiers: ['Cấp độ 3', 'Không Ngao'],
+              pricedModifiers: [],
+              note: null,
+              isTakeaway: false,
+            },
+            {
+              name: 'Mì Thập Cẩm',
+              quantity: 1,
+              unitPrice: 50000,
+              lineTotal: 50000,
+              modifiers: ['Cấp độ 2', 'Kim chi (5k)'],
+              pricedModifiers: ['Kim chi (5k)'],
+              note: null,
+              isTakeaway: false,
+            },
+            {
+              name: 'Mì Thập Cẩm',
+              quantity: 1,
+              unitPrice: 45000,
+              lineTotal: 45000,
+              modifiers: ['Cấp độ 0'],
+              pricedModifiers: [],
+              note: null,
+              isTakeaway: true,
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.addInitScript(() => {
+      window.print = () => {};
+    });
+
+    await page.goto('/pos', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('table-card-1').click();
+    await page.getByTestId('btn-provisional-bill').click();
+    await page.getByRole('dialog').getByRole('button', { name: /Tất cả/i }).click();
+
+    const rows = page.getByTestId('provisional-items-table').locator('tbody tr');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText('1. Mì Thập Cẩm');
+    await expect(rows.nth(0)).toContainText('90.000');
+    await expect(rows.nth(1)).toContainText('2. Mì Thập Cẩm');
+    await expect(rows.nth(1)).toContainText('+ Kim chi (5k)');
+    await expect(rows.nth(1)).toContainText('50.000');
+    await expect(rows.nth(2)).toContainText('3. Mì Thập Cẩm [Mang về]');
+    await expect(rows.nth(2)).toContainText('45.000');
+  });
 });

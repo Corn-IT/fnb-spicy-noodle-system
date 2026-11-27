@@ -29,7 +29,9 @@ export interface SplitSelectedItemSummary {
   unitPrice: number;
   lineTotal: number;
   modifiers: string[];
+  pricedModifiers?: string[];
   note: string | null;
+  isTakeaway?: boolean;
 }
 
 export interface SplitOrderItemsDialogProps {
@@ -118,7 +120,9 @@ export function SplitOrderItemsDialog({
         unitPrice: item.unitPrice,
         lineTotal: item.unitPrice * qty,
         modifiers: item.modifiers,
+        ...(item.pricedModifiers !== undefined ? { pricedModifiers: item.pricedModifiers } : {}),
         note: item.itemNote,
+        ...(item.isTakeaway ? { isTakeaway: true } : {}),
       },
     ];
   });

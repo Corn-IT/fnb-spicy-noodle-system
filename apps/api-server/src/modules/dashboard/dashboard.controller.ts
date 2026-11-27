@@ -1,5 +1,11 @@
 import { Controller, Get, Inject, Query, UseGuards } from '@nestjs/common';
-import { DashboardQuerySchema, type AuthPrincipal, type DashboardQuery } from '@fnb/shared';
+import {
+  DashboardItemSalesQuerySchema,
+  DashboardQuerySchema,
+  type AuthPrincipal,
+  type DashboardItemSalesQuery,
+  type DashboardQuery,
+} from '@fnb/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -19,5 +25,14 @@ export class DashboardController {
     @CurrentUser() user: AuthPrincipal,
   ) {
     return this.dashboardService.getOverview(query, user);
+  }
+
+  @Get('daily-item-sales')
+  @RequirePermission('dashboard', 'view')
+  getDailyItemSales(
+    @Query(new ZodValidationPipe(DashboardItemSalesQuerySchema)) query: DashboardItemSalesQuery,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    return this.dashboardService.getDailyItemSales(query, user);
   }
 }

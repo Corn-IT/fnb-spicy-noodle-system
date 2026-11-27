@@ -1,8 +1,11 @@
+import { formatTakeawayShortCode, type TakeawayLabelFormat } from '@fnb/shared';
+
 export interface VietQrTableOptions {
   tableLabel?: string | null;
   tableId?: number | null;
   orderType?: string | null;
   takeawayNumber?: number | null;
+  takeawayLabelFormat?: TakeawayLabelFormat | null;
 }
 
 export interface VietQrFallbackOptions extends VietQrTableOptions {
@@ -25,8 +28,16 @@ export function formatTableOrTakeawayShortCode(
     return digits ? `B${digits[0].padStart(2, '0')}` : options.replace(/\s+/g, '').toUpperCase();
   }
   if (options.orderType === 'TAKEAWAY' || options.takeawayNumber) {
-    const num = options.takeawayNumber ?? 1;
-    return `MV${String(num).padStart(2, '0')}`;
+    if (options.takeawayLabelFormat) {
+      return formatTakeawayShortCode(options.takeawayNumber ?? 1, options.takeawayLabelFormat);
+    }
+    if (options.tableLabel && options.tableLabel.trim()) {
+      const hashMatch = /#([A-Za-z0-9]+)/.exec(options.tableLabel.trim());
+      if (hashMatch?.[1]) {
+        return `MV${hashMatch[1].toUpperCase()}`;
+      }
+    }
+    return formatTakeawayShortCode(options.takeawayNumber ?? 1, 'NUMBER');
   }
   if (options.tableLabel && options.tableLabel.trim()) {
     const label = options.tableLabel.trim();
@@ -64,6 +75,7 @@ export function buildVietQrImageUrl(options: VietQrUrlOptions): string {
     tableId: options.tableId,
     orderType: options.orderType,
     takeawayNumber: options.takeawayNumber,
+    takeawayLabelFormat: options.takeawayLabelFormat,
   });
 
   const query = new URLSearchParams({
@@ -82,6 +94,7 @@ export function buildVietQrFallbackSvgDataUrl(options: VietQrFallbackOptions): s
     tableId: options.tableId,
     orderType: options.orderType,
     takeawayNumber: options.takeawayNumber,
+    takeawayLabelFormat: options.takeawayLabelFormat,
   });
   const seedText = `${memo}|${numericAmount}`;
 

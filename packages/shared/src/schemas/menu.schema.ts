@@ -2,6 +2,13 @@ import { z } from 'zod';
 import { ProductStationSchema } from '../enums/station.enum';
 import { TableStatusSchema } from '../enums/order.enum';
 import { IdSchema, MoneyAmountSchema, QrTokenSchema } from './common.schema';
+import { validateGroupSubstitutionRules } from '../utils/modifier-substitution.util';
+
+export const AllowedSubstituteNamesSchema = z
+  .array(z.string().trim().min(1).max(120))
+  .max(50)
+  .nullable()
+  .optional();
 
 export const ModifierSchema = z.object({
   id: IdSchema,
@@ -10,6 +17,7 @@ export const ModifierSchema = z.object({
   isDefaultChecked: z.boolean().optional(),
   isAvailable: z.boolean().optional(),
   defaultSubstituteName: z.string().trim().max(120).nullable().optional(),
+  allowedSubstituteNames: AllowedSubstituteNamesSchema,
 }).strict();
 export type Modifier = z.infer<typeof ModifierSchema>;
 
@@ -30,6 +38,7 @@ const ModifierInputSchema = z.object({
   isDefaultChecked: z.boolean().default(false),
   isAvailable: z.boolean().default(true),
   defaultSubstituteName: z.string().trim().max(120).nullable().optional(),
+  allowedSubstituteNames: AllowedSubstituteNamesSchema,
 }).strict();
 
 const ModifierGroupInputSchema = z.object({
@@ -39,7 +48,16 @@ const ModifierGroupInputSchema = z.object({
   isAutoSelect: z.boolean().default(false),
   allowSubstitution: z.boolean().default(false),
   modifiers: z.array(ModifierInputSchema).min(1),
-}).strict();
+}).strict().superRefine((group, ctx) => {
+  const errorMessage = validateGroupSubstitutionRules(group);
+  if (errorMessage) {
+    ctx.addIssue({
+      code: 'custom',
+      message: errorMessage,
+      path: ['modifiers'],
+    });
+  }
+});
 
 export const ComboItemSchema = z.object({
   productId: IdSchema,

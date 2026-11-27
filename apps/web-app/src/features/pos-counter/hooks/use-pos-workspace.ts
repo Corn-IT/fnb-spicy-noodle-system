@@ -1,7 +1,10 @@
 import {
+  ErrorCodes,
+  formatTakeawayLabel,
   type OrderDetailResponse,
   type PaymentMethod,
   type PosDraftResponse,
+  type Product,
   TableActionType,
   type ApplyPosDiscountRequest,
   type CheckoutOrderRequest,
@@ -15,10 +18,17 @@ import * as React from 'react';
 
 import { useThermalPrinter, useThermalPrinterConfigStore } from '@/components/print-slips';
 import { useAppMessages } from '@/hooks/use-app-messages';
+import { ApiClientError } from '@/lib/api-client';
 import { evaluateOrderPendingAlert } from '@/lib/qr-pending-reminder';
 import { getActiveQrReminderConfig } from '@/lib/qr-voice-announcer';
-import { buildInitialSelectedByGroup, computeOrderModifiersPayload } from '@/lib/modifier-selection';
+import {
+  buildInitialSelectedByGroup,
+  computeOrderModifiersPayload,
+  hydrateModifierSelectionFromExisting,
+  inferModifierSelectionsFromLabels,
+} from '@/lib/modifier-selection';
 import { useAuthStore } from '@/stores/auth.store';
+import type { ProductOptionsDialogInitialValue } from '../components/product-options-dialog';
 import {
   useApproveQrOrderMutation,
   useCancelPosOrderMutation,
@@ -63,6 +73,15 @@ export interface UsePosWorkspaceOptions {
   onViewChange?: (event: PosWorkspaceViewEvent) => void;
 }
 
+export interface PosEditingItemTarget {
+  kind: 'draft' | 'order';
+  product: Product;
+  draftIndex?: number;
+  orderItemId?: number;
+  editInstanceKey: string;
+  initialValue: ProductOptionsDialogInitialValue;
+}
+
 /**
  * Toàn bộ state, truy vấn, mutation và handler nghiệp vụ của quầy POS.
  * Không chứa giao diện: `PosUnifiedPage` (chuột) và `PosTouchPage` (cảm ứng) cùng dùng hook này
@@ -98,6 +117,10 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   const gridData = tableGridQuery.data;
   const productsQuery = usePosProductsQuery();
   const products = productsQuery.data ?? [];
+  const productsById = React.useMemo(
+    () => new Map(products.map((product) => [product.id, product])),
+    [products],
+  );
   const draftsQuery = usePosDraftsQuery();
   const parkedDrafts = draftsQuery.data ?? [];
   const [selectedOrderId, setSelectedOrderId] = React.useState<number | null>(null);
@@ -137,6 +160,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   const [checkoutOpen, setCheckoutOpen] = React.useState(false);
   const [discountDialogOpen, setDiscountDialogOpen] = React.useState(false);
   const [splitDialogMode, setSplitDialogMode] = React.useState<SplitOrderDialogMode | null>(null);
+  const [editingItemTarget, setEditingItemTarget] = React.useState<PosEditingItemTarget | null>(null);
   const [lastSplitPaymentAccountId, setLastSplitPaymentAccountId] = React.useState<number | null>(
     null,
   );
@@ -163,6 +187,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   React.useEffect(() => {
     setLastSplitPaymentAccountId(null);
     setAddonIsTakeaway(false);
+    setEditingItemTarget(null);
   }, [selectedOrderId]);
 
   const selectedTableRow = React.useMemo(
@@ -538,6 +563,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     setDraftTarget(null);
     setDraftItems([]);
     setDraftIsDirty(false);
+    setEditingItemTarget(null);
     draftSubmitKeyRef.current = null;
   };
 
@@ -689,6 +715,145 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     }
   };
 
+  const handleOpenEditDraftItem = (index: number) => {
+    if (!canCreateOrder || draftOperationRef.current) return;
+    const targetItem = draftItems[index];
+    if (!targetItem) return;
+    const product = productsById.get(targetItem.productId);
+    if (!product) {
+      notify('pos.order.editItemError', {
+        variant: 'destructive',
+        vars: { reason: 'Món này hiện không còn trong thực đơn.' },
+      });
+      return;
+    }
+    const { selectedByGroup, manualSubstituteByModifierId } = hydrateModifierSelectionFromExisting(
+      product,
+      targetItem.modifiers,
+    );
+    setEditingItemTarget({
+      kind: 'draft',
+      draftIndex: index,
+      product,
+      editInstanceKey: `draft-${index}-${targetItem.productId}-${targetItem.quantity}`,
+      initialValue: {
+        quantity: targetItem.quantity,
+        selectedByGroup,
+        manualSubstituteByModifierId,
+        itemNote: targetItem.itemNote ?? '',
+      },
+    });
+  };
+
+  const handleOpenEditOrderItem = (orderItemId: number) => {
+    if (!canUpdateOrder || !currentOrder || !selectedOrderId) return;
+    if (currentOrder.status !== 'PENDING' && currentOrder.status !== 'SERVING') return;
+    const targetItem = currentOrder.items.find((item) => item.id === orderItemId);
+    if (!targetItem || targetItem.kitchenStatus !== 'NEW') return;
+    const product = productsById.get(targetItem.productId);
+    if (!product) {
+      notify('pos.order.editItemError', {
+        variant: 'destructive',
+        vars: { reason: 'Món này hiện không còn khả dụng để chỉnh sửa tuỳ chọn.' },
+      });
+      return;
+    }
+    const selections =
+      targetItem.modifierSelections && targetItem.modifierSelections.length > 0
+        ? targetItem.modifierSelections
+        : inferModifierSelectionsFromLabels(product, targetItem.modifiers);
+    const { selectedByGroup, manualSubstituteByModifierId } = hydrateModifierSelectionFromExisting(
+      product,
+      selections,
+    );
+    setEditingItemTarget({
+      kind: 'order',
+      orderItemId,
+      product,
+      editInstanceKey: `order-${orderItemId}-${targetItem.productId}-${targetItem.quantity}`,
+      initialValue: {
+        quantity: targetItem.quantity,
+        selectedByGroup,
+        manualSubstituteByModifierId,
+        itemNote: targetItem.itemNote ?? '',
+      },
+    });
+  };
+
+  const handleConfirmEditItem = async (updatedItem: PosMenuSelectedItem) => {
+    const target = editingItemTarget;
+    if (!target) return;
+
+    if (target.kind === 'draft' && target.draftIndex !== undefined) {
+      const idx = target.draftIndex;
+      setDraftIsDirty(true);
+      setDraftItems((prev) =>
+        prev.map((entry, entryIdx) =>
+          entryIdx === idx
+            ? {
+                ...updatedItem,
+                ...(entry.isTakeaway ? { isTakeaway: true } : {}),
+              }
+            : entry,
+        ),
+      );
+      setEditingItemTarget(null);
+      return;
+    }
+
+    if (target.kind === 'order' && target.orderItemId !== undefined) {
+      if (!selectedOrderId || !canUpdateOrder) return;
+      const orderId = selectedOrderId;
+      const orderItemId = target.orderItemId;
+      await enqueueOrderMutation(async () => {
+        try {
+          await patchItemsMutation.mutateAsync({
+            orderId,
+            input: {
+              updates: [
+                {
+                  orderItemId,
+                  expectedKitchenStatus: 'NEW',
+                  quantity: updatedItem.quantity,
+                  modifiers: updatedItem.modifiers,
+                  itemNote: updatedItem.itemNote ?? null,
+                },
+              ],
+            },
+          });
+          setEditingItemTarget(null);
+          notify('pos.order.editItemSuccess', {
+            variant: 'success',
+            vars: { quantity: updatedItem.quantity, itemName: updatedItem.name },
+            duration: 2500,
+          });
+        } catch (err) {
+          const errorCode =
+            err instanceof ApiClientError
+              ? err.code
+              : typeof err === 'object' && err !== null && 'code' in err
+                ? String((err as { code?: unknown }).code)
+                : undefined;
+          const statusCode =
+            err instanceof ApiClientError
+              ? err.statusCode
+              : typeof err === 'object' && err !== null && 'statusCode' in err
+                ? Number((err as { statusCode?: unknown }).statusCode)
+                : undefined;
+          if (errorCode === ErrorCodes.POS_ITEM_ALREADY_PRINTED || statusCode === 409) {
+            void queryClient.invalidateQueries({ queryKey: posQueryKeys.orderDetail(orderId) });
+            void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
+            setEditingItemTarget(null);
+            notifyErr('pos.order.editItemError', err);
+            return;
+          }
+          notifyErr('pos.order.editItemError', err);
+          throw err;
+        }
+      });
+    }
+  };
+
   const handleSplitKitchen = async () => {
     if (!selectedOrderId || splitKitchenMutation.isPending) return;
     try {
@@ -700,6 +865,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
           orderType: currentOrder?.orderType,
           tableLabel: currentOrder?.tableLabel,
           takeawayNumber: currentOrder?.takeawayNumber,
+          takeawayLabelFormat: currentOrder?.takeawayLabelFormat,
           orderNote: currentOrder?.note,
           tickets: response.tickets,
         });
@@ -732,6 +898,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
           orderType: currentOrder?.orderType,
           tableLabel: currentOrder?.tableLabel,
           takeawayNumber: currentOrder?.takeawayNumber,
+          takeawayLabelFormat: currentOrder?.takeawayLabelFormat,
           orderNote: currentOrder?.note,
           isReprint: true,
           tickets: response.tickets,
@@ -774,6 +941,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       thermalPrinter.printProvisionalVietQr({
         ...bill,
         tableLabel: currentOrder?.tableLabel,
+        takeawayLabelFormat: bill.takeawayLabelFormat ?? currentOrder?.takeawayLabelFormat,
         cashierName: currentUser?.fullName ?? currentUser?.username,
         createdAt: currentOrder?.createdAt,
       });
@@ -857,7 +1025,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         const resolvedTableLabel =
           orderSnapshot.tableLabel ??
           (orderSnapshot.orderType === 'TAKEAWAY'
-            ? `Mang về #${String(orderSnapshot.takeawayNumber ?? 1).padStart(2, '0')}`
+            ? formatTakeawayLabel(orderSnapshot.takeawayNumber, orderSnapshot.takeawayLabelFormat)
             : `Bàn #${orderSnapshot.tableId}`);
         const discountLabel =
           orderSnapshot.discountSnapshot?.kind === 'CODE'
@@ -997,7 +1165,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         const resolvedTableLabel =
           orderSnapshot.tableLabel ??
           (orderSnapshot.orderType === 'TAKEAWAY'
-            ? `Mang về #${String(orderSnapshot.takeawayNumber ?? 1).padStart(2, '0')}`
+            ? formatTakeawayLabel(orderSnapshot.takeawayNumber, orderSnapshot.takeawayLabelFormat)
             : `Bàn #${orderSnapshot.tableId}`);
         thermalPrinter.printOfficialReceipt({
           orderCode: response.paidOrderCode,
@@ -1014,7 +1182,11 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
             unitPrice: item.unitPrice,
             lineTotal: item.lineTotal,
             modifiers: item.modifiers,
+            ...(item.pricedModifiers !== undefined ? { pricedModifiers: item.pricedModifiers } : {}),
             note: item.note,
+            ...(orderSnapshot.orderType !== 'TAKEAWAY' && item.isTakeaway
+              ? { isTakeaway: true }
+              : {}),
           })),
         });
       } else {
@@ -1140,7 +1312,10 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     ? currentOrder.totalAmount
     : draftItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const activeLabel = currentOrder
-    ? currentOrder.tableLabel
+    ? (currentOrder.tableLabel ??
+      (currentOrder.orderType === 'TAKEAWAY'
+        ? formatTakeawayLabel(currentOrder.takeawayNumber, currentOrder.takeawayLabelFormat)
+        : `Bàn #${currentOrder.tableId}`))
     : draftTarget?.orderType === 'TAKEAWAY'
       ? 'Đơn Mang về mới'
       : draftTarget?.orderType === 'DINE_IN'
@@ -1156,6 +1331,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     setDraftItems([]);
     setActiveSavedDraft(null);
     setDraftIsDirty(false);
+    setEditingItemTarget(null);
     draftSubmitKeyRef.current = null;
   };
 
@@ -1219,6 +1395,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       setDiscountDialogOpen,
       splitDialogMode,
       setSplitDialogMode,
+      editingItemTarget,
+      setEditingItemTarget,
     },
     isOrderClosedLocally,
     actions: {
@@ -1232,6 +1410,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       addItemFromMenu: handleAddItemFromMenu,
       updateDraftQty: handleUpdateDraftQty,
       removeDraftItem: handleRemoveDraftItem,
+      openEditDraftItem: handleOpenEditDraftItem,
       saveDraft: handleSaveDraft,
       resumeDraft: handleResumeDraft,
       deleteDraft: handleDeleteDraft,
@@ -1241,6 +1420,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       updateOrderItemQuantity: handleUpdateOrderItemQuantity,
       toggleOrderItemTakeaway: handleToggleOrderItemTakeaway,
       removeOrCancelOrderItem: handleRemoveOrCancelOrderItem,
+      openEditOrderItem: handleOpenEditOrderItem,
+      confirmEditItem: handleConfirmEditItem,
       splitKitchen: handleSplitKitchen,
       reprintKitchen: handleReprintKitchen,
       printProvisionalBill: handlePrintProvisionalBill,

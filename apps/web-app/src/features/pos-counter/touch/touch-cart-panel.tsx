@@ -8,6 +8,7 @@ import {
   Loader2,
   Minus,
   MoreHorizontal,
+  Pencil,
   Plus,
   Printer,
   QrCode,
@@ -82,6 +83,8 @@ function DraftCart({ workspace, askConfirm }: { workspace: PosWorkspace; askConf
               key={`${item.productId}-${index}`}
               item={item}
               index={index}
+              canEdit={permissions.canCreateOrder}
+              onEdit={() => actions.openEditDraftItem(index)}
               onDecrease={() => actions.updateDraftQty(index, -1)}
               onIncrease={() => actions.updateDraftQty(index, 1)}
               onRemove={() =>
@@ -147,12 +150,16 @@ function DraftCart({ workspace, askConfirm }: { workspace: PosWorkspace; askConf
 function DraftItemRow({
   item,
   index,
+  canEdit = false,
+  onEdit,
   onDecrease,
   onIncrease,
   onRemove,
 }: {
   item: PosMenuSelectedItem;
   index: number;
+  canEdit?: boolean;
+  onEdit?: () => void;
   onDecrease: () => void;
   onIncrease: () => void;
   onRemove: () => void;
@@ -162,12 +169,32 @@ function DraftItemRow({
       data-testid={`touch-draft-item-${index}`}
       className="space-y-2 rounded-xl border bg-background p-2.5"
     >
-      <ItemText
-        name={item.name}
-        modifiers={item.modifierLabels}
-        note={item.itemNote ?? null}
-        lineTotal={item.unitPrice * item.quantity}
-      />
+      {canEdit && onEdit ? (
+        <button
+          type="button"
+          data-testid={`touch-edit-draft-item-${index}`}
+          onClick={onEdit}
+          className="w-full text-left rounded-lg p-1 -m-1 hover:bg-muted/40 active:bg-muted/70 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+        >
+          <ItemText
+            name={item.name}
+            modifiers={item.modifierLabels}
+            note={item.itemNote ?? null}
+            lineTotal={item.unitPrice * item.quantity}
+          />
+          <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-accent-text">
+            <Pencil className="h-3 w-3" />
+            Chạm để sửa món
+          </span>
+        </button>
+      ) : (
+        <ItemText
+          name={item.name}
+          modifiers={item.modifierLabels}
+          note={item.itemNote ?? null}
+          lineTotal={item.unitPrice * item.quantity}
+        />
+      )}
       <div className="flex items-center justify-between gap-2">
         <QuantityStepper
           name={item.name}
@@ -391,6 +418,11 @@ function LiveOrderCart({
                     item={item}
                     isTableOrder={order.orderType === 'DINE_IN'}
                     canEdit={canUpdateOrder && isOrderActive}
+                    onEdit={
+                      item.kitchenStatus === 'NEW' && canUpdateOrder && isOrderActive
+                        ? () => actions.openEditOrderItem(item.id)
+                        : undefined
+                    }
                     onChangeQuantity={(quantity) =>
                       void actions.updateOrderItemQuantity(item.id, quantity)
                     }
@@ -659,6 +691,7 @@ function LiveItemRow({
   item,
   isTableOrder,
   canEdit,
+  onEdit,
   onChangeQuantity,
   onToggleTakeaway,
   onRemove,
@@ -666,6 +699,7 @@ function LiveItemRow({
   item: OrderItem;
   isTableOrder: boolean;
   canEdit: boolean;
+  onEdit?: () => void;
   onChangeQuantity: (quantity: number) => void;
   onToggleTakeaway: () => void;
   onRemove: () => void;
@@ -684,12 +718,32 @@ function LiveItemRow({
     >
       <div className="flex items-start gap-2">
         <div className={cn('min-w-0 flex-1', isCancelled && 'line-through')}>
-          <ItemText
-            name={`${item.quantity} x ${item.name}`}
-            modifiers={item.modifiers}
-            note={item.itemNote}
-            lineTotal={item.lineTotal}
-          />
+          {isNew && canEdit && onEdit ? (
+            <button
+              type="button"
+              data-testid={`touch-edit-item-${item.id}`}
+              onClick={onEdit}
+              className="w-full min-w-0 text-left rounded-lg p-1 -m-1 hover:bg-muted/40 active:bg-muted/70 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            >
+              <ItemText
+                name={`${item.quantity} x ${item.name}`}
+                modifiers={item.modifiers}
+                note={item.itemNote}
+                lineTotal={item.lineTotal}
+              />
+              <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-accent-text">
+                <Pencil className="h-3 w-3" />
+                Chạm để sửa món
+              </span>
+            </button>
+          ) : (
+            <ItemText
+              name={`${item.quantity} x ${item.name}`}
+              modifiers={item.modifiers}
+              note={item.itemNote}
+              lineTotal={item.lineTotal}
+            />
+          )}
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           <span

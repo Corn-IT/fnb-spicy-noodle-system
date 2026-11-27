@@ -1,6 +1,9 @@
 import {
   DEFAULT_DRINK_SIZE_MODIFIER_GROUP,
   isDrinkSizeCategoryName,
+  normalizeSubstituteNameList,
+  syncSubstitutionRulesOnModifierChange,
+  validateGroupSubstitutionRules,
   type CreateProductInput,
   type MdmItem,
   type Product,
@@ -44,6 +47,7 @@ interface EditableModifier {
   isDefaultChecked: boolean;
   isAvailable: boolean;
   defaultSubstituteName: string;
+  allowedSubstituteNames: string[] | null;
 }
 
 interface EditableModifierGroup {
@@ -111,20 +115,46 @@ export function ProductFormDrawer({
       setSortOrder(String(editingProduct.sortOrder));
       setIsAvailable(editingProduct.isAvailable);
       setModifierGroups(
-        editingProduct.modifierGroups.map((g) => ({
-          name: g.name,
-          isRequired: g.isRequired,
-          maxSelect: g.maxSelect,
-          isAutoSelect: g.isAutoSelect ?? false,
-          allowSubstitution: g.allowSubstitution ?? false,
-          modifiers: g.modifiers.map((m) => ({
-            name: m.name,
-            extraPrice: m.extraPrice,
-            isDefaultChecked: m.isDefaultChecked ?? false,
-            isAvailable: m.isAvailable ?? true,
-            defaultSubstituteName: m.defaultSubstituteName ?? '',
-          })),
-        })),
+        editingProduct.modifierGroups.map((g) => {
+          const allowSubstitution = g.allowSubstitution ?? false;
+          const siblingNames = g.modifiers
+            .map((item) => item.name.trim())
+            .filter(Boolean);
+          return {
+            name: g.name,
+            isRequired: g.isRequired,
+            maxSelect: g.maxSelect,
+            isAutoSelect: g.isAutoSelect ?? false,
+            allowSubstitution,
+            modifiers: g.modifiers.map((m) => {
+              const modName = m.name.trim();
+              const fallbackLegacyAllowed = siblingNames.filter(
+                (candidate) => candidate !== modName,
+              );
+              const allowedSubstituteNames = allowSubstitution
+                ? Array.isArray(m.allowedSubstituteNames)
+                  ? (normalizeSubstituteNameList(m.allowedSubstituteNames, modName) ?? [])
+                  : fallbackLegacyAllowed
+                : null;
+              const rawDefault = m.defaultSubstituteName?.trim() ?? '';
+              const defaultSubstituteName =
+                allowSubstitution && allowedSubstituteNames
+                  ? allowedSubstituteNames.includes(rawDefault)
+                    ? rawDefault
+                    : (allowedSubstituteNames[0] ?? '')
+                  : '';
+
+              return {
+                name: m.name,
+                extraPrice: m.extraPrice,
+                isDefaultChecked: m.isDefaultChecked ?? false,
+                isAvailable: m.isAvailable ?? true,
+                defaultSubstituteName,
+                allowedSubstituteNames,
+              };
+            }),
+          };
+        }),
       );
       setComboItems(
         editingProduct.comboItems.map((c) => ({
@@ -158,6 +188,7 @@ export function ProductFormDrawer({
       isDefaultChecked: m.isDefaultChecked,
       isAvailable: m.isAvailable,
       defaultSubstituteName: m.defaultSubstituteName ?? '',
+      allowedSubstituteNames: null,
     })),
   });
 
@@ -201,6 +232,7 @@ export function ProductFormDrawer({
           isDefaultChecked: false,
           isAvailable: true,
           defaultSubstituteName: '',
+          allowedSubstituteNames: null,
         })),
       },
     ]);
@@ -222,6 +254,7 @@ export function ProductFormDrawer({
             isDefaultChecked: true,
             isAvailable: true,
             defaultSubstituteName: '',
+            allowedSubstituteNames: null,
           }),
         ),
       },
@@ -238,9 +271,30 @@ export function ProductFormDrawer({
         isAutoSelect: true,
         allowSubstitution: true,
         modifiers: [
-          { name: 'Tôm', extraPrice: 0, isDefaultChecked: true, isAvailable: true, defaultSubstituteName: 'Mực' },
-          { name: 'Ngao', extraPrice: 0, isDefaultChecked: true, isAvailable: true, defaultSubstituteName: 'Mực' },
-          { name: 'Mực', extraPrice: 0, isDefaultChecked: true, isAvailable: true, defaultSubstituteName: 'Tôm' },
+          {
+            name: 'Ngao',
+            extraPrice: 0,
+            isDefaultChecked: true,
+            isAvailable: true,
+            defaultSubstituteName: '',
+            allowedSubstituteNames: [],
+          },
+          {
+            name: 'Tôm',
+            extraPrice: 0,
+            isDefaultChecked: true,
+            isAvailable: true,
+            defaultSubstituteName: 'Mực',
+            allowedSubstituteNames: ['Mực', 'Ngao'],
+          },
+          {
+            name: 'Mực',
+            extraPrice: 0,
+            isDefaultChecked: true,
+            isAvailable: true,
+            defaultSubstituteName: 'Tôm',
+            allowedSubstituteNames: ['Tôm', 'Ngao'],
+          },
         ],
       },
     ]);
@@ -256,16 +310,16 @@ export function ProductFormDrawer({
         isAutoSelect: false,
         allowSubstitution: false,
         modifiers: [
-          { name: 'Xúc xích', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Tôm viên', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Đậu hũ', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Bò Mỹ', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Sườn sụn', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Ngao', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Tôm', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Mực', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Kim chi', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
-          { name: 'Nấm kim châm', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: 'Xúc xích', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Tôm viên', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Đậu hũ', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Bò Mỹ', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Sườn sụn', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Ngao', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Tôm', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Mực', extraPrice: 10000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Kim chi', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
+          { name: 'Nấm kim châm', extraPrice: 5000, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
         ],
       },
     ]);
@@ -281,7 +335,7 @@ export function ProductFormDrawer({
         isAutoSelect: false,
         allowSubstitution: false,
         modifiers: [
-          { name: '', extraPrice: 0, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '' },
+          { name: '', extraPrice: 0, isDefaultChecked: false, isAvailable: true, defaultSubstituteName: '', allowedSubstituteNames: null },
         ],
       },
     ]);
@@ -301,13 +355,34 @@ export function ProductFormDrawer({
             updated.maxSelect = Math.max(updated.modifiers.length, 1);
           }
         }
-        if (patch.allowSubstitution) {
+        if (patch.allowSubstitution === true) {
           updated.isAutoSelect = true;
+          const siblingNames = updated.modifiers
+            .map((item) => item.name.trim())
+            .filter(Boolean);
+          updated.modifiers = updated.modifiers.map((m) => {
+            const modName = m.name.trim();
+            const existingAllowed = Array.isArray(m.allowedSubstituteNames)
+              ? (normalizeSubstituteNameList(m.allowedSubstituteNames, modName) ?? [])
+              : siblingNames.filter((candidate) => candidate !== modName);
+            const currentDefault = m.defaultSubstituteName.trim();
+            const nextDefault = existingAllowed.includes(currentDefault)
+              ? currentDefault
+              : (existingAllowed[0] ?? '');
+            return {
+              ...m,
+              isDefaultChecked: true,
+              allowedSubstituteNames: existingAllowed,
+              defaultSubstituteName: nextDefault,
+            };
+          });
+          updated.maxSelect = Math.max(updated.modifiers.length, 1);
+        } else if (patch.allowSubstitution === false) {
           updated.modifiers = updated.modifiers.map((m) => ({
             ...m,
-            isDefaultChecked: true,
+            allowedSubstituteNames: null,
+            defaultSubstituteName: '',
           }));
-          updated.maxSelect = Math.max(updated.modifiers.length, 1);
         }
         return updated;
       }),
@@ -322,7 +397,7 @@ export function ProductFormDrawer({
     setModifierGroups((prev) =>
       prev.map((group, idx) => {
         if (idx !== groupIdx) return group;
-        const nextModifiers = [
+        const nextModifiers: EditableModifier[] = [
           ...group.modifiers,
           {
             name: '',
@@ -330,6 +405,7 @@ export function ProductFormDrawer({
             isDefaultChecked: group.isAutoSelect,
             isAvailable: true,
             defaultSubstituteName: '',
+            allowedSubstituteNames: group.allowSubstitution ? [] : null,
           },
         ];
         return {
@@ -351,11 +427,79 @@ export function ProductFormDrawer({
     setModifierGroups((prev) =>
       prev.map((group, gIdx) => {
         if (gIdx !== groupIdx) return group;
+        const prevMod = group.modifiers[modIdx];
+        const nextModifiers = group.modifiers.map((m, mIdx) => {
+          if (mIdx !== modIdx) return m;
+          const nextRow = { ...m, ...patch };
+          if (patch.name !== undefined && Array.isArray(nextRow.allowedSubstituteNames)) {
+            nextRow.allowedSubstituteNames =
+              normalizeSubstituteNameList(nextRow.allowedSubstituteNames, patch.name) ?? [];
+            if (
+              nextRow.defaultSubstituteName.trim() &&
+              !nextRow.allowedSubstituteNames.includes(nextRow.defaultSubstituteName.trim())
+            ) {
+              nextRow.defaultSubstituteName = nextRow.allowedSubstituteNames[0] ?? '';
+            }
+          }
+          return nextRow;
+        });
+
+        const syncedModifiers =
+          group.allowSubstitution && patch.name !== undefined && prevMod
+            ? syncSubstitutionRulesOnModifierChange(nextModifiers, {
+                type: 'rename',
+                oldName: prevMod.name,
+                newName: patch.name,
+              }).map((m) => ({
+                ...m,
+                defaultSubstituteName: m.defaultSubstituteName ?? '',
+                allowedSubstituteNames: m.allowedSubstituteNames ?? null,
+              }))
+            : nextModifiers;
+
         return {
           ...group,
-          modifiers: group.modifiers.map((m, mIdx) =>
-            mIdx === modIdx ? { ...m, ...patch } : m,
-          ),
+          modifiers: syncedModifiers,
+        };
+      }),
+    );
+  };
+
+  const toggleAllowedSubstitute = (
+    groupIdx: number,
+    modIdx: number,
+    targetName: string,
+    checked: boolean,
+  ) => {
+    setModifierGroups((prev) =>
+      prev.map((group, gIdx) => {
+        if (gIdx !== groupIdx) return group;
+        return {
+          ...group,
+          modifiers: group.modifiers.map((m, mIdx) => {
+            if (mIdx !== modIdx) return m;
+            const modName = m.name.trim();
+            const siblingNames = group.modifiers
+              .map((other) => other.name.trim())
+              .filter((nameVal) => nameVal && nameVal !== modName);
+            const currentAllowed = Array.isArray(m.allowedSubstituteNames)
+              ? m.allowedSubstituteNames
+              : siblingNames;
+            const rawNext = checked
+              ? [...currentAllowed, targetName]
+              : currentAllowed.filter((entry) => entry.trim() !== targetName);
+            const nextAllowed = normalizeSubstituteNameList(rawNext, modName) ?? [];
+            const currentDefault = m.defaultSubstituteName.trim();
+            const nextDefault = nextAllowed.includes(currentDefault)
+              ? currentDefault
+              : (nextAllowed[0] ?? '');
+
+            return {
+              ...m,
+              allowedSubstituteNames: nextAllowed,
+              defaultSubstituteName: nextDefault,
+            };
+          }),
         };
       }),
     );
@@ -365,9 +509,23 @@ export function ProductFormDrawer({
     setModifierGroups((prev) =>
       prev.map((group, gIdx) => {
         if (gIdx !== groupIdx) return group;
+        const removedMod = group.modifiers[modIdx];
+        const filtered = group.modifiers.filter((_, mIdx) => mIdx !== modIdx);
+        const syncedModifiers =
+          group.allowSubstitution && removedMod
+            ? syncSubstitutionRulesOnModifierChange(filtered, {
+                type: 'remove',
+                removedName: removedMod.name,
+              }).map((m) => ({
+                ...m,
+                defaultSubstituteName: m.defaultSubstituteName ?? '',
+                allowedSubstituteNames: m.allowedSubstituteNames ?? null,
+              }))
+            : filtered;
+
         return {
           ...group,
-          modifiers: group.modifiers.filter((_, mIdx) => mIdx !== modIdx),
+          modifiers: syncedModifiers,
         };
       }),
     );
@@ -403,6 +561,23 @@ export function ProductFormDrawer({
         });
         return;
       }
+      const substitutionError = validateGroupSubstitutionRules({
+        allowSubstitution: group.allowSubstitution,
+        modifiers: group.modifiers.map((m) => ({
+          name: m.name.trim(),
+          defaultSubstituteName: m.defaultSubstituteName.trim() || null,
+          allowedSubstituteNames: group.allowSubstitution
+            ? (normalizeSubstituteNameList(m.allowedSubstituteNames, m.name) ?? [])
+            : null,
+        })),
+      });
+      if (substitutionError) {
+        notify('menu.product.saveError', {
+          variant: 'destructive',
+          vars: { reason: substitutionError },
+        });
+        return;
+      }
     }
 
     const payload: CreateProductInput = {
@@ -425,8 +600,12 @@ export function ProductFormDrawer({
           extraPrice: Math.max(0, Number(m.extraPrice) || 0),
           isDefaultChecked: m.isDefaultChecked,
           isAvailable: m.isAvailable,
-          defaultSubstituteName: m.defaultSubstituteName.trim()
-            ? m.defaultSubstituteName.trim()
+          defaultSubstituteName:
+            group.allowSubstitution && m.defaultSubstituteName.trim()
+              ? m.defaultSubstituteName.trim()
+              : null,
+          allowedSubstituteNames: group.allowSubstitution
+            ? (normalizeSubstituteNameList(m.allowedSubstituteNames, m.name) ?? [])
             : null,
         })),
       })),
@@ -464,7 +643,7 @@ export function ProductFormDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-3xl p-0 gap-0 overflow-hidden flex flex-col h-dvh"
+        className="w-full sm:max-w-4xl p-0 gap-0 overflow-hidden flex flex-col h-dvh"
         data-testid="product-form-drawer"
       >
         <SheetHeader className="p-4 sm:p-5 border-b border-border bg-card shrink-0 pr-12">
@@ -893,23 +1072,51 @@ export function ProductFormDrawer({
                   {/* Danh sách từng Line Item trong nhóm */}
                   <div className="space-y-2">
                     <div className="hidden sm:grid sm:grid-cols-12 gap-2 px-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                      <div className={group.allowSubstitution ? 'sm:col-span-3' : 'sm:col-span-4'}>
+                      <div className={group.allowSubstitution ? 'sm:col-span-2' : 'sm:col-span-4'}>
                         Tên tuỳ chọn
                       </div>
                       <div className={group.allowSubstitution ? 'sm:col-span-2' : 'sm:col-span-3'}>
-                        Đơn giá cộng thêm
+                        {group.allowSubstitution ? 'Giá thêm' : 'Đơn giá cộng thêm'}
                       </div>
                       {group.allowSubstitution ? (
-                        <div className="sm:col-span-3">Món thay thế mặc định</div>
+                        <>
+                          <div className="sm:col-span-3">Đổi món</div>
+                          <div className="sm:col-span-2">Mặc định</div>
+                        </>
                       ) : null}
                       <div className={group.allowSubstitution ? 'sm:col-span-1 text-center' : 'sm:col-span-2 text-center'}>
-                        Auto bật
+                        {group.allowSubstitution ? 'Auto' : 'Auto bật'}
                       </div>
-                      <div className="sm:col-span-2 text-center">Tạm hết</div>
+                      <div className={group.allowSubstitution ? 'sm:col-span-1 text-center' : 'sm:col-span-2 text-center'}>
+                        Tạm hết
+                      </div>
                       <div className="sm:col-span-1 text-right">Xoá</div>
                     </div>
 
-                    {group.modifiers.map((mod, mIdx) => (
+                    {group.modifiers.map((mod, mIdx) => {
+                      const modTrimmedName = mod.name.trim();
+                      const seenSiblings = new Set<string>();
+                      const otherModifiers = group.modifiers
+                        .map((other, idx) => ({ other, idx }))
+                        .filter(({ other, idx }) => {
+                          const targetName = other.name.trim();
+                          if (idx === mIdx || !targetName || targetName === modTrimmedName) {
+                            return false;
+                          }
+                          if (seenSiblings.has(targetName)) return false;
+                          seenSiblings.add(targetName);
+                          return true;
+                        });
+                      const allowedSet = new Set(
+                        Array.isArray(mod.allowedSubstituteNames)
+                          ? mod.allowedSubstituteNames.map((entry) => entry.trim())
+                          : otherModifiers.map(({ other }) => other.name.trim()),
+                      );
+                      const checkedTargets = otherModifiers
+                        .map(({ other }) => other.name.trim())
+                        .filter((targetName) => allowedSet.has(targetName));
+
+                      return (
                       <div
                         key={mIdx}
                         className={`rounded-lg border p-2.5 sm:p-0 sm:border-0 grid grid-cols-12 items-center gap-2 ${
@@ -921,7 +1128,7 @@ export function ProductFormDrawer({
                         <div
                           className={
                             group.allowSubstitution
-                              ? 'col-span-12 sm:col-span-3'
+                              ? 'col-span-7 sm:col-span-2'
                               : 'col-span-7 sm:col-span-4'
                           }
                         >
@@ -962,27 +1169,92 @@ export function ProductFormDrawer({
                         </div>
 
                         {group.allowSubstitution ? (
-                          <div className="col-span-7 sm:col-span-3">
-                            <span className="block sm:hidden text-[10px] font-semibold text-muted-foreground mb-0.5">
-                              Thay thế mặc định
-                            </span>
-                            <Input
-                              value={mod.defaultSubstituteName}
-                              onChange={(e) =>
-                                updateModifier(gIdx, mIdx, {
-                                  defaultSubstituteName: e.target.value,
-                                })
-                              }
-                              placeholder="VD: Mực / Tôm"
-                              className="h-8 text-xs"
-                            />
-                          </div>
+                          <>
+                            <div className="col-span-12 sm:col-span-3">
+                              <span className="block sm:hidden text-[10px] font-semibold text-muted-foreground mb-1">
+                                Đổi món (được phép thay thế)
+                              </span>
+                              {otherModifiers.length === 0 ? (
+                                <span className="text-[11px] text-muted-foreground">
+                                  Cần ít nhất 2 món
+                                </span>
+                              ) : (
+                                <div
+                                  data-testid={`modifier-allowed-subs-${gIdx}-${mIdx}`}
+                                  className="flex flex-wrap gap-1"
+                                >
+                                  {otherModifiers.map(({ other, idx: siblingIdx }) => {
+                                    const targetName = other.name.trim();
+                                    const isAllowed = allowedSet.has(targetName);
+                                    return (
+                                      <label
+                                        key={siblingIdx}
+                                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium cursor-pointer select-none transition-colors ${
+                                          isAllowed
+                                            ? 'border-blue-500/50 bg-blue-500/10 text-blue-800 dark:text-blue-300'
+                                            : 'border-border/60 bg-background text-muted-foreground hover:text-foreground'
+                                        }`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          data-testid={`modifier-sub-checkbox-${gIdx}-${mIdx}-${siblingIdx}`}
+                                          aria-label={`Cho phép đổi ${modTrimmedName || 'món này'} sang ${targetName}`}
+                                          checked={isAllowed}
+                                          onChange={(e) =>
+                                            toggleAllowedSubstitute(
+                                              gIdx,
+                                              mIdx,
+                                              targetName,
+                                              e.target.checked,
+                                            )
+                                          }
+                                          className="h-3.5 w-3.5 rounded border-border accent-blue-600 cursor-pointer"
+                                        />
+                                        <span>{targetName}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="col-span-12 sm:col-span-2">
+                              <span className="block sm:hidden text-[10px] font-semibold text-muted-foreground mb-0.5">
+                                Thay thế mặc định
+                              </span>
+                              <select
+                                data-testid={`modifier-default-sub-select-${gIdx}-${mIdx}`}
+                                aria-label={`Món thay thế mặc định cho ${modTrimmedName || 'món này'}`}
+                                disabled={checkedTargets.length === 0}
+                                value={checkedTargets.length === 0 ? '' : mod.defaultSubstituteName}
+                                onChange={(e) =>
+                                  updateModifier(gIdx, mIdx, {
+                                    defaultSubstituteName: e.target.value,
+                                  })
+                                }
+                                className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-65"
+                              >
+                                {checkedTargets.length === 0 ? (
+                                  <option value="">Chỉ bỏ, không đổi</option>
+                                ) : (
+                                  <>
+                                    <option value="">-- Chọn mặc định --</option>
+                                    {checkedTargets.map((targetName) => (
+                                      <option key={targetName} value={targetName}>
+                                        {targetName}
+                                      </option>
+                                    ))}
+                                  </>
+                                )}
+                              </select>
+                            </div>
+                          </>
                         ) : null}
 
                         <div
                           className={
                             group.allowSubstitution
-                              ? 'col-span-5 sm:col-span-1 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0'
+                              ? 'col-span-4 sm:col-span-1 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0'
                               : 'col-span-5 sm:col-span-2 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0'
                           }
                         >
@@ -1002,7 +1274,13 @@ export function ProductFormDrawer({
                           </span>
                         </div>
 
-                        <div className="col-span-5 sm:col-span-2 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0">
+                        <div
+                          className={
+                            group.allowSubstitution
+                              ? 'col-span-5 sm:col-span-1 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0'
+                              : 'col-span-5 sm:col-span-2 flex items-center sm:justify-center gap-1.5 pt-1 sm:pt-0'
+                          }
+                        >
                           <input
                             type="checkbox"
                             data-testid={`modifier-unavailable-toggle-${gIdx}-${mIdx}`}
@@ -1020,11 +1298,18 @@ export function ProductFormDrawer({
                           </span>
                         </div>
 
-                        <div className="col-span-2 sm:col-span-1 flex justify-end pt-1 sm:pt-0">
+                        <div
+                          className={
+                            group.allowSubstitution
+                              ? 'col-span-3 sm:col-span-1 flex justify-end pt-1 sm:pt-0'
+                              : 'col-span-2 sm:col-span-1 flex justify-end pt-1 sm:pt-0'
+                          }
+                        >
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
+                            data-testid={`modifier-remove-btn-${gIdx}-${mIdx}`}
                             className="h-7 w-7 p-0 text-destructive"
                             disabled={group.modifiers.length <= 1}
                             onClick={() => removeModifier(gIdx, mIdx)}
@@ -1033,7 +1318,8 @@ export function ProductFormDrawer({
                           </Button>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
 
                     <div className="pt-1">
                       <Button

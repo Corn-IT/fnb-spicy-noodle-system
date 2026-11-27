@@ -1,4 +1,5 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
+import { ErrorCodes } from '@fnb/shared';
 import { Prisma } from '@prisma/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KitchenSplitService } from '../kitchen-split.service';
@@ -1173,5 +1174,509 @@ describe('PosService', () => {
     });
     expect(res.requireCancellationSlip).toBe(false);
     expect(res.kitchenCancellationSlips).toEqual([]);
+  });
+
+  it('snapshots takeawayLabelFormat on POS takeaway orders and preserves old labels when setting toggles mid-day', async () => {
+    const harness = createHarness();
+    let currentFormat: 'NUMBER' | 'LETTER' = 'LETTER';
+    (harness.tx as Record<string, unknown>).masterData = {
+      findUnique: vi.fn(async () => ({
+        metadata: { takeawayLabelFormat: currentFormat },
+      })),
+    };
+    harness.tx.order.create
+      .mockResolvedValueOnce({
+        id: 21,
+        orderCode: 'HD-20261127-0005',
+        orderType: 'TAKEAWAY',
+        orderSource: 'POS_COUNTER',
+        tableId: null,
+        takeawayNumber: 5,
+        takeawayLabelFormat: 'LETTER',
+        status: 'SERVING',
+        totalAmount: new Prisma.Decimal('100.00'),
+      })
+      .mockResolvedValueOnce({
+        id: 22,
+        orderCode: 'HD-20261127-0006',
+        orderType: 'TAKEAWAY',
+        orderSource: 'POS_COUNTER',
+        tableId: null,
+        takeawayNumber: 6,
+        takeawayLabelFormat: 'NUMBER',
+        status: 'SERVING',
+        totalAmount: new Prisma.Decimal('100.00'),
+      });
+    const service = createPosService(harness);
+
+    const fifth = await service.createOrder(
+      { orderType: 'TAKEAWAY', tableId: null, items: [{ productId: 11, quantity: 1 }] },
+      3,
+    );
+    expect(fifth.tableLabel).toBe('Mang về #AA');
+    expect(fifth.takeawayLabelFormat).toBe('LETTER');
+    expect(harness.tx.order.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          takeawayLabelFormat: 'LETTER',
+        }),
+      }),
+    );
+
+    currentFormat = 'NUMBER';
+    const sixth = await service.createOrder(
+      { orderType: 'TAKEAWAY', tableId: null, items: [{ productId: 11, quantity: 1 }] },
+      3,
+    );
+    expect(sixth.tableLabel).toBe('Mang về #06');
+    expect(sixth.takeawayLabelFormat).toBe('NUMBER');
+
+    harness.prisma.order.findUnique = vi.fn().mockResolvedValue({
+      id: 21,
+      orderCode: 'HD-20261127-0005',
+      orderType: 'TAKEAWAY',
+      orderSource: 'POS_COUNTER',
+      tableId: null,
+      table: null,
+      takeawayNumber: 5,
+      takeawayLabelFormat: 'LETTER',
+      status: 'SERVING',
+      paymentMethod: null,
+      cashAmount: new Prisma.Decimal('0.00'),
+      transferAmount: new Prisma.Decimal('0.00'),
+      subtotalAmount: new Prisma.Decimal('100.00'),
+      discountAmount: new Prisma.Decimal('0.00'),
+      discountSnapshot: null,
+      totalAmount: new Prisma.Decimal('100.00'),
+      note: null,
+      createdAt: new Date('2026-11-27T05:00:00.000Z'),
+      paidAt: null,
+      tableTransferLogs: [],
+      items: [],
+    });
+    const detail = await service.getOrder(21);
+    expect(detail.tableLabel).toBe('Mang về #AA');
+    expect(detail.takeawayLabelFormat).toBe('LETTER');
+  });
+
+  it('edits modifiers, quantity, and itemNote on a NEW order item and recalculates active percentage discount', async () => {
+    const harness = createHarness();
+    const spicyNoodle = {
+      id: 55,
+      name: 'Mì Cay Bò',
+      price: new Prisma.Decimal('50000.00'),
+      station: 'BEP_NAU',
+      isAvailable: true,
+      modifierGroups: [
+        {
+          id: 1,
+          name: 'Cấp độ cay',
+          isRequired: true,
+          maxSelect: 1,
+          isAutoSelect: false,
+          allowSubstitution: false,
+          modifiers: [
+            { id: 101, name: 'Cấp 1', extraPrice: new Prisma.Decimal('0.00'), isAvailable: true, isDefaultChecked: true },
+            { id: 103, name: 'Cấp 3', extraPrice: new Prisma.Decimal('0.00'), isAvailable: true, isDefaultChecked: false },
+          ],
+        },
+        {
+          id: 2,
+          name: 'Topping',
+          isRequired: false,
+          maxSelect: 3,
+          isAutoSelect: false,
+          allowSubstitution: false,
+          modifiers: [
+            { id: 201, name: 'Thêm Bò Mỹ', extraPrice: new Prisma.Decimal('20000.00'), isAvailable: true, isDefaultChecked: false },
+            { id: 202, name: 'Hết hàng', extraPrice: new Prisma.Decimal('10000.00'), isAvailable: false, isDefaultChecked: false },
+          ],
+        },
+      ],
+    };
+    harness.tx.product.findMany.mockResolvedValue([spicyNoodle]);
+    (harness.tx as Record<string, unknown>).discount = {
+      findUnique: vi.fn().mockResolvedValue({
+        id: 9,
+        code: 'GIAM10',
+        name: 'Giảm 10%',
+        type: 'PERCENT',
+        value: new Prisma.Decimal('10.00'),
+        maxDiscountAmount: null,
+        minOrderAmount: new Prisma.Decimal('50000.00'),
+        applyScope: 'ALL',
+        categoryId: null,
+        isActive: true,
+        startDate: null,
+        endDate: null,
+      }),
+    };
+    harness.tx.order.findUnique.mockResolvedValue({
+      id: 77,
+      orderCode: 'HD-77',
+      status: 'SERVING',
+      orderType: 'DINE_IN',
+      tableId: 4,
+      table: { id: 4, name: 'Bàn 04' },
+      discountId: 9,
+      discountSnapshot: {
+        kind: 'CODE',
+        discountId: 9,
+        code: 'GIAM10',
+        name: 'Giảm 10%',
+        valueType: 'PERCENT',
+        value: 10,
+        maxDiscountAmount: null,
+        scope: 'ORDER',
+        targetCategoryIds: [],
+        targetProductIds: [],
+        minOrderAmount: 50000,
+        appliedAt: '2026-11-27T04:00:00.000Z',
+        appliedBy: 1,
+        reason: null,
+      },
+      items: [
+        {
+          id: 301,
+          orderId: 77,
+          productId: 55,
+          quantity: 1,
+          unitPrice: new Prisma.Decimal('50000.00'),
+          modifiersSnapshot: [{ groupId: 1, modifierId: 101, name: 'Cấp 1', extraPrice: '0.00' }],
+          itemNote: null,
+          batchNo: 1,
+          kitchenStatus: 'NEW',
+          isTakeaway: false,
+          product: spicyNoodle,
+        },
+      ],
+    });
+    harness.tx.orderItem.findMany.mockResolvedValue([
+      {
+        id: 301,
+        productId: 55,
+        quantity: 2,
+        kitchenStatus: 'NEW',
+        unitPrice: new Prisma.Decimal('70000.00'),
+        modifiersSnapshot: [
+          { groupId: 1, modifierId: 103, name: 'Cấp 3', extraPrice: '0.00' },
+          { groupId: 2, modifierId: 201, name: 'Thêm Bò Mỹ', extraPrice: '20000.00' },
+        ],
+        product: { categoryId: 1 },
+      },
+    ]);
+    harness.tx.order.update.mockResolvedValue({ id: 77, totalAmount: new Prisma.Decimal('126000.00') });
+
+    const service = createPosService(harness);
+    const res = await service.patchOrderItems(77, {
+      updates: [
+        {
+          orderItemId: 301,
+          expectedKitchenStatus: 'NEW',
+          quantity: 2,
+          modifiers: [
+            { groupId: 1, modifierId: 103 },
+            { groupId: 2, modifierId: 201 },
+          ],
+          itemNote: 'Không hành',
+        },
+      ],
+    });
+
+    expect(harness.tx.orderItem.update).toHaveBeenCalledWith({
+      where: { id: 301 },
+      data: expect.objectContaining({
+        quantity: 2,
+        unitPrice: new Prisma.Decimal('70000.00'),
+        itemNote: 'Không hành',
+        modifiersSnapshot: expect.arrayContaining([
+          expect.objectContaining({ modifierId: 103, name: 'Cấp 3' }),
+          expect.objectContaining({ modifierId: 201, name: 'Thêm Bò Mỹ', extraPrice: '20000.00' }),
+        ]),
+      }),
+    });
+    expect(harness.tx.order.update).toHaveBeenCalledWith({
+      where: { id: 77 },
+      data: {
+        subtotalAmount: new Prisma.Decimal('140000.00'),
+        discountAmount: new Prisma.Decimal('14000.00'),
+        totalAmount: new Prisma.Decimal('126000.00'),
+      },
+    });
+    expect(res.requireCancellationSlip).toBe(false);
+  });
+
+  it('rejects editing an already PRINTED order item with 409 POS_ITEM_ALREADY_PRINTED when expectedKitchenStatus is NEW', async () => {
+    const harness = createHarness();
+    harness.tx.order.findUnique.mockResolvedValue({
+      id: 42,
+      orderCode: 'HD-42',
+      status: 'SERVING',
+      orderType: 'DINE_IN',
+      tableId: 7,
+      table: { id: 7, name: 'Bàn 07' },
+      items: [
+        {
+          id: 10,
+          orderId: 42,
+          productId: 11,
+          quantity: 1,
+          unitPrice: new Prisma.Decimal('100.00'),
+          modifiersSnapshot: [],
+          itemNote: null,
+          batchNo: 1,
+          kitchenStatus: 'PRINTED',
+          isTakeaway: false,
+          product,
+        },
+      ],
+    });
+
+    const service = createPosService(harness);
+    const err = await service
+      .patchOrderItems(42, {
+        updates: [{ orderItemId: 10, expectedKitchenStatus: 'NEW', quantity: 2, itemNote: 'Cấp 3' }],
+      })
+      .catch((caught: unknown) => caught as ConflictException);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: ErrorCodes.POS_ITEM_ALREADY_PRINTED });
+    expect(harness.tx.orderItem.update).not.toHaveBeenCalled();
+    expect(harness.tx.order.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects editing a CANCELLED item and rejects unavailable modifiers', async () => {
+    const harness = createHarness();
+    const spicyNoodle = {
+      id: 55,
+      name: 'Mì Cay Bò',
+      price: new Prisma.Decimal('50000.00'),
+      station: 'BEP_NAU',
+      isAvailable: true,
+      modifierGroups: [
+        {
+          id: 2,
+          name: 'Topping',
+          isRequired: false,
+          maxSelect: 3,
+          isAutoSelect: false,
+          allowSubstitution: false,
+          modifiers: [
+            { id: 202, name: 'Nấm Hết Hàng', extraPrice: new Prisma.Decimal('10000.00'), isAvailable: false },
+          ],
+        },
+      ],
+    };
+    harness.tx.product.findMany.mockResolvedValue([spicyNoodle]);
+    (harness.tx as Record<string, unknown>).discount = {
+      findUnique: vi.fn().mockResolvedValue({
+        id: 9,
+        code: 'GIAM10',
+        name: 'Giảm 10%',
+        type: 'PERCENT',
+        value: new Prisma.Decimal('10.00'),
+        maxDiscountAmount: null,
+        minOrderAmount: new Prisma.Decimal('50000.00'),
+        applyScope: 'ALL',
+        categoryId: null,
+        isActive: true,
+        startDate: null,
+        endDate: null,
+      }),
+    };
+    harness.tx.order.findUnique.mockResolvedValue({
+      id: 88,
+      orderCode: 'HD-88',
+      status: 'SERVING',
+      orderType: 'DINE_IN',
+      tableId: 4,
+      table: { id: 4, name: 'Bàn 04' },
+      items: [
+        {
+          id: 501,
+          orderId: 88,
+          productId: 55,
+          quantity: 1,
+          unitPrice: new Prisma.Decimal('50000.00'),
+          modifiersSnapshot: [],
+          itemNote: null,
+          batchNo: 1,
+          kitchenStatus: 'CANCELLED',
+          isTakeaway: false,
+          product: spicyNoodle,
+        },
+        {
+          id: 502,
+          orderId: 88,
+          productId: 55,
+          quantity: 1,
+          unitPrice: new Prisma.Decimal('50000.00'),
+          modifiersSnapshot: [],
+          itemNote: null,
+          batchNo: 2,
+          kitchenStatus: 'NEW',
+          isTakeaway: false,
+          product: spicyNoodle,
+        },
+      ],
+    });
+
+    const service = createPosService(harness);
+    await expect(
+      service.patchOrderItems(88, {
+        updates: [{ orderItemId: 501, quantity: 2 }],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    await expect(
+      service.patchOrderItems(88, {
+        updates: [{ orderItemId: 502, modifiers: [{ groupId: 2, modifierId: 202 }] }],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(harness.tx.orderItem.update).not.toHaveBeenCalled();
+  });
+
+  it('should enforce modifier allowedSubstituteNames rules for SUBSTITUTED vs REMOVED_DEFAULT on create and patch', async () => {
+    const matrixProduct = {
+      id: 99,
+      name: 'Mì Hải Sản',
+      price: new Prisma.Decimal('69000.00'),
+      station: 'BEP_NAU',
+      isAvailable: true,
+      modifierGroups: [
+        {
+          id: 3,
+          name: 'Đồ ăn món chính',
+          isRequired: false,
+          maxSelect: 3,
+          isAutoSelect: true,
+          allowSubstitution: true,
+          modifiers: [
+            {
+              id: 301,
+              name: 'Ngao',
+              extraPrice: new Prisma.Decimal('0.00'),
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: null,
+              allowedSubstituteNames: [],
+            },
+            {
+              id: 302,
+              name: 'Tôm',
+              extraPrice: new Prisma.Decimal('0.00'),
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: 'Mực',
+              allowedSubstituteNames: ['Mực'],
+            },
+            {
+              id: 303,
+              name: 'Mực',
+              extraPrice: new Prisma.Decimal('0.00'),
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: 'Tôm',
+              allowedSubstituteNames: ['Tôm', 'Ngao'],
+            },
+          ],
+        },
+      ],
+    };
+
+    const harness = createHarness();
+    harness.tx.product.findMany.mockResolvedValue([matrixProduct]);
+    harness.tx.order.create.mockResolvedValue({
+      id: 101,
+      orderCode: 'HD-20261127-0101',
+      orderType: 'TAKEAWAY',
+      tableId: null,
+      takeawayNumber: 1,
+      status: 'SERVING',
+      totalAmount: new Prisma.Decimal('69000.00'),
+    });
+    const service = createPosService(harness);
+
+    // 1. Disallowed swap: unchecking Ngao (allowedSubstituteNames: []) MUST NOT use SUBSTITUTED -> 422
+    await expect(
+      service.createOrder({
+        orderType: 'TAKEAWAY',
+        items: [{
+          productId: 99,
+          quantity: 1,
+          modifiers: [{ groupId: 3, modifierId: 301, action: 'SUBSTITUTED', substituteModifierId: 302 }],
+        }],
+      }, 1),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    // 2. Disallowed swap target: Tôm only allows Mực; attempting Tôm -> Ngao throws 422
+    await expect(
+      service.createOrder({
+        orderType: 'TAKEAWAY',
+        items: [{
+          productId: 99,
+          quantity: 1,
+          modifiers: [{ groupId: 3, modifierId: 302, action: 'SUBSTITUTED', substituteModifierId: 301 }],
+        }],
+      }, 1),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(harness.tx.order.create).not.toHaveBeenCalled();
+
+    // 3. Removing Ngao via REMOVED_DEFAULT + substituting Tôm -> Mực succeeds accurately
+    await service.createOrder({
+      orderType: 'TAKEAWAY',
+      items: [{
+        productId: 99,
+        quantity: 1,
+        modifiers: [
+          { groupId: 3, modifierId: 301, action: 'REMOVED_DEFAULT' },
+          { groupId: 3, modifierId: 302, action: 'SUBSTITUTED', substituteModifierId: 303 },
+        ],
+      }],
+    }, 1);
+
+    expect(harness.tx.order.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        items: {
+          create: [expect.objectContaining({
+            modifiersSnapshot: [
+              { groupId: 3, modifierId: 301, name: 'Không Ngao', extraPrice: '0.00', action: 'REMOVED_DEFAULT' },
+              {
+                groupId: 3,
+                modifierId: 302,
+                name: 'Không Tôm (Thay bằng Mực)',
+                extraPrice: '0.00',
+                action: 'SUBSTITUTED',
+                substituteModifierId: 303,
+                substituteName: 'Mực',
+              },
+            ],
+          })],
+        },
+      }),
+    }));
+
+    // 4. When Mực (the only allowed substitute for Tôm) is out-of-stock, Tôm SUBSTITUTED throws 422
+    harness.tx.product.findMany.mockResolvedValue([{
+      ...matrixProduct,
+      modifierGroups: [{
+        ...matrixProduct.modifierGroups[0]!,
+        modifiers: [
+          matrixProduct.modifierGroups[0]!.modifiers[0]!,
+          matrixProduct.modifierGroups[0]!.modifiers[1]!,
+          { ...matrixProduct.modifierGroups[0]!.modifiers[2]!, isAvailable: false },
+        ],
+      }],
+    }]);
+    await expect(
+      service.createOrder({
+        orderType: 'TAKEAWAY',
+        items: [{
+          productId: 99,
+          quantity: 1,
+          modifiers: [{ groupId: 3, modifierId: 302, action: 'SUBSTITUTED' }],
+        }],
+      }, 1),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 });

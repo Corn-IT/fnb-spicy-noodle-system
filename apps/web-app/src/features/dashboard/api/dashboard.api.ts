@@ -1,8 +1,11 @@
 import {
+  DashboardDailyItemSalesResponseSchema,
+  type DashboardDailyItemSalesResponse,
   type DashboardOverviewResponse,
   DashboardOverviewResponseSchema,
   type DashboardPreset,
   DashboardQuerySchema,
+  type ProductStation,
   SocketEvents,
 } from '@fnb/shared';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,6 +18,12 @@ export interface DashboardFilterParams {
   preset: DashboardPreset;
   fromDate?: string;
   toDate?: string;
+}
+
+export interface DashboardItemSalesFilterParams extends DashboardFilterParams {
+  station?: 'ALL' | ProductStation;
+  categoryId?: number;
+  search?: string;
 }
 
 const REALTIME_DASHBOARD_EVENTS = [
@@ -38,6 +47,19 @@ export function getDashboardQueryKey(filter: DashboardFilterParams) {
   ] as const;
 }
 
+export function getDashboardDailyItemSalesQueryKey(filter: DashboardItemSalesFilterParams) {
+  return [
+    'dashboard',
+    'daily-item-sales',
+    filter.preset,
+    filter.fromDate ?? '',
+    filter.toDate ?? '',
+    filter.station ?? 'ALL',
+    filter.categoryId ?? 'ALL',
+    filter.search ?? '',
+  ] as const;
+}
+
 export async function fetchDashboardOverview(
   filter: DashboardFilterParams,
 ): Promise<DashboardOverviewResponse> {
@@ -48,6 +70,40 @@ export async function fetchDashboardOverview(
   }
   const raw = await apiClient.get<unknown>('/api/v1/dashboard/overview', { params });
   return DashboardOverviewResponseSchema.parse(raw);
+}
+
+export async function fetchDashboardDailyItemSales(
+  filter: DashboardItemSalesFilterParams,
+): Promise<DashboardDailyItemSalesResponse> {
+  const params: Record<string, string> = { preset: filter.preset };
+  if (filter.preset === 'custom' && filter.fromDate && filter.toDate) {
+    params.fromDate = filter.fromDate;
+    params.toDate = filter.toDate;
+  }
+  if (filter.station && filter.station !== 'ALL') {
+    params.station = filter.station;
+  }
+  if (filter.categoryId !== undefined) {
+    params.categoryId = String(filter.categoryId);
+  }
+  const trimmedSearch = filter.search?.trim();
+  if (trimmedSearch) {
+    params.search = trimmedSearch;
+  }
+  const raw = await apiClient.get<unknown>('/api/v1/dashboard/daily-item-sales', { params });
+  return DashboardDailyItemSalesResponseSchema.parse(raw);
+}
+
+export function useDashboardDailyItemSales(filter: DashboardItemSalesFilterParams) {
+  const isCustomReady = getDashboardCustomRangeError(filter) === null;
+  return useQuery({
+    queryKey: getDashboardDailyItemSalesQueryKey(filter),
+    queryFn: () => fetchDashboardDailyItemSales(filter),
+    enabled: isCustomReady,
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+    refetchInterval: 60_000,
+  });
 }
 
 export function getDashboardCustomRangeError(filter: DashboardFilterParams): string | null {

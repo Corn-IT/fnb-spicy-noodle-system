@@ -1,260 +1,246 @@
-import { type Product } from '@fnb/shared';
+import type { Product } from '@fnb/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildInitialSelectedByGroup,
   computeOrderModifiersPayload,
+  getSubstitutionHintText,
+  hydrateModifierSelectionFromExisting,
+  inferModifierSelectionsFromLabels,
+  isProductModifierSelectionValid,
   resolveSubstituteForUncheckedModifier,
 } from '../modifier-selection';
 
-const sampleSeafoodNoodle: Product = {
+const spicyComboNoodle: Product = {
   id: 1,
-  name: 'Mì cay hải sản',
-  subtitle: 'Ngao, tôm, mực',
-  categoryId: 10,
-  categoryName: 'Mì Cay',
-  price: 79000,
+  name: 'Mì Cay Hải Sản',
+  price: 55000,
   station: 'BEP_NAU',
   isAvailable: true,
+  imageUrl: null,
   sortOrder: 1,
   comboItems: [],
   modifierGroups: [
     {
-      id: 1,
+      id: 10,
       name: 'Cấp độ cay',
       isRequired: true,
       maxSelect: 1,
-      isAutoSelect: false,
-      allowSubstitution: false,
       modifiers: [
-        { id: 101, name: 'Cấp 1', extraPrice: 0, isDefaultChecked: false },
-        { id: 102, name: 'Cấp 3', extraPrice: 0, isDefaultChecked: false },
+        { id: 101, name: 'Cấp 0', extraPrice: 0, isDefaultChecked: true, isAvailable: true },
+        { id: 102, name: 'Cấp 3', extraPrice: 0, isDefaultChecked: false, isAvailable: true },
+        { id: 103, name: 'Cấp 7 (Tạm hết)', extraPrice: 0, isDefaultChecked: false, isAvailable: false },
       ],
     },
     {
-      id: 2,
-      name: 'Đồ ăn mặc định (0đ)',
+      id: 20,
+      name: 'Topping',
       isRequired: false,
-      maxSelect: 6,
+      maxSelect: 5,
+      modifiers: [
+        { id: 201, name: 'Thêm Bò Mỹ', extraPrice: 20000, isAvailable: true },
+        { id: 202, name: 'Thêm Phô Mai', extraPrice: 10000, isAvailable: true },
+        { id: 203, name: 'Trứng Cút (Tạm hết)', extraPrice: 5000, isAvailable: false },
+      ],
+    },
+    {
+      id: 30,
+      name: 'Gia vị đi kèm',
+      isRequired: false,
+      maxSelect: 2,
       isAutoSelect: true,
-      allowSubstitution: false,
       modifiers: [
-        { id: 201, name: 'Tôm viên', extraPrice: 0, isDefaultChecked: true },
-        { id: 202, name: 'Rau', extraPrice: 0, isDefaultChecked: true },
+        { id: 301, name: 'Hành lá', extraPrice: 0, isDefaultChecked: true, isAvailable: true },
+        { id: 302, name: 'Nấm kim châm', extraPrice: 0, isDefaultChecked: true, isAvailable: true },
       ],
     },
     {
-      id: 3,
-      name: 'Đồ ăn chính của món',
-      isRequired: false,
+      id: 40,
+      name: 'Loại mì',
+      isRequired: true,
       maxSelect: 3,
-      isAutoSelect: true,
       allowSubstitution: true,
       modifiers: [
-        {
-          id: 301,
-          name: 'Tôm',
-          extraPrice: 0,
-          isDefaultChecked: true,
-          defaultSubstituteName: 'Mực',
-        },
-        {
-          id: 302,
-          name: 'Ngao',
-          extraPrice: 0,
-          isDefaultChecked: true,
-          defaultSubstituteName: 'Mực',
-        },
-        {
-          id: 303,
-          name: 'Mực',
-          extraPrice: 0,
-          isDefaultChecked: true,
-          defaultSubstituteName: 'Tôm',
-        },
-      ],
-    },
-    {
-      id: 4,
-      name: 'Đồ ăn thêm',
-      isRequired: false,
-      maxSelect: 10,
-      isAutoSelect: false,
-      allowSubstitution: false,
-      modifiers: [
-        { id: 401, name: 'Bò Mỹ', extraPrice: 10000, isDefaultChecked: false },
+        { id: 401, name: 'Mì Hàn Quốc', extraPrice: 0, defaultSubstituteName: 'Bún tươi', isAvailable: true },
+        { id: 402, name: 'Bún tươi', extraPrice: 0, isAvailable: true },
+        { id: 403, name: 'Miến dong', extraPrice: 0, isAvailable: true },
       ],
     },
   ],
 };
 
-describe('modifier-selection engine', () => {
-  it('auto-checks all default modifiers when opening a product', () => {
-    const initial = buildInitialSelectedByGroup(sampleSeafoodNoodle);
-    expect(initial[1]).toBeUndefined();
-    expect(initial[2]).toEqual([201, 202]);
-    expect(initial[3]).toEqual([301, 302, 303]);
-  });
+describe('modifier-selection hydration & round-trip', () => {
+  it('hydrates radio, checkbox, REMOVED_DEFAULT, and SUBSTITUTED selections back into editable state', () => {
+    const initialSelections = [
+      { groupId: 10, modifierId: 102 },
+      { groupId: 20, modifierId: 201 },
+      { groupId: 20, modifierId: 202 },
+      { groupId: 30, modifierId: 301, action: 'REMOVED_DEFAULT' as const },
+      {
+        groupId: 40,
+        modifierId: 401,
+        action: 'SUBSTITUTED' as const,
+        substituteModifierId: 403,
+        substituteName: 'Miến dong',
+      },
+    ];
 
-  it('resolves default substitute when 1 main ingredient is unchecked and locks to sole remaining when 2 are unchecked', () => {
-    const mainGroup = sampleSeafoodNoodle.modifierGroups[2]!;
-    const ngao = mainGroup.modifiers[1]!;
-    const muc = mainGroup.modifiers[2]!;
+    const hydrated = hydrateModifierSelectionFromExisting(spicyComboNoodle, initialSelections);
 
-    // Bỏ tích 1 món (Ngao) -> Thay thế mặc định bằng Mực
-    const singleUncheck = resolveSubstituteForUncheckedModifier(
-      mainGroup,
-      ngao,
-      [301, 303],
-      {},
+    expect(hydrated.selectedByGroup[10]).toEqual([102]);
+    expect(hydrated.selectedByGroup[20]).toEqual([201, 202]);
+    // Hành lá (301) unchecked; Nấm kim châm (302) kept checked
+    expect(hydrated.selectedByGroup[30]).toEqual([302]);
+    // Mì Hàn Quốc (401) unchecked; remaining kept with manual substitute 403
+    expect(hydrated.selectedByGroup[40]).toEqual([402, 403]);
+    expect(hydrated.manualSubstituteByModifierId[401]).toBe(403);
+    expect(isProductModifierSelectionValid(spicyComboNoodle, hydrated.selectedByGroup)).toBe(true);
+
+    const recomputed = computeOrderModifiersPayload(
+      spicyComboNoodle,
+      hydrated.selectedByGroup,
+      hydrated.manualSubstituteByModifierId,
     );
-    expect(singleUncheck.substituteName).toBe('Mực');
-    expect(singleUncheck.availableSubstitutes.map((m) => m.name)).toEqual(['Tôm', 'Mực']);
-
-    // Bỏ tích 2 món (Ngao và Mực) -> Tự động khoá thay thế bằng món còn lại duy nhất là Tôm
-    const doubleUncheckNgao = resolveSubstituteForUncheckedModifier(
-      mainGroup,
-      ngao,
-      [301],
-      {},
-    );
-    const doubleUncheckMuc = resolveSubstituteForUncheckedModifier(
-      mainGroup,
-      muc,
-      [301],
-      {},
-    );
-    expect(doubleUncheckNgao.substituteName).toBe('Tôm');
-    expect(doubleUncheckMuc.substituteName).toBe('Tôm');
-  });
-
-  it('computes exception-based payload for removed defaults, substituted main items, and extra toppings', () => {
-    const payload = computeOrderModifiersPayload(sampleSeafoodNoodle, {
-      1: [102], // Cấp 3
-      2: [201], // Bỏ chọn Rau (202)
-      3: [301], // Bỏ chọn Ngao (302) và Mực (303), chỉ giữ Tôm (301)
-      4: [401], // Thêm Bò Mỹ (+10k)
-    });
-
-    expect(payload.extraPrice).toBe(10000);
-    expect(payload.modifierLabels).toEqual([
+    expect(recomputed.extraPrice).toBe(30000);
+    expect(recomputed.modifierLabels).toEqual([
       'Cấp 3',
-      'Không Rau',
-      'Không Ngao (Thay bằng Tôm)',
-      'Không Mực (Thay bằng Tôm)',
-      'Bò Mỹ',
-    ]);
-    expect(payload.modifiers).toEqual([
-      { groupId: 1, modifierId: 102 },
-      { groupId: 2, modifierId: 202, action: 'REMOVED_DEFAULT' },
-      {
-        groupId: 3,
-        modifierId: 302,
-        action: 'SUBSTITUTED',
-        substituteModifierId: 301,
-        substituteName: 'Tôm',
-      },
-      {
-        groupId: 3,
-        modifierId: 303,
-        action: 'SUBSTITUTED',
-        substituteModifierId: 301,
-        substituteName: 'Tôm',
-      },
-      { groupId: 4, modifierId: 401 },
+      'Thêm Bò Mỹ',
+      'Thêm Phô Mai',
+      'Không Hành lá',
+      'Không Mì Hàn Quốc (Thay bằng Miến dong)',
     ]);
   });
 
-  it('skips out-of-stock (isAvailable: false) modifiers on auto-select and filters them out of substitute options', () => {
-    const noodleWithUnavailableShrimp: Product = {
-      ...sampleSeafoodNoodle,
-      modifierGroups: sampleSeafoodNoodle.modifierGroups.map((group) =>
-        group.id === 3
-          ? {
-              ...group,
-              modifiers: group.modifiers.map((m) =>
-                m.id === 301 ? { ...m, isAvailable: false } : m,
-              ),
-            }
-          : group,
-      ),
-    };
+  it('gracefully drops deleted or out-of-stock modifiers and falls back to default valid radio', () => {
+    const hydrated = hydrateModifierSelectionFromExisting(spicyComboNoodle, [
+      { groupId: 10, modifierId: 103 }, // unavailable radio modifier
+      { groupId: 20, modifierId: 203 }, // unavailable topping
+      { groupId: 20, modifierId: 9999 }, // deleted modifier ID
+    ]);
 
-    const initial = buildInitialSelectedByGroup(noodleWithUnavailableShrimp);
-    expect(initial[3]).toEqual([302, 303]);
-
-    const mainGroup = noodleWithUnavailableShrimp.modifierGroups[2]!;
-    const shrimp = mainGroup.modifiers[0]!;
-    const subForShrimp = resolveSubstituteForUncheckedModifier(
-      mainGroup,
-      shrimp,
-      initial[3] ?? [],
-      {},
-    );
-    expect(subForShrimp.availableSubstitutes.map((m) => m.name)).toEqual(['Ngao', 'Mực']);
-    expect(subForShrimp.substituteName).toBe('Mực');
+    expect(hydrated.selectedByGroup[10]).toEqual([101]);
+    expect(hydrated.selectedByGroup[20]).toEqual([]);
+    expect(isProductModifierSelectionValid(spicyComboNoodle, hydrated.selectedByGroup)).toBe(true);
   });
 
-  it('pre-selects radio defaults without printing default label or emitting REMOVED_DEFAULT when switched', () => {
-    const drinkWithDefaults: Product = {
-      id: 20,
-      name: 'Trà Đào',
-      subtitle: 'Hồng trà đào',
-      categoryId: 14,
-      categoryName: 'Trà Trái Cây',
-      price: 25000,
-      station: 'PHA_CHE',
+  it('reconstructs structured selections from legacy display labels via inferModifierSelectionsFromLabels', () => {
+    const inferred = inferModifierSelectionsFromLabels(spicyComboNoodle, [
+      'Cấp 3',
+      'Thêm Phô Mai',
+      'Không Nấm kim châm',
+      'Không Mì Hàn Quốc (Thay bằng Bún tươi)',
+    ]);
+
+    expect(inferred).toEqual([
+      { groupId: 10, modifierId: 102 },
+      { groupId: 20, modifierId: 202 },
+      { groupId: 30, modifierId: 302, action: 'REMOVED_DEFAULT' },
+      {
+        groupId: 40,
+        modifierId: 401,
+        action: 'SUBSTITUTED',
+        substituteModifierId: 402,
+        substituteName: 'Bún tươi',
+      },
+    ]);
+  });
+
+  it('respects allowedSubstituteNames matrix: REMOVED_DEFAULT for unswappable Ngao and filtered substitutes for Tôm', () => {
+    const seafoodMatrixProduct: Product = {
+      id: 2,
+      name: 'Mì Cay Hải Sản Matrix',
+      price: 69000,
+      station: 'BEP_NAU',
       isAvailable: true,
+      imageUrl: null,
       sortOrder: 1,
       comboItems: [],
       modifierGroups: [
         {
-          id: 10,
-          name: 'Độ ngọt (Đường)',
-          isRequired: true,
-          maxSelect: 1,
-          isAutoSelect: false,
-          allowSubstitution: false,
+          id: 50,
+          name: 'Đồ ăn món chính',
+          isRequired: false,
+          maxSelect: 3,
+          isAutoSelect: true,
+          allowSubstitution: true,
           modifiers: [
-            { id: 1001, name: 'Mặc định', extraPrice: 0, isDefaultChecked: true },
-            { id: 1002, name: 'Giảm ngọt', extraPrice: 0, isDefaultChecked: false },
-            { id: 1003, name: 'Thêm ngọt', extraPrice: 0, isDefaultChecked: false },
-          ],
-        },
-        {
-          id: 11,
-          name: 'Lượng đá',
-          isRequired: true,
-          maxSelect: 1,
-          isAutoSelect: false,
-          allowSubstitution: false,
-          modifiers: [
-            { id: 1101, name: 'Đá mặc định', extraPrice: 0, isDefaultChecked: true },
-            { id: 1102, name: 'Ít đá', extraPrice: 0, isDefaultChecked: false },
+            {
+              id: 501,
+              name: 'Ngao',
+              extraPrice: 0,
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: null,
+              allowedSubstituteNames: [],
+            },
+            {
+              id: 502,
+              name: 'Tôm',
+              extraPrice: 0,
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: 'Mực',
+              allowedSubstituteNames: ['Mực'],
+            },
+            {
+              id: 503,
+              name: 'Mực',
+              extraPrice: 0,
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: 'Tôm',
+              allowedSubstituteNames: ['Tôm', 'Ngao'],
+            },
           ],
         },
       ],
     };
 
-    const initial = buildInitialSelectedByGroup(drinkWithDefaults);
-    expect(initial[10]).toEqual([1001]);
-    expect(initial[11]).toEqual([1101]);
+    const group = seafoodMatrixProduct.modifierGroups[0]!;
+    expect(getSubstitutionHintText(group, group.modifiers[0]!)).toBe(
+      '(Bỏ tích → Không Ngao, không đổi món)',
+    );
+    expect(getSubstitutionHintText(group, group.modifiers[1]!)).toBe(
+      '(Bỏ tích → Thay bằng Mực)',
+    );
 
-    const defaultPayload = computeOrderModifiersPayload(drinkWithDefaults, initial);
-    expect(defaultPayload.modifierLabels).toEqual([]);
-    expect(defaultPayload.modifiers).toEqual([
-      { groupId: 10, modifierId: 1001 },
-      { groupId: 11, modifierId: 1101 },
-    ]);
-
-    const changedPayload = computeOrderModifiersPayload(drinkWithDefaults, {
-      10: [1002],
-      11: [1102],
+    // Uncheck Ngao -> must NOT substitute with Tôm/Mực; emits REMOVED_DEFAULT
+    const ngaoSubInfo = resolveSubstituteForUncheckedModifier(group, group.modifiers[0]!, [502, 503], {});
+    expect(ngaoSubInfo).toEqual({
+      substituteModifier: null,
+      substituteName: '',
+      availableSubstitutes: [],
     });
-    expect(changedPayload.modifierLabels).toEqual(['Giảm ngọt', 'Ít đá']);
-    expect(changedPayload.modifiers).toEqual([
-      { groupId: 10, modifierId: 1002 },
-      { groupId: 11, modifierId: 1102 },
+
+    const tomSubInfo = resolveSubstituteForUncheckedModifier(group, group.modifiers[1]!, [501, 503], {});
+    expect(tomSubInfo.availableSubstitutes.map((m) => m.name)).toEqual(['Mực']);
+
+    // Unchecking both Ngao and Tôm (keeping Mực): Ngao -> REMOVED_DEFAULT, Tôm -> SUBSTITUTED(Mực)
+    const payload = computeOrderModifiersPayload(seafoodMatrixProduct, { 50: [503] });
+    expect(payload.modifiers).toEqual([
+      { groupId: 50, modifierId: 501, action: 'REMOVED_DEFAULT' },
+      {
+        groupId: 50,
+        modifierId: 502,
+        action: 'SUBSTITUTED',
+        substituteModifierId: 503,
+        substituteName: 'Mực',
+      },
     ]);
+    expect(payload.modifierLabels).toEqual([
+      'Không Ngao',
+      'Không Tôm (Thay bằng Mực)',
+    ]);
+
+    // Round-trip hydration & label inference preserve REMOVED_DEFAULT + SUBSTITUTED
+    const hydrated = hydrateModifierSelectionFromExisting(seafoodMatrixProduct, payload.modifiers);
+    expect(hydrated.selectedByGroup[50]).toEqual([503]);
+    expect(hydrated.manualSubstituteByModifierId[502]).toBe(503);
+
+    expect(inferModifierSelectionsFromLabels(seafoodMatrixProduct, payload.modifierLabels)).toEqual(
+      payload.modifiers,
+    );
+
+    // Empty chosenIds in allowSubstitution violates min-1 guard
+    expect(isProductModifierSelectionValid(seafoodMatrixProduct, { 50: [] })).toBe(false);
   });
 });

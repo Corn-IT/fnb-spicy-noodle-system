@@ -513,4 +513,163 @@ describe('MenuService', () => {
       }),
     }));
   });
+
+  it('should persist allowedSubstituteNames matrix and return parsed allowlists in toProduct', async () => {
+    const tx = {
+      product: {
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue({
+          id: 50,
+          name: 'Mì Cay Hải Sản',
+          subtitle: null,
+          categoryId: 1,
+          category: { id: 1, name: 'Mì Cay', isActive: true },
+          price: new Prisma.Decimal('69000.00'),
+          station: 'BEP_NAU',
+          isAvailable: true,
+          imageUrl: null,
+          sortOrder: 1,
+          modifierGroups: [
+            {
+              id: 30,
+              name: 'Đồ ăn món chính',
+              isRequired: false,
+              maxSelect: 3,
+              isAutoSelect: true,
+              allowSubstitution: true,
+              modifiers: [
+                {
+                  id: 301,
+                  name: 'Ngao',
+                  extraPrice: new Prisma.Decimal('0.00'),
+                  isDefaultChecked: true,
+                  isAvailable: true,
+                  defaultSubstituteName: null,
+                  allowedSubstituteNames: [],
+                },
+                {
+                  id: 302,
+                  name: 'Tôm',
+                  extraPrice: new Prisma.Decimal('0.00'),
+                  isDefaultChecked: true,
+                  isAvailable: true,
+                  defaultSubstituteName: 'Mực',
+                  allowedSubstituteNames: ['Mực'],
+                },
+                {
+                  id: 303,
+                  name: 'Mực',
+                  extraPrice: new Prisma.Decimal('0.00'),
+                  isDefaultChecked: true,
+                  isAvailable: true,
+                  defaultSubstituteName: 'Tôm',
+                  allowedSubstituteNames: ['Tôm', 'Ngao'],
+                },
+              ],
+            },
+          ],
+          comboParents: [],
+        }),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (op: (client: typeof tx) => Promise<unknown>) => op(tx)),
+    };
+    const service = new MenuService(prisma as never);
+
+    const created = await service.createProduct({
+      name: 'Mì Cay Hải Sản',
+      price: 69000,
+      station: 'BEP_NAU',
+      modifierGroups: [
+        {
+          name: 'Đồ ăn món chính',
+          isRequired: false,
+          maxSelect: 3,
+          isAutoSelect: true,
+          allowSubstitution: true,
+          modifiers: [
+            {
+              name: 'Ngao',
+              extraPrice: 0,
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: null,
+              allowedSubstituteNames: [],
+            },
+            {
+              name: 'Tôm',
+              extraPrice: 0,
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: 'Mực',
+              allowedSubstituteNames: ['Mực'],
+            },
+            {
+              name: 'Mực',
+              extraPrice: 0,
+              isDefaultChecked: true,
+              isAvailable: true,
+              defaultSubstituteName: 'Tôm',
+              allowedSubstituteNames: ['Tôm', 'Ngao'],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(tx.product.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        modifierGroups: {
+          create: [
+            expect.objectContaining({
+              allowSubstitution: true,
+              modifiers: {
+                create: expect.arrayContaining([
+                  expect.objectContaining({ name: 'Ngao', allowedSubstituteNames: [] }),
+                  expect.objectContaining({ name: 'Tôm', defaultSubstituteName: 'Mực', allowedSubstituteNames: ['Mực'] }),
+                  expect.objectContaining({ name: 'Mực', defaultSubstituteName: 'Tôm', allowedSubstituteNames: ['Tôm', 'Ngao'] }),
+                ]),
+              },
+            }),
+          ],
+        },
+      }),
+    }));
+    expect(created.modifierGroups[0]?.modifiers[0]?.allowedSubstituteNames).toEqual([]);
+    expect(created.modifierGroups[0]?.modifiers[1]?.allowedSubstituteNames).toEqual(['Mực']);
+  });
+
+  it('should reject self-substitution, unknown targets, or default omitted from allowedSubstituteNames', async () => {
+    const prisma = { $transaction: vi.fn() };
+    const service = new MenuService(prisma as never);
+
+    await expect(service.createProduct({
+      name: 'Mì Hải Sản',
+      price: 69000,
+      station: 'BEP_NAU',
+      modifierGroups: [{
+        name: 'Đồ ăn chính',
+        allowSubstitution: true,
+        modifiers: [
+          { name: 'Ngao', extraPrice: 0, allowedSubstituteNames: [], defaultSubstituteName: 'Tôm' },
+          { name: 'Tôm', extraPrice: 0, allowedSubstituteNames: ['Mực'], defaultSubstituteName: 'Mực' },
+          { name: 'Mực', extraPrice: 0, allowedSubstituteNames: ['Tôm'], defaultSubstituteName: 'Tôm' },
+        ],
+      }],
+    })).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    await expect(service.updateProduct(1, {
+      modifierGroups: [{
+        name: 'Đồ ăn chính',
+        allowSubstitution: true,
+        modifiers: [
+          { name: 'Tôm', extraPrice: 0, allowedSubstituteNames: ['Tôm'], defaultSubstituteName: 'Tôm' },
+          { name: 'Mực', extraPrice: 0, allowedSubstituteNames: ['Tôm'], defaultSubstituteName: 'Tôm' },
+        ],
+      }],
+    })).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 });

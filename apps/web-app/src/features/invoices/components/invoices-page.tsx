@@ -1,5 +1,5 @@
 import { type ColumnDef } from '@tanstack/react-table';
-import { type OrderType, type PaymentMethod } from '@fnb/shared';
+import { formatTakeawayLabel, type OrderType, type PaymentMethod } from '@fnb/shared';
 import { Ban, CheckCircle2, Eye, FileSpreadsheet, Pencil, ShieldCheck, XCircle } from 'lucide-react';
 import * as React from 'react';
 
@@ -145,7 +145,7 @@ export function InvoicesPage() {
           const label =
             item.tableLabel ??
             (item.orderType === 'TAKEAWAY' && item.takeawayNumber !== null
-              ? `Mang về #${String(item.takeawayNumber).padStart(2, '0')}`
+              ? formatTakeawayLabel(item.takeawayNumber, item.takeawayLabelFormat)
               : 'Tại bàn');
           return (
             <Badge
@@ -411,7 +411,7 @@ export function InvoicesPage() {
             value: (r) =>
               r.tableLabel ??
               (r.orderType === 'TAKEAWAY' && r.takeawayNumber !== null
-                ? `Mang về #${String(r.takeawayNumber).padStart(2, '0')}`
+                ? formatTakeawayLabel(r.takeawayNumber, r.takeawayLabelFormat)
                 : 'Tại bàn'),
             width: 16,
           },

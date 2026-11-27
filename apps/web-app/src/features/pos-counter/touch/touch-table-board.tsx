@@ -1,4 +1,4 @@
-import type { PosDraftResponse, PosOrderSummary, PosTableGridResponse } from '@fnb/shared';
+import { formatTakeawayLabel, formatTakeawaySuffix, type PosDraftResponse, type PosOrderSummary, type PosTableGridResponse } from '@fnb/shared';
 import { BellRing, Clock3, Plus, ShoppingBag } from 'lucide-react';
 import * as React from 'react';
 
@@ -57,7 +57,7 @@ export function sortTakeawaysForBoard(takeaways: PosOrderSummary[]): PosOrderSum
 }
 
 export function resolveTakeawayLabel(order: PosOrderSummary): string {
-  return order.tableLabel ?? `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`;
+  return order.tableLabel ?? formatTakeawayLabel(order.takeawayNumber, order.takeawayLabelFormat);
 }
 
 function resolveAlertBadge(
@@ -162,7 +162,7 @@ export function TouchTableBoard({
         testId={`touch-takeaway-card-${order.orderId}`}
         title={
           order.takeawayNumber
-            ? `#${String(order.takeawayNumber).padStart(2, '0')}`
+            ? `#${formatTakeawaySuffix(order.takeawayNumber, order.takeawayLabelFormat)}`
             : resolveTakeawayLabel(order)
         }
         eyebrow={

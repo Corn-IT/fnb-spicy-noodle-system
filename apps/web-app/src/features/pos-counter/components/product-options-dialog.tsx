@@ -16,6 +16,7 @@ import { useAppMessages } from '@/hooks/use-app-messages';
 import {
   buildInitialSelectedByGroup,
   computeOrderModifiersPayload,
+  getSubstitutionHintText,
   isProductModifierSelectionValid,
   resolveSubstituteForUncheckedModifier,
 } from '@/lib/modifier-selection';
@@ -23,17 +24,36 @@ import { cn } from '@/utils/cn';
 
 import type { PosMenuSelectedItem } from './pos-menu-types';
 
+export interface ProductOptionsDialogInitialValue {
+  quantity: number;
+  selectedByGroup: Record<number, number[]>;
+  manualSubstituteByModifierId: Record<number, number>;
+  itemNote?: string;
+}
+
 export interface ProductOptionsDialogProps {
   product: Product | null;
+  mode?: 'create' | 'edit';
+  editInstanceKey?: string;
+  initialValue?: ProductOptionsDialogInitialValue;
+  isSubmitting?: boolean;
   onClose: () => void;
-  onConfirm: (item: PosMenuSelectedItem) => void;
+  onConfirm: (item: PosMenuSelectedItem) => void | Promise<void>;
 }
 
 /**
  * Modal chọn tuỳ chọn (topping, cấp độ, món thay thế), ghi chú và số lượng cho 1 món.
- * Dùng chung cho màn POS chuột và màn POS cảm ứng.
+ * Dùng chung cho màn POS chuột và màn POS cảm ứng (cả chế độ thêm mới và chỉnh sửa món chưa in bếp).
  */
-export function ProductOptionsDialog({ product, onClose, onConfirm }: ProductOptionsDialogProps) {
+export function ProductOptionsDialog({
+  product,
+  mode = 'create',
+  editInstanceKey,
+  initialValue,
+  isSubmitting = false,
+  onClose,
+  onConfirm,
+}: ProductOptionsDialogProps) {
   return (
     <Dialog
       open={Boolean(product)}
@@ -47,8 +67,11 @@ export function ProductOptionsDialog({ product, onClose, onConfirm }: ProductOpt
       >
         {product ? (
           <ProductOptionsForm
-            key={product.id}
+            key={`${product.id}-${mode}-${editInstanceKey ?? 'new'}`}
             product={product}
+            mode={mode}
+            initialValue={initialValue}
+            isSubmitting={isSubmitting}
             onClose={onClose}
             onConfirm={onConfirm}
           />
@@ -60,20 +83,30 @@ export function ProductOptionsDialog({ product, onClose, onConfirm }: ProductOpt
 
 interface ProductOptionsFormProps {
   product: Product;
+  mode: 'create' | 'edit';
+  initialValue?: ProductOptionsDialogInitialValue;
+  isSubmitting: boolean;
   onClose: () => void;
-  onConfirm: (item: PosMenuSelectedItem) => void;
+  onConfirm: (item: PosMenuSelectedItem) => void | Promise<void>;
 }
 
-function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormProps) {
+function ProductOptionsForm({
+  product,
+  mode,
+  initialValue,
+  isSubmitting,
+  onClose,
+  onConfirm,
+}: ProductOptionsFormProps) {
   const { notify } = useAppMessages();
-  const [quantity, setQuantity] = React.useState(1);
+  const [quantity, setQuantity] = React.useState(() => Math.max(1, initialValue?.quantity ?? 1));
   const [selectedByGroup, setSelectedByGroup] = React.useState<Record<number, number[]>>(() =>
-    buildInitialSelectedByGroup(product),
+    initialValue ? { ...initialValue.selectedByGroup } : buildInitialSelectedByGroup(product),
   );
   const [manualSubstituteByModifierId, setManualSubstituteByModifierId] = React.useState<
     Record<number, number>
-  >({});
-  const [itemNote, setItemNote] = React.useState('');
+  >(() => (initialValue ? { ...initialValue.manualSubstituteByModifierId } : {}));
+  const [itemNote, setItemNote] = React.useState(() => initialValue?.itemNote ?? '');
 
   const handleToggleModifier = (group: ModifierGroup, modifierId: number) => {
     const targetMod = group.modifiers.find((m) => m.id === modifierId);
@@ -107,18 +140,22 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
     [product, selectedByGroup, manualSubstituteByModifierId],
   );
 
-  const handleConfirm = () => {
-    if (!isValid) return;
-    onConfirm({
-      productId: product.id,
-      name: product.name,
-      quantity,
-      unitPrice: product.price + computedPayload.extraPrice,
-      modifiers: computedPayload.modifiers,
-      modifierLabels: computedPayload.modifierLabels,
-      itemNote: itemNote.trim() ? itemNote.trim() : undefined,
-    });
-    onClose();
+  const handleConfirm = async () => {
+    if (!isValid || isSubmitting) return;
+    try {
+      await onConfirm({
+        productId: product.id,
+        name: product.name,
+        quantity,
+        unitPrice: product.price + computedPayload.extraPrice,
+        modifiers: computedPayload.modifiers,
+        modifierLabels: computedPayload.modifierLabels,
+        itemNote: itemNote.trim() ? itemNote.trim() : undefined,
+      });
+      onClose();
+    } catch {
+      // Lỗi mutation đã được xử lý thông báo ở hook workspace; giữ modal để người dùng điều chỉnh.
+    }
   };
 
   return (
@@ -135,6 +172,11 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
               ({product.subtitle})
             </span>
           ) : null}
+          {mode === 'edit' ? (
+            <Badge variant="secondary" data-testid="pos-modal-edit-badge" className="text-[10px] self-center">
+              Chỉnh sửa món
+            </Badge>
+          ) : null}
         </DialogTitle>
         <DialogDescription className="text-xs text-muted-foreground mt-0.5 flex items-center justify-between touch-ui:text-sm">
           <span>
@@ -149,6 +191,11 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
       </DialogHeader>
 
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y px-4 py-3 sm:px-5 sm:py-3.5 space-y-3.5">
+        {product.modifierGroups.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+            Món này chưa cấu hình tuỳ chọn thêm. Bạn có thể chỉnh số lượng hoặc ghi chú bếp bên dưới.
+          </p>
+        ) : null}
         {product.modifierGroups.map((group) => {
           const chosenIds = selectedByGroup[group.id] ?? [];
           const isAutoGroup = Boolean(group.isAutoSelect || group.allowSubstitution);
@@ -199,6 +246,13 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
                           manualSubstituteByModifierId,
                         )
                       : null;
+                  const canSubstitute = Boolean(
+                    subInfo && subInfo.availableSubstitutes.length > 0 && subInfo.substituteName,
+                  );
+                  const substitutionHint =
+                    group.allowSubstitution && isSelected
+                      ? getSubstitutionHintText(group, mod)
+                      : null;
 
                   return (
                     <div
@@ -206,12 +260,12 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
                       className={cn(
                         'flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all',
                         isOutOfStock
-                          ? group.allowSubstitution
+                          ? canSubstitute
                             ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
                             : 'border-dashed border-border/80 bg-muted/50 text-muted-foreground opacity-85'
                           : isSelected
                             ? 'border-primary bg-primary/10 text-accent-text shadow-2xs'
-                            : group.allowSubstitution
+                            : canSubstitute
                               ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
                               : isAutoGroup
                                 ? 'border-dashed border-border bg-muted/40 text-muted-foreground'
@@ -250,7 +304,7 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
                               className={cn(
                                 'block text-xs font-bold leading-snug touch-ui:text-sm',
                                 isOutOfStock ||
-                                  (!isSelected && isAutoGroup && !group.allowSubstitution)
+                                  (!isSelected && isAutoGroup && (!group.allowSubstitution || !canSubstitute))
                                   ? 'line-through opacity-70'
                                   : '',
                               )}
@@ -284,7 +338,7 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
                       </button>
 
                       {/* Subtitle động cho Đồ ăn chính khi bỏ tích chọn */}
-                      {group.allowSubstitution && !isSelected && subInfo ? (
+                      {group.allowSubstitution && !isSelected && subInfo && canSubstitute ? (
                         <div
                           data-testid={`pos-mod-substitute-${mod.id}`}
                           className="mt-1.5 border-t border-amber-500/30 pt-1.5 space-y-1"
@@ -321,18 +375,21 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
                       ) : null}
 
                       {/* Subtitle gợi ý mặc định khi đang tích chọn Đồ ăn chính */}
-                      {!isOutOfStock &&
-                      group.allowSubstitution &&
-                      isSelected &&
-                      mod.defaultSubstituteName ? (
+                      {substitutionHint ? (
                         <span className="mt-1 pl-6 text-[10px] font-medium text-muted-foreground touch-ui:text-xs">
-                          (Bỏ tích → Thay bằng {mod.defaultSubstituteName})
+                          {substitutionHint}
                         </span>
                       ) : null}
 
-                      {/* Subtitle khi bỏ tích Đồ ăn mặc định 0đ */}
-                      {!isOutOfStock && !group.allowSubstitution && isAutoGroup && !isSelected ? (
-                        <span className="mt-1 pl-6 text-[10px] font-semibold text-rose-600 dark:text-rose-400 touch-ui:text-xs">
+                      {/* Subtitle khi bỏ tích Đồ ăn mặc định hoặc món chính không đổi */}
+                      {!isOutOfStock &&
+                      !isSelected &&
+                      isAutoGroup &&
+                      (!group.allowSubstitution || !canSubstitute) ? (
+                        <span
+                          data-testid={`pos-mod-removed-${mod.id}`}
+                          className="mt-1 pl-6 text-[10px] font-semibold text-rose-600 dark:text-rose-400 touch-ui:text-xs"
+                        >
                           Không {mod.name}
                         </span>
                       ) : null}
@@ -350,6 +407,7 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
           </label>
           <textarea
             id="pos-item-note"
+            data-testid="pos-item-note-input"
             rows={2}
             placeholder="Nhập ghi chú riêng cho bếp (VD: Ít cay, nấu chín kỹ, để riêng nước...)"
             value={itemNote}
@@ -398,11 +456,11 @@ function ProductOptionsForm({ product, onClose, onConfirm }: ProductOptionsFormP
           <Button
             type="button"
             data-testid="pos-confirm-modifier-btn"
-            disabled={!isValid}
-            onClick={handleConfirm}
+            disabled={!isValid || isSubmitting}
+            onClick={() => void handleConfirm()}
             className="bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.98]"
           >
-            Xác nhận thêm món
+            {isSubmitting ? 'Đang lưu...' : mode === 'edit' ? 'Lưu thay đổi' : 'Xác nhận thêm món'}
           </Button>
         </div>
       </DialogFooter>

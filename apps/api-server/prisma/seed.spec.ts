@@ -235,6 +235,15 @@ describe('seedDatabase', () => {
     expect(modifiers.size).toBe(expectedModifierCount);
     expect([...modifierGroups.values()].filter((group) => group.name === 'Cấp độ cay' && group.isRequired === true && group.maxSelect === 1)).toHaveLength(7);
     expect([...modifierGroups.values()].filter((group) => group.name === 'Đồ ăn món chính' && group.allowSubstitution === true)).toHaveLength(3);
+    expect(
+      [...modifiers.values()].filter(
+        (modifier) =>
+          modifier.name === 'Ngao' &&
+          Array.isArray(modifier.allowedSubstituteNames) &&
+          modifier.allowedSubstituteNames.length === 0 &&
+          modifier.defaultSubstituteName === null,
+      ),
+    ).toHaveLength(3);
     expect([...modifierGroups.values()].filter((group) => group.name === 'Đồ ăn thêm' && group.isRequired === false && group.maxSelect === 10)).toHaveLength(7);
     expect([...modifiers.values()].filter((modifier) => modifier.name === 'Cấp độ 0' && modifier.extraPrice === '0.00')).toHaveLength(7);
     expect(tx.employee.create).toHaveBeenCalledTimes(12);

@@ -1334,5 +1334,242 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
       expect(takeawaySection).toHaveTextContent('+ Trân châu trắng (5k)');
       expect(takeawaySection).not.toHaveTextContent('+ Size L');
     });
+
+    it('renders LETTER takeaway labels (#A, #AA, MVAA) cleanly on kitchen split and provisional VietQR slips', () => {
+      const { unmount: unmountKitchen } = render(
+        <KitchenSplitSlip
+          orderCode="HD-20261127-0005"
+          orderType="TAKEAWAY"
+          takeawayNumber={5}
+          takeawayLabelFormat="LETTER"
+          tickets={[
+            {
+              station: 'BEP_NAU',
+              stationTitle: 'BẾP NẤU',
+              logoType: 'CHEF_HAT_NOODLE',
+              batchNo: 1,
+              batchLabel: '[LƯỢT 1]',
+              items: [
+                {
+                  name: 'Mì Cay Xúc Xích',
+                  qty: 2,
+                  modifiers: ['Cấp độ 2'],
+                  note: 'Ít hành',
+                },
+              ],
+            },
+          ]}
+        />,
+      );
+
+      expect(screen.getByTestId('kitchen-ticket-page-BEP_NAU')).toHaveTextContent('MANG VỀ #AA');
+      unmountKitchen();
+
+      render(
+        <ThermalPrintProvider>
+          <ProvisionalVietQrSlip
+            bill={{
+              orderId: 911,
+              orderCode: 'HD-20261127-0005',
+              orderType: 'TAKEAWAY',
+              tableId: null,
+              takeawayNumber: 5,
+              takeawayLabelFormat: 'LETTER',
+              totalAmount: 80000,
+              status: 'SERVING',
+              paymentAccount: {
+                id: 1,
+                label: 'VPBank',
+                bankName: 'VPBank',
+                bankCode: 'VPB',
+                accountNo: '186877721',
+                accountName: 'CHU QUAN',
+              },
+              vietQrPayload: 'data:image/png;base64,ZmFrZQ==',
+              items: [
+                {
+                  name: 'Mì Cay Xúc Xích',
+                  quantity: 2,
+                  unitPrice: 40000,
+                  lineTotal: 80000,
+                  modifiers: ['Cấp độ 2'],
+                  pricedModifiers: [],
+                  note: null,
+                },
+              ],
+            }}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      expect(screen.getByTestId('provisional-vietqr-slip')).toHaveTextContent('MANG VỀ #AA');
+      expect(screen.getByTestId('provisional-vietqr-slip')).toHaveTextContent('TT MVAA');
+    });
+
+    it('merges same-price/same-topping items and splits different-price, different-topping, different-size, and [Mang về] items on Provisional & Official slips', () => {
+      const mixedReceiptItems = [
+        {
+          name: 'Mì Thập Cẩm',
+          quantity: 1,
+          unitPrice: 45000,
+          lineTotal: 45000,
+          modifiers: ['Cấp độ 1', 'Không hành'],
+          pricedModifiers: [],
+          note: null,
+          isTakeaway: false,
+        },
+        {
+          name: 'Mì Thập Cẩm',
+          quantity: 1,
+          unitPrice: 45000,
+          lineTotal: 45000,
+          modifiers: ['Cấp độ 3', 'Không Ngao'],
+          pricedModifiers: [],
+          note: 'Ít nước',
+          isTakeaway: false,
+        },
+        {
+          name: 'Mì Thập Cẩm',
+          quantity: 1,
+          unitPrice: 50000,
+          lineTotal: 50000,
+          modifiers: ['Cấp độ 2', 'Kim chi (5k)'],
+          pricedModifiers: ['Kim chi (5k)'],
+          note: null,
+          isTakeaway: false,
+        },
+        {
+          name: 'Mì Thập Cẩm',
+          quantity: 1,
+          unitPrice: 50000,
+          lineTotal: 50000,
+          modifiers: ['Cấp độ 0', 'Kim chi (5k)'],
+          pricedModifiers: ['Kim chi (5k)'],
+          note: null,
+          isTakeaway: false,
+        },
+        {
+          name: 'Mì Thập Cẩm',
+          quantity: 1,
+          unitPrice: 50000,
+          lineTotal: 50000,
+          modifiers: ['Cấp độ 1', 'Xúc xích (5k)'],
+          pricedModifiers: ['Xúc xích (5k)'],
+          note: null,
+          isTakeaway: false,
+        },
+        {
+          name: 'Mì Thập Cẩm',
+          quantity: 1,
+          unitPrice: 45000,
+          lineTotal: 45000,
+          modifiers: ['Cấp độ 1'],
+          pricedModifiers: [],
+          note: null,
+          isTakeaway: true,
+        },
+        {
+          name: 'Trà Sữa Matcha',
+          quantity: 2,
+          unitPrice: 30000,
+          lineTotal: 60000,
+          modifiers: ['Size M'],
+          pricedModifiers: [],
+          note: null,
+          isTakeaway: false,
+        },
+        {
+          name: 'Trà Sữa Matcha',
+          quantity: 1,
+          unitPrice: 30000,
+          lineTotal: 30000,
+          modifiers: ['Size M', 'Ít đá'],
+          pricedModifiers: [],
+          note: null,
+          isTakeaway: false,
+        },
+        {
+          name: 'Trà Sữa Matcha',
+          quantity: 1,
+          unitPrice: 35000,
+          lineTotal: 35000,
+          modifiers: ['Size L'],
+          pricedModifiers: ['Size L'],
+          note: null,
+          isTakeaway: false,
+        },
+      ];
+
+      const { unmount: unmountProvisional } = render(
+        <ThermalPrintProvider>
+          <ProvisionalVietQrSlip
+            bill={{
+              orderId: 912,
+              orderCode: 'HD-20261127-0912',
+              orderType: 'DINE_IN',
+              tableId: 10,
+              takeawayNumber: null,
+              totalAmount: 410000,
+              status: 'SERVING',
+              paymentAccount: {
+                id: 1,
+                label: 'BIDV',
+                bankName: 'BIDV',
+                bankCode: 'BIDV',
+                accountNo: '8878564012',
+                accountName: 'TRAN VAN HUNG',
+              },
+              vietQrPayload: 'data:image/png;base64,ZmFrZQ==',
+              items: mixedReceiptItems,
+            }}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      const provisionalRows = screen
+        .getByTestId('provisional-items-table')
+        .querySelectorAll('tbody tr');
+      expect(provisionalRows).toHaveLength(6);
+      expect(provisionalRows[0]).toHaveTextContent('1. Mì Thập Cẩm');
+      expect(provisionalRows[0]).toHaveTextContent('290.000');
+      expect(provisionalRows[1]).toHaveTextContent('2. Mì Thập Cẩm+ Kim chi (5k)');
+      expect(provisionalRows[1]).toHaveTextContent('2100.000');
+      expect(provisionalRows[2]).toHaveTextContent('3. Mì Thập Cẩm+ Xúc xích (5k)');
+      expect(provisionalRows[2]).toHaveTextContent('150.000');
+      expect(provisionalRows[3]).toHaveTextContent('4. Mì Thập Cẩm [Mang về]');
+      expect(provisionalRows[3]).toHaveTextContent('145.000');
+      expect(provisionalRows[4]).toHaveTextContent('5. Trà Sữa Matcha (M)');
+      expect(provisionalRows[4]).toHaveTextContent('390.000');
+      expect(provisionalRows[5]).toHaveTextContent('6. Trà Sữa Matcha (L)');
+      expect(provisionalRows[5]).toHaveTextContent('135.000');
+      unmountProvisional();
+
+      render(
+        <ThermalPrintProvider>
+          <OfficialReceiptSlip
+            orderCode="HD-20261127-0912"
+            tableLabel="Bàn 10"
+            paymentMethod="CASH"
+            cashAmount={410000}
+            transferAmount={0}
+            totalAmount={410000}
+            items={mixedReceiptItems}
+          />
+        </ThermalPrintProvider>,
+      );
+
+      const officialRows = screen
+        .getByTestId('official-items-table')
+        .querySelectorAll('tbody tr');
+      expect(officialRows).toHaveLength(6);
+      expect(officialRows[0]).toHaveTextContent('1. Mì Thập Cẩm');
+      expect(officialRows[0]).toHaveTextContent('290.000');
+      expect(officialRows[1]).toHaveTextContent('2. Mì Thập Cẩm+ Kim chi (5k)');
+      expect(officialRows[1]).toHaveTextContent('2100.000');
+      expect(officialRows[4]).toHaveTextContent('5. Trà Sữa Matcha (M)');
+      expect(officialRows[4]).toHaveTextContent('390.000');
+      expect(officialRows[5]).toHaveTextContent('6. Trà Sữa Matcha (L)');
+      expect(officialRows[5]).toHaveTextContent('135.000');
+    });
   });
 });
