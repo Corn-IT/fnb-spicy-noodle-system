@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import {
+  ErrorCodes,
   UserPermissionsSchema,
   type OrderDetailResponse,
   type PosDraftResponse,
@@ -12,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ThermalPrintProvider } from '@/components/print-slips';
 import { useToastStore } from '@/components/ui/toast';
-import { apiClient } from '@/lib/api-client';
+import { ApiClientError, apiClient } from '@/lib/api-client';
 import { POS_DEVICE_MODE_STORAGE_KEY } from '@/lib/pos-device-mode';
 import * as socketClient from '@/lib/socket-client';
 import { QueryProvider } from '@/providers/query-provider';
@@ -877,5 +878,104 @@ describe('POS cảm ứng (/pos/touch)', () => {
     await view.queryClient.invalidateQueries();
     expect(await screen.findByTestId('touch-table-board')).toBeInTheDocument();
     await waitFor(() => expect(toastTexts()).toContain('máy khác'));
+  });
+
+  it('displays #AA LETTER takeaway labels on Touch board and edits draft / NEW order items directly (with 409 guard)', async () => {
+    const letterGrid: PosTableGridResponse = {
+      ...grid,
+      takeaways: [
+        {
+          orderId: 801,
+          orderCode: 'HD-20261127-0005',
+          orderType: 'TAKEAWAY',
+          tableId: null,
+          tableLabel: 'Mang về #AA',
+          takeawayNumber: 5,
+          takeawayLabelFormat: 'LETTER',
+          status: 'SERVING',
+          totalAmount: 55000,
+          createdAt: minutesAgo(3),
+        },
+      ],
+    };
+    mockGetApi(letterGrid);
+    const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValue({
+      orderId: 700,
+      totalAmount: 95000,
+      requireCancellationSlip: false,
+      kitchenCancellationSlips: [],
+    });
+
+    renderTouchPage();
+
+    // LETTER takeaway badge appears cleanly as #AA on the card
+    const takeawayCard = await screen.findByTestId('touch-takeaway-card-801');
+    expect(takeawayCard).toHaveTextContent('#AA');
+
+    // Open table 700: PRINTED item (9001) has no edit trigger; NEW item (9002) does
+    fireEvent.click(screen.getByTestId('touch-table-card-7'));
+    expect(await screen.findByTestId('touch-order-item-9001')).toBeInTheDocument();
+    expect(screen.queryByTestId('touch-edit-item-9001')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('touch-edit-item-9002'));
+    expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('pos-item-note-input'), {
+      target: { value: 'Ít đá lại' },
+    });
+    fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith('/api/v1/pos/orders/700/items', {
+        updates: [
+          {
+            orderItemId: 9002,
+            expectedKitchenStatus: 'NEW',
+            quantity: 1,
+            modifiers: [],
+            itemNote: 'Ít đá lại',
+          },
+        ],
+      });
+    });
+
+    // 409 race closes modal cleanly & shows toast
+    patchSpy.mockRejectedValueOnce(
+      new ApiClientError({
+        statusCode: 409,
+        error: 'Conflict',
+        code: ErrorCodes.POS_ITEM_ALREADY_PRINTED,
+        message: 'Món đã tách bếp',
+        details: null,
+        requestId: 'touch-409',
+      }),
+    );
+    fireEvent.click(screen.getByTestId('touch-edit-item-9002'));
+    expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('pos-modifier-modal')).not.toBeInTheDocument();
+    });
+    expect(toastTexts()).toContain('Món đã tách bếp');
+
+    // Draft item edit on empty table 1
+    fireEvent.click(screen.getByTestId('touch-back-to-tables'));
+    fireEvent.click(await screen.findByTestId('touch-table-card-1'));
+    fireEvent.click(await screen.findByTestId('touch-product-101'));
+    expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('pos-mod-option-10'));
+    fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+
+    fireEvent.click(await screen.findByTestId('touch-edit-draft-item-0'));
+    expect(await screen.findByTestId('pos-modifier-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('pos-mod-option-11'));
+    fireEvent.change(screen.getByTestId('pos-item-note-input'), {
+      target: { value: 'Không ớt' },
+    });
+    fireEvent.click(screen.getByTestId('pos-confirm-modifier-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('touch-draft-item-0')).toHaveTextContent('Cấp 1');
+      expect(screen.getByTestId('touch-draft-item-0')).toHaveTextContent('Không ớt');
+    });
   });
 });

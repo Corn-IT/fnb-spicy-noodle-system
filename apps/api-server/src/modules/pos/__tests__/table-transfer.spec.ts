@@ -525,6 +525,98 @@ describe('TableTransferService', () => {
 
     expect(failure.getResponse()).toMatchObject({ code: 'POS_ORDER_NOT_ACTIVE' });
   });
+
+  it('snapshots LETTER format on TO_TAKEAWAY (#E for 21) and clears takeawayLabelFormat when MOVEing TAKEAWAY to DINE_IN (Hard Invariant 2)', async () => {
+    const harness = createHarness();
+    (harness.tx as Record<string, unknown>).masterData = {
+      findUnique: vi.fn().mockResolvedValue({
+        metadata: { takeawayLabelFormat: 'LETTER' },
+      }),
+    };
+    let seq = 20;
+    harness.tx.$queryRaw = vi.fn(async (strings: TemplateStringsArray) => {
+      const sql = strings.raw.join('');
+      if (sql.includes('INSERT INTO takeaway_sequences')) return [{ takeawayNumber: ++seq }];
+      return [];
+    }) as never;
+
+    // 1. TO_TAKEAWAY at #21 -> Mang về #E with LETTER snapshot
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 42, orderType: 'DINE_IN', tableId: 1 })
+      .mockResolvedValueOnce({
+        id: 42,
+        orderCode: 'HD-20261127-0042',
+        orderType: 'DINE_IN',
+        tableId: 1,
+        status: 'SERVING',
+        tableTransferLogs: [],
+        table: { id: 1, name: 'Bàn 01' },
+        items: [{ kitchenStatus: 'PRINTED', product: { station: 'BEP_NAU' } }],
+      });
+    harness.tx.diningTable.findUnique.mockResolvedValue({ ...sourceTable });
+
+    const toTakeawayResult = await harness.service.executeTableAction(42, {
+      action: 'TO_TAKEAWAY',
+      reason: 'Khách đổi mang về',
+    }, 3);
+
+    expect(toTakeawayResult).toMatchObject({
+      action: 'TO_TAKEAWAY',
+      takeawayNumber: 21,
+      takeawayLabelFormat: 'LETTER',
+      kitchenTransferSlip: { toLabel: 'Mang về #E' },
+    });
+    expect(harness.tx.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          orderType: 'TAKEAWAY',
+          tableId: null,
+          takeawayNumber: 21,
+          takeawayLabelFormat: 'LETTER',
+        }),
+      }),
+    );
+
+    // 2. MOVE takeaway order -> physical table Bàn 07 clears takeawayNumber & takeawayLabelFormat (Hard Invariant 2)
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 55, orderType: 'TAKEAWAY', tableId: null })
+      .mockResolvedValueOnce({
+        id: 55,
+        orderCode: 'HD-20261127-0055',
+        orderType: 'TAKEAWAY',
+        tableId: null,
+        takeawayNumber: 5,
+        takeawayLabelFormat: 'LETTER',
+        status: 'SERVING',
+        tableTransferLogs: [],
+        table: null,
+        items: [{ kitchenStatus: 'PRINTED', product: { station: 'PHA_CHE' } }],
+      });
+    harness.tx.diningTable.findUnique.mockResolvedValue({ ...targetTable });
+
+    const moveToTableResult = await harness.service.executeTableAction(55, {
+      action: 'MOVE',
+      targetTableId: 7,
+      reason: 'Khách ngồi lại bàn 07',
+    }, 3);
+
+    expect(moveToTableResult).toMatchObject({
+      action: 'MOVE',
+      targetTableId: 7,
+      kitchenTransferSlip: { fromLabel: 'Mang về #AA', toLabel: 'Bàn 07' },
+    });
+    expect(harness.tx.order.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { id: 55 },
+        data: expect.objectContaining({
+          orderType: 'DINE_IN',
+          tableId: 7,
+          takeawayNumber: null,
+          takeawayLabelFormat: null,
+        }),
+      }),
+    );
+  });
 });
 
 function activeStatus(status: string): boolean {

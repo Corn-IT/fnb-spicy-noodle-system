@@ -313,15 +313,25 @@ async function upsertModifierGroup(
   for (const modifier of modifiers) {
     const isDefaultChecked = modifier.isDefaultChecked ?? false;
     const defaultSubstituteName = modifier.defaultSubstituteName ?? null;
+    const allowedSubstituteNames = Array.isArray(modifier.allowedSubstituteNames)
+      ? [...modifier.allowedSubstituteNames]
+      : Prisma.DbNull;
     const existingModifier = await tx.modifier.findFirst({ where: { groupId: group.id, name: modifier.name } });
     if (existingModifier) {
       await tx.modifier.update({
         where: { id: existingModifier.id },
-        data: { extraPrice: modifier.extraPrice, isDefaultChecked, defaultSubstituteName },
+        data: { extraPrice: modifier.extraPrice, isDefaultChecked, defaultSubstituteName, allowedSubstituteNames },
       });
     } else {
       await tx.modifier.create({
-        data: { groupId: group.id, name: modifier.name, extraPrice: modifier.extraPrice, isDefaultChecked, defaultSubstituteName },
+        data: {
+          groupId: group.id,
+          name: modifier.name,
+          extraPrice: modifier.extraPrice,
+          isDefaultChecked,
+          defaultSubstituteName,
+          allowedSubstituteNames,
+        },
       });
     }
   }

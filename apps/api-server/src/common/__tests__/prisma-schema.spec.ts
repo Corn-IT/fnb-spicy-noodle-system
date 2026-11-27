@@ -17,6 +17,14 @@ const posDraftsMigration = readFileSync(
   resolve(prismaDirectory, 'migrations/20261126000000_add_pos_drafts_and_takeaway_sequence/migration.sql'),
   'utf8',
 );
+const takeawayFormatMigration = readFileSync(
+  resolve(prismaDirectory, 'migrations/20261127064542_add_order_takeaway_label_format/migration.sql'),
+  'utf8',
+);
+const allowedSubstitutesMigration = readFileSync(
+  resolve(prismaDirectory, 'migrations/20261127074741_add_modifier_allowed_substitutes/migration.sql'),
+  'utf8',
+);
 
 describe('Prisma schema and initial migration', () => {
   it('should define all twenty physical models including POS drafts and takeaway sequences', () => {
@@ -31,6 +39,8 @@ describe('Prisma schema and initial migration', () => {
     expect([...schema.matchAll(/^model\s+/gm)]).toHaveLength(20);
     expect(posDraftsMigration).toContain('CREATE TABLE "pos_drafts"');
     expect(posDraftsMigration).toContain('CREATE TABLE "takeaway_sequences"');
+    expect(takeawayFormatMigration).toContain('chk_order_takeaway_label_format');
+    expect(allowedSubstitutesMigration).toContain('allowed_substitute_names');
   });
 
   it('should keep every monetary column as Decimal(12, 2)', () => {

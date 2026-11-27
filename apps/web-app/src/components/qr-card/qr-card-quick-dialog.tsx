@@ -123,6 +123,7 @@ export function QrCardQuickDialog({ open, onOpenChange }: QrCardQuickDialogProps
       pageHeaders: activeBase.pageHeaders,
       printTemplates: activeBase.printTemplates,
       displayScale: activeBase.displayScale,
+      takeawayLabelFormat: activeBase.takeawayLabelFormat,
     };
 
     const parsedSettings = StoreSettingsSchema.safeParse(candidatePayload);

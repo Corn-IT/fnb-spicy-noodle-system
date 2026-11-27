@@ -144,14 +144,15 @@ model ModifierGroup {
 }
 
 model Modifier {
-  id                    Int           @id @default(autoincrement())
-  groupId               Int           @map("group_id")
-  name                  String        @db.VarChar(128)
-  extraPrice            Decimal       @default(0) @map("extra_price") @db.Decimal(12, 2)
-  isDefaultChecked      Boolean       @default(false) @map("is_default_checked")
-  isAvailable           Boolean       @default(true) @map("is_available")
-  defaultSubstituteName String?       @map("default_substitute_name") @db.VarChar(128)
-  group                 ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  id                     Int           @id @default(autoincrement())
+  groupId                Int           @map("group_id")
+  name                   String        @db.VarChar(128)
+  extraPrice             Decimal       @default(0) @map("extra_price") @db.Decimal(12, 2)
+  isDefaultChecked       Boolean       @default(false) @map("is_default_checked")
+  isAvailable            Boolean       @default(true) @map("is_available")
+  defaultSubstituteName  String?       @map("default_substitute_name") @db.VarChar(128)
+  allowedSubstituteNames Json?         @map("allowed_substitute_names")
+  group                  ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@map("modifiers")
 }
@@ -181,9 +182,10 @@ model Order {
   orderCode          String          @unique(map: "orders_order_code_key") @map("order_code") @db.VarChar(32)
   orderType          String          @map("order_type") @db.VarChar(16)
   orderSource        String          @map("order_source") @db.VarChar(16)
-  tableId            Int?            @map("table_id")
-  takeawayNumber     Int?            @map("takeaway_number")
-  status             String          @db.VarChar(16)
+  tableId             Int?            @map("table_id")
+  takeawayNumber      Int?            @map("takeaway_number")
+  takeawayLabelFormat String?         @map("takeaway_label_format") @db.VarChar(16)
+  status              String          @db.VarChar(16)
   paymentMethod      String?         @map("payment_method") @db.VarChar(16)
   paymentAccountId   Int?            @map("payment_account_id")
   cashAmount         Decimal         @default(0) @map("cash_amount") @db.Decimal(12, 2)

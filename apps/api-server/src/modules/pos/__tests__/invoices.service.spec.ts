@@ -413,4 +413,88 @@ describe('InvoicesService', () => {
       .rejects.toBeInstanceOf(ConflictException);
     expect(auditLogService.record).not.toHaveBeenCalled();
   });
+
+  it('formats takeaway invoices using each order takeawayLabelFormat snapshot and resolves #AA search queries', async () => {
+    const harness = createHarness();
+    harness.prisma.order.count.mockResolvedValue(2);
+    harness.prisma.order.findMany.mockResolvedValue([
+      {
+        id: 201,
+        orderCode: 'HD-20261127-0005',
+        orderType: 'TAKEAWAY',
+        orderSource: 'POS_COUNTER',
+        tableId: null,
+        table: null,
+        takeawayNumber: 5,
+        takeawayLabelFormat: 'LETTER',
+        status: 'PAID',
+        paymentMethod: 'CASH',
+        cashAmount: new Prisma.Decimal('60000.00'),
+        transferAmount: new Prisma.Decimal('0.00'),
+        subtotalAmount: new Prisma.Decimal('60000.00'),
+        discountAmount: new Prisma.Decimal('0.00'),
+        discountSnapshot: null,
+        totalAmount: new Prisma.Decimal('60000.00'),
+        createdAt: new Date('2026-11-27T04:00:00.000Z'),
+        paidAt: new Date('2026-11-27T04:10:00.000Z'),
+        note: null,
+      },
+      {
+        id: 202,
+        orderCode: 'HD-20261127-0006',
+        orderType: 'TAKEAWAY',
+        orderSource: 'POS_COUNTER',
+        tableId: null,
+        table: null,
+        takeawayNumber: 6,
+        takeawayLabelFormat: 'NUMBER',
+        status: 'PAID',
+        paymentMethod: 'TRANSFER',
+        cashAmount: new Prisma.Decimal('0.00'),
+        transferAmount: new Prisma.Decimal('30000.00'),
+        subtotalAmount: new Prisma.Decimal('30000.00'),
+        discountAmount: new Prisma.Decimal('0.00'),
+        discountSnapshot: null,
+        totalAmount: new Prisma.Decimal('30000.00'),
+        createdAt: new Date('2026-11-27T05:00:00.000Z'),
+        paidAt: new Date('2026-11-27T05:10:00.000Z'),
+        note: null,
+      },
+    ]);
+    harness.prisma.order.aggregate.mockResolvedValue({
+      _sum: {
+        totalAmount: new Prisma.Decimal('90000.00'),
+        cashAmount: new Prisma.Decimal('60000.00'),
+        transferAmount: new Prisma.Decimal('30000.00'),
+        discountAmount: new Prisma.Decimal('0.00'),
+      },
+    });
+    const service = new InvoicesService(harness.prisma as never);
+
+    const res = await service.list({
+      page: 1,
+      limit: 20,
+      fromDate: '2026-11-27',
+      toDate: '2026-11-27',
+      searchField: 'table',
+      keyword: 'Mang về #AA',
+    });
+
+    expect(harness.prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          AND: expect.arrayContaining([
+            {
+              OR: expect.arrayContaining([
+                { orderType: 'TAKEAWAY', takeawayNumber: 5 },
+              ]),
+            },
+          ]),
+        },
+      }),
+    );
+    expect(res.items.map((i) => i.tableLabel)).toEqual(['Mang về #AA', 'Mang về #06']);
+    expect(res.items[0]?.takeawayLabelFormat).toBe('LETTER');
+    expect(res.items[1]?.takeawayLabelFormat).toBe('NUMBER');
+  });
 });

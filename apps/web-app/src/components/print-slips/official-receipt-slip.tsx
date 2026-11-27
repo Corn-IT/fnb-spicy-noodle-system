@@ -1,14 +1,13 @@
 import {
   PRINT_TEMPLATE_DEFAULTS,
   StoreAssetKind,
-  formatProductNameWithSize,
   type PaymentMethod,
   type PublicStoreSettingsResponse,
 } from '@fnb/shared';
 import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings';
 import {
+  consolidateReceiptPrintItems,
   getThermalSlipRootStyle,
-  resolvePricedModifiers,
   resolveThermalFontSizePt,
 } from './print-template.util';
 
@@ -216,17 +215,13 @@ export function OfficialReceiptSlip({
             </tr>
           </thead>
           <tbody>
-            {items.map((item, idx) => {
-              const { displayName, remainingModifiers, remainingPricedModifiers } =
-                formatProductNameWithSize(item.name, item.modifiers, item.pricedModifiers);
-              const pricedMods = tpl.blocks.itemModifiers
-                ? resolvePricedModifiers(remainingModifiers, remainingPricedModifiers)
-                : [];
+            {consolidateReceiptPrintItems(items).map((item, idx) => {
+              const pricedMods = tpl.blocks.itemModifiers ? item.pricedModifiers : [];
               return (
-                <tr key={`${item.name}-${idx}`}>
+                <tr key={`${item.key}-${idx}`}>
                   <td data-print-align="left" className="border border-black px-1 py-0.5 align-top">
                     <div data-print-bold className="font-bold">
-                      {idx + 1}. {displayName}
+                      {idx + 1}. {item.displayName}
                       {item.isTakeaway ? ' [Mang về]' : ''}
                     </div>
                     {pricedMods.map((mod, mIdx) => (

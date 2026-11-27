@@ -2,6 +2,8 @@ import {
   ALLOWED_STORE_NAV_PATHS,
   DEFAULT_STORE_SETTINGS,
   ErrorCodes,
+  TakeawayLabelFormat,
+  formatTakeawayLabel,
   normalizeQrCardSettings,
   sanitizeNavGroupLabels,
   sanitizeNavGroupOrder,
@@ -200,6 +202,7 @@ function extractFormSettings(source: StoreSettings): StoreSettings {
       Object.entries(source.pageHeaders).map(([path, header]) => [path, { ...header }]),
     ),
     printTemplates: clonePrintTemplates(source.printTemplates),
+    takeawayLabelFormat: source.takeawayLabelFormat ?? TakeawayLabelFormat.NUMBER,
     displayScale: {
       globalPercent: source.displayScale?.globalPercent ?? 100,
       perPath: { ...(source.displayScale?.perPath ?? {}) },
@@ -607,6 +610,75 @@ export function StoreSettingsPage() {
                 placeholder="VD: Hệ thống bán hàng và vận hành nội bộ..."
                 className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               />
+            </div>
+
+            <div
+              data-testid="settings-takeaway-format-section"
+              className="space-y-2.5 border-t pt-4"
+            >
+              <div>
+                <h3 className="text-sm font-semibold">Định dạng nhãn đơn Mang về</h3>
+                <p className="text-xs text-muted-foreground">
+                  Áp dụng cho sơ đồ POS, phiếu bếp, phiếu tạm tính và hoá đơn của các đơn Mang về tạo mới (reset mỗi ngày theo giờ Việt Nam). Đơn đã tạo trước đó vẫn giữ nguyên định dạng cũ.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  data-testid="takeaway-format-number"
+                  aria-pressed={draft.takeawayLabelFormat === TakeawayLabelFormat.NUMBER}
+                  disabled={!canUpdate}
+                  onClick={() =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      takeawayLabelFormat: TakeawayLabelFormat.NUMBER,
+                    }))
+                  }
+                  className={
+                    draft.takeawayLabelFormat === TakeawayLabelFormat.NUMBER
+                      ? 'flex flex-col items-start gap-1 rounded-xl border-2 border-primary bg-primary/5 p-3.5 text-left transition-all disabled:opacity-60'
+                      : 'flex flex-col items-start gap-1 rounded-xl border bg-background p-3.5 text-left hover:bg-muted/40 transition-all disabled:opacity-60'
+                  }
+                >
+                  <div className="flex w-full items-center justify-between gap-2">
+                    <span className="text-sm font-bold">Số thứ tự</span>
+                    <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs font-bold">
+                      {formatTakeawayLabel(1, TakeawayLabelFormat.NUMBER)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Mẫu nối tiếp: #01, #02, #03, ..., #10...
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="takeaway-format-letter"
+                  aria-pressed={draft.takeawayLabelFormat === TakeawayLabelFormat.LETTER}
+                  disabled={!canUpdate}
+                  onClick={() =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      takeawayLabelFormat: TakeawayLabelFormat.LETTER,
+                    }))
+                  }
+                  className={
+                    draft.takeawayLabelFormat === TakeawayLabelFormat.LETTER
+                      ? 'flex flex-col items-start gap-1 rounded-xl border-2 border-primary bg-primary/5 p-3.5 text-left transition-all disabled:opacity-60'
+                      : 'flex flex-col items-start gap-1 rounded-xl border bg-background p-3.5 text-left hover:bg-muted/40 transition-all disabled:opacity-60'
+                  }
+                >
+                  <div className="flex w-full items-center justify-between gap-2">
+                    <span className="text-sm font-bold">Chữ thứ tự</span>
+                    <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs font-bold">
+                      {formatTakeawayLabel(1, TakeawayLabelFormat.LETTER)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    #A → #D, #AA → #DD, #E → #ED, #F → #FD ... #ZD (131+ dùng #131).
+                  </p>
+                </button>
+              </div>
             </div>
           </div>
         </TabsContent>

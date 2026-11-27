@@ -23,6 +23,7 @@ export type SeedModifierDef = {
   extraPrice: string;
   isDefaultChecked?: boolean;
   defaultSubstituteName?: string;
+  allowedSubstituteNames?: readonly string[] | null;
 };
 
 export type SeedModifierGroupDef = {
@@ -87,22 +88,22 @@ export const defaultNoodleGarnishes: readonly SeedModifierDef[] = [
 ];
 
 export const seafoodMainIngredients: readonly SeedModifierDef[] = [
-  { name: 'Ngao', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-  { name: 'Tôm', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-  { name: 'Mực', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Tôm' },
+  { name: 'Ngao', extraPrice: '0.00', isDefaultChecked: true, allowedSubstituteNames: [] },
+  { name: 'Tôm', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực', allowedSubstituteNames: ['Mực', 'Ngao'] },
+  { name: 'Mực', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Tôm', allowedSubstituteNames: ['Tôm', 'Ngao'] },
 ];
 
 export const squidMainIngredients: readonly SeedModifierDef[] = [
-  { name: 'Ngao', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-  { name: 'Mực', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Ngao' },
+  { name: 'Ngao', extraPrice: '0.00', isDefaultChecked: true, allowedSubstituteNames: [] },
+  { name: 'Mực', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Ngao', allowedSubstituteNames: ['Ngao'] },
 ];
 
 export const mixedMainIngredients: readonly SeedModifierDef[] = [
-  { name: 'Ngao', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-  { name: 'Tôm', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực' },
-  { name: 'Sườn sụn', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Tôm' },
-  { name: 'Trứng', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Ngao' },
-  { name: 'Mực', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Tôm' },
+  { name: 'Ngao', extraPrice: '0.00', isDefaultChecked: true, allowedSubstituteNames: [] },
+  { name: 'Tôm', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Mực', allowedSubstituteNames: ['Mực', 'Sườn sụn'] },
+  { name: 'Sườn sụn', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Tôm', allowedSubstituteNames: ['Tôm', 'Mực'] },
+  { name: 'Trứng', extraPrice: '0.00', isDefaultChecked: true, allowedSubstituteNames: [] },
+  { name: 'Mực', extraPrice: '0.00', isDefaultChecked: true, defaultSubstituteName: 'Tôm', allowedSubstituteNames: ['Tôm', 'Sườn sụn'] },
 ];
 
 export const noodleToppings: readonly SeedModifierDef[] = [

@@ -73,7 +73,7 @@ describe('@fnb/shared contracts', () => {
       'PAYMENT_QR_NOT_CONFIGURED', 'PAYMENT_QR_LOCKED_FIELD', 'PAYMENT_QR_IN_USE', 'PAYMENT_QR_CANNOT_DELETE_ACTIVE', 'PAYMENT_QR_LAST_ACTIVE', 'PAYMENT_QR_DUPLICATE_ACCOUNT',
       'STORE_ASSET_INVALID_TYPE', 'STORE_ASSET_TOO_LARGE', 'STORE_SETTINGS_CONFLICT',
       'DISCOUNT_NOT_FOUND', 'DISCOUNT_INACTIVE', 'DISCOUNT_EXPIRED', 'DISCOUNT_NOT_STARTED', 'DISCOUNT_OUT_OF_TIME_WINDOW', 'DISCOUNT_USAGE_EXHAUSTED', 'DISCOUNT_NOT_APPLICABLE', 'DISCOUNT_LOCKED_FIELDS', 'POS_DISCOUNT_BLOCKS_SPLIT',
-      'POS_DRAFT_CONCURRENT_MODIFICATION', 'POS_DRAFT_ALREADY_SUBMITTED',
+      'POS_DRAFT_CONCURRENT_MODIFICATION', 'POS_DRAFT_ALREADY_SUBMITTED', 'POS_ITEM_ALREADY_PRINTED',
     ]);
     expect(contracts.ErrorCodes.AUTH_TOKEN_EXPIRED).toBe('AUTH_TOKEN_EXPIRED');
     expect(contracts.ErrorCodes.CASHFLOW_DISCREPANCY_NOTE_REQUIRED).toBe('CASHFLOW_DISCREPANCY_NOTE_REQUIRED');
@@ -193,6 +193,50 @@ describe('@fnb/shared contracts', () => {
   it('validates products, modifiers, and non-recursive combo components', () => {
     const modifier = { id: 1, name: 'Cấp độ 3', extraPrice: 0 };
     expect(contracts.ModifierSchema.safeParse(modifier).success).toBe(true);
+    expect(
+      contracts.ModifierSchema.safeParse({
+        ...modifier,
+        allowedSubstituteNames: ['Mực', 'Tôm'],
+      }).success,
+    ).toBe(true);
+    expect(contracts.ModifierSchema.safeParse({ ...modifier, allowedSubstituteNames: null }).success).toBe(true);
+    expect(contracts.ModifierSchema.safeParse({ ...modifier, allowedSubstituteNames: [''] }).success).toBe(false);
+    expect(
+      contracts.CreateProductSchema.safeParse({
+        name: 'Mì Hải Sản',
+        price: 55000,
+        station: 'BEP_NAU',
+        modifierGroups: [
+          {
+            name: 'Đồ ăn món chính',
+            allowSubstitution: true,
+            modifiers: [
+              { name: 'Ngao', isDefaultChecked: true, allowedSubstituteNames: [], defaultSubstituteName: null },
+              { name: 'Tôm', isDefaultChecked: true, allowedSubstituteNames: ['Mực'], defaultSubstituteName: 'Mực' },
+              { name: 'Mực', isDefaultChecked: true, allowedSubstituteNames: ['Tôm'], defaultSubstituteName: 'Tôm' },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      contracts.CreateProductSchema.safeParse({
+        name: 'Mì Hải Sản',
+        price: 55000,
+        station: 'BEP_NAU',
+        modifierGroups: [
+          {
+            name: 'Đồ ăn món chính',
+            allowSubstitution: true,
+            modifiers: [
+              { name: 'Ngao', isDefaultChecked: true, allowedSubstituteNames: [], defaultSubstituteName: 'Tôm' },
+              { name: 'Tôm', isDefaultChecked: true, allowedSubstituteNames: ['Mực'], defaultSubstituteName: 'Mực' },
+              { name: 'Mực', isDefaultChecked: true, allowedSubstituteNames: ['Tôm'], defaultSubstituteName: 'Tôm' },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(false);
     expect(contracts.ModifierSchema.safeParse({ ...modifier, extraPrice: 1.001 }).success).toBe(false);
     expect(contracts.ModifierGroupSchema.safeParse({ id: 1, name: 'Cấp độ cay', isRequired: true, maxSelect: 1, modifiers: [modifier] }).success).toBe(true);
     expect(contracts.ModifierGroupSchema.safeParse({ id: 1, name: 'Cấp độ cay', isRequired: true, maxSelect: 0, modifiers: [] }).success).toBe(false);

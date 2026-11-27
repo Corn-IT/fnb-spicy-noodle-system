@@ -498,4 +498,61 @@ describe('Takeaway QR End-to-End Backend Logic', () => {
     const guestRes = await menuService.getPublicMenu('Ban01-K7M9');
     expect(guestRes.table.tableName).toBe('Bàn 01');
   });
+
+  it('snapshots LETTER takeawayLabelFormat on QR takeaway creation and leaves old orders intact when setting switches to NUMBER', async () => {
+    const harness = createPosTakeawayHarness();
+    let formatSetting: 'NUMBER' | 'LETTER' = 'LETTER';
+    harness.tx.masterData.findUnique = vi.fn(async ({ where }: { where?: { category_normalizedName?: { category?: string; normalizedName?: string } } }) => {
+      if (where?.category_normalizedName?.category === 'SYSTEM_CONFIG' && where.category_normalizedName.normalizedName === 'store_settings') {
+        return { isActive: true, metadata: { takeawayLabelFormat: formatSetting } };
+      }
+      return { isActive: true, metadata: { qrToken: TAKEAWAY_TOKEN } };
+    }) as never;
+
+    let seq = 0;
+    harness.tx.$queryRaw = vi.fn(async (strings: TemplateStringsArray) => {
+      const sql = strings.raw.join('');
+      if (sql.includes('INSERT INTO takeaway_sequences')) return [{ takeawayNumber: ++seq }];
+      return [];
+    }) as never;
+    harness.tx.order.create = vi.fn(async ({ data }: { data: { takeawayNumber: number; takeawayLabelFormat: string | null } }) => ({
+      id: 900 + data.takeawayNumber,
+      orderCode: `HD-20261127-0${data.takeawayNumber}`,
+      orderType: 'TAKEAWAY',
+      orderSource: 'QR_CODE',
+      tableId: null,
+      takeawayNumber: data.takeawayNumber,
+      takeawayLabelFormat: data.takeawayLabelFormat,
+      status: 'PENDING',
+      totalAmount: new Prisma.Decimal('49000.00'),
+    })) as never;
+
+    // Issue 5 sequential QR orders (#A, #B, #C, #D, #AA)
+    const results: Array<{ currentTableLabel: string; takeawayLabelFormat?: string | null }> = [];
+    for (let i = 0; i < 5; i += 1) {
+      results.push(
+        await harness.service.createQrOrder({
+          qrToken: TAKEAWAY_TOKEN,
+          items: [{ productId: 11, quantity: 1 }],
+        }),
+      );
+    }
+    expect(results.map((r) => r.currentTableLabel)).toEqual([
+      'Mang về #A',
+      'Mang về #B',
+      'Mang về #C',
+      'Mang về #D',
+      'Mang về #AA',
+    ]);
+    expect(results.every((r) => r.takeawayLabelFormat === 'LETTER')).toBe(true);
+
+    // Mid-day toggle back to NUMBER -> next QR order #6 uses #06
+    formatSetting = 'NUMBER';
+    const sixth = await harness.service.createQrOrder({
+      qrToken: TAKEAWAY_TOKEN,
+      items: [{ productId: 11, quantity: 1 }],
+    });
+    expect(sixth.currentTableLabel).toBe('Mang về #06');
+    expect(sixth.takeawayLabelFormat).toBe('NUMBER');
+  });
 });

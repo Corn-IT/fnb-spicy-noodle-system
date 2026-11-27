@@ -25,6 +25,8 @@ export * from './schemas/hr-schedule.schema';
 export * from './schemas/profile.schema';
 export * from './schemas/audit-log.schema';
 export * from './utils/discount-calculator';
+export * from './utils/modifier-substitution.util';
+export * from './utils/takeaway-label.util';
 export * from './schemas/store-settings.schema';
 export * from './schemas/dashboard.schema';
 export * from './schemas/web-push.schema';

@@ -1,4 +1,4 @@
-import { type OrderDetailResponse } from '@fnb/shared';
+import { formatTakeawayLabel, type OrderDetailResponse } from '@fnb/shared';
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
@@ -50,7 +50,7 @@ export function CancelOrderConfirmDialog({
   const targetLabel =
     order.tableLabel ??
     (isTakeaway
-      ? `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`
+      ? formatTakeawayLabel(order.takeawayNumber, order.takeawayLabelFormat)
       : `Bàn #${order.tableId}`);
 
   const activeItems = order.items.filter((i) => i.kitchenStatus !== 'CANCELLED');

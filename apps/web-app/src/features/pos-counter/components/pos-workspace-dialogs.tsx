@@ -1,6 +1,7 @@
 import type { PosWorkspace } from '../hooks/use-pos-workspace';
 import { CheckoutConfirmDialog } from './checkout-confirm-dialog';
 import { PosDiscountDialog } from './pos-discount-dialog';
+import { ProductOptionsDialog } from './product-options-dialog';
 import { SplitOrderItemsDialog } from './split-order-items-dialog';
 import { TableActionDialog } from './table-action-dialog';
 
@@ -8,12 +9,24 @@ export interface PosWorkspaceDialogsProps {
   workspace: PosWorkspace;
 }
 
-/** Bộ dialog nghiệp vụ dùng chung (đổi/gộp bàn, thanh toán, giảm giá, tách đơn) của quầy POS. */
+/** Bộ dialog nghiệp vụ dùng chung (đổi/gộp bàn, thanh toán, giảm giá, tách đơn, chỉnh sửa món) của quầy POS. */
 export function PosWorkspaceDialogs({ workspace }: PosWorkspaceDialogsProps) {
   const { currentOrder, gridData, dialogs, pending, actions } = workspace;
 
   return (
     <>
+      <ProductOptionsDialog
+        product={dialogs.editingItemTarget?.product ?? null}
+        mode="edit"
+        editInstanceKey={dialogs.editingItemTarget?.editInstanceKey}
+        initialValue={dialogs.editingItemTarget?.initialValue}
+        isSubmitting={
+          dialogs.editingItemTarget?.kind === 'order' ? pending.isPatchingItems : false
+        }
+        onClose={() => dialogs.setEditingItemTarget(null)}
+        onConfirm={actions.confirmEditItem}
+      />
+
       <TableActionDialog
         open={dialogs.tableActionOpen}
         onOpenChange={dialogs.setTableActionOpen}

@@ -1,8 +1,10 @@
 import {
   formatProductNameWithSize,
+  formatTakeawayLabel,
   type OrderType,
   type PublicStoreSettingsResponse,
   type SplitKitchenResponse,
+  type TakeawayLabelFormat,
 } from '@fnb/shared';
 import * as React from 'react';
 
@@ -15,6 +17,7 @@ export interface KitchenSplitSlipProps {
   orderType?: OrderType;
   tableLabel?: string | null;
   takeawayNumber?: number | null;
+  takeawayLabelFormat?: TakeawayLabelFormat | null;
   printedAt?: string;
   orderNote?: string | null;
   transferFromTable?: string | null;
@@ -48,6 +51,7 @@ export function KitchenSplitSlip({
   orderType = 'DINE_IN',
   tableLabel,
   takeawayNumber,
+  takeawayLabelFormat,
   printedAt,
   orderNote,
   transferFromTable,
@@ -69,11 +73,12 @@ export function KitchenSplitSlip({
 
   const resolvedTableDisplay = React.useMemo(() => {
     if (orderType === 'TAKEAWAY' || (takeawayNumber !== null && takeawayNumber !== undefined)) {
-      const num = String(takeawayNumber ?? 1).padStart(2, '0');
-      return tableLabel ? tableLabel.toUpperCase() : `MANG VỀ #${num}`;
+      return tableLabel
+        ? tableLabel.toUpperCase()
+        : formatTakeawayLabel(takeawayNumber, takeawayLabelFormat, { uppercase: true });
     }
     return (tableLabel || 'BÀN 01').toUpperCase();
-  }, [orderType, tableLabel, takeawayNumber]);
+  }, [orderType, tableLabel, takeawayNumber, takeawayLabelFormat]);
 
   const formattedTime =
     printedAt ||

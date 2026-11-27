@@ -1,4 +1,4 @@
-import { formatProductNameWithSize, type OrderDetailResponse } from '@fnb/shared';
+import { formatProductNameWithSize, formatTakeawayLabel, type OrderDetailResponse } from '@fnb/shared';
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -8,6 +8,7 @@ import {
   Loader2,
   Maximize2,
   Minus,
+  Pencil,
   Plus,
   Printer,
   QrCode,
@@ -70,6 +71,7 @@ export interface LiveInvoicePanelProps {
   pendingAlert?: OrderPendingAlertState | null;
   onUpdateDraftQty: (index: number, delta: number) => void;
   onRemoveDraftItem: (index: number) => void;
+  onEditDraftItem?: (index: number) => void;
   onSubmitDraftOrder: () => void;
   onSaveDraft?: () => void;
   onChooseDraftTarget?: () => void;
@@ -77,6 +79,7 @@ export interface LiveInvoicePanelProps {
   onUpdateOrderItemQuantity: (orderItemId: number, newQuantity: number) => void;
   onToggleOrderItemTakeaway?: (orderItemId: number, nextIsTakeaway: boolean) => void;
   onRemoveOrCancelOrderItem: (orderItemId: number) => void;
+  onEditOrderItem?: (orderItemId: number) => void;
   addonIsTakeaway?: boolean;
   onChangeAddonIsTakeaway?: (isTakeaway: boolean) => void;
   onOpenTableAction: () => void;
@@ -115,6 +118,7 @@ export function LiveInvoicePanel({
   pendingAlert = null,
   onUpdateDraftQty,
   onRemoveDraftItem,
+  onEditDraftItem,
   onSubmitDraftOrder,
   onSaveDraft = () => undefined,
   onChooseDraftTarget = () => undefined,
@@ -122,6 +126,7 @@ export function LiveInvoicePanel({
   onUpdateOrderItemQuantity,
   onToggleOrderItemTakeaway,
   onRemoveOrCancelOrderItem,
+  onEditOrderItem,
   addonIsTakeaway = false,
   onChangeAddonIsTakeaway,
   onOpenTableAction,
@@ -188,19 +193,52 @@ export function LiveInvoicePanel({
                 <div
                   key={`${item.productId}-${idx}`}
                   data-testid={`draft-item-${idx}`}
-                  className="flex items-center justify-between rounded-lg border p-2.5 text-sm"
+                  className="flex items-center justify-between gap-2 rounded-lg border p-2.5 text-sm"
                 >
-                  <div>
-                    <p className="font-semibold">{displayName}</p>
-                    {remainingModifiers.length > 0 ? (
-                      <p className="text-xs text-muted-foreground">
-                        {remainingModifiers.join(', ')}
+                  {canCreate && onEditDraftItem ? (
+                    <button
+                      type="button"
+                      data-testid={`edit-draft-item-${idx}`}
+                      onClick={() => onEditDraftItem(idx)}
+                      title="Bấm để chỉnh sửa tuỳ chọn, số lượng hoặc ghi chú"
+                      className="min-w-0 flex-1 pr-2 text-left rounded-md px-1.5 py-0.5 -mx-1.5 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-colors cursor-pointer group"
+                    >
+                      <p className="font-semibold flex items-center gap-1.5 group-hover:text-accent-text transition-colors">
+                        <span className="min-w-0 break-words">{displayName}</span>
+                        <Pencil className="h-3 w-3 shrink-0 text-muted-foreground opacity-75 group-hover:text-accent-text group-hover:opacity-100" />
                       </p>
-                    ) : null}
-                    <p className="text-xs font-bold text-price">
-                      {(item.unitPrice * item.quantity).toLocaleString('vi-VN')} đ
-                    </p>
-                  </div>
+                      {remainingModifiers.length > 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          {remainingModifiers.join(', ')}
+                        </p>
+                      ) : null}
+                      {item.itemNote ? (
+                        <p className="text-xs italic font-medium text-amber-700 dark:text-amber-300">
+                          Ghi chú: {item.itemNote}
+                        </p>
+                      ) : null}
+                      <p className="text-xs font-bold text-price">
+                        {(item.unitPrice * item.quantity).toLocaleString('vi-VN')} đ
+                      </p>
+                    </button>
+                  ) : (
+                    <div className="min-w-0 flex-1 pr-2">
+                      <p className="font-semibold">{displayName}</p>
+                      {remainingModifiers.length > 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          {remainingModifiers.join(', ')}
+                        </p>
+                      ) : null}
+                      {item.itemNote ? (
+                        <p className="text-xs italic font-medium text-amber-700 dark:text-amber-300">
+                          Ghi chú: {item.itemNote}
+                        </p>
+                      ) : null}
+                      <p className="text-xs font-bold text-price">
+                        {(item.unitPrice * item.quantity).toLocaleString('vi-VN')} đ
+                      </p>
+                    </div>
+                  )}
                   {canCreate ? (
                     <div className="flex items-center gap-1.5">
                       <Button
@@ -360,7 +398,7 @@ export function LiveInvoicePanel({
   const resolvedHeaderLabel =
     order.tableLabel ??
     (order.orderType === 'TAKEAWAY'
-      ? `Mang về #${String(order.takeawayNumber ?? 1).padStart(2, '0')}`
+      ? formatTakeawayLabel(order.takeawayNumber, order.takeawayLabelFormat)
       : `Bàn #${order.tableId}`);
 
   const resolvedStatusLabel =
@@ -548,6 +586,34 @@ export function LiveInvoicePanel({
                 const isTableOrder = order.orderType === 'DINE_IN';
                 const itemIsTakeaway = Boolean(item.isTakeaway);
 
+                const isItemEditable = isNew && canUpdate && isOrderActive && Boolean(onEditOrderItem);
+                const statusBadge = (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'text-[10px] px-1.5 py-0.5 font-bold shrink-0',
+                      isNew &&
+                        'border-amber-500/80 bg-amber-50 text-amber-800 dark:border-amber-400/70 dark:bg-amber-950/60 dark:text-amber-200',
+                      isPrinted &&
+                        'border-emerald-600/80 bg-emerald-50 text-emerald-800 dark:border-emerald-400/70 dark:bg-emerald-950/60 dark:text-emerald-200',
+                      isCancelled &&
+                        'border-rose-500/80 bg-rose-50 text-rose-700 dark:border-rose-400/70 dark:bg-rose-950/60 dark:text-rose-200',
+                    )}
+                  >
+                    {isNew ? 'Mới gọi' : isPrinted ? 'Đã in bếp' : 'Đã huỷ'}
+                  </Badge>
+                );
+                const takeawayBadge =
+                  isTableOrder && itemIsTakeaway ? (
+                    <Badge
+                      variant="outline"
+                      data-testid={`invoice-item-takeaway-badge-${item.id}`}
+                      className="text-[10px] px-1.5 py-0.5 font-bold shrink-0 border-sky-500/80 bg-sky-50 text-sky-800 dark:border-sky-400/70 dark:bg-sky-950/60 dark:text-sky-200"
+                    >
+                      Mang về
+                    </Badge>
+                  ) : null;
+
                 return (
                   <div
                     key={item.id}
@@ -557,35 +623,63 @@ export function LiveInvoicePanel({
                       isCancelled && 'bg-muted/40 opacity-60 line-through',
                     )}
                   >
-                    <div className="min-w-0 flex-1 pr-2 space-y-0.5">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="font-semibold leading-snug">
-                          {item.quantity}x {displayName}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            'text-[10px] px-1.5 py-0.5 font-bold shrink-0',
-                            isNew &&
-                              'border-amber-500/80 bg-amber-50 text-amber-800 dark:border-amber-400/70 dark:bg-amber-950/60 dark:text-amber-200',
-                            isPrinted &&
-                              'border-emerald-600/80 bg-emerald-50 text-emerald-800 dark:border-emerald-400/70 dark:bg-emerald-950/60 dark:text-emerald-200',
-                            isCancelled &&
-                              'border-rose-500/80 bg-rose-50 text-rose-700 dark:border-rose-400/70 dark:bg-rose-950/60 dark:text-rose-200',
-                          )}
+                    <div className="min-w-0 flex-1 pr-2 space-y-1">
+                      {isItemEditable ? (
+                        <button
+                          type="button"
+                          data-testid={`edit-new-item-${item.id}`}
+                          onClick={() => onEditOrderItem?.(item.id)}
+                          title="Bấm để chỉnh sửa tuỳ chọn, cấp độ cay, số lượng hoặc ghi chú"
+                          className="w-full text-left rounded-md px-1.5 py-0.5 -mx-1.5 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-colors cursor-pointer group space-y-0.5"
                         >
-                          {isNew ? 'Mới gọi' : isPrinted ? 'Đã in bếp' : 'Đã huỷ'}
-                        </Badge>
-                        {isTableOrder && itemIsTakeaway ? (
-                          <Badge
-                            variant="outline"
-                            data-testid={`invoice-item-takeaway-badge-${item.id}`}
-                            className="text-[10px] px-1.5 py-0.5 font-bold shrink-0 border-sky-500/80 bg-sky-50 text-sky-800 dark:border-sky-400/70 dark:bg-sky-950/60 dark:text-sky-200"
-                          >
-                            Mang về
-                          </Badge>
-                        ) : null}
-                        {isTableOrder && !isCancelled && canUpdate && isOrderActive && onToggleOrderItemTakeaway ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-semibold leading-snug group-hover:text-accent-text transition-colors">
+                              {item.quantity}x {displayName}
+                            </span>
+                            <Pencil className="h-3 w-3 shrink-0 text-muted-foreground opacity-75 group-hover:text-accent-text group-hover:opacity-100" />
+                            {statusBadge}
+                            {takeawayBadge}
+                          </div>
+                          {remainingModifiers.length > 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              {remainingModifiers.join(', ')}
+                            </p>
+                          ) : null}
+                          {item.itemNote ? (
+                            <p className="text-xs italic font-medium text-amber-700 dark:text-amber-300">
+                              Ghi chú: {item.itemNote}
+                            </p>
+                          ) : null}
+                          <p className="text-xs font-bold text-price tabular-nums">
+                            {item.lineTotal.toLocaleString('vi-VN')} đ
+                          </p>
+                        </button>
+                      ) : (
+                        <div className="space-y-0.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-semibold leading-snug">
+                              {item.quantity}x {displayName}
+                            </span>
+                            {statusBadge}
+                            {takeawayBadge}
+                          </div>
+                          {remainingModifiers.length > 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              {remainingModifiers.join(', ')}
+                            </p>
+                          ) : null}
+                          {item.itemNote ? (
+                            <p className="text-xs italic font-medium text-amber-700 dark:text-amber-300">
+                              Ghi chú: {item.itemNote}
+                            </p>
+                          ) : null}
+                          <p className="text-xs font-bold text-price tabular-nums">
+                            {item.lineTotal.toLocaleString('vi-VN')} đ
+                          </p>
+                        </div>
+                      )}
+                      {isTableOrder && !isCancelled && canUpdate && isOrderActive && onToggleOrderItemTakeaway ? (
+                        <div>
                           <button
                             type="button"
                             data-testid={`toggle-item-takeaway-${item.id}`}
@@ -595,21 +689,8 @@ export function LiveInvoicePanel({
                           >
                             {itemIsTakeaway ? 'Bỏ nhãn MV' : '+ Mang về'}
                           </button>
-                        ) : null}
-                      </div>
-                      {remainingModifiers.length > 0 ? (
-                        <p className="text-xs text-muted-foreground">
-                          {remainingModifiers.join(', ')}
-                        </p>
+                        </div>
                       ) : null}
-                      {item.itemNote ? (
-                        <p className="text-xs italic font-medium text-amber-700 dark:text-amber-300">
-                          Ghi chú: {item.itemNote}
-                        </p>
-                      ) : null}
-                      <p className="text-xs font-bold text-price tabular-nums">
-                        {item.lineTotal.toLocaleString('vi-VN')} đ
-                      </p>
                     </div>
 
                     {!isCancelled && canUpdate && isOrderActive ? (

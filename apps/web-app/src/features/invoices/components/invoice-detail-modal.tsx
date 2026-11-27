@@ -1,4 +1,4 @@
-import { type OrderDetailResponse } from '@fnb/shared';
+import { formatTakeawayLabel, type OrderDetailResponse } from '@fnb/shared';
 import { ArrowRightLeft, Printer } from 'lucide-react';
 import * as React from 'react';
 
@@ -107,6 +107,9 @@ export function InvoiceDetailModal({
           modifiers: item.modifiers,
           pricedModifiers: item.pricedModifiers,
           note: item.itemNote,
+          ...(printableDetail.orderType !== 'TAKEAWAY' && item.isTakeaway
+            ? { isTakeaway: true }
+            : {}),
         }));
 
       printOfficialReceipt({
@@ -114,7 +117,7 @@ export function InvoiceDetailModal({
         tableLabel:
           printableDetail.tableLabel ??
           (printableDetail.takeawayNumber
-            ? `Mang về #${String(printableDetail.takeawayNumber).padStart(2, '0')}`
+            ? formatTakeawayLabel(printableDetail.takeawayNumber, printableDetail.takeawayLabelFormat)
             : 'Tại bàn'),
         cashierName: user?.fullName || user?.username || 'Thu ngân',
         paidAt: formatDateTimeVi(printableDetail.paidAt ?? printableDetail.createdAt),
@@ -225,7 +228,7 @@ export function InvoiceDetailModal({
                 <div className="mt-0.5 font-semibold text-foreground">
                   {detail.tableLabel ??
                     (detail.takeawayNumber
-                      ? `Mang về #${String(detail.takeawayNumber).padStart(2, '0')}`
+                      ? formatTakeawayLabel(detail.takeawayNumber, detail.takeawayLabelFormat)
                       : '—')}
                 </div>
               </div>

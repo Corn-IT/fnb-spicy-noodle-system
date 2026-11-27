@@ -44,10 +44,14 @@ import {
   UpdateDiningTableSchema,
   VoidInvoiceRequestSchema,
   calculateOrderDiscount,
+  filterAllowedSubstituteModifiers,
+  formatTakeawayShortCode,
   getVietQrBankShortName,
   isLegacyLongQrToken,
+  isSubstituteTargetAllowed,
   maskQrTokenForAudit,
   normalizeQrToken,
+  parseAllowedSubstituteNamesFromJson,
   type ApplyPosDiscountRequest,
   type ApproveQrOrderInput,
   type AuthPrincipal,
@@ -74,6 +78,11 @@ import type { ZodType } from 'zod';
 import type { EnvConfig } from '../../config/env.config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService, formatPaymentMethodVi } from '../../common/audit/audit-log.service';
+import {
+  formatOrderTakeawayLabel,
+  normalizeTakeawayLabelFormat,
+  resolveStoreTakeawayLabelFormat,
+} from '../../common/utils/takeaway-format.util';
 import { generateUniqueTableQrToken } from '../../common/utils/qr-token.util';
 import {
   formatTakeawayCustomerNote,
@@ -106,6 +115,7 @@ type PricingModifier = {
   isDefaultChecked?: boolean;
   isAvailable?: boolean;
   defaultSubstituteName?: string | null;
+  allowedSubstituteNames?: Prisma.JsonValue | null;
 };
 type PricingGroup = {
   id: number;
@@ -139,6 +149,7 @@ type OrderRow = {
   orderSource?: string;
   tableId: number | null;
   takeawayNumber: number | null;
+  takeawayLabelFormat?: string | null;
   status: string;
   paymentMethod?: string | null;
   paymentAccountId?: number | null;
@@ -230,6 +241,9 @@ export class PosService {
       const takeawayNumber = parsed.orderType === 'TAKEAWAY'
         ? await allocateTakeawayNumber(tx, now)
         : null;
+      const takeawayLabelFormat = parsed.orderType === 'TAKEAWAY'
+        ? await resolveStoreTakeawayLabelFormat(tx)
+        : null;
       const items = await this.resolveItems(tx, parsed.items);
       const totalAmount = this.totalForItems(items);
       const order = await tx.order.create({
@@ -239,6 +253,7 @@ export class PosService {
           orderSource: 'POS_COUNTER',
           tableId: parsed.orderType === 'DINE_IN' ? parsed.tableId : null,
           takeawayNumber,
+          takeawayLabelFormat,
           status: 'SERVING',
           cashierId,
           note: parsed.note,
@@ -401,6 +416,9 @@ export class PosService {
       await this.lockOrderSequence(tx, businessDay.key);
       const orderCode = await this.nextOrderCode(tx, businessDay);
       const takeawayNumber = state.orderType === 'TAKEAWAY' ? await allocateTakeawayNumber(tx, now) : null;
+      const takeawayLabelFormat = state.orderType === 'TAKEAWAY'
+        ? await resolveStoreTakeawayLabelFormat(tx)
+        : null;
       const items = await this.resolveItems(tx, state.items);
       const totalAmount = this.totalForItems(items);
       const order = await tx.order.create({
@@ -410,6 +428,7 @@ export class PosService {
           orderSource: 'POS_COUNTER',
           tableId: state.orderType === 'DINE_IN' ? state.tableId : null,
           takeawayNumber,
+          takeawayLabelFormat,
           status: 'SERVING',
           cashierId,
           note: state.note ?? undefined,
@@ -534,7 +553,7 @@ export class PosService {
             : parsed.items;
           const response = await this.appendItems(tx, target, addonItems);
           const resolvedTableLabel = target.orderType === 'TAKEAWAY'
-            ? `Mang về #${String(target.takeawayNumber ?? 1).padStart(2, '0')}`
+            ? formatOrderTakeawayLabel(target.takeawayNumber, target.takeawayLabelFormat)
             : target.table!.name;
           return {
             kind: 'addon' as const,
@@ -729,6 +748,7 @@ export class PosService {
               orderSource: true,
               tableId: true,
               takeawayNumber: true,
+              takeawayLabelFormat: true,
               status: true,
               subtotalAmount: true,
               discountAmount: true,
@@ -1107,7 +1127,7 @@ export class PosService {
       }
       return {
         order: updated as OrderRow,
-        tableLabel: current.table?.name ?? (current.orderType === 'TAKEAWAY' ? `Mang về #${String(current.takeawayNumber ?? 0).padStart(2, '0')}` : null),
+        tableLabel: current.table?.name ?? (current.orderType === 'TAKEAWAY' ? formatOrderTakeawayLabel(current.takeawayNumber, current.takeawayLabelFormat) : null),
       };
     });
     this.gateway.emitOrderStatusUpdated(id, {
@@ -1165,7 +1185,7 @@ export class PosService {
         throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Chỉ có thể huỷ đơn hàng đang mở hoặc đang phục vụ');
       }
 
-      const tableLabel = current.table?.name ?? (current.orderType === 'TAKEAWAY' ? `Mang về #${String(current.takeawayNumber ?? 0).padStart(2, '0')}` : null);
+      const tableLabel = current.table?.name ?? (current.orderType === 'TAKEAWAY' ? formatOrderTakeawayLabel(current.takeawayNumber, current.takeawayLabelFormat) : null);
       const slipLabel = tableLabel ?? `Đơn #${current.orderCode}`;
       const kitchenCancellationSlips: Array<{ station: 'BEP_NAU' | 'BEP_CHIEN' | 'PHA_CHE'; tableLabel: string; itemName: string; quantity: number }> = [];
       for (const printedItem of current.items ?? []) {
@@ -1277,7 +1297,7 @@ export class PosService {
       const slips: Array<{ station: 'BEP_NAU' | 'BEP_CHIEN' | 'PHA_CHE'; tableLabel: string; itemName: string; quantity: number }> = [];
       const itemsById = new Map((order.items ?? []).map((item) => [item.id, item]));
       const changedIds = new Set<number>();
-      const tableLabel = order.table?.name ?? `Mang về #${String(order.takeawayNumber ?? 0).padStart(2, '0')}`;
+      const tableLabel = order.table?.name ?? formatOrderTakeawayLabel(order.takeawayNumber, order.takeawayLabelFormat);
 
       for (const itemId of parsed.removeItemIds ?? []) {
         const item = itemsById.get(itemId);
@@ -1296,6 +1316,12 @@ export class PosService {
         if (!item || changedIds.has(update.orderItemId)) throw new NotFoundException({ message: 'Không tìm thấy món trong đơn hàng' });
         changedIds.add(update.orderItemId);
         if (item.kitchenStatus === 'CANCELLED') throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Món đã huỷ không thể sửa tiếp');
+        if (update.expectedKitchenStatus === 'NEW' && item.kitchenStatus !== 'NEW') {
+          throw this.conflict(
+            ErrorCodes.POS_ITEM_ALREADY_PRINTED,
+            'Món này vừa được tách xuống bếp, không thể sửa trực tiếp tuỳ chọn nữa',
+          );
+        }
 
         const isOnlyTakeawayToggle =
           update.isTakeaway !== undefined &&
@@ -1504,7 +1530,7 @@ export class PosService {
       const detailText = slip
         ? `từ ${slip.fromLabel} sang ${slip.toLabel} (đơn ${slip.orderCode})`
         : input.action === 'TO_TAKEAWAY'
-          ? `cho đơn #${id} sang Mang về #${String(res.takeawayNumber ?? 1).padStart(2, '0')}`
+          ? `cho đơn #${id} sang ${formatOrderTakeawayLabel(res.takeawayNumber, res.takeawayLabelFormat)}`
           : `cho đơn #${id} sang bàn #${input.targetTableId}`;
       await this.auditLogService?.record({
         module: 'POS',
@@ -1884,6 +1910,7 @@ export class PosService {
       orderType: order.orderType,
       tableId: order.tableId,
       takeawayNumber: order.takeawayNumber,
+      takeawayLabelFormat: normalizeTakeawayLabelFormat(order.takeawayLabelFormat),
       items: (order.items ?? [])
         .filter((item) => item.kitchenStatus !== 'CANCELLED')
         .map((item) => ({
@@ -2001,6 +2028,7 @@ export class PosService {
       orderType: order.orderType,
       tableId: order.tableId,
       takeawayNumber: order.takeawayNumber,
+      takeawayLabelFormat: normalizeTakeawayLabelFormat(order.takeawayLabelFormat),
       items: billItems,
       subtotalAmount: splitTotal.toNumber(),
       discountAmount: 0,
@@ -2111,7 +2139,7 @@ export class PosService {
       if (order.tableId !== null) {
         await tx.diningTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE', activeOrderId: null } });
       }
-      const tableLabel = order.table?.name ?? (order.orderType === 'TAKEAWAY' ? `Mang về #${String(order.takeawayNumber ?? 0).padStart(2, '0')}` : null);
+      const tableLabel = order.table?.name ?? (order.orderType === 'TAKEAWAY' ? formatOrderTakeawayLabel(order.takeawayNumber, order.takeawayLabelFormat) : null);
       return { order: updated as OrderRow, paidAt, tableId: order.tableId, tableLabel };
     });
 
@@ -2277,6 +2305,10 @@ export class PosService {
       const splitOrderCode = await this.nextOrderCode(tx, businessDay);
       const splitTakeawayNumber =
         order.orderType === 'TAKEAWAY' ? await allocateTakeawayNumber(tx, paidAt) : null;
+      const splitTakeawayLabelFormat =
+        order.orderType === 'TAKEAWAY'
+          ? (normalizeTakeawayLabelFormat(order.takeawayLabelFormat) ?? await resolveStoreTakeawayLabelFormat(tx))
+          : null;
 
       const paidOrder = await tx.order.create({
         data: {
@@ -2285,6 +2317,7 @@ export class PosService {
           orderSource: 'POS_COUNTER',
           tableId: order.orderType === 'DINE_IN' ? order.tableId : null,
           takeawayNumber: splitTakeawayNumber,
+          takeawayLabelFormat: splitTakeawayLabelFormat,
           status: 'PAID',
           paymentMethod: parsed.paymentMethod,
           paymentAccountId: resolvedPaymentAccountId,
@@ -2408,13 +2441,13 @@ export class PosService {
       const orderMeta = typeof this.prisma.order?.findUnique === 'function'
         ? await this.prisma.order.findUnique({
             where: { id },
-            select: { orderCode: true, orderType: true, takeawayNumber: true, table: { select: { name: true } } },
+            select: { orderCode: true, orderType: true, takeawayNumber: true, takeawayLabelFormat: true, table: { select: { name: true } } },
           })
         : null;
       const tableLabel =
         orderMeta?.table?.name ??
         (orderMeta?.orderType === 'TAKEAWAY'
-          ? `Mang về #${String(orderMeta.takeawayNumber ?? 0).padStart(2, '0')}`
+          ? formatOrderTakeawayLabel(orderMeta.takeawayNumber, orderMeta.takeawayLabelFormat)
           : undefined);
       await this.auditLogService?.record({
         module: 'POS',
@@ -2562,6 +2595,23 @@ export class PosService {
           }
 
           if (selection.action === 'SUBSTITUTED') {
+            const allowedList = parseAllowedSubstituteNamesFromJson(modifier.allowedSubstituteNames);
+            const allowedRemaining = filterAllowedSubstituteModifiers(
+              {
+                id: modifier.id,
+                name: modifier.name,
+                allowedSubstituteNames: allowedList,
+              },
+              remainingGroupModifiers,
+            );
+
+            if (allowedList !== null && allowedRemaining.length === 0) {
+              throw new UnprocessableEntityException({
+                code: 'VALIDATION_FAILED',
+                message: `Món "${modifier.name}" không được phép đổi sang các món còn lại`,
+              });
+            }
+
             if (selection.substituteModifierId) {
               const targetMod = group.modifiers.find((m) => m.id === selection.substituteModifierId);
               if (!targetMod || targetMod.isAvailable === false) {
@@ -2570,23 +2620,74 @@ export class PosService {
                   message: 'Món thay thế hiện không khả dụng hoặc tạm hết',
                 });
               }
+              if (
+                !isSubstituteTargetAllowed(
+                  { name: modifier.name, allowedSubstituteNames: allowedList },
+                  targetMod.name,
+                )
+              ) {
+                throw new UnprocessableEntityException({
+                  code: 'VALIDATION_FAILED',
+                  message: `Món "${modifier.name}" không được phép đổi sang "${targetMod.name}"`,
+                });
+              }
             }
+
             const explicitSubModifier = selection.substituteModifierId
-              ? remainingGroupModifiers.find((m) => m.id === selection.substituteModifierId)
+              ? allowedRemaining.find((m) => m.id === selection.substituteModifierId)
               : undefined;
+            if (allowedList !== null && selection.substituteModifierId && !explicitSubModifier) {
+              throw new UnprocessableEntityException({
+                code: 'VALIDATION_FAILED',
+                message: 'Món thay thế được chọn không hợp lệ hoặc không còn trong đơn',
+              });
+            }
+
+            const requestedSubstituteName = selection.substituteName?.trim();
+            if (
+              allowedList !== null &&
+              requestedSubstituteName &&
+              !isSubstituteTargetAllowed(
+                { name: modifier.name, allowedSubstituteNames: allowedList },
+                requestedSubstituteName,
+              )
+            ) {
+              throw new UnprocessableEntityException({
+                code: 'VALIDATION_FAILED',
+                message: `Món "${modifier.name}" không được phép đổi sang "${requestedSubstituteName}"`,
+              });
+            }
+
+            const explicitNamedModifier = requestedSubstituteName
+              ? allowedRemaining.find((m) => m.name.trim() === requestedSubstituteName)
+              : undefined;
+            if (allowedList !== null && requestedSubstituteName && !explicitNamedModifier) {
+              throw new UnprocessableEntityException({
+                code: 'VALIDATION_FAILED',
+                message: 'Món thay thế được chọn không hợp lệ hoặc tạm hết',
+              });
+            }
+
+            const trimmedDefaultSub = modifier.defaultSubstituteName?.trim();
             const defaultSubIsAvailable = Boolean(
-              modifier.defaultSubstituteName?.trim() &&
-              !group.modifiers.some(
-                (m) => m.name === modifier.defaultSubstituteName?.trim() && m.isAvailable === false,
-              ),
+              trimmedDefaultSub &&
+                (allowedList !== null
+                  ? allowedRemaining.some((m) => m.name.trim() === trimmedDefaultSub)
+                  : !group.modifiers.some(
+                      (m) => m.name === trimmedDefaultSub && m.isAvailable === false,
+                    )),
             );
-            const replacementName = remainingGroupModifiers.length === 1
-              ? remainingGroupModifiers[0]!.name
-              : (explicitSubModifier?.name
-                ?? selection.substituteName?.trim()
-                ?? (defaultSubIsAvailable ? modifier.defaultSubstituteName?.trim() : undefined)
-                ?? remainingGroupModifiers[0]?.name
-                ?? '');
+
+            const replacementName =
+              allowedRemaining.length === 1
+                ? allowedRemaining[0]!.name
+                : (explicitSubModifier?.name ??
+                    explicitNamedModifier?.name ??
+                    (allowedList === null ? requestedSubstituteName : undefined) ??
+                    (defaultSubIsAvailable ? trimmedDefaultSub : undefined) ??
+                    allowedRemaining[0]?.name ??
+                    '');
+
             const formattedName = replacementName
               ? `Không ${modifier.name} (Thay bằng ${replacementName})`
               : `Không ${modifier.name}`;
@@ -2641,8 +2742,11 @@ export class PosService {
   }
 
   private createdOrderResponse(order: OrderRow, tableLabel: string | null) {
+    const takeawayLabelFormat = order.orderType === 'TAKEAWAY'
+      ? (normalizeTakeawayLabelFormat(order.takeawayLabelFormat) ?? 'NUMBER')
+      : null;
     const label = order.orderType === 'TAKEAWAY' && order.takeawayNumber !== null
-      ? `Mang về #${String(order.takeawayNumber).padStart(2, '0')}`
+      ? formatOrderTakeawayLabel(order.takeawayNumber, takeawayLabelFormat)
       : tableLabel;
     return PosOrderCreationResponseSchema.parse({
       orderId: order.id,
@@ -2650,6 +2754,7 @@ export class PosService {
       orderType: order.orderType,
       tableId: order.tableId,
       takeawayNumber: order.takeawayNumber,
+      takeawayLabelFormat,
       tableLabel: label,
       status: order.status,
       subtotalAmount: order.subtotalAmount !== undefined ? order.subtotalAmount.toNumber() : order.totalAmount.toNumber(),
@@ -2659,8 +2764,11 @@ export class PosService {
   }
 
   private orderSummary(order: OrderRow, tableLabel: string | null) {
+    const takeawayLabelFormat = order.orderType === 'TAKEAWAY'
+      ? (normalizeTakeawayLabelFormat(order.takeawayLabelFormat) ?? 'NUMBER')
+      : null;
     const resolvedTableLabel = order.orderType === 'TAKEAWAY' && order.takeawayNumber !== null
-      ? `Mang về #${String(order.takeawayNumber).padStart(2, '0')}`
+      ? formatOrderTakeawayLabel(order.takeawayNumber, takeawayLabelFormat)
       : tableLabel;
 
     let hasUnprintedAddon: boolean | undefined;
@@ -2702,6 +2810,7 @@ export class PosService {
       tableId: order.tableId,
       tableLabel: resolvedTableLabel,
       takeawayNumber: order.takeawayNumber ?? null,
+      takeawayLabelFormat,
       status: order.status,
       subtotalAmount: order.subtotalAmount !== undefined ? order.subtotalAmount.toNumber() : order.totalAmount.toNumber(),
       discountAmount: order.discountAmount !== undefined ? order.discountAmount.toNumber() : 0,
@@ -2715,8 +2824,11 @@ export class PosService {
   }
 
   private orderDetail(order: OrderRow) {
+    const takeawayLabelFormat = order.orderType === 'TAKEAWAY'
+      ? (normalizeTakeawayLabelFormat(order.takeawayLabelFormat) ?? 'NUMBER')
+      : null;
     const tableLabel = order.orderType === 'TAKEAWAY' && order.takeawayNumber !== null
-      ? `Mang về #${String(order.takeawayNumber).padStart(2, '0')}`
+      ? formatOrderTakeawayLabel(order.takeawayNumber, takeawayLabelFormat)
       : order.table?.name ?? null;
     const totals = computeTotalsFromRows(order.items ?? [], order.discountSnapshot);
     return OrderDetailResponseSchema.parse({
@@ -2727,6 +2839,7 @@ export class PosService {
       tableId: order.tableId,
       tableLabel,
       takeawayNumber: order.takeawayNumber ?? null,
+      takeawayLabelFormat,
       status: order.status,
       paymentMethod: order.paymentMethod ?? null,
       cashAmount: (order.cashAmount ?? new Prisma.Decimal(0)).toNumber(),
@@ -2751,6 +2864,7 @@ export class PosService {
         lineTotal: item.unitPrice.mul(item.quantity).toNumber(),
         modifiers: this.modifierNames(item.modifiersSnapshot),
         pricedModifiers: this.pricedModifierNames(item.modifiersSnapshot),
+        modifierSelections: this.modifierSelections(item.modifiersSnapshot),
         itemNote: item.itemNote,
         batchNo: item.batchNo,
         kitchenStatus: item.kitchenStatus,
@@ -2827,9 +2941,9 @@ export class PosService {
     });
   }
 
-  private orderTableCode(order: { table?: { name?: string | null } | null; tableId?: number | null; orderType?: string | null; takeawayNumber?: number | null }): string {
+  private orderTableCode(order: { table?: { name?: string | null } | null; tableId?: number | null; orderType?: string | null; takeawayNumber?: number | null; takeawayLabelFormat?: string | null }): string {
     if (order.orderType === 'TAKEAWAY' || order.takeawayNumber) {
-      return `MV${String(order.takeawayNumber ?? 1).padStart(2, '0')}`;
+      return formatTakeawayShortCode(order.takeawayNumber, normalizeTakeawayLabelFormat(order.takeawayLabelFormat));
     }
     if (order.table?.name) {
       const digits = order.table.name.match(/\d+/);
@@ -2937,7 +3051,8 @@ export class PosService {
       if (!['PENDING', 'SERVING'].includes(target.status)) {
         throw this.conflict('POS_ORDER_NOT_ACTIVE', 'Đơn hàng không còn mở để gọi thêm món');
       }
-      const takeawayLabel = `Mang về #${String(target.takeawayNumber ?? 1).padStart(2, '0')}`;
+      const takeawayFormat = normalizeTakeawayLabelFormat(target.takeawayLabelFormat) ?? 'NUMBER';
+      const takeawayLabel = formatOrderTakeawayLabel(target.takeawayNumber, takeawayFormat);
       const addon = await this.appendItems(tx, target, parsed.items);
       const guestSessionToken = signTakeawayGuestSessionToken(target.id, target.orderCode);
       const response = QrOrderResponseSchema.parse({
@@ -2946,6 +3061,7 @@ export class PosService {
         orderCode: target.orderCode,
         orderType: 'TAKEAWAY',
         takeawayNumber: target.takeawayNumber,
+        takeawayLabelFormat: takeawayFormat,
         guestSessionToken,
         currentTableLabel: takeawayLabel,
         status: target.status,
@@ -2970,6 +3086,7 @@ export class PosService {
     await this.lockOrderSequence(tx, businessDay.key);
     const orderCode = await this.nextOrderCode(tx, businessDay);
     const takeawayNumber = await allocateTakeawayNumber(tx, now);
+    const takeawayLabelFormat = await resolveStoreTakeawayLabelFormat(tx);
     const items = await this.resolveItems(tx, parsed.items);
     const totalAmount = this.totalForItems(items);
     const formattedNote = formatTakeawayCustomerNote({
@@ -2984,6 +3101,7 @@ export class PosService {
         orderSource: 'QR_CODE',
         tableId: null,
         takeawayNumber,
+        takeawayLabelFormat,
         status: 'PENDING',
         note: formattedNote,
         subtotalAmount: totalAmount,
@@ -2993,7 +3111,7 @@ export class PosService {
         items: { create: items.map((item) => ({ ...item, batchNo: 1, itemSource: 'QR_CODE' })) },
       },
     });
-    const takeawayLabel = `Mang về #${String(takeawayNumber).padStart(2, '0')}`;
+    const takeawayLabel = formatOrderTakeawayLabel(takeawayNumber, takeawayLabelFormat);
     const guestSessionToken = signTakeawayGuestSessionToken(order.id, orderCode);
     const response = QrOrderResponseSchema.parse({
       orderId: order.id,
@@ -3001,6 +3119,7 @@ export class PosService {
       orderCode,
       orderType: 'TAKEAWAY',
       takeawayNumber,
+      takeawayLabelFormat,
       guestSessionToken,
       currentTableLabel: takeawayLabel,
       status: 'PENDING',

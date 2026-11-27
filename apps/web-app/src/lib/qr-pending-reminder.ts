@@ -1,4 +1,5 @@
 import {
+  formatTakeawayLabel,
   type PosOrderSummary,
   type PosTableGridResponse,
   type QrReminderConfig,
@@ -84,7 +85,7 @@ export function collectPendingQrItems(
   for (const takeaway of tableGrid.takeaways ?? []) {
     const fallbackLabel =
       takeaway.takeawayNumber != null
-        ? `Mang về #${String(takeaway.takeawayNumber).padStart(2, '0')}`
+        ? formatTakeawayLabel(takeaway.takeawayNumber, takeaway.takeawayLabelFormat)
         : 'Mang về';
     pushIfPending(takeaway, fallbackLabel, takeaway.status === 'PENDING');
   }

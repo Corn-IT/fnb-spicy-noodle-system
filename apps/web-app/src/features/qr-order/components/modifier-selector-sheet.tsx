@@ -20,6 +20,7 @@ import { useAppMessages } from '@/hooks/use-app-messages';
 import {
   buildInitialSelectedByGroup,
   computeOrderModifiersPayload,
+  getSubstitutionHintText,
   isProductModifierSelectionValid,
   resolveSubstituteForUncheckedModifier,
 } from '@/lib/modifier-selection';
@@ -193,6 +194,13 @@ export function ModifierSelectorSheet({
                             manualSubstituteByModifierId,
                           )
                         : null;
+                    const canSubstitute = Boolean(
+                      subInfo && subInfo.availableSubstitutes.length > 0 && subInfo.substituteName,
+                    );
+                    const substitutionHint =
+                      group.allowSubstitution && isSelected
+                        ? getSubstitutionHintText(group, mod)
+                        : null;
 
                     return (
                       <div
@@ -200,12 +208,12 @@ export function ModifierSelectorSheet({
                         className={cn(
                           'flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all',
                           isOutOfStock
-                            ? group.allowSubstitution
+                            ? canSubstitute
                               ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
                               : 'border-dashed border-border/80 bg-muted/50 text-muted-foreground opacity-85'
                             : isSelected
                               ? 'border-primary bg-primary/10 font-semibold text-accent-text'
-                              : group.allowSubstitution
+                              : canSubstitute
                                 ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
                                 : isAutoGroup
                                   ? 'border-dashed border-border bg-muted/40 text-muted-foreground'
@@ -242,7 +250,8 @@ export function ModifierSelectorSheet({
                               <span
                                 className={cn(
                                   'block font-bold leading-snug',
-                                  isOutOfStock || (!isSelected && isAutoGroup && !group.allowSubstitution)
+                                  isOutOfStock ||
+                                    (!isSelected && isAutoGroup && (!group.allowSubstitution || !canSubstitute))
                                     ? 'line-through opacity-70'
                                     : '',
                                 )}
@@ -271,7 +280,7 @@ export function ModifierSelectorSheet({
                           ) : null}
                         </button>
 
-                        {group.allowSubstitution && !isSelected && subInfo ? (
+                        {group.allowSubstitution && !isSelected && subInfo && canSubstitute ? (
                           <div className="mt-1.5 border-t border-amber-500/30 pt-1.5 space-y-1">
                             <div className="flex items-center gap-1 text-[11px] font-bold text-amber-800 dark:text-amber-300">
                               <RefreshCw className="h-3 w-3 shrink-0" />
@@ -304,13 +313,16 @@ export function ModifierSelectorSheet({
                           </div>
                         ) : null}
 
-                        {!isOutOfStock && group.allowSubstitution && isSelected && mod.defaultSubstituteName ? (
+                        {substitutionHint ? (
                           <span className="mt-1 pl-6 text-[10px] font-medium text-muted-foreground">
-                            (Bỏ tích → Thay bằng {mod.defaultSubstituteName})
+                            {substitutionHint}
                           </span>
                         ) : null}
 
-                        {!isOutOfStock && !group.allowSubstitution && isAutoGroup && !isSelected ? (
+                        {!isOutOfStock &&
+                        !isSelected &&
+                        isAutoGroup &&
+                        (!group.allowSubstitution || !canSubstitute) ? (
                           <span className="mt-1 pl-6 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
                             Không {mod.name}
                           </span>

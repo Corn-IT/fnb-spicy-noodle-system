@@ -3,6 +3,7 @@ import {
   type StoreMessagesMap,
   validateStoreMessagesMap,
 } from '../constants/message-catalog';
+import { TakeawayLabelFormat, TakeawayLabelFormatSchema } from '../enums/order.enum';
 import { IsoDateTimeSchema } from './common.schema';
 
 const PlainText = (max: number) => z.string().trim().max(max);
@@ -406,6 +407,7 @@ export const StoreSettingsSchema = z.object({
   navOrder: z.array(NavPathSchema).max(64),
   pageHeaders: z.record(NavPathSchema, PageHeaderOverrideSchema),
   printTemplates: PrintTemplatesSchema,
+  takeawayLabelFormat: TakeawayLabelFormatSchema,
   displayScale: z.object({
     globalPercent: DisplayScalePercentSchema,
     perPath: z
@@ -526,6 +528,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   navOrder: [],
   pageHeaders: {},
   printTemplates: cloneDefaultPrintTemplates(),
+  takeawayLabelFormat: TakeawayLabelFormat.NUMBER,
   displayScale: cloneDefaultDisplayScale(),
 };
 
@@ -558,6 +561,7 @@ export const NEUTRAL_STORE_SETTINGS: PublicStoreSettingsResponse = {
   navOrder: [],
   pageHeaders: {},
   printTemplates: cloneDefaultPrintTemplates(),
+  takeawayLabelFormat: TakeawayLabelFormat.NUMBER,
   displayScale: cloneDefaultDisplayScale(),
   updatedAt: null,
   assets: {

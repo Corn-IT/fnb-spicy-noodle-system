@@ -265,6 +265,7 @@ export function PosUnifiedPage() {
           pendingAlert={selectedPendingAlert}
           onUpdateDraftQty={actions.updateDraftQty}
           onRemoveDraftItem={actions.removeDraftItem}
+          onEditDraftItem={actions.openEditDraftItem}
           onSubmitDraftOrder={actions.submitDraftOrder}
           onSaveDraft={actions.saveDraft}
           onChooseDraftTarget={actions.chooseDraftTarget}
@@ -272,6 +273,7 @@ export function PosUnifiedPage() {
           onUpdateOrderItemQuantity={actions.updateOrderItemQuantity}
           onToggleOrderItemTakeaway={actions.toggleOrderItemTakeaway}
           onRemoveOrCancelOrderItem={actions.removeOrCancelOrderItem}
+          onEditOrderItem={actions.openEditOrderItem}
           addonIsTakeaway={addonIsTakeaway}
           onChangeAddonIsTakeaway={setAddonIsTakeaway}
           onOpenTableAction={() => dialogs.setTableActionOpen(true)}
