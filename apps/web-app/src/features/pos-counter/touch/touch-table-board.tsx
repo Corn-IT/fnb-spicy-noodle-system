@@ -76,7 +76,7 @@ function resolveAlertBadge(
 }
 
 /** Lưới thẻ dùng chung cho Phòng bàn và Mang về. Số cột tính theo bố cục đã chọn. */
-const BOARD_GRID_CLASS = 'grid gap-3';
+const BOARD_GRID_CLASS = 'grid min-w-0 gap-3';
 
 /** Sơ đồ bàn cảm ứng: hiển thị một lưới theo tab đang chọn. */
 export function TouchTableBoard({
@@ -256,7 +256,7 @@ export function TouchTableBoard({
       id="touch-table-board"
       data-testid="touch-table-board"
       data-tab={tab}
-      className="space-y-3 p-4"
+      className="min-w-0 space-y-3 p-4"
     >
       {grid.clamped ? (
         <p data-testid="touch-board-columns-clamped" className="text-xs font-medium text-muted-foreground">

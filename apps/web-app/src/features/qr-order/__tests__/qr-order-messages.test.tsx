@@ -9,6 +9,8 @@ import { ApiClientError, apiClient } from '@/lib/api-client';
 import { queryClient as appQueryClient } from '@/providers/query-provider';
 import * as socketClient from '@/lib/socket-client';
 
+import { ThemeProvider } from '@/providers/theme-provider';
+
 import { QrOrderPage } from '../components/qr-order-page';
 
 vi.mock('@/providers/socket-provider', () => ({
@@ -88,6 +90,38 @@ describe('QrOrderPage custom message catalog (Story 17)', () => {
     });
 
     expect(screen.getByTestId('qr-table-transfer-warning')).toHaveTextContent(customNotice);
+  });
+
+  it('keeps the guest dark theme when staff light settings refresh branding', async () => {
+    const previousPath = window.location.pathname;
+    window.history.replaceState(null, '', '/qr/table-5-token');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      table: { tableId: 5, tableName: 'Bàn 05', status: 'AVAILABLE', activeOrderId: null },
+      stations: [], categories: [], activeOrder: null, products: [], updatedAt: null,
+    });
+    const settings = makePublicSettings({ defaultTheme: 'light', qr: { ...DEFAULT_STORE_SETTINGS.qr, theme: 'dark' } });
+    const content = (current: PublicStoreSettingsResponse) => (
+      <QueryClientProvider client={client}>
+        <StoreSettingsContext.Provider value={{ settings: current }}>
+          <ThemeProvider>
+            <MemoryRouter initialEntries={['/qr/table-5-token']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <Routes><Route path="/qr/:token" element={<QrOrderPage />} /></Routes>
+            </MemoryRouter>
+          </ThemeProvider>
+        </StoreSettingsContext.Provider>
+      </QueryClientProvider>
+    );
+    const view = render(content(settings));
+    try {
+      await waitFor(() => expect(document.documentElement.classList.contains('dark')).toBe(true));
+      view.rerender(content({ ...settings, brandColor: '#059669', updatedAt: '2026-11-27T12:00:00.000Z' }));
+      expect(document.documentElement.classList.contains('dark')).toBe(true);
+    } finally {
+      view.unmount();
+      client.clear();
+      window.history.replaceState(null, '', previousPath);
+    }
   });
 
   it('clears stale sessionStorage activeOrderId when the same table is now AVAILABLE and recovers from socket connect_error', async () => {

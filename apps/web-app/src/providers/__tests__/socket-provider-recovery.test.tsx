@@ -80,6 +80,13 @@ describe('SocketProvider 24/7 Mobile Token Auto-Refresh & Wake Recovery (BUG-1)'
       </QueryClientProvider>,
     );
 
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    act(() => {
+      for (const cb of listeners.get('connect') ?? []) cb();
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['store-settings'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['store-messages'] });
+
     // Trigger Unauthorized connect_error as happens when mobile wakes up after >15m
     act(() => {
       for (const cb of listeners.get('connect_error') ?? []) {

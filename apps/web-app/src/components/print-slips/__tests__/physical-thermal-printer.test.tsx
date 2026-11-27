@@ -705,6 +705,7 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
 
   describe('4. PrinterHardwareSettingsPanel UI (Settings Tab -> Phiếu in)', () => {
     it('allows switching between BROWSER, RAWBT_USB (iMin D3-505 + iPOS iTP6), and LAN_ESCPOS, validating LAN IP, and testing print + RJ11 cash drawer kick', async () => {
+      useAuthStore.setState({ user: { ...useAuthStore.getState().user!, isSuperAdmin: true } });
       const user = userEvent.setup();
       const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
         success: true,

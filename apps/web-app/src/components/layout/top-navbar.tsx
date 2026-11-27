@@ -1,6 +1,6 @@
 import { StoreAssetKind } from '@fnb/shared';
 import { type QueryClient } from '@tanstack/react-query';
-import { ChevronDown, LogOut, Menu, Moon, Search, Sun, User } from 'lucide-react';
+import { ChevronDown, LogOut, Menu, Search, User } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { APP_NAVIGATION_ROUTES } from '@/components/layout/command-palette';
@@ -19,8 +19,6 @@ import { buildStoreAssetUrl, resolveNavLabel, useStoreSettings } from '@/hooks/u
 import { apiClient } from '@/lib/api-client';
 import { stopMobileAudioKeepAlive } from '@/lib/mobile-audio-keepalive';
 import { AUTH_STORAGE_KEY, useAuthStore } from '@/stores/auth.store';
-import { resolveEffectiveTheme } from '@/providers/theme-provider';
-import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { resolvePublicAssetUrl } from '@/utils/asset-url';
 
 /**
@@ -68,10 +66,7 @@ export function TopNavbar({
   const user = useAuthStore((state) => state.user);
   const { settings } = useStoreSettings();
   const logoUrl = buildStoreAssetUrl(StoreAssetKind.LOGO, settings.assets.logo);
-  const storedTheme = useUiPreferencesStore((state) => state.theme);
-  const hasExplicitTheme = useUiPreferencesStore((state) => state.hasExplicitTheme);
-  const theme = resolveEffectiveTheme(storedTheme, hasExplicitTheme, settings.defaultTheme);
-  const setTheme = useUiPreferencesStore((state) => state.setTheme);
+
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -87,15 +82,7 @@ export function TopNavbar({
     return settings.storeName;
   })();
 
-  const handleToggleTheme = () => {
-    const nextTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(nextTheme);
-    if (useAuthStore.getState().accessToken) {
-      void apiClient
-        .patch('/api/v1/profile/ui-prefs', { theme: nextTheme })
-        .catch(() => {});
-    }
-  };
+
 
   const handleLogout = async () => {
     await executeCleanLogout(queryClient);
@@ -146,7 +133,7 @@ export function TopNavbar({
       </div>
 
       {/* AC-08.3: Góc phải Navbar đúng thứ tự từ trái sang phải:
-          [Search Button (Ctrl+K)] -> [Theme Toggle] -> [User Avatar + Name Dropdown] */}
+          [Search Button (Ctrl+K)] -> [User Avatar + Name Dropdown] */}
       <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
         <MobileAlertControlButton />
         <div
@@ -170,24 +157,6 @@ export function TopNavbar({
           <kbd className="pointer-events-none ml-1 hidden lg:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
             Ctrl+K
           </kbd>
-        </Button>
-
-        {/* 2. Nút chuyển Theme Sáng/Tối */}
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          data-navbar-item="theme-toggle"
-          onClick={handleToggleTheme}
-          aria-label="Chuyển chế độ Sáng/Tối"
-          title={theme === 'dark' ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối'}
-          className="hidden md:inline-flex h-10 w-10 lg:h-9 lg:w-9"
-        >
-          {theme === 'dark' ? (
-            <Sun className="h-4 w-4 text-amber-400" />
-          ) : (
-            <Moon className="h-4 w-4 text-slate-700" />
-          )}
         </Button>
 
         {/* 3. Avatar + Tên người dùng Dropdown */}
@@ -232,17 +201,6 @@ export function TopNavbar({
             >
               <Search className="h-4 w-4" />
               <span>Tìm nhanh màn hình</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="md:hidden"
-              onSelect={() => handleToggleTheme()}
-            >
-              {theme === 'dark' ? (
-                <Sun className="h-4 w-4 text-amber-400" />
-              ) : (
-                <Moon className="h-4 w-4 text-slate-700" />
-              )}
-              <span>{theme === 'dark' ? 'Giao diện Sáng' : 'Giao diện Tối'}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator className="md:hidden" />
             <DropdownMenuItem onSelect={() => navigate('/profile')}>

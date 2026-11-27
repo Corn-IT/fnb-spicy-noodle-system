@@ -116,11 +116,27 @@ export const useThermalPrinterConfigStore = create<ThermalPrinterConfigState>()(
       }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<ThermalPrinterConfigState> | undefined;
-        return {
-          ...currentState,
-          config: sanitizePrinterConfig(currentState.config, persisted?.config ?? {}),
-        };
+        const parsed = ThermalPrinterDeviceConfigSchema.safeParse(persisted?.config);
+        return { ...currentState, config: parsed.success ? parsed.data : currentState.config };
       },
     },
   ),
 );
+
+// Browser storage events only arrive in other tabs; do not persist again and create an echo loop.
+export function syncPrinterConfigFromStorage(event: StorageEvent): void {
+  if (event.key !== THERMAL_PRINTER_CONFIG_STORAGE_KEY || !event.newValue) return;
+  try {
+    const raw = localStorage.getItem(THERMAL_PRINTER_CONFIG_STORAGE_KEY);
+    if (!raw) return;
+    const stored = JSON.parse(raw) as { state?: { config?: unknown } };
+    const parsed = ThermalPrinterDeviceConfigSchema.safeParse(stored.state?.config);
+    if (!parsed.success) return;
+    void useThermalPrinterConfigStore.persist.rehydrate();
+  } catch {
+    // Ignore malformed or inaccessible browser storage.
+  }
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', syncPrinterConfigFromStorage);
+}

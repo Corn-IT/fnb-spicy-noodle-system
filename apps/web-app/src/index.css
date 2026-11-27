@@ -157,6 +157,21 @@ html[data-page-zoomed='true'] [data-radix-popper-content-wrapper] {
   zoom: var(--page-zoom, 1);
 }
 
+/* Viewport units do not shrink with CSS zoom. Keep scaled portals inside the physical screen,
+   while retaining their own vertical scrolling for long forms and actions. */
+html[data-page-zoomed='true'] [role='dialog'] {
+  min-width: 0;
+  max-width: calc((100vw - 1rem) / var(--page-zoom, 1));
+  max-height: calc((100dvh - 1rem) / var(--page-zoom, 1));
+}
+html[data-page-zoomed='true'] [data-radix-popper-content-wrapper] {
+  max-width: calc((100vw - 1rem) / var(--page-zoom, 1));
+}
+html[data-page-zoomed='true'] [data-radix-popper-content-wrapper] > * {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 /* Màn POS cảm ứng: chạm nhanh (không zoom khi chạm đúp), không kéo-để-tải-lại (mất giỏ nháp),
    không bôi đen chữ khi giữ tay lâu, trừ ô nhập liệu. */
 html[data-pos-touch] {

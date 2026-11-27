@@ -78,19 +78,19 @@ function TouchShellInner() {
   return (
     <div
       data-testid="pos-touch-shell"
-      className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-background"
+      className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-background"
     >
       {showSubpageHeader ? <TouchSubpageHeader /> : null}
 
       <div
         data-testid="touch-shell-body"
         className={cn(
-          'flex min-h-0 flex-1 flex-col',
+          'flex min-h-0 min-w-0 flex-1 flex-col scroll-pb-6',
           isPosBoard
             ? 'overflow-hidden p-0'
             : isHub
-              ? 'overflow-y-auto overscroll-contain p-0'
-              : 'overflow-y-auto overscroll-contain p-3 sm:p-4',
+              ? 'overflow-y-auto overscroll-contain p-0 pb-6'
+              : 'overflow-y-auto overscroll-contain p-3 pb-6 sm:p-4 sm:pb-6',
         )}
       >
         <Outlet />
