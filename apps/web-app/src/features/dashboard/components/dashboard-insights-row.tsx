@@ -71,6 +71,18 @@ export function DashboardInsightsRow({ data }: DashboardInsightsRowProps) {
                 <p className="text-xs text-muted-foreground">Theo số lượng đã thanh toán trong kỳ</p>
               </div>
             </div>
+            <button
+              type="button"
+              data-testid="dashboard-view-all-sold-items-btn"
+              onClick={() =>
+                document.getElementById('daily-item-sales-section')?.scrollIntoView({
+                  behavior: 'smooth',
+                })
+              }
+              className="text-xs font-semibold text-accent-text hover:underline"
+            >
+              Xem tất cả món ↓
+            </button>
           </div>
 
           {/* Station Filter Tabs */}

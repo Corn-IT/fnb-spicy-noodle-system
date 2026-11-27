@@ -514,9 +514,44 @@ describe('DashboardPage (/dashboard)', () => {
       },
     });
 
-    const getSpy = vi
-      .spyOn(apiClient, 'get')
-      .mockResolvedValue(makeSuperAdminOverview());
+    const makeDailySalesMock = (blindMode: boolean) => ({
+      meta: {
+        preset: 'today' as const,
+        fromDate: '2026-11-17',
+        toDate: '2026-11-17',
+        generatedAt: '2026-11-17T12:00:00.000Z',
+        blindMode,
+        canViewProfit: !blindMode,
+        canViewSales: true,
+      },
+      summary: {
+        totalProductsSold: 1,
+        totalQuantity: 2,
+        totalRevenue: blindMode ? 0 : 80000,
+        totalOrders: 2,
+      },
+      categories: [{ id: 1, name: 'Mì Cay' }],
+      stations: ['BEP_NAU'],
+      items: [
+        {
+          productId: 1,
+          name: 'Mì Cay Xúc Xích',
+          categoryId: 1,
+          categoryName: 'Mì Cay',
+          station: 'BEP_NAU' as const,
+          qty: 2,
+          orderCount: 2,
+          revenue: blindMode ? 0 : 80000,
+          avgUnitPrice: blindMode ? 0 : 40000,
+          sharePercent: blindMode ? 0 : 100,
+        },
+      ],
+    });
+
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url.includes('/daily-item-sales')) return makeDailySalesMock(false);
+      return makeSuperAdminOverview();
+    });
     const exportSpy = vi.spyOn(excelExportLib, 'exportToExcel').mockImplementation(() => {});
 
     renderDashboard();
@@ -574,7 +609,44 @@ describe('DashboardPage (/dashboard)', () => {
       },
     });
 
-    vi.spyOn(apiClient, 'get').mockResolvedValue(makeCashierBlindOverview());
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url.includes('/daily-item-sales')) {
+        return {
+          meta: {
+            preset: 'today',
+            fromDate: '2026-11-17',
+            toDate: '2026-11-17',
+            generatedAt: '2026-11-17T12:00:00.000Z',
+            blindMode: true,
+            canViewProfit: false,
+            canViewSales: true,
+          },
+          summary: {
+            totalProductsSold: 1,
+            totalQuantity: 2,
+            totalRevenue: 0,
+            totalOrders: 2,
+          },
+          categories: [{ id: 1, name: 'Mì Cay' }],
+          stations: ['BEP_NAU'],
+          items: [
+            {
+              productId: 1,
+              name: 'Mì Cay Xúc Xích',
+              categoryId: 1,
+              categoryName: 'Mì Cay',
+              station: 'BEP_NAU',
+              qty: 2,
+              orderCount: 2,
+              revenue: 0,
+              avgUnitPrice: 0,
+              sharePercent: 0,
+            },
+          ],
+        };
+      }
+      return makeCashierBlindOverview();
+    });
 
     renderDashboard();
 
@@ -605,10 +677,31 @@ describe('DashboardPage (/dashboard)', () => {
       },
     });
 
-    const getSpy = vi
-      .spyOn(apiClient, 'get')
-      .mockRejectedValueOnce(new Error('Network unavailable'))
-      .mockResolvedValue(makeSuperAdminOverview());
+    let failOnce = true;
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url.includes('/daily-item-sales')) {
+        return {
+          meta: {
+            preset: 'today',
+            fromDate: '2026-11-17',
+            toDate: '2026-11-17',
+            generatedAt: '2026-11-17T12:00:00.000Z',
+            blindMode: false,
+            canViewProfit: true,
+            canViewSales: true,
+          },
+          summary: { totalProductsSold: 0, totalQuantity: 0, totalRevenue: 0, totalOrders: 0 },
+          categories: [],
+          stations: [],
+          items: [],
+        };
+      }
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('Network unavailable');
+      }
+      return makeSuperAdminOverview();
+    });
 
     const { unmount } = renderDashboard();
 
