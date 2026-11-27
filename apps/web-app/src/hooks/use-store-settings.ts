@@ -171,6 +171,10 @@ export function useStoreSettingsQuery() {
     initialData: () => readCachedStoreSettings(),
     initialDataUpdatedAt: 0,
     staleTime: 60_000,
+    refetchOnWindowFocus: 'always',
+    refetchOnReconnect: 'always',
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
     retry: 1,
   });
 }

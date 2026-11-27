@@ -60,7 +60,7 @@ test.describe('POS cảm ứng toàn màn hình (/pos/touch)', () => {
 });
 
 test.describe('POS cảm ứng — bố cục và kích thước chạm', () => {
-  test('ignores the store /pos zoom (150%) so the touch layout is not double-scaled', async ({
+  test('applies the store /pos zoom (150%) consistently in touch and regular POS', async ({
     page,
   }) => {
     await setupMockApi(page, {
@@ -72,7 +72,7 @@ test.describe('POS cảm ứng — bố cục và kích thước chạm', () => 
     await expect(page.getByTestId('pos-touch-screen')).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--page-zoom')))
-      .toBe('1');
+      .toBe('1.5');
 
     await page.getByTestId('touch-kiosk-menu-btn').tap();
     await page.getByTestId('touch-sheet-action-exit').tap();

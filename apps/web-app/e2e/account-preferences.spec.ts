@@ -55,29 +55,30 @@ async function captureSaves(page: Page): Promise<Array<Record<string, unknown>>>
   return saves;
 }
 
-test.describe('Per-account preferences', () => {
-  test('account scale overrides the store scale per screen while the guest QR page keeps the store scale', async ({ page }) => {
+test.describe('Store policy and remaining account preferences', () => {
+  test('store scale wins over old account overrides while QR uses its store scale', async ({ page }) => {
     await signInWithPreferences(
       page,
       { displayScale: { globalPercent: 120, perPath: { '/pos': 110 } } },
-      { displayScale: { globalPercent: 100, perPath: {}, qrOrderPercent: 110 } },
+      { defaultTheme: 'dark', displayScale: { globalPercent: 125, perPath: { '/pos': 150 }, qrOrderPercent: 110 } },
     );
-    const isPhone = (page.viewportSize()?.width ?? 1280) < 640;
 
     await page.goto('/pos', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('main[data-app-content="true"]');
-    await expect.poll(() => readZoom(page)).toBe(isPhone ? '1' : '1.1');
+    await expect.poll(() => readZoom(page)).toBe('1.5');
+    await expect(page.getByTestId('table-card-1')).toBeVisible();
+    await page.waitForLoadState('load');
 
     await page.goto('/invoices', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('main[data-app-content="true"]');
-    await expect.poll(() => readZoom(page)).toBe(isPhone ? '1' : '1.2');
+    await expect.poll(() => readZoom(page)).toBe('1.25');
 
     await page.goto(`/q/${MOCK_QR_TOKEN}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('[data-qr-order-root="true"]');
     await expect.poll(() => readZoom(page)).toBe('1.1');
   });
 
-  test('restores saved menu order and collapsed sidebar when the session is restored on reload', async ({ page, isMobile }) => {
+  test('ignores personal menu order while retaining personal collapsed sidebar', async ({ page, isMobile }) => {
     test.skip(isMobile, 'The desktop sidebar is not rendered on phones');
     await signInWithPreferences(page, {
       sidebarCollapsed: true,
@@ -89,7 +90,7 @@ test.describe('Per-account preferences', () => {
 
     await expect.poll(() => page.locator('aside').first().evaluate((el) => el.getBoundingClientRect().width)).toBeLessThan(100);
     const hrefs = await page.locator('aside nav a').evaluateAll((links) => links.map((a) => a.getAttribute('href')));
-    expect(hrefs.indexOf('/cashflow')).toBeLessThan(hrefs.indexOf('/pos'));
+    expect(hrefs.indexOf('/pos')).toBeLessThan(hrefs.indexOf('/cashflow'));
   });
 
   test('a different account never inherits the previous account preferences', async ({ page, isMobile }) => {
@@ -145,32 +146,20 @@ test.describe('Per-account preferences', () => {
 
     await expect.poll(sidebarWidth).toBeLessThan(100);
     const hrefs = await page.locator('aside nav a').evaluateAll((links) => links.map((a) => a.getAttribute('href')));
-    expect(hrefs.indexOf('/cashflow')).toBeLessThan(hrefs.indexOf('/pos'));
+    expect(hrefs.indexOf('/pos')).toBeLessThan(hrefs.indexOf('/cashflow'));
   });
 
-  test('profile card saves quick consecutive changes as one request and updates the menu', async ({ page, isMobile }) => {
-    await signInWithPreferences(page, {});
+  test('profile explains store management and exposes no personal theme, scale or menu controls', async ({ page }) => {
+    await signInWithPreferences(page, { theme: 'light', displayScale: { globalPercent: 80, perPath: {} } }, { defaultTheme: 'dark' });
     const saves = await captureSaves(page);
-
-    await page.goto('/profile', { waitUntil: 'domcontentloaded' });
+    await page.goto('/profile');
     const card = page.getByTestId('profile-personal-preferences-card');
     await expect(card).toBeVisible();
-
-    const groups = card.getByRole('list', { name: 'Thứ tự nhóm menu' });
-    // Two clicks in a row: the second one must not produce a second request.
-    await groups.getByRole('button', { name: /^Đưa nhóm Tài chính.* lên$/ }).click();
-    await groups.getByRole('button', { name: /^Đưa nhóm Nhân sự.* lên$/ }).click();
-
-    await expect.poll(() => saves.length, { timeout: 5000 }).toBe(1);
-    await page.waitForTimeout(600);
-    expect(saves).toHaveLength(1);
-    expect(saves[0]).toEqual({ navGroupOrder: ['finance', 'hr', 'sales', 'system'] });
-    await expect(card.getByRole('status')).toContainText('Đã lưu cho tài khoản của bạn');
-
-    if (!isMobile) {
-      const hrefs = await page.locator('aside nav a').evaluateAll((links) => links.map((a) => a.getAttribute('href')));
-      expect(hrefs.indexOf('/cashflow')).toBeLessThan(hrefs.indexOf('/pos'));
-    }
+    await expect(card.getByText(/cài đặt chung của cửa hàng/i).first()).toBeVisible();
+    await expect(card.getByRole('list', { name: 'Thứ tự nhóm menu' })).toHaveCount(0);
+    await expect(page.getByTestId('personal-per-path-scale')).toHaveCount(0);
+    await expect(page.locator('html')).toHaveClass(/dark/);
+    expect(saves).toEqual([]);
   });
 
   test('turning the voice off in the profile card is saved for the account and silences the device switch', async ({ page }) => {
@@ -185,13 +174,13 @@ test.describe('Per-account preferences', () => {
     expect(await page.evaluate(() => localStorage.getItem('fnb-pos-voice-alert'))).toBe('false');
   });
 
-  test('phones keep the drawer menu on screen even when the account asks for 150% zoom', async ({ page, isMobile }) => {
+  test('phones apply store 150% zoom and keep drawer controls on screen', async ({ page, isMobile }) => {
     test.skip(!isMobile, 'Phone-only behavior');
-    await signInWithPreferences(page, { displayScale: { globalPercent: 150, perPath: {} } });
+    await signInWithPreferences(page, { displayScale: { globalPercent: 80, perPath: {} } }, { displayScale: { globalPercent: 150, perPath: {}, qrOrderPercent: 100 } });
 
     await page.goto('/invoices', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('main[data-app-content="true"]');
-    await expect.poll(() => readZoom(page)).toBe('1');
+    await expect.poll(() => readZoom(page)).toBe('1.5');
 
     await page.getByRole('button', { name: 'Mở menu điều hướng' }).click();
     const closeButton = page.getByRole('button', { name: /đóng/i }).first();
@@ -209,9 +198,6 @@ test.describe('Per-account preferences', () => {
       await page.goto(path, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('main[data-app-content="true"]');
       await page.waitForTimeout(300);
-      if (path === '/profile') {
-        await page.getByTestId('personal-per-path-scale').locator('summary').click();
-      }
       const violations = await auditPageLayout(page, { checkTouchTargets: false });
       const overflow = violations.filter((v) => v.rule === 'HORIZONTAL_OVERFLOW');
       expect(overflow, `${path}: ${overflow.map((v) => `${v.selector} ${v.detail}`).join('; ')}`).toEqual([]);

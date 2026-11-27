@@ -80,7 +80,7 @@ export function InvoiceDualFilterBar({
           <span className="whitespace-nowrap">Khoảng thời gian:</span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <Button
             type="button"
             variant={isTodaySelected ? 'default' : 'outline'}

@@ -8,10 +8,8 @@ import {
   LogOut,
   Monitor,
   MonitorSmartphone,
-  Moon,
   RefreshCw,
   Shrink,
-  Sun,
 } from 'lucide-react';
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -30,9 +28,7 @@ import {
 import { apiClient } from '@/lib/api-client';
 import { POS_DEFAULT_PATH, usePosDeviceMode } from '@/lib/pos-device-mode';
 import { prefetchRouteChunk, prefetchRouteData } from '@/lib/route-prefetch';
-import { resolveEffectiveTheme } from '@/providers/theme-provider';
 import { useAuthStore } from '@/stores/auth.store';
-import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { resolvePublicAssetUrl } from '@/utils/asset-url';
 import { cn } from '@/utils/cn';
 import { formatClockTime, useNowTick } from './elapsed-time';
@@ -73,10 +69,7 @@ export function TouchHubPage() {
   const nowMs = useNowTick(15_000);
 
   const printerDriver = useThermalPrinterConfigStore((state) => state.config.driver);
-  const storedTheme = useUiPreferencesStore((state) => state.theme);
-  const hasExplicitTheme = useUiPreferencesStore((state) => state.hasExplicitTheme);
-  const theme = resolveEffectiveTheme(storedTheme, hasExplicitTheme, settings.defaultTheme);
-  const setTheme = useUiPreferencesStore((state) => state.setTheme);
+
 
   const canViewMenu = Boolean(user?.isSuperAdmin || user?.permissions?.menu?.view);
   const productsQuery = useQuery<Product[]>({
@@ -119,13 +112,7 @@ export function TouchHubPage() {
     .map((word) => word[0]?.toUpperCase() ?? '')
     .join('');
 
-  const handleToggleTheme = () => {
-    const nextTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(nextTheme);
-    if (useAuthStore.getState().accessToken) {
-      void apiClient.patch('/api/v1/profile/ui-prefs', { theme: nextTheme }).catch(() => {});
-    }
-  };
+
 
   const handleSyncData = async () => {
     if (isSyncing) return;
@@ -210,17 +197,7 @@ export function TouchHubPage() {
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 min-[1100px]:gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            data-testid="touch-hub-theme-toggle"
-            aria-label={theme === 'dark' ? 'Chuyển giao diện Sáng' : 'Chuyển giao diện Tối'}
-            onClick={handleToggleTheme}
-            className="h-11 w-11 rounded-xl border border-white/15 bg-white/10 text-white hover:bg-white/20 hover:text-white"
-          >
-            {theme === 'dark' ? <Sun className="h-5 w-5 text-amber-300" /> : <Moon className="h-5 w-5" />}
-          </Button>
+
 
           {fullscreen.isSupported ? (
             <Button
@@ -401,7 +378,7 @@ export function TouchHubPage() {
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-base font-extrabold text-foreground">
+                        <span className="min-w-0 whitespace-normal break-words text-base font-extrabold text-foreground">
                           {index + 1}. {resolveTitle(route)}
                         </span>
                         {isStockTile && unavailableCount > 0 ? (

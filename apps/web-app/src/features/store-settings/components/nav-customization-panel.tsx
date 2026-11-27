@@ -288,7 +288,7 @@ export function NavCustomizationPanel({
         <p className="text-xs leading-relaxed text-muted-foreground">
           Sắp xếp thứ tự hiển thị mặc định toàn quán và tuỳ chỉnh Tiêu đề gom (tối đa 40 ký tự), Tên menu (tối đa 40
           ký tự), Tiêu đề trang (H1, tối đa 80 ký tự) và Mô tả trang (Subtitle, tối đa 200 ký tự).
-          Tên menu & tiêu đề trang áp dụng cho mọi tài khoản; riêng thứ tự nhóm/menu sẽ tôn trọng sắp xếp cá nhân nếu nhân viên đã tự tuỳ chỉnh trong <strong>Hồ sơ → Cá nhân của tôi</strong>.
+          Tên menu, tiêu đề trang và thứ tự nhóm/menu áp dụng chung cho mọi tài khoản; các màn hình vẫn được lọc theo quyền truy cập.
         </p>
 
         <Button

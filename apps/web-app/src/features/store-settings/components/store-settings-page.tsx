@@ -265,6 +265,7 @@ export function StoreSettingsPage() {
   const [draft, setDraft] = React.useState<StoreSettings>(() =>
     extractFormSettings(DEFAULT_STORE_SETTINGS),
   );
+  const [draftUpdatedAt, setDraftUpdatedAt] = React.useState<string | null>(null);
   const [hasInitialized, setHasInitialized] = React.useState(false);
   const [draftMessages, setDraftMessages] = React.useState<StoreMessagesMap>(() =>
     cloneStoreMessages(messagesQuery.data?.messages),
@@ -278,6 +279,7 @@ export function StoreSettingsPage() {
   React.useEffect(() => {
     if (settingsQuery.data && !hasInitialized) {
       setDraft(extractFormSettings(settingsQuery.data));
+      setDraftUpdatedAt(settingsQuery.data.updatedAt);
       setHasInitialized(true);
     }
   }, [settingsQuery.data, hasInitialized]);
@@ -377,9 +379,10 @@ export function StoreSettingsPage() {
       const updated = await updateMutation.mutateAsync({
         ...parsed.data,
         messages: sanitizedMessages,
-        expectedUpdatedAt: settingsQuery.data?.updatedAt ?? null,
+        expectedUpdatedAt: draftUpdatedAt,
       });
       setDraft(extractFormSettings(updated));
+      setDraftUpdatedAt(updated.updatedAt);
       setDraftMessages(cloneStoreMessages(sanitizedMessages));
       setIsMessagesDirty(false);
     } catch (err) {
@@ -408,6 +411,7 @@ export function StoreSettingsPage() {
     ]);
     if (refreshed.data) {
       setDraft(extractFormSettings(refreshed.data));
+      setDraftUpdatedAt(refreshed.data.updatedAt);
     }
     if (refreshedMessages.data) {
       setDraftMessages(cloneStoreMessages(refreshedMessages.data.messages));
@@ -810,10 +814,10 @@ export function StoreSettingsPage() {
 
             <div className="space-y-2 border-t pt-4">
               <span className="block text-sm font-semibold">
-                Giao diện mặc định (Trang Đăng nhập & tài khoản mới)
+                Giao diện chung cho nhân viên và trang đăng nhập
               </span>
               <p className="text-xs text-muted-foreground">
-                Mỗi nhân viên vẫn có thể bật Sáng/Tối riêng trên thanh công cụ nếu muốn.
+                Mọi tài khoản dùng giao diện này trên tất cả thiết bị.
               </p>
               <div className="flex flex-wrap gap-2 pt-1">
                 {(['light', 'dark'] as const).map((mode) => (

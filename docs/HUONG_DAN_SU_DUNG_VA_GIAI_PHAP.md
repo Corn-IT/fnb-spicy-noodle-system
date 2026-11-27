@@ -110,9 +110,12 @@ Mật khẩu mặc định chung sau khi seed: **`Password@123`**
 - Super Admin có thể xem danh sách phiên online, lịch sử đăng nhập theo IP/thiết bị và bấm **Thu hồi phiên** từ xa trong `/rbac`.
 
 #### 1.3. Tiện ích Giao diện Cá nhân & Bảo toàn khi Đăng xuất
-1. **Chuyển chế độ Sáng (Light) / Tối (Dark):** Bấm biểu tượng Mặt trời/Mặt trăng trên Header.
-2. **Phóng to / Thu nhỏ tỷ lệ hiển thị (`displayScale`):** Tuỳ chỉnh từ `80%` đến `150%` (toàn hệ thống hoặc từng trang riêng, phù hợp nhân sự lớn tuổi hoặc màn hình độ phân giải cao).
-3. **Lưu giữ Thói quen Cá nhân (Hard Invariant 9):** Theme, độ rộng cột bảng, độ rộng/thu gọn Sidebar, thứ tự menu và bật/tắt giọng nói báo đơn QR được lưu cả trên trình duyệt và đồng bộ lên tài khoản (`users.ui_preferences`). **Khi đăng xuất, dữ liệu nghiệp vụ được xoá sạch khỏi bộ nhớ đệm nhưng cài đặt giao diện cá nhân được giữ nguyên.** Nếu muốn đưa về mặc định, vào **Hồ sơ (`/profile`)** và bấm **Khôi phục toàn bộ cài đặt cá nhân**.
+1. **Chế độ Sáng (Light) / Tối (Dark):** Người có quyền `settings.update` hoặc Super Admin chọn trong Cài đặt Cửa hàng, áp dụng cho mọi tài khoản.
+2. **Phóng to / Thu nhỏ tỷ lệ hiển thị (`displayScale`):** Tuỳ chỉnh trong Cài đặt Cửa hàng từ `80%` đến `150%` (toàn hệ thống hoặc từng trang riêng, phù hợp nhân sự lớn tuổi hoặc màn hình độ phân giải cao).
+3. **Cấu hình cửa hàng và cá nhân (Hard Invariant 9):** Theme, tỉ lệ hiển thị 80–150% và thứ tự menu/nhóm áp dụng chung từ Cài đặt Cửa hàng cho mọi tài khoản, kể cả điện thoại và POS cảm ứng. Các giá trị cá nhân cũ vẫn được giữ nhưng không ghi đè. Độ rộng cột, độ rộng/thu gọn Sidebar và bật/tắt loa báo đơn QR vẫn lưu theo tài khoản. Đăng xuất xoá dữ liệu nghiệp vụ và phiên đăng nhập, giữ nguyên preferences; Hồ sơ có nút **Đặt lại loa và thanh bên**.
+4. **QR khách:** Theme theo cấu hình QR của quán; chế độ `system` theo giao diện hệ điều hành, không có nút đổi theme riêng.
+5. **Máy in và két tiền:** Chỉ Super Admin chỉnh hoặc khôi phục cấu hình phần cứng tại Cài đặt và POS cảm ứng. Nhân viên vẫn in bằng cấu hình đã lưu và mở két theo quyền hiện có. Cấu hình lưu riêng theo origin/profile trình duyệt, giữ khi logout/đổi tài khoản và đồng bộ giữa các tab; không quản lý từ xa.
+6. **Đồng bộ:** Cấu hình và nội dung thông báo cập nhật khi kết nối lại Socket, quay lại tab, online và mỗi 60 giây khi tab ở foreground. Offline giữ cache. Draft đang sửa được giữ; nếu người khác lưu trước, dùng xử lý xung đột 409 để tải lại.
 
 ---
 

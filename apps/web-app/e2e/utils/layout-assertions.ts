@@ -18,6 +18,8 @@ export interface LayoutCheckOptions {
   checkTouchTargets?: boolean;
   /** Tolerance in px for rounding/subpixel */
   tolerancePx?: number;
+  /** Scroll clipped controls into view before declaring them unreachable. */
+  checkScrollReachability?: boolean;
 }
 
 /**
@@ -33,10 +35,10 @@ export async function auditPageLayout(
   page: Page,
   options: LayoutCheckOptions = {},
 ): Promise<LayoutViolation[]> {
-  const { checkTouchTargets = false, tolerancePx = 2 } = options;
+  const { checkTouchTargets = false, tolerancePx = 2, checkScrollReachability = false } = options;
 
   return page.evaluate(
-    ({ checkTouch, tol }) => {
+    ({ checkTouch, tol, checkScroll }) => {
       const violations: LayoutViolation[] = [];
       const vw = window.innerWidth;
       const vh = window.innerHeight;
@@ -155,6 +157,25 @@ export async function auditPageLayout(
           const cy = rect.top + rect.height / 2;
           const topEl = document.elementFromPoint(cx, cy);
           if (topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el)) {
+            // A control below a nested scroll viewport or behind a sticky table column can
+            // still be reached by scrolling. Hidden/clip containers do not qualify.
+            let scrollParent = el.parentElement;
+            let canScroll = false;
+            while (scrollParent) {
+              const parentStyle = window.getComputedStyle(scrollParent);
+              if ((/(auto|scroll)/.test(parentStyle.overflowY) && scrollParent.scrollHeight > scrollParent.clientHeight + tol)
+                || (/(auto|scroll)/.test(parentStyle.overflowX) && scrollParent.scrollWidth > scrollParent.clientWidth + tol)) {
+                canScroll = true;
+                break;
+              }
+              scrollParent = scrollParent.parentElement;
+            }
+            if (checkScroll && canScroll) {
+              el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+              const revealed = el.getBoundingClientRect();
+              const hit = document.elementFromPoint(revealed.left + revealed.width / 2, revealed.top + revealed.height / 2);
+              if (hit && (hit === el || el.contains(hit) || hit.contains(el))) continue;
+            }
             violations.push({
               rule: 'INTERACTIVE_OCCLUDED',
               selector: describeEl(el),
@@ -182,7 +203,7 @@ export async function auditPageLayout(
 
       return violations;
     },
-    { checkTouch: checkTouchTargets, tol: tolerancePx },
+    { checkTouch: checkTouchTargets, tol: tolerancePx, checkScroll: checkScrollReachability },
   );
 }
 
@@ -199,6 +220,11 @@ export const RESPONSIVE_VIEWPORTS = [
   { name: 'tablet-1180', width: 1180, height: 820, isTouch: true },
   { name: 'desktop-1366', width: 1366, height: 768, isTouch: false },
   { name: 'desktop-1920', width: 1920, height: 1080, isTouch: false },
+  { name: 'desktop-2560', width: 2560, height: 1440, isTouch: false },
+  { name: 'breakpoint-639', width: 639, height: 900, isTouch: true },
+  { name: 'breakpoint-640', width: 640, height: 900, isTouch: true },
+  { name: 'breakpoint-767', width: 767, height: 900, isTouch: true },
+  { name: 'breakpoint-1023', width: 1023, height: 900, isTouch: true },
 ] as const;
 
 export const EXTENDED_RESPONSIVE_VIEWPORTS = [

@@ -3,7 +3,7 @@ import {
   MESSAGE_CATALOG_BY_KEY,
   type StoreMessagesMap,
 } from '@fnb/shared';
-import { Bell, Clock, Play, RotateCcw, Volume2, VolumeX } from 'lucide-react';
+import { Bell, Clock, Play, RotateCcw, Volume2 } from 'lucide-react';
 import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -16,20 +16,15 @@ import {
   DEFAULT_QR_REMINDER_CONFIG,
   DEFAULT_QR_VOICE_ENGINE_CONFIG,
   enqueueQrVoiceAlert,
-  isQrVoiceAlertEnabled,
   parseQrReminderConfig,
   parseQrVoiceEngineConfig,
   serializeQrReminderConfig,
   serializeQrVoiceEngineConfig,
-  setQrVoiceAlertEnabled,
-  subscribeQrVoiceAlertState,
   unlockQrVoiceAudio,
   type QrReminderConfig,
   type QrVoiceEngineConfig,
   type QrVoiceProfileType,
 } from '@/lib/qr-voice-announcer';
-import { persistAccountPreferences } from '@/lib/persist-account-preferences';
-import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { cn } from '@/utils/cn';
 
 export interface VoiceAnnouncerSettingsCardProps {
@@ -137,14 +132,6 @@ export function VoiceAnnouncerSettingsCard({
   onChangeMessages,
   disabled = false,
 }: VoiceAnnouncerSettingsCardProps) {
-  const [deviceVoiceEnabled, setDeviceVoiceEnabled] = React.useState<boolean>(() =>
-    isQrVoiceAlertEnabled(),
-  );
-
-  React.useEffect(() => {
-    return subscribeQrVoiceAlertState(setDeviceVoiceEnabled);
-  }, []);
-
   const newOrderDef = MESSAGE_CATALOG_BY_KEY.get('pos.voice.qrNewOrder');
   const addonOrderDef = MESSAGE_CATALOG_BY_KEY.get('pos.voice.qrAddonOrder');
   const newReminderDef = MESSAGE_CATALOG_BY_KEY.get('pos.voice.qrNewReminder');
@@ -290,28 +277,7 @@ export function VoiceAnnouncerSettingsCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="voice-settings-device-toggle-btn"
-            title="Chỉ bật/tắt loa cho tài khoản đang đăng nhập (lưu theo tài khoản cá nhân, không ảnh hưởng tài khoản khác)"
-            onClick={() => {
-              const next = !deviceVoiceEnabled;
-              setQrVoiceAlertEnabled(next);
-              useUiPreferencesStore.getState().setUserVoiceAlertEnabled(next);
-              void persistAccountPreferences({ voiceAlertEnabled: next });
-              setDeviceVoiceEnabled(next);
-            }}
-            className="h-8 gap-1.5 text-xs font-semibold"
-          >
-            {deviceVoiceEnabled ? (
-              <Volume2 className="h-3.5 w-3.5 text-accent-text" />
-            ) : (
-              <VolumeX className="h-3.5 w-3.5 text-muted-foreground" />
-            )}
-            <span>{deviceVoiceEnabled ? 'Loa tài khoản này: Đang Bật' : 'Loa tài khoản này: Đang Tắt'}</span>
-          </Button>
+
 
           <Button
             type="button"

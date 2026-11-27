@@ -267,11 +267,11 @@ export function BaseTable<TData>({
   return (
     <div className={cn('flex flex-col gap-3', className)}>
       {showToolbar ? (
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-2">{toolbarLeft}</div>
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-col flex-wrap gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{toolbarLeft}</div>
+          <div className="flex w-full min-w-0 max-w-full flex-wrap items-center gap-2 sm:w-auto">
             {onSearchChange ? (
-              <div ref={search.containerRef} className="relative flex-1 min-w-[200px] sm:flex-none sm:w-72 lg:w-80">
+              <div ref={search.containerRef} className="relative min-w-0 max-w-full flex-1 sm:flex-none sm:w-72 lg:w-80">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground touch-ui:left-3 touch-ui:h-5 touch-ui:w-5" />
                 <Input
                   {...search.inputProps}
@@ -588,7 +588,7 @@ export function BaseTable<TData>({
       )}
 
       {pagination ? (
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground touch-ui:text-sm">
+        <div className="flex min-w-0 flex-col flex-wrap gap-2.5 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground touch-ui:text-sm">
           <div>
             Hiển thị trang <span className="font-semibold text-foreground">{pagination.page}</span> /{' '}
             <span className="font-semibold text-foreground">
