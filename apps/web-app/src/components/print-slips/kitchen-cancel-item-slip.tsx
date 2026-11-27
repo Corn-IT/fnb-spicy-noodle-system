@@ -76,8 +76,9 @@ export function KitchenCancelItemSlip({
             key={`${slip.station}-${slip.itemName}-${index}`}
             data-testid={`kitchen-cancel-slip-${slip.station}-${index}`}
             data-font-size-pt={fontSizePt}
+            data-thermal-font={tpl.fontFamily}
             className="ticket-page break-words bg-white px-0 py-0 font-mono text-black"
-            style={getThermalSlipRootStyle(fontSizePt)}
+            style={getThermalSlipRootStyle(fontSizePt, tpl.fontFamily)}
           >
             <div className="flex flex-col items-center border-b-2 border-black pb-1 text-center">
               <StationLogo logoType={meta.logoType} className="mb-0.5 h-9 w-9" />

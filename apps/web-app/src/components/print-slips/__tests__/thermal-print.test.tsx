@@ -767,6 +767,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
         printTemplates: {
           ...DEFAULT_STORE_SETTINGS.printTemplates,
           provisional: {
+            fontFamily: DEFAULT_STORE_SETTINGS.printTemplates.provisional.fontFamily,
             title: 'TẠM TÍNH BÀN',
             footerNote: 'Kiểm tra món kỹ trước khi thanh toán',
             fontSizePt: 8,
@@ -848,6 +849,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
             blocks: { ...DEFAULT_STORE_SETTINGS.printTemplates.provisional.blocks, logo: false },
           },
           official: {
+            fontFamily: DEFAULT_STORE_SETTINGS.printTemplates.official.fontFamily,
             title: 'HOÁ ĐƠN BÁN LẺ',
             footerNote: 'Cảm ơn quý khách nhiều!',
             fontSizePt: 8,
@@ -907,6 +909,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
         printTemplates: {
           ...DEFAULT_STORE_SETTINGS.printTemplates,
           kitchen: {
+            fontFamily: DEFAULT_STORE_SETTINGS.printTemplates.kitchen.fontFamily,
             title: 'BẾP CHÍNH',
             footerNote: 'Ưu tiên bàn VIP',
             fontSizePt: 11.5,
@@ -919,6 +922,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
             },
           },
           kitchenCancel: {
+            fontFamily: DEFAULT_STORE_SETTINGS.printTemplates.kitchenCancel.fontFamily,
             title: 'HUỶ GẤP',
             footerNote: 'Ngừng chế biến ngay',
             fontSizePt: 7,
@@ -928,6 +932,7 @@ describe('Story 10 — 80mm Thermal Print System, 5 Standard Slips & Dynamic Vie
             },
           },
           tableTransfer: {
+            fontFamily: DEFAULT_STORE_SETTINGS.printTemplates.tableTransfer.fontFamily,
             title: 'CHUYỂN BÀN BẾP',
             footerNote: 'Đưa từ {fromTable} qua {toTable} gấp!',
             fontSizePt: 8,

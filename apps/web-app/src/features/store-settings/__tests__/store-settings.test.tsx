@@ -357,6 +357,8 @@ describe('StoreSettingsPage (Story 14)', () => {
     });
     expect(container.querySelector('script')).toBeNull();
     expect(screen.getByTestId('store-settings-save-btn')).toBeDisabled();
+    await userEvent.click(screen.getByRole('tab', { name: /Phiếu in/i }));
+    expect(await screen.findByTestId('print-font-family-official')).toBeDisabled();
   });
 
   it('configures primaryTextColor, accentTextColor and priceColor Light/Dark overrides, WCAG warning, and auto dark mode (Story 15)', async () => {
@@ -481,6 +483,7 @@ describe('StoreSettingsPage (Story 14)', () => {
       printTemplates: {
         ...DEFAULT_STORE_SETTINGS.printTemplates,
         provisional: {
+          fontFamily: 'roboto',
           title: 'PHIẾU TẠM BÀN',
           footerNote: '',
           fontSizePt: 8,
@@ -513,10 +516,15 @@ describe('StoreSettingsPage (Story 14)', () => {
     const preview = screen.getByTestId('receipt-live-preview');
     expect(preview).toHaveAttribute('data-preview-template', 'official');
     expect(screen.getByTestId('official-receipt-payment-breakdown')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByTestId('print-font-family-official'), { key: 'Enter' });
+    await user.click(screen.getByRole('option', { name: 'Be Vietnam Pro' }));
+    expect(preview.querySelector('[data-thermal-font]')).toHaveAttribute('data-thermal-font', 'be-vietnam-pro');
+
 
     // Switch to Provisional + VietQR
     await user.click(screen.getByTestId('print-template-tab-provisional'));
     expect(preview).toHaveAttribute('data-preview-template', 'provisional');
+    expect(screen.getByTestId('print-font-family-provisional')).toHaveTextContent('Roboto');
     expect(screen.queryByTestId('provisional-discount-line')).not.toBeInTheDocument();
     fireEvent.change(screen.getByTestId('input-print-title-provisional'), {
       target: { value: 'PHIẾU TẠM BÀN' },
@@ -548,6 +556,9 @@ describe('StoreSettingsPage (Story 14)', () => {
     // Switch to Kitchen cancel & test per-template reset
     await user.click(screen.getByTestId('print-template-tab-kitchenCancel'));
     expect(preview).toHaveAttribute('data-preview-template', 'kitchenCancel');
+    fireEvent.keyDown(screen.getByTestId('print-font-family-kitchenCancel'), { key: 'Enter' });
+    await user.click(screen.getByRole('option', { name: /^Serif$/ }));
+
     fireEvent.change(screen.getByTestId('input-print-title-kitchenCancel'), {
       target: { value: 'HUỶ ĐỒ GẤP' },
     });
@@ -571,6 +582,7 @@ describe('StoreSettingsPage (Story 14)', () => {
         '/api/v1/settings',
         expect.objectContaining({
           printTemplates: expect.objectContaining({
+            official: expect.objectContaining({ fontFamily: 'be-vietnam-pro' }),
             provisional: expect.objectContaining({
               title: 'PHIẾU TẠM BÀN',
               blocks: expect.objectContaining({ discountLine: true, bankInfo: false }),

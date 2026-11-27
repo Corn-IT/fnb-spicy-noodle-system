@@ -1,5 +1,7 @@
 import {
   cloneDefaultPrintTemplates,
+  THERMAL_FONT_OPTIONS,
+  type ThermalFontFamily,
   PRINT_TEMPLATE_DEFAULTS,
   THERMAL_FONT_SIZE_PT_MAX,
   THERMAL_FONT_SIZE_PT_MIN,
@@ -16,6 +18,7 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { apiClient } from '@/lib/api-client';
 import { cn } from '@/utils/cn';
 import { ReceiptPreviewPanel } from './receipt-preview-panel';
@@ -466,6 +469,16 @@ export function PrintTemplateCustomizer({
               {activeMeta.footerHint ? (
                 <p className="text-[11px] font-medium text-accent-text">{activeMeta.footerHint}</p>
               ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor={`print-font-family-${selectedTemplate}`} className="text-sm font-semibold">Phông chữ phiếu in</label>
+              <Select value={activeTemplate.fontFamily} disabled={!canUpdate} onValueChange={(value: ThermalFontFamily) =>
+                onChangePrintTemplates((prev) => ({ ...prev, [selectedTemplate]: { ...prev[selectedTemplate], fontFamily: value } }))
+              }>
+                <SelectTrigger id={`print-font-family-${selectedTemplate}`} data-testid={`print-font-family-${selectedTemplate}`}><SelectValue /></SelectTrigger>
+                <SelectContent>{THERMAL_FONT_OPTIONS.map((option) => <SelectItem key={option.key} value={option.key}>{option.label}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
 
             {/* Free font size selector (Word/Excel style, 6–16pt, step 0.5) */}

@@ -1,5 +1,8 @@
+import './thermal-fonts.css';
 import {
   DEFAULT_THERMAL_FONT_SIZE_PT,
+  resolveThermalFontFamily,
+  type ThermalFontFamily,
   PRINT_TEMPLATE_DEFAULTS,
   THERMAL_FONT_SIZE_PT_MAX,
   THERMAL_FONT_SIZE_PT_MIN,
@@ -15,9 +18,10 @@ export function resolveThermalFontSizePt(raw: unknown): number {
   return DEFAULT_THERMAL_FONT_SIZE_PT;
 }
 
-export function getThermalSlipRootStyle(fontSizePt: number): React.CSSProperties {
+export function getThermalSlipRootStyle(fontSizePt: number, fontFamily: ThermalFontFamily): React.CSSProperties {
   return {
     fontSize: `${resolveThermalFontSizePt(fontSizePt)}pt`,
+    fontFamily: resolveThermalFontFamily(fontFamily),
     lineHeight: 1.25,
     breakAfter: 'page',
     pageBreakAfter: 'always',

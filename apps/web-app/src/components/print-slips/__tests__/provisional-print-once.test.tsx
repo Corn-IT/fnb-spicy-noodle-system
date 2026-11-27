@@ -40,6 +40,8 @@ describe('ThermalPrintProvider — phiếu tạm tính chỉ in đúng 1 lần',
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    Object.defineProperty(document, 'fonts', { configurable: true, value: undefined });
   });
 
   it('prints once and does not re-print the already printed slip when the provider re-renders', async () => {
@@ -105,7 +107,30 @@ describe('ThermalPrintProvider — phiếu tạm tính chỉ in đúng 1 lần',
     fireEvent.click(button); // phiếu B thay thế A trước khi A kịp in
 
     expect(cancelSpy).toHaveBeenCalled();
-    flushFrames();
+    await act(async () => { flushFrames(); });
     expect(printSpy).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it('waits for both font weights and ignores a replaced job while its fonts load', async () => {
+  const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+  const pending: ((faces: FontFace[]) => void)[] = [];
+  const load = vi.fn(() => new Promise<FontFace[]>((resolve) => pending.push(resolve)));
+  Object.defineProperty(document, 'fonts', { configurable: true, value: { load } });
+  render(<ThermalPrintProvider><PrintProvisionalButton /></ThermalPrintProvider>);
+  const button = screen.getByRole('button', { name: 'In tạm tính' });
+  fireEvent.click(button);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(printSpy).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+  expect(load).toHaveBeenCalledTimes(4);
+  await act(async () => { pending[0]!([{} as FontFace]); pending[1]!([{} as FontFace]); });
+  expect(printSpy).not.toHaveBeenCalled();
+  await act(async () => { pending[2]!([{} as FontFace]); pending[3]!([{} as FontFace]); });
+  expect(printSpy).toHaveBeenCalledTimes(1);
+  Object.defineProperty(document, 'fonts', { configurable: true, value: undefined });
+  vi.restoreAllMocks();
 });

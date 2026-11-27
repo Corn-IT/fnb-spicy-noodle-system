@@ -1,3 +1,4 @@
+import { waitForThermalContainerFonts } from './thermal-font.util';
 import * as React from 'react';
 
 import {
@@ -106,12 +107,6 @@ export interface ThermalPrintProviderProps {
   children: React.ReactNode;
 }
 
-/** Bỏ job vừa in khỏi hàng đợi; giữ nguyên mảng khi hàng đợi đã trống để không render lại thừa. */
-function dequeuePrintJob(queue: ThermalPrintJob[], jobId: string): ThermalPrintJob[] {
-  if (queue.length === 0) return queue;
-  return queue.length > 1 ? queue.filter((item) => item.id !== jobId) : [];
-}
-
 export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
   const [printQueue, setPrintQueue] = React.useState<ThermalPrintJob[]>([]);
   const [lastJob, setLastJob] = React.useState<ThermalPrintJob | null>(null);
@@ -127,69 +122,57 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
   const currentRenderJobRef = React.useRef<ThermalPrintJob | null>(null);
   currentRenderJobRef.current = currentRenderJob;
 
+  const activePrintJobIdRef = React.useRef<string | null>(null);
+  activePrintJobIdRef.current = activePrintJob?.id ?? null;
+  const pendingPrintJobs = React.useRef(new Set<string>());
+  React.useEffect(() => () => { activePrintJobIdRef.current = null; }, []);
+
   const executeBrowserPrintAndDequeue = React.useCallback((jobId: string) => {
+    if (activePrintJobIdRef.current !== jobId || pendingPrintJobs.current.has(jobId)) return;
+    const containerEl = containerRef.current;
+    if (!containerEl) return;
     const printerConfig = useThermalPrinterConfigStore.getState().config;
     const job = currentRenderJobRef.current;
-
-    if (printerConfig.driver === 'BROWSER') {
-      if (typeof window !== 'undefined' && typeof window.print === 'function') {
-        const isAutomation = Boolean(
-          (typeof navigator !== 'undefined' && navigator.webdriver) ||
-            window.location.search.includes('no-print') ||
-            window.localStorage.getItem('fnb_disable_native_print') === 'true',
-        );
-        if (!isAutomation) {
-          window.print();
-        } else {
-          console.log('[ThermalPrint] Automation mode detected: simulated print for job', jobId);
-        }
-      }
-      setPrintQueue((prev) => dequeuePrintJob(prev, jobId));
-      return;
-    }
-
-    const containerEl =
-      containerRef.current ??
-      (typeof document !== 'undefined'
-        ? document.getElementById('thermal-print-container')
-        : null);
-
-    setPrintQueue((prev) => dequeuePrintJob(prev, jobId));
-
-    if (!containerEl) {
-      return;
-    }
-
-    const shouldKickCashDrawer = Boolean(
-      printerConfig.cashDrawerKick &&
-        job?.type === 'OFFICIAL_RECEIPT' &&
-        job.payload.paymentMethod !== 'TRANSFER',
-    );
-
+    // Snapshot each job before awaiting fonts so replacement jobs cannot change its raster.
+    const snapshot = containerEl.cloneNode(true) as HTMLElement;
+    pendingPrintJobs.current.add(jobId);
     void (async () => {
       try {
         setLastPhysicalPrintError(null);
-        const escPosBytes = await encodeThermalContainerToEscPos(containerEl, {
-          paperWidthDots: printerConfig.paperWidthDots,
-          kickCashDrawer: shouldKickCashDrawer,
-          leftMarginMm: printerConfig.leftMarginMm,
-          rightMarginMm: printerConfig.rightMarginMm,
-          feedLinesBeforeCut: printerConfig.feedLinesBeforeCut,
-        });
-
-        if (printerConfig.driver === 'RAWBT_USB') {
-          const res = await dispatchRawbtUsbPrint(escPosBytes, {
-            wsUrl: printerConfig.rawbtWsUrl,
-            fallbackToIntent: printerConfig.rawbtFallbackToIntent,
+        if (printerConfig.driver === 'BROWSER') {
+          const liveFontKeys = () => Array.from(containerEl.querySelectorAll<HTMLElement>('[data-thermal-font]'))
+            .map((ticket) => ticket.dataset.thermalFont).sort().join(',');
+          let fontKeys: string;
+          do {
+            fontKeys = liveFontKeys();
+            await waitForThermalContainerFonts(containerEl);
+            if (activePrintJobIdRef.current !== jobId) return;
+          } while (fontKeys !== liveFontKeys());
+          const isAutomation = Boolean(navigator.webdriver || window.location.search.includes('no-print') ||
+            window.localStorage.getItem('fnb_disable_native_print') === 'true');
+          if (!isAutomation) window.print();
+        } else {
+          const escPosBytes = await encodeThermalContainerToEscPos(snapshot, {
+            paperWidthDots: printerConfig.paperWidthDots,
+            kickCashDrawer: Boolean(printerConfig.cashDrawerKick && job?.type === 'OFFICIAL_RECEIPT' && job.payload.paymentMethod !== 'TRANSFER'),
+            leftMarginMm: printerConfig.leftMarginMm,
+            rightMarginMm: printerConfig.rightMarginMm,
+            feedLinesBeforeCut: printerConfig.feedLinesBeforeCut,
           });
-          setLastPhysicalPrintResult(res);
-        } else if (printerConfig.driver === 'LAN_ESCPOS') {
-          const res = await dispatchLanEscPosPrint(escPosBytes, printerConfig);
-          setLastPhysicalPrintResult(res);
+          if (activePrintJobIdRef.current !== jobId) return;
+          const result = printerConfig.driver === 'RAWBT_USB'
+            ? await dispatchRawbtUsbPrint(escPosBytes, { wsUrl: printerConfig.rawbtWsUrl, fallbackToIntent: printerConfig.rawbtFallbackToIntent })
+            : await dispatchLanEscPosPrint(escPosBytes, printerConfig);
+          setLastPhysicalPrintResult(result);
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Lỗi gửi lệnh in nhiệt ESC/POS';
-        setLastPhysicalPrintError(msg);
+        if (activePrintJobIdRef.current === jobId) {
+          setLastPhysicalPrintError(err instanceof Error ? err.message : 'Lỗi gửi lệnh in nhiệt ESC/POS');
+        }
+      } finally {
+        if (activePrintJobIdRef.current === jobId) activePrintJobIdRef.current = null;
+        setPrintQueue((prev) => prev.filter((item) => item.id !== jobId));
+        pendingPrintJobs.current.delete(jobId);
       }
     })();
   }, []);
@@ -197,8 +180,6 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
   // Phiếu chờ ảnh (VietQR, logo) báo "sẵn sàng in" qua callback này. Callback phải ổn định và chỉ
   // gắn cho job ĐANG chờ in: phiếu đã in vẫn được giữ trên màn (lastJob), nếu nó còn callback thì
   // mỗi lần render lại sẽ tự in thêm một bản (vòng lặp in liên tục).
-  const activePrintJobIdRef = React.useRef<string | null>(null);
-  activePrintJobIdRef.current = activePrintJob?.id ?? null;
   // Callback gắn với ĐÚNG job đang chờ: phiếu cũ (đã bị thay bằng lệnh in mới) có gọi muộn cũng
   // không in nhầm phiếu mới trước khi ảnh VietQR của phiếu mới tải xong.
   const activeJobId = activePrintJob?.id ?? null;
@@ -251,11 +232,13 @@ export function ThermalPrintProvider({ children }: ThermalPrintProviderProps) {
   }, [activePrintJob, executeBrowserPrintAndDequeue]);
 
   const enqueueReplacementOrAppend = React.useCallback((job: ThermalPrintJob) => {
+    activePrintJobIdRef.current = job.id;
     setLastJob(job);
     setPrintQueue([job]);
   }, []);
 
   const clearPrintQueue = React.useCallback(() => {
+    activePrintJobIdRef.current = null;
     setLastJob(null);
     setPrintQueue([]);
   }, []);
