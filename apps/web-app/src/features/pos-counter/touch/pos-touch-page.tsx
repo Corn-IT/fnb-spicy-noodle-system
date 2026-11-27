@@ -320,7 +320,7 @@ export function PosTouchPage() {
   return (
     <div
       data-testid="pos-touch-screen"
-      className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-background"
+      className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-background"
     >
       {screen === 'order' ? (
         <TouchOrderScreen
@@ -332,11 +332,11 @@ export function PosTouchPage() {
         />
       ) : (
         <>
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-card px-2 min-[1100px]:gap-3 min-[1100px]:px-3">
+          <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-2 border-b bg-card px-2 py-2 min-[1100px]:gap-3 min-[1100px]:px-3">
             <div
               role="tablist"
               aria-label="Phân loại sơ đồ bàn"
-              className="flex shrink-0 items-center gap-0.5 rounded-xl bg-muted p-0.5"
+              className="flex min-w-0 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-0.5"
             >
               <button
                 type="button"

@@ -95,3 +95,20 @@ describe('TouchPrinterPage — Máy in & Két tiền cảm ứng', () => {
     expect(screen.queryByTestId('btn-test-cash-drawer-kick')).not.toBeInTheDocument();
   });
 });
+
+describe('local hardware edit policy', () => {
+  it('allows a cashier with settings.update to print but disables edits and reset', async () => {
+    const user = (await import('@testing-library/user-event')).default.setup();
+    useAuthStore.setState({ user: { id: 3, employeeId: 3, username: 'manager', fullName: 'Manager', isSuperAdmin: false, permissions: UserPermissionsSchema.parse({ pos: { view: true }, settings: { update: true } }) } });
+    const { useThermalPrinterConfigStore } = await import('@/components/print-slips');
+    useThermalPrinterConfigStore.getState().resetConfig();
+    const view = render(<TouchPrinterPage />);
+    expect(screen.getByTestId('btn-reset-printer-hardware-config')).toBeDisabled();
+    expect(screen.getByTestId('printer-driver-option-LAN_ESCPOS')).toBeDisabled();
+    await user.click(screen.getByTestId('printer-driver-option-LAN_ESCPOS'));
+    expect(useThermalPrinterConfigStore.getState().config.driver).toBe('BROWSER');
+    expect(screen.getByTestId('btn-test-thermal-print')).toBeEnabled();
+    view.unmount();
+    useAuthStore.getState().clearAuth();
+  });
+});

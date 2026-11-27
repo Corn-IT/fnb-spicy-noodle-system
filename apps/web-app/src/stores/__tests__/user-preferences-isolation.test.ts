@@ -1,7 +1,5 @@
-import { DEFAULT_DISPLAY_SCALE } from '@fnb/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { mergeUserDisplayScale } from '@/hooks/use-display-scale';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 
 describe('per-account preferences', () => {
@@ -39,14 +37,7 @@ describe('per-account preferences', () => {
     expect(state.userNavGroupOrder).toEqual([]);
   });
 
-  it('falls back to the store display scale when there is no override, keeping the QR scale global', () => {
-    const storeScale = { ...DEFAULT_DISPLAY_SCALE, globalPercent: 100, qrOrderPercent: 90 };
-    expect(mergeUserDisplayScale(storeScale, { perPath: {} })).toEqual(storeScale);
-    const merged = mergeUserDisplayScale(storeScale, { globalPercent: 120, perPath: { '/pos': 110 } });
-    expect(merged.globalPercent).toBe(120);
-    expect(merged.perPath).toEqual({ '/pos': 110 });
-    expect(merged.qrOrderPercent).toBe(90);
-  });
+
 });
 
 describe('per-account sidebar and voice preferences', () => {
@@ -58,20 +49,6 @@ describe('per-account sidebar and voice preferences', () => {
     useUiPreferencesStore.getState().hydrateFromServer({});
     expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(false);
     expect(useUiPreferencesStore.getState().userVoiceAlertEnabled).toBeUndefined();
-  });
-});
-
-describe('display scale on phone viewports', () => {
-  it('never zooms in below the phone breakpoint but still allows zooming out', async () => {
-    const { capPercentForViewport } = await import('@/hooks/use-display-scale');
-    expect(capPercentForViewport(140, 375)).toBe(100);
-    expect(capPercentForViewport(90, 375)).toBe(90);
-    expect(capPercentForViewport(140, 640)).toBe(140);
-    expect(capPercentForViewport(150, 1280)).toBe(150);
-    // The guest QR page keeps the scale the store chose, even on a phone.
-    expect(capPercentForViewport(120, 375, '/q/abc')).toBe(120);
-    expect(capPercentForViewport(120, 375, '/qr/abc')).toBe(120);
-    expect(capPercentForViewport(120, 375, '/pos')).toBe(100);
   });
 });
 

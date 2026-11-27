@@ -110,6 +110,8 @@ export function SocketProvider({ children }: SocketProviderProps) {
 
     const handleConnect = () => {
       setIsConnected(true);
+      void queryClient.invalidateQueries({ queryKey: ['store-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['store-messages'] });
     };
     const handleDisconnect = () => {
       setIsConnected(false);
@@ -170,7 +172,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', recoverConnection);
     };
-  }, [socket]);
+  }, [socket, queryClient]);
 
   React.useEffect(() => {
     if (!socket) return;

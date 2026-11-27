@@ -115,11 +115,11 @@ export function PosUnifiedPage() {
           className="flex flex-1 min-h-0 h-full flex-col"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-2.5 sm:px-4 py-2 sm:py-2.5 shrink-0">
-            <TabsList className="grid flex-1 min-w-[180px] grid-cols-3 min-[820px]:grid-cols-2 h-auto p-1">
+            <TabsList className="grid w-full min-w-0 flex-auto min-[820px]:w-auto min-[820px]:flex-1 grid-cols-3 min-[820px]:grid-cols-2 h-auto p-1">
               <TabsTrigger
                 value="tables"
                 data-testid="pos-tab-tables"
-                className="min-h-9 min-[820px]:min-h-8 gap-1 px-1.5 sm:px-3 text-xs sm:text-sm"
+                className="min-w-0 min-h-9 min-[820px]:min-h-8 gap-1 px-1 sm:px-3 text-xs sm:text-sm"
               >
                 <LayoutGrid className="h-3.5 w-3.5 shrink-0 sm:hidden" />
                 <span className="sm:hidden">Bàn</span>
@@ -129,7 +129,7 @@ export function PosUnifiedPage() {
               <TabsTrigger
                 value="menu"
                 data-testid="pos-tab-menu"
-                className="min-h-9 min-[820px]:min-h-8 gap-1 px-1.5 sm:px-3 text-xs sm:text-sm"
+                className="min-w-0 min-h-9 min-[820px]:min-h-8 gap-1 px-1 sm:px-3 text-xs sm:text-sm"
               >
                 <UtensilsCrossed className="h-3.5 w-3.5 shrink-0 sm:hidden" />
                 <span className="sm:hidden">Món</span>
@@ -140,7 +140,7 @@ export function PosUnifiedPage() {
                 value="invoice"
                 data-testid="pos-tab-invoice"
                 onClick={() => setPosTab('invoice')}
-                className="min-[820px]:hidden min-h-9 gap-1 px-1.5 sm:px-3 text-xs sm:text-sm"
+                className="min-w-0 min-[820px]:hidden min-h-9 flex-wrap gap-1 px-1 sm:px-3 text-xs sm:text-sm"
               >
                 <Receipt className="h-3.5 w-3.5 shrink-0 sm:hidden" />
                 <span className="sm:hidden">Đơn</span>
@@ -152,7 +152,7 @@ export function PosUnifiedPage() {
                 ) : null}
               </TabsTrigger>
             </TabsList>
-            <div className="flex shrink-0 items-center gap-1.5">
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-1.5 min-[820px]:w-auto">
               <Button
                 type="button"
                 variant="outline"

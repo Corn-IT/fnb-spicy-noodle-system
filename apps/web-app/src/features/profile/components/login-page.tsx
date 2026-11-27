@@ -6,7 +6,7 @@ import {
   resolveHttpErrorDefinition,
   StoreAssetKind,
 } from '@fnb/shared';
-import { AlertCircle, Clock, Lock, Moon, ShieldAlert, Sun, User, X } from 'lucide-react';
+import { AlertCircle, Clock, Lock, ShieldAlert, User, X } from 'lucide-react';
 import * as React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -27,9 +27,7 @@ import { useLoginMutation } from '@/features/profile/api/auth.api';
 import { resolvePosHomePath } from '@/lib/pos-device-mode';
 import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings';
 import { ApiClientError } from '@/lib/api-client';
-import { resolveEffectiveTheme } from '@/providers/theme-provider';
 import { type AuthNoticeReason, useAuthStore } from '@/stores/auth.store';
-import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { cn } from '@/utils/cn';
 
 function formatKickTimestamp(iso?: string | null): string {
@@ -53,10 +51,6 @@ export function LoginPage() {
   const loginMutation = useLoginMutation();
   const { settings } = useStoreSettings();
   const logoUrl = buildStoreAssetUrl(StoreAssetKind.LOGO, settings.assets.logo);
-  const storedTheme = useUiPreferencesStore((state) => state.theme);
-  const hasExplicitTheme = useUiPreferencesStore((state) => state.hasExplicitTheme);
-  const theme = resolveEffectiveTheme(storedTheme, hasExplicitTheme, settings.defaultTheme);
-  const setTheme = useUiPreferencesStore((state) => state.setTheme);
 
   React.useEffect(() => {
     document.title = `Đăng nhập · ${settings.storeName}`;
@@ -167,25 +161,6 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen w-screen items-center justify-center bg-gradient-to-br from-slate-100 via-slate-50 to-primary/5 p-4 dark:from-slate-950 dark:via-slate-900 dark:to-primary/10">
       <div className="relative w-full max-w-md rounded-2xl border bg-card/95 p-8 shadow-2xl backdrop-blur-md">
-        <div className="absolute right-4 top-4">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            data-testid="login-theme-toggle"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            aria-label="Chuyển chế độ Sáng/Tối"
-            title={theme === 'dark' ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối'}
-            className="h-11 w-11 lg:h-9 lg:w-9 rounded-lg"
-          >
-            {theme === 'dark' ? (
-              <Sun className="h-4 w-4 text-amber-400" />
-            ) : (
-              <Moon className="h-4 w-4 text-slate-700" />
-            )}
-          </Button>
-        </div>
-
         <div className="mb-6 flex flex-col items-center text-center">
           <StoreBrandLogo
             src={logoUrl}

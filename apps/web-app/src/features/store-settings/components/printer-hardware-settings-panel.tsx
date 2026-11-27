@@ -27,6 +27,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/utils/cn';
 
 export interface PrinterHardwareSettingsPanelProps {
@@ -83,6 +84,7 @@ export function PrinterHardwareSettingsPanel({
   confirmCashDrawerKick = false,
   canKickCashDrawer = true,
 }: PrinterHardwareSettingsPanelProps) {
+  const canEdit = useAuthStore((state) => Boolean(state.user?.isSuperAdmin));
   const config = useThermalPrinterConfigStore((s) => s.config);
   const setDriver = useThermalPrinterConfigStore((s) => s.setDriver);
   const updateConfig = useThermalPrinterConfigStore((s) => s.updateConfig);
@@ -190,7 +192,7 @@ export function PrinterHardwareSettingsPanel({
   return (
     <div
       data-testid="printer-hardware-settings-panel"
-      className="mb-4 space-y-4 rounded-xl border bg-card p-4 sm:p-5 shadow-xs"
+      className="mb-4 min-w-0 shrink-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5 shadow-xs"
     >
       <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3">
         <div className="space-y-1">
@@ -209,6 +211,7 @@ export function PrinterHardwareSettingsPanel({
           type="button"
           variant="outline"
           size="sm"
+          disabled={!canEdit}
           data-testid="btn-reset-printer-hardware-config"
           onClick={() => {
             resetConfig();
@@ -217,13 +220,15 @@ export function PrinterHardwareSettingsPanel({
               text: 'Đã khôi phục cấu hình thiết bị in về mặc định (In qua Trình duyệt).',
             });
           }}
-          className="gap-1.5 text-xs"
+          className="h-auto max-w-full whitespace-normal break-words gap-1.5 py-2 text-xs"
         >
           <RotateCcw className="h-3.5 w-3.5" />
           <span>Khôi phục mặc định</span>
         </Button>
       </div>
 
+      {!canEdit ? <p className="text-xs text-muted-foreground">Chỉ Super Admin được thay đổi cấu hình thiết bị. Bạn vẫn có thể in bằng cấu hình đã lưu.</p> : null}
+      <fieldset disabled={!canEdit} className="min-w-0 space-y-4">
       {/* 3 Driver Mode Cards */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         {DRIVER_OPTIONS.map((option) => {
@@ -240,20 +245,20 @@ export function PrinterHardwareSettingsPanel({
                 setStatusNote(null);
               }}
               className={cn(
-                'flex flex-col items-start gap-2 rounded-xl border p-3.5 text-left transition-colors',
+                'flex min-w-0 flex-col items-start gap-2 rounded-xl border p-3.5 text-left transition-colors',
                 isSelected
                   ? 'border-primary bg-primary/5 ring-1 ring-primary'
                   : 'border-border bg-background hover:bg-muted/40',
               )}
             >
-              <div className="flex w-full items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1.5 text-sm font-bold text-foreground">
+              <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2">
+                <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-sm font-bold text-foreground">
                   <Icon className="h-4 w-4 text-accent-text shrink-0" />
-                  <span>{option.title}</span>
+                  <span className="min-w-0 break-words">{option.title}</span>
                 </span>
                 <span
                   className={cn(
-                    'rounded-full px-2 py-0.5 text-[10px] font-bold uppercase',
+                    'max-w-full break-words rounded-full px-2 py-0.5 text-[10px] font-bold uppercase',
                     isSelected
                       ? 'bg-primary text-primary-foreground'
                       : 'bg-muted text-muted-foreground',
@@ -285,7 +290,7 @@ export function PrinterHardwareSettingsPanel({
                 variant={config.paperWidthDots === opt.value ? 'default' : 'outline'}
                 data-testid={`printer-width-${opt.value}`}
                 onClick={() => updateConfig({ paperWidthDots: opt.value })}
-                className="text-xs"
+                className="h-auto max-w-full whitespace-normal break-words py-2 text-xs"
               >
                 {opt.label}
               </Button>
@@ -516,16 +521,17 @@ export function PrinterHardwareSettingsPanel({
         </div>
       ) : null}
 
+      </fieldset>
       {/* Test Actions Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
           <Button
             type="button"
             variant="secondary"
             size="sm"
             data-testid="btn-test-thermal-print"
             onClick={handleTestThermalPrint}
-            className="gap-1.5 font-semibold"
+            className="h-auto max-w-full whitespace-normal break-words gap-1.5 py-2 font-semibold"
           >
             <Printer className="h-3.5 w-3.5" />
             <span>In phiếu kiểm tra kết nối (80mm)</span>
@@ -553,7 +559,7 @@ export function PrinterHardwareSettingsPanel({
                 }
                 void handleTestCashDrawerKick();
               }}
-              className="gap-1.5 font-semibold"
+              className="h-auto max-w-full whitespace-normal break-words gap-1.5 py-2 font-semibold"
             >
               <Vault className="h-3.5 w-3.5" />
               <span>{confirmCashDrawerKick ? 'Mở két tiền (RJ11)' : 'Test bung két tiền (RJ11)'}</span>

@@ -28,10 +28,11 @@ describe('useDisplayScale & resolveDisplayScalePercent', () => {
     expect(resolveDisplayScalePercent('/dashboard', scale)).toBe(115);
   });
 
-  it('keeps the touch POS screen at 100% instead of inheriting the /pos or global zoom', () => {
+  it('uses store scale for touch POS and the corresponding touch settings route', () => {
     const scale = { globalPercent: 120, perPath: { '/pos': 150 }, qrOrderPercent: 100 };
     expect(resolveDisplayScalePercent('/pos', scale)).toBe(150);
-    expect(resolveDisplayScalePercent('/pos/touch', scale)).toBe(100);
+    expect(resolveDisplayScalePercent('/pos/touch', scale)).toBe(150);
+    expect(resolveDisplayScalePercent('/pos/touch/settings', { ...scale, perPath: { '/settings': 125 } })).toBe(125);
   });
 
   it('isolates guest QR order routes so they never inherit globalPercent', () => {

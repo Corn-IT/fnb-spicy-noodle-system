@@ -12,9 +12,9 @@ description: Frontend React UX, POS core layout, Base Table (TanStack Table v8),
 ## 1. Core Layout, Store Settings Động & UI Preferences
 
 ### Sidebar & Navbar (Desktop Shell — `AppShell`)
-- **Sidebar (trái):** Resizable (`180px–480px`), hỗ trợ thu gọn (`sidebarCollapsed`), tuỳ biến tên/thứ tự nhóm menu cấp cửa hàng (`navLabels`, `navGroupLabels`, `navOrder`, `navGroupOrder`) và cấp cá nhân (`users.ui_preferences`). **CHỈ** hiện màn hình mà user có quyền `view = true` (hoặc `isSuperAdmin`).
-- **Navbar (trên):** Command Palette (`Ctrl+K` / `Cmd+K`, lọc tuyệt đối theo RBAC), chuyển nhanh POS Cảm ứng, điều khiển cảnh báo âm thanh/Web Push, Light/Dark toggle, Avatar dropdown (`Hồ sơ tài khoản`, `Đăng xuất`).
-- **Trang Hồ sơ (`/profile`):** JOIN `employees` + `users`; `Chức vụ` & `Chuyên môn` readonly; cho phép sửa thông tin cá nhân/ngân hàng, tải/xoá Avatar (`/api/v1/profile/avatar`), đổi mật khẩu (`PATCH /api/v1/profile/password`), xem phiên hiện tại, và **Khôi phục toàn bộ cài đặt cá nhân**.
+- **Sidebar (trái):** Resizable (`180px–480px`), hỗ trợ thu gọn (`sidebarCollapsed`), tuỳ biến tên/thứ tự nhóm menu cấp cửa hàng (`navLabels`, `navGroupLabels`, `navOrder`, `navGroupOrder`) áp dụng cho mọi tài khoản. Các thứ tự cá nhân cũ trong `users.ui_preferences` được giữ nhưng không ghi đè cấu hình cửa hàng. **CHỈ** hiện màn hình mà user có quyền `view = true` (hoặc `isSuperAdmin`).
+- **Navbar (trên):** Command Palette (`Ctrl+K` / `Cmd+K`, lọc tuyệt đối theo RBAC), chuyển nhanh POS Cảm ứng, điều khiển cảnh báo âm thanh/Web Push, Avatar dropdown (`Hồ sơ tài khoản`, `Đăng xuất`).
+- **Trang Hồ sơ (`/profile`):** JOIN `employees` + `users`; `Chức vụ` & `Chuyên môn` readonly; cho phép sửa thông tin cá nhân/ngân hàng, tải/xoá Avatar (`/api/v1/profile/avatar`), đổi mật khẩu (`PATCH /api/v1/profile/password`), xem phiên hiện tại, và **Đặt lại loa và thanh bên**.
 - **Cài đặt Cửa hàng Động (`/settings`):** Áp dụng động qua `StoreSettingsProvider` (`brandColor`, `primaryTextColor`, `accentTextColor`, `priceColor`, `pageHeaders`, `displayScale` `80%–150%`, `logo`/`favicon`/`qr-logo`, 5 mẫu `printTemplates`, `qrCard`, và `messages` catalog).
 
 ## 2. Logout Behavior (Hard Invariant 9)
@@ -82,3 +82,11 @@ Khi bấm Đăng xuất, thực hiện **ĐÚNG** thứ tự:
 ## 7. Unsaved Changes Guard (`/schedules`)
 
 - Bắt buộc duy trì đồng thời: `window.addEventListener('beforeunload', ...)` + React Router navigation blocker + hộp thoại xác nhận khi đổi tuần chưa lưu.
+
+## Chính sách cấu hình cửa hàng dùng chung
+
+- Theme, display scale (80–150%, gồm điện thoại và Touch POS), thứ tự menu/nhóm luôn lấy từ Store Settings; không dùng override cá nhân cũ. Giữ dữ liệu `ui_preferences` và hành vi logout.
+- QR khách dùng `qr.theme`; `system` theo OS và cập nhật khi OS đổi. Không có nút theme riêng.
+- Settings và danh mục thông báo authenticated refresh khi socket connect/reconnect, trở lại foreground/online và mỗi 60 giây foreground; giữ cache khi offline. Giữ draft quản trị và phiên bản `expectedUpdatedAt` của draft cho 409.
+- Chỉ Super Admin chỉnh/khôi phục phần cứng tại Settings và Touch Printer; tài khoản khác in bằng cấu hình có sẵn, quyền mở két giữ nguyên. Cấu hình local theo origin/browser profile, đồng bộ tab, giữ khi đổi tài khoản/logout; đây là UI permission, không chống DevTools.
+- Nội dung/cấu hình giọng nói chung ở Settings; bật/tắt loa cá nhân ở profile và toolbar.

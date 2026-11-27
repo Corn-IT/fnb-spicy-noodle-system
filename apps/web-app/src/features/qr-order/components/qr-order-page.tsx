@@ -17,12 +17,10 @@ import {
   Copy,
   MapPin,
   Minus,
-  Moon,
   Plus,
   RefreshCw,
   Search,
   ShoppingBag,
-  Sun,
   Trash2,
   Wifi,
   X,
@@ -47,8 +45,6 @@ import { buildStoreAssetUrl, useStoreSettings } from '@/hooks/use-store-settings
 import { ApiClientError } from '@/lib/api-client';
 import { useMenuSyncListener } from '@/lib/menu-sync';
 import { useCommitSearch } from '@/lib/use-commit-search';
-import { resolveEffectiveTheme } from '@/providers/theme-provider';
-import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
 import { cn } from '@/utils/cn';
 import { useDisplayScale } from '@/hooks/use-display-scale';
 import { matchesVietnameseQuery } from '@/utils/search';
@@ -224,21 +220,20 @@ export function QrOrderPage() {
   const qrStoreName = settings.qr.storeName || settings.storeName;
   const qrSubtitle = settings.qr.subtitle || settings.subtitle;
 
-  const [qrThemeOverride, setQrThemeOverride] = React.useState<'light' | 'dark' | null>(null);
-  const resolvedQrSettingTheme = React.useMemo<'light' | 'dark'>(() => {
-    if (settings.qr.theme === 'dark' || settings.qr.theme === 'light') {
-      return settings.qr.theme;
-    }
-    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-    return 'light';
-  }, [settings.qr.theme]);
-
-  const effectiveQrTheme = qrThemeOverride ?? resolvedQrSettingTheme;
-  const toggleQrTheme = () => {
-    setQrThemeOverride(effectiveQrTheme === 'dark' ? 'light' : 'dark');
-  };
+  const [systemDark, setSystemDark] = React.useState(() =>
+    typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches,
+  );
+  React.useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const update = () => setSystemDark(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+  const effectiveQrTheme = settings.qr.theme === 'system'
+    ? (systemDark ? 'dark' : 'light')
+    : settings.qr.theme;
 
   React.useEffect(() => {
     syncDocumentThemeMode(
@@ -250,14 +245,8 @@ export function QrOrderPage() {
     );
     document.title = qrStoreName;
     return () => {
-      const prefs = useUiPreferencesStore.getState();
-      const restored = resolveEffectiveTheme(
-        prefs.theme,
-        prefs.hasExplicitTheme,
-        settings.defaultTheme,
-      );
       syncDocumentThemeMode(
-        restored,
+        settings.defaultTheme,
         settings.brandColor,
         settings.accentTextColor,
         settings.priceColor,
@@ -962,22 +951,7 @@ export function QrOrderPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              data-testid="qr-theme-toggle"
-              onClick={toggleQrTheme}
-              aria-label="Chuyển chế độ Sáng/Tối"
-              title={effectiveQrTheme === 'dark' ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối'}
-              className="h-10 w-10 rounded-lg"
-            >
-              {effectiveQrTheme === 'dark' ? (
-                <Sun className="h-4 w-4 text-amber-400" />
-              ) : (
-                <Moon className="h-4 w-4 text-slate-700" />
-              )}
-            </Button>
+
             <Badge
               data-testid="qr-table-header"
               className="h-8 px-3.5 py-0 rounded-lg bg-primary text-xs sm:text-sm font-bold text-primary-foreground shadow-xs"
@@ -1402,7 +1376,7 @@ export function QrOrderPage() {
                     ) : null}
                   </div>
 
-                  <div className="mt-2.5 flex items-center justify-between gap-1.5 border-t border-border/40 pt-2">
+                  <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 border-t border-border/40 pt-2">
                     <p className="text-xs sm:text-sm font-extrabold text-price tabular-nums whitespace-nowrap">
                       {product.price.toLocaleString('vi-VN')} đ
                     </p>

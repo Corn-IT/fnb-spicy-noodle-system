@@ -540,7 +540,7 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
   });
 
   describe('AC-08.3: Navbar Right-Corner Order', () => {
-    it('should render right-corner controls in exact order: [Search Ctrl+K] -> [Theme Toggle] -> [Avatar + User Name Dropdown]', () => {
+    it('should render right-corner controls in exact order: [Search Ctrl+K] -> [Avatar + User Name Dropdown]', () => {
       useAuthStore.getState().setAuth({
         accessToken: 'cashier-token',
         user: {
@@ -570,7 +570,7 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
         el.getAttribute('data-navbar-item'),
       );
 
-      expect(buttons).toEqual(['search-ctrl-k', 'theme-toggle', 'user-avatar-dropdown']);
+      expect(buttons).toEqual(['search-ctrl-k', 'user-avatar-dropdown']);
     });
   });
 

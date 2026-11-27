@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   DEFAULT_STORE_SETTINGS,
@@ -302,17 +302,19 @@ describe('StoreSettingsPage (Story 14)', () => {
       }),
     );
 
-    const { getSpy } = renderStoreSettingsPage(initial);
+    const { getSpy, queryClient } = renderStoreSettingsPage(initial);
     await waitFor(() => {
       expect(screen.getByTestId('store-settings-save-btn')).toBeEnabled();
     });
 
     const nameInput = await screen.findByTestId('input-store-name');
     fireEvent.change(nameInput, { target: { value: 'Tên Của Tôi' } });
+    act(() => { queryClient.setQueryData(['admin-store-settings'], fresher); });
+    expect(nameInput).toHaveValue('Tên Của Tôi');
     await user.click(screen.getByTestId('store-settings-save-btn'));
 
     await waitFor(() => {
-      expect(putSpy).toHaveBeenCalled();
+      expect(putSpy).toHaveBeenCalledWith('/api/v1/settings', expect.objectContaining({ expectedUpdatedAt: initial.updatedAt, storeName: 'Tên Của Tôi' }));
       expect(screen.getByTestId('store-settings-conflict-banner')).toHaveTextContent(
         /Cấu hình đã bị người khác thay đổi, tải lại\?/i,
       );
