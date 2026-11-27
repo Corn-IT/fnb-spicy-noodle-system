@@ -112,7 +112,7 @@ Mỗi `src/features/<feature>/` **MUST** có:
 | # | Folder | Routes | Chức năng chính |
 |:-:|:---|:---|:---|
 | 1 | `dashboard/` | `/dashboard`, `/pos/touch/dashboard` | Bảng điều khiển tổng quan KPI, biểu đồ, cảnh báo quá hạn, lọc phạm vi theo RBAC |
-| 2 | `pos-counter/` | `/pos`, `/pos/touch`, `/pos/touch/hub`, `/pos/touch/stock-status`, `/pos/touch/printer` | POS Desktop Split-View & POS Cảm ứng toàn màn hình (3 tab, thanh đáy 4 nút, Hub, báo hết món 1 chạm, máy in/két tiền) |
+| 2 | `pos-counter/` | `/pos`, `/pos/touch`, `/pos/touch/hub`, `/pos/touch/stock-status`, `/pos/touch/printer` | POS Desktop Split-View & POS Cảm ứng toàn màn hình (4 tab, thanh đáy 4 nút, Hub, báo hết món 1 chạm, máy in/két tiền) |
 | 3 | `qr-order/` | `/q/:token`, `/qr/:token` | Giao diện khách quét QR tại bàn & QR Mang về (realtime Socket.io + bảo mật Wi-Fi/GPS) |
 | 4 | `menu/` | `/menu`, `/pos/touch/menu` | Thực đơn 3 tầng động, 4 nhóm tuỳ chọn thông minh, Size M/L, nhập/xuất Excel, trạm bếp & danh mục con |
 | 5 | `discounts/` | `/discounts`, `/pos/touch/discounts` | Quản lý mã giảm giá (`PERCENT`/`FIXED`, `ORDER`/`CATEGORY`/`PRODUCT`, khung giờ, lượt dùng) |

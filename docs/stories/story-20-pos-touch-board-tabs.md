@@ -1,4 +1,4 @@
-# Story 20: Màn POS cảm ứng — 3 tab "Tất cả / Phòng bàn / Mang về" trên sơ đồ bàn
+# Story 20: Màn POS cảm ứng — phiên bản ban đầu với 3 tab sơ đồ bàn
 
 > **Story ID:** `STORY-20`
 > **Trạng thái:** Đã triển khai (Completed)
@@ -6,6 +6,8 @@
 > **Phạm vi:** Chỉ frontend, chỉ màn `/pos/touch` (`apps/web-app/src/features/pos-counter/touch/`). **Không** sửa backend, `packages/shared`, `/pos` thường hay luồng đặt món.
 > **Người thực hiện:** Agent Codex.
 > **Quy tắc bắt buộc:** Đọc `AGENTS.md` và `.agents/rules/04-frontend-ux-table-and-print.md`, `05-testing-strategy.md`, `07-deployment-and-git.md` trước khi code. Hard Invariant 1 (cô lập module): toàn bộ code mới nằm trong `features/pos-counter/touch/`.
+
+> **Cập nhật hiện trạng (2026-11-27):** Story này ghi lại phạm vi ban đầu gồm `Tất cả / Phòng bàn / Mang về`. POS Touch hiện có thêm tab `Lưu tạm`. Thẻ `Giỏ chưa gán bàn` xuất hiện đúng một lần trong Tất cả, Mang về và Lưu tạm; ở Lưu tạm thẻ nằm trước danh sách giỏ đã lưu. Thẻ này không xuất hiện ở Phòng bàn. Các yêu cầu bên dưới mô tả lịch sử triển khai Story 20; trạng thái hiện tại được chuẩn hoá trong `.agents/rules/04-frontend-ux-table-and-print.md` và hướng dẫn sử dụng.
 
 ---
 

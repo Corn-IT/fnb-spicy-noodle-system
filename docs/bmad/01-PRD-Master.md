@@ -112,7 +112,7 @@ sequenceDiagram
 ### 3.3. Phân hệ 3: Bán hàng POS Desktop & POS Cảm ứng Touch Shell (`pos-counter` — `/pos`, `/pos/touch/*`)
 - **POS Desktop (`/pos`):** Giao diện Split-View (Sơ đồ bàn + Đơn mang về / Thực đơn nhanh + Live Invoice).
 - **POS Cảm ứng Touch Shell (`/pos/touch/*` — Stories 20 & 21):**
-  - Toàn màn hình kiosk (`data-pos-touch="true"`, Screen Wake Lock), 3 tab sơ đồ bàn (**Tất cả** — đưa ô `+ Đơn mang về mới` & đơn mang về lên đầu trước Bàn 01, **Phòng bàn**, **Mang về**).
+  - Toàn màn hình kiosk (`data-pos-touch="true"`, Screen Wake Lock), 4 tab (**Tất cả**, **Phòng bàn**, **Mang về**, **Lưu tạm**). Ô `Giỏ chưa gán bàn` mở một giỏ mới và xuất hiện một lần trong các tab Tất cả, Mang về, Lưu tạm; tab Tất cả còn có ô `+ Đơn mang về mới`, đơn mang về đang phục vụ và các bàn.
   - **Thanh điều hướng đáy 4 nút** (`Bán hàng · Hoá đơn · Kết ca · Quản lý`) tự ẩn khi đang ở màn gọi món/tính tiền (`TouchOrderScreen`).
   - **Trung tâm Quản lý Hub (`/pos/touch/hub`):** Truy cập nhanh 10 màn vận hành quầy ngay trong Touch Shell (`/pos/touch/dashboard`, `/pos/touch/invoices`, `/pos/touch/cashflow`, `/pos/touch/inventory`, `/pos/touch/menu`, `/pos/touch/stock-status`, `/pos/touch/discounts`, `/pos/touch/payment-qr`, `/pos/touch/printer`, `/pos/touch/settings`, `/pos/touch/profile`).
 - **Quản lý Bàn & Mã QR:** Thêm/sửa/xoá bàn vật lý (`POST/PUT/DELETE /api/v1/pos/tables`), xoay mã QR từng bàn (`POST /api/v1/pos/tables/:id/rotate-qr`), xoay mã QR Mang về (`POST /api/v1/pos/takeaway-qr/rotate`), rút gọn mã QR cũ (`POST /api/v1/pos/tables/shorten-qr`), xuất/in thẻ QR theo thiết kế động (`qrCard`).
