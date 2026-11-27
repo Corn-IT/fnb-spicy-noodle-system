@@ -45,6 +45,8 @@ test.describe('All 18 routes responsive & visual audit (Mobile + Tablet)', () =>
   test('zero critical layout, overflow, truncation, or touch-target violations across all routes', async ({ page }) => {
     test.setTimeout(300_000);
     await setupMockApi(page);
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
 
     const screenshotDir = process.env.E2E_SCREENSHOT_DIR ?? '';
     if (screenshotDir) {
@@ -60,8 +62,18 @@ test.describe('All 18 routes responsive & visual audit (Mobile + Tablet)', () =>
     for (const target of ALL_ROUTES) {
       for (const vp of AUDIT_VIEWPORTS) {
         await page.setViewportSize({ width: vp.width, height: vp.height });
+        const dataPath = target.slug === 'inventory' ? '/inventory-imports' : target.slug === 'payroll' ? '/payroll' : null;
+        const dataReady = dataPath ? page.waitForResponse((response) =>
+          new URL(response.url()).pathname === `/api/v1${dataPath}` && response.status() === 200,
+        ) : null;
         await page.goto(target.path, { waitUntil: 'domcontentloaded' });
+        if (dataReady) await dataReady;
         await page.waitForTimeout(300);
+        if (dataPath) {
+          await expect(page.getByTestId(`${target.slug}-footer-total`)).toBeVisible();
+          await expect(page.getByTestId('app-fatal-error-boundary')).toHaveCount(0);
+        }
+        expect(pageErrors, `${target.path} must render without uncaught errors`).toEqual([]);
 
         const violations = await auditPageLayout(page, {
           checkTouchTargets: vp.isTouch,
@@ -97,4 +109,21 @@ test.describe('All 18 routes responsive & visual audit (Mobile + Tablet)', () =>
     );
     expect(critical, JSON.stringify(critical, null, 2)).toEqual([]);
   });
+});
+
+test('inventory and payroll render mock summaries without an error boundary', async ({ page }) => {
+  await setupMockApi(page);
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  for (const [routePath, apiPath, footer] of [
+    ['/inventory', '/api/v1/inventory-imports', 'inventory-footer-total'],
+    ['/payroll', '/api/v1/payroll', 'payroll-footer-total'],
+  ]) {
+    const dataReady = page.waitForResponse((response) => new URL(response.url()).pathname === apiPath && response.status() === 200);
+    await page.goto(routePath, { waitUntil: 'domcontentloaded' });
+    await dataReady;
+    await expect(page.getByTestId(footer)).toBeVisible();
+    await expect(page.getByTestId('app-fatal-error-boundary')).toHaveCount(0);
+  }
+  expect(pageErrors).toEqual([]);
 });

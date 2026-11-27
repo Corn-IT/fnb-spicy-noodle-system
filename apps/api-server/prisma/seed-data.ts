@@ -950,7 +950,7 @@ export const defaultOpeningBudgetSeed = {
 
 export const adminPermissions: UserPermissions = UserPermissionsSchema.parse({
   dashboard: { view: true, viewProfit: true, export: true },
-  pos: { view: true, create: true, update: true, delete: true, splitKitchen: true, tableAction: true, checkout: true, qrSecurity: true, manualDiscount: true, openCashDrawer: true },
+  pos: { view: true, create: true, update: true, delete: true, deleteDrafts: true, splitKitchen: true, tableAction: true, checkout: true, qrSecurity: true, manualDiscount: true, openCashDrawer: true },
   menu: { view: true, create: true, update: true, delete: true, manageStations: true, manageCategories: true, import: true, export: true },
   invoices: { view: true, reprint: true, update: true, approve: true, void: false, export: true },
   inventory: { view: true, create: true, update: true, delete: true, export: true },
@@ -967,7 +967,7 @@ export const adminPermissions: UserPermissions = UserPermissionsSchema.parse({
 
 export const cashierPermissions: UserPermissions = UserPermissionsSchema.parse({
   dashboard: { view: true, viewProfit: false, export: false },
-  pos: { view: true, create: true, update: true, delete: false, splitKitchen: true, tableAction: true, checkout: true, qrSecurity: false, manualDiscount: false, openCashDrawer: false },
+  pos: { view: true, create: true, update: true, delete: false, deleteDrafts: true, splitKitchen: true, tableAction: true, checkout: true, qrSecurity: false, manualDiscount: false, openCashDrawer: false },
   menu: { view: true, create: false, update: true, delete: false, manageStations: false, manageCategories: false, import: false, export: false },
   invoices: { view: true, reprint: true, update: true, approve: false, void: false, export: false },
   inventory: { view: true, create: true, update: false, delete: true, export: false },

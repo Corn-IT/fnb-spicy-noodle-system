@@ -31,6 +31,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { type OrderPendingAlertState } from '@/lib/qr-pending-reminder';
 import { cn } from '@/utils/cn';
+import { DraftDiscardButton } from './draft-discard-button';
 import { CancelOrderConfirmDialog } from './cancel-order-confirm-dialog';
 import type { PosMenuSelectedItem } from './pos-menu-types';
 
@@ -60,6 +61,9 @@ export interface LiveInvoicePanelProps {
   isApprovingQr: boolean;
   isSubmittingDraft: boolean;
   isSavingDraft?: boolean;
+  isDraftPending?: boolean;
+  canDiscardDraft?: boolean;
+  onDiscardDraft?: () => Promise<boolean>;
   isCancellingOrder?: boolean;
   isDiscountPending?: boolean;
   isReprintPending?: boolean;
@@ -102,6 +106,9 @@ export function LiveInvoicePanel({
   isApprovingQr,
   isSubmittingDraft,
   isSavingDraft = false,
+  isDraftPending = false,
+  canDiscardDraft = false,
+  onDiscardDraft,
   isCancellingOrder = false,
   isDiscountPending = false,
   isReprintPending = false,
@@ -278,11 +285,16 @@ export function LiveInvoicePanel({
             </span>
           </div>
           {draftItems.length > 0 ? (
-            <Button type="button" variant="outline" className="mb-2 w-full" onClick={onChooseDraftTarget}>
+            <Button type="button" variant="outline" className="mb-2 w-full" disabled={isDraftPending} onClick={onChooseDraftTarget}>
               {draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)
                 ? 'Gán bàn hoặc chọn Mang về'
                 : 'Đổi bàn hoặc chọn Mang về'}
             </Button>
+          ) : null}
+          {canDiscardDraft && onDiscardDraft ? (
+            <div className="mb-2">
+              <DraftDiscardButton testId="pos-discard-draft-btn" disabled={false} pending={isDraftPending} onDiscard={onDiscardDraft} />
+            </div>
           ) : null}
           {canCreate || canSaveDraft ? (
             <div className="grid grid-cols-2 gap-2">
@@ -291,7 +303,7 @@ export function LiveInvoicePanel({
                   type="button"
                   data-testid="pos-save-draft-btn"
                   variant="outline"
-                  disabled={draftItems.length === 0 || isSavingDraft}
+                  disabled={draftItems.length === 0 || isDraftPending || isSavingDraft}
                   onClick={onSaveDraft}
                   className="h-10 font-bold"
                 >
@@ -302,7 +314,7 @@ export function LiveInvoicePanel({
                 <Button
                   type="button"
                   data-testid="pos-submit-new-order-btn"
-                  disabled={draftItems.length === 0 || isSubmittingDraft || draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)}
+                  disabled={draftItems.length === 0 || isDraftPending || isSubmittingDraft || draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)}
                   onClick={onSubmitDraftOrder}
                   className="h-10 bg-primary font-bold text-primary-foreground hover:bg-primary/90 active:scale-[0.99] touch-manipulation shadow-sm"
                 >

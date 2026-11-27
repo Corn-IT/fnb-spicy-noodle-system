@@ -57,7 +57,7 @@ import { usePosCashierSocket } from './use-pos-cashier-socket';
  * - `order-opened`: vừa chọn bàn / đơn mang về đang có hoá đơn.
  * - `draft-submitted`: vừa tạo đơn từ giỏ nháp thành công (đơn mới đã được chọn).
  */
-export type PosWorkspaceViewEvent = 'draft-started' | 'draft-target-picker' | 'draft-parked' | 'order-opened' | 'draft-submitted';
+export type PosWorkspaceViewEvent = 'draft-started' | 'draft-target-picker' | 'draft-parked' | 'draft-discarded' | 'order-opened' | 'draft-submitted';
 
 export interface UsePosWorkspaceOptions {
   onViewChange?: (event: PosWorkspaceViewEvent) => void;
@@ -120,6 +120,10 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.tableAction,
   );
   const canCheckout = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.checkout);
+
+  const canDeleteDrafts = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.deleteDrafts);
+  const draftOperationRef = React.useRef(false);
+  const [draftOperationPending, setDraftOperationPending] = React.useState(false);
 
   const [draftTarget, setDraftTarget] = React.useState<LiveInvoiceDraftTarget | null>(null);
   const [draftItems, setDraftItems] = React.useState<PosMenuSelectedItem[]>([]);
@@ -208,6 +212,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   }, [selectedActivePendingOrder, selectedTableRow, selectedTakeawayRow?.status, alertClockMs]);
 
   const handleSelectTable = (table: PosTableGridResponse['tables'][number]) => {
+    if (draftOperationRef.current) return;
     if (draftTarget && draftIsDirty && draftItems.length > 0 && table.status !== 'AVAILABLE') {
       notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
       return;
@@ -248,6 +253,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleSelectTakeawayOrder = (order: PosOrderSummary) => {
+    if (draftOperationRef.current) return;
     if (draftTarget && draftIsDirty && draftItems.length > 0) {
       notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
       return;
@@ -278,6 +284,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleStartNewTakeaway = () => {
+    if (draftOperationRef.current) return;
     if (!canCreateOrder) return;
     // Source C: Click [+ TẠO ĐƠN MANG VỀ] -> prepare TAKEAWAY draft (tableId: null) and switch to Menu tab
     setSelectedOrderId(null);
@@ -294,6 +301,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleStartUntargetedDraft = () => {
+    if (draftOperationRef.current) return;
     if (!canCreateOrder) return;
     setSelectedOrderId(null);
     if (!draftTarget) {
@@ -350,6 +358,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleAddItemFromMenu = async (item: PosMenuSelectedItem) => {
+    if (draftOperationRef.current) return;
     if (selectedOrderId && currentOrder) {
       if (!canUpdateOrder) return;
       const orderId = selectedOrderId;
@@ -374,6 +383,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleUpdateDraftQty = (index: number, delta: number) => {
+    if (draftOperationRef.current) return;
     setDraftIsDirty(true);
     setDraftItems((prev) =>
       prev.map((item, idx) =>
@@ -383,6 +393,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleRemoveDraftItem = (index: number) => {
+    if (draftOperationRef.current) return;
     setDraftIsDirty(true);
     setDraftItems((prev) => prev.filter((_, idx) => idx !== index));
   };
@@ -419,7 +430,9 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
 
   const handleSaveDraft = async () => {
     const canSave = activeSavedDraft ? canUpdateOrder : canCreateOrder;
-    if (!canSave || draftItems.length === 0) return;
+    if (!canSave || draftItems.length === 0 || draftOperationRef.current) return;
+    draftOperationRef.current = true;
+    setDraftOperationPending(true);
     try {
       const saved = draftIsDirty || !activeSavedDraft ? await persistCurrentDraft() : null;
       notify('pos.draft.saved', { variant: 'success', vars: { itemCount: saved?.items.length ?? draftItems.length } });
@@ -432,6 +445,9 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       emitViewChange('draft-parked');
     } catch (err) {
       notifyErr('pos.draft.saveError', err);
+    } finally {
+      draftOperationRef.current = false;
+      setDraftOperationPending(false);
     }
   };
 
@@ -497,6 +513,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   }, [activeSavedDraft?.id, pendingDraftHydration, productsQuery.isSuccess, toSelectedDraftItems]);
 
   const handleResumeDraft = (draft: PosDraftResponse) => {
+    if (draftOperationRef.current) return;
     if (draftTarget && draftIsDirty && draftItems.length > 0) {
       notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
       return;
@@ -515,30 +532,53 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     emitViewChange('draft-started');
   };
 
-  const handleDeleteDraft = async (draft: PosDraftResponse) => {
-    if (!canDeleteOrder) return;
+  const clearDraft = () => {
+    setActiveSavedDraft(null);
+    setPendingDraftHydration(null);
+    setDraftTarget(null);
+    setDraftItems([]);
+    setDraftIsDirty(false);
+    draftSubmitKeyRef.current = null;
+  };
+
+  const handleDeleteDraft = async (draft: { id: string; revision: number }): Promise<boolean> => {
+    if (!canDeleteDrafts || draftOperationRef.current) return false;
+    draftOperationRef.current = true;
+    setDraftOperationPending(true);
     try {
       await deleteDraftMutation.mutateAsync({ id: draft.id, revision: draft.revision });
       if (activeSavedDraft?.id === draft.id) {
-        setActiveSavedDraft(null);
-        setDraftTarget(null);
-        setDraftItems([]);
-        setDraftIsDirty(false);
-        draftSubmitKeyRef.current = null;
+        clearDraft();
+        emitViewChange('draft-discarded');
       }
       notify('pos.draft.deleted', { variant: 'success' });
+      return true;
     } catch (err) {
       notifyErr('pos.draft.deleteError', err);
+      return false;
+    } finally {
+      draftOperationRef.current = false;
+      setDraftOperationPending(false);
     }
   };
 
+  const handleDiscardDraft = async (): Promise<boolean> => {
+    if (draftOperationRef.current || !draftTarget) return false;
+    if (activeSavedDraft) return handleDeleteDraft(activeSavedDraft);
+    clearDraft();
+    emitViewChange('draft-discarded');
+    return true;
+  };
+
   const handleSubmitDraftOrder = async () => {
-    if (!draftTarget || draftItems.length === 0) return;
+    if (!canCreateOrder || !draftTarget || draftItems.length === 0 || draftOperationRef.current) return;
     if (draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)) {
       notify('pos.draft.assignTarget', { variant: 'warning' });
       return;
     }
 
+    draftOperationRef.current = true;
+    setDraftOperationPending(true);
     try {
       let saved = activeSavedDraft;
       if (!saved || draftIsDirty) {
@@ -569,6 +609,9 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       });
     } catch (err) {
       notifyErr('pos.order.createError', err);
+    } finally {
+      draftOperationRef.current = false;
+      setDraftOperationPending(false);
     }
   };
 
@@ -1107,6 +1150,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
           : 'Đang chọn bàn';
 
   const clearSelection = () => {
+    if (draftOperationRef.current) return;
     setSelectedOrderId(null);
     setDraftTarget(null);
     setDraftItems([]);
@@ -1137,6 +1181,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       canCreateOrder,
       canUpdateOrder,
       canDeleteOrder,
+      canDeleteDrafts,
+      canDiscardDraft: !activeSavedDraft || canDeleteDrafts,
       canSaveDraft: activeSavedDraft ? canUpdateOrder : canCreateOrder,
       canSplitKitchen,
       canTableAction,
@@ -1148,6 +1194,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       activeLabel,
     },
     pending: {
+      isDraftPending: draftOperationPending,
       isSplitPending: splitKitchenMutation.isPending,
       isProvisionalPending: provisionalBillMutation.isPending,
       isApprovingQr: approveQrMutation.isPending,
@@ -1188,6 +1235,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       saveDraft: handleSaveDraft,
       resumeDraft: handleResumeDraft,
       deleteDraft: handleDeleteDraft,
+      discardDraft: handleDiscardDraft,
       submitDraftOrder: handleSubmitDraftOrder,
       approveQrOrder: handleApproveQrOrder,
       updateOrderItemQuantity: handleUpdateOrderItemQuantity,

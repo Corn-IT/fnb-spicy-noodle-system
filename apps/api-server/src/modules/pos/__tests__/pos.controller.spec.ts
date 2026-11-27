@@ -15,6 +15,7 @@ import { PosService } from '../pos.service';
 
 describe('POS and invoice HTTP routes', () => {
   const posService = {
+    deletePosDraft: vi.fn(async () => ({ id: 'draft-1', deleted: true })),
     getTableGrid: vi.fn(async () => ({ tables: [], takeaways: [] })),
     createQrOrder: vi.fn(async () => ({ orderId: 42, activeOrderId: 42, orderCode: 'HD-20261108-0001', currentTableLabel: 'Bàn 07', status: 'PENDING', batchNo: 1, totalAmount: 100 })),
     createOrder: vi.fn(async () => ({ orderId: 43 })),
@@ -78,6 +79,31 @@ describe('POS and invoice HTTP routes', () => {
   });
 
   afterAll(async () => app?.close());
+
+  it('allows draft deletion independently from confirmed-order deletion and forwards the revision', async () => {
+    const previous = cashierRecord.permissions;
+    cashierRecord.permissions = UserPermissionsSchema.parse({ pos: { deleteDrafts: true, delete: false } });
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/pos/drafts/draft-1?revision=2`, {
+        method: 'DELETE', headers: { authorization: 'Bearer cashier-token' },
+      });
+      expect(response.status).toBe(200);
+      expect(posService.deletePosDraft).toHaveBeenCalledWith('draft-1', 2, 2);
+      expect((await fetch(`${baseUrl}/api/v1/pos/orders/43/cancel`, {
+        method: 'POST', headers: { authorization: 'Bearer cashier-token' },
+      })).status).toBe(403);
+    } finally { cashierRecord.permissions = previous; }
+  });
+
+  it('denies draft deletion without the dedicated permission even for staff who can create and delete orders', async () => {
+    const previous = cashierRecord.permissions;
+    cashierRecord.permissions = UserPermissionsSchema.parse({ pos: { create: true, update: true, delete: true } });
+    try {
+      expect((await fetch(`${baseUrl}/api/v1/pos/drafts/draft-1?revision=2`, {
+        method: 'DELETE', headers: { authorization: 'Bearer cashier-token' },
+      })).status).toBe(403);
+    } finally { cashierRecord.permissions = previous; }
+  });
 
   it('should accept public QR orders without staff authentication', async () => {
     const response = await fetch(`${baseUrl}/api/v1/public/orders/qr`, {
