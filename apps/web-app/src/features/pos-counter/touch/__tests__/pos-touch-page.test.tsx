@@ -547,6 +547,11 @@ describe('POS cảm ứng (/pos/touch)', () => {
 
     expect(screen.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'drafts');
     expect(screen.queryByTestId('touch-table-card-1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('touch-table-grid').firstElementChild).toHaveAttribute(
+      'data-testid',
+      'touch-new-untargeted-draft',
+    );
+    expect(screen.getAllByTestId('touch-new-untargeted-draft')).toHaveLength(1);
     expect(screen.getByTestId('pos-parked-drafts')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('pos-resume-draft-draft-701'));
 
@@ -681,6 +686,7 @@ describe('POS cảm ứng (/pos/touch)', () => {
 
     expect(screen.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'tables');
     expect(screen.queryByTestId('touch-new-takeaway')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('touch-new-untargeted-draft')).not.toBeInTheDocument();
     expect(screen.queryByTestId('touch-takeaway-card-801')).not.toBeInTheDocument();
     expect(Array.from(screen.getByTestId('touch-table-grid').children).map((child) => child.getAttribute('data-testid'))).toEqual([
       'touch-table-card-1',
@@ -697,9 +703,22 @@ describe('POS cảm ứng (/pos/touch)', () => {
     expect(screen.getByTestId('touch-table-board')).toHaveAttribute('data-tab', 'takeaway');
     expect(screen.queryByTestId('touch-table-card-1')).not.toBeInTheDocument();
     expect(screen.getByTestId('touch-new-takeaway')).toBeInTheDocument();
+    expect(screen.getAllByTestId('touch-new-untargeted-draft')).toHaveLength(1);
     expect(screen.getByTestId('touch-takeaway-card-801')).toBeInTheDocument();
     expect(screen.getByTestId('touch-tab-takeaway')).toHaveTextContent('Mang về (2)');
     expect(screen.queryByTestId('touch-only-occupied')).not.toBeInTheDocument();
+  });
+
+  it('starts a new unassigned cart from the Drafts tab', async () => {
+    mockGetApi(grid, [parkedDraft]);
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-tab-drafts'));
+    expect(screen.getAllByTestId('touch-new-untargeted-draft')).toHaveLength(1);
+    fireEvent.click(screen.getByTestId('touch-new-untargeted-draft'));
+
+    expect(await screen.findByTestId('touch-order-screen')).toBeInTheDocument();
+    expect(screen.getByTestId('touch-order-title')).toHaveTextContent('Giỏ chưa gán bàn');
   });
 
   it('does not duplicate a takeaway while switching tabs when its id matches a table id', async () => {

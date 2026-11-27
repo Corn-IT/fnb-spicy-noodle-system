@@ -238,6 +238,30 @@ test.describe('POS drafts — Desktop', () => {
 test.describe('POS drafts — Touch', () => {
   test.use({ viewport: { width: 1366, height: 768 }, hasTouch: true });
 
+  test('shows one unassigned-cart tile in All, Takeaway and Drafts, and opens it from Drafts', async ({ page }) => {
+    await setupMockApi(page);
+    await mockDraftApi(page);
+    await page.goto('/pos/touch', { waitUntil: 'domcontentloaded' });
+
+    const tile = page.getByTestId('touch-new-untargeted-draft');
+    await expect(tile).toHaveCount(1);
+    await page.getByTestId('touch-tab-takeaway').tap();
+    await expect(tile).toHaveCount(1);
+    await page.getByTestId('touch-tab-drafts').tap();
+    await expect(tile).toHaveCount(1);
+    await expect(page.getByTestId('touch-table-grid').locator(':scope > *').first()).toHaveAttribute(
+      'data-testid',
+      'touch-new-untargeted-draft',
+    );
+    await page.getByTestId('touch-tab-all').tap();
+    await expect(tile).toHaveCount(1);
+    await page.getByTestId('touch-tab-drafts').tap();
+    await tile.tap();
+
+    await expect(page.getByTestId('touch-order-screen')).toBeVisible();
+    await expect(page.getByTestId('touch-order-title')).toHaveText('Giỏ chưa gán bàn');
+  });
+
   test('parks an unassigned cart, resumes it, assigns a free table, and submits once', async ({ page }) => {
     await setupMockApi(page);
     const draftApi = await mockDraftApi(page);
