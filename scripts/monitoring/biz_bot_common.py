@@ -421,6 +421,26 @@ def send_chat_action(bot_token: str, chat_id: str, action: str = "typing") -> No
         pass
 
 
+def set_message_reaction(bot_token: str, chat_id: str, message_id: int | None, emoji: str = "👀") -> None:
+    """Best-effort emoji reaction on a user's message so they know Bot #2 received & is processing it."""
+    if not bot_token or not chat_id or message_id is None:
+        return
+    try:
+        tg_api(
+            bot_token,
+            "setMessageReaction",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reaction": [{"type": "emoji", "emoji": emoji}],
+                "is_big": False,
+            },
+            timeout=3,
+        )
+    except Exception:
+        pass
+
+
 def sanitize_telegram_html(text: str) -> str:
     """Keep only valid Telegram HTML tags, escaping stray angle brackets cleanly."""
     tokens: list[str] = []
