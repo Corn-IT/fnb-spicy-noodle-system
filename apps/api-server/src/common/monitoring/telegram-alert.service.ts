@@ -124,6 +124,21 @@ export interface ContainerResourceStats {
   cpuCores: number;
 }
 
+export interface VpsHostStats {
+  ramUsedMb: number;
+  ramTotalMb: number;
+  ramPercent: number;
+  diskUsedGb: number | null;
+  diskTotalGb: number | null;
+  diskPercent: number | null;
+  cpuPercent: number | null;
+}
+
+interface ProcCpuSample {
+  total: number;
+  idle: number;
+}
+
 const UNLIMITED_CGROUP_BYTES = 8 * 1024 * 1024 * 1024 * 1024; // 8 TiB threshold
 
 function readNumericFileSync(filePath: string): number | null {
@@ -135,6 +150,120 @@ function readNumericFileSync(filePath: string): number | null {
   } catch {
     return null;
   }
+}
+
+export function parseProcMeminfoText(raw: string): { ramUsedMb: number; ramTotalMb: number; ramPercent: number } | null {
+  let memTotalKb = 0;
+  let memAvailableKb = -1;
+  let memFreeKb = 0;
+
+  for (const line of raw.split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const valKb = Number.parseInt(line.slice(idx + 1).trim(), 10);
+    if (!Number.isFinite(valKb)) continue;
+    if (key === 'MemTotal') memTotalKb = valKb;
+    else if (key === 'MemAvailable') memAvailableKb = valKb;
+    else if (key === 'MemFree') memFreeKb = valKb;
+  }
+
+  if (memTotalKb <= 0) return null;
+  const availKb = memAvailableKb >= 0 ? memAvailableKb : memFreeKb;
+  const usedKb = Math.max(0, memTotalKb - availKb);
+  return {
+    ramUsedMb: Number((usedKb / 1024).toFixed(1)),
+    ramTotalMb: Number((memTotalKb / 1024).toFixed(0)),
+    ramPercent: Number(((usedKb / memTotalKb) * 100).toFixed(1)),
+  };
+}
+
+export function parseProcStatCpuSample(raw: string): ProcCpuSample | null {
+  const firstLine = raw.split('\n')[0]?.trim() ?? '';
+  if (!firstLine.startsWith('cpu ')) return null;
+  const parts = firstLine
+    .slice(3)
+    .trim()
+    .split(/\s+/)
+    .map(Number)
+    .filter((n) => Number.isFinite(n));
+  if (parts.length < 4) return null;
+  const idle = (parts[3] ?? 0) + (parts[4] ?? 0);
+  const total = parts.reduce((acc, n) => acc + n, 0);
+  return total > 0 ? { total, idle } : null;
+}
+
+export function computeCpuPercentFromSamples(prev: ProcCpuSample | null, curr: ProcCpuSample | null): number | null {
+  if (!prev || !curr) return null;
+  const totalDelta = curr.total - prev.total;
+  const idleDelta = curr.idle - prev.idle;
+  if (totalDelta <= 0) return null;
+  const pct = 100 * (1 - idleDelta / totalDelta);
+  return Number(Math.min(100, Math.max(0, pct)).toFixed(1));
+}
+
+export function readVpsHostStats(options?: {
+  prevCpuSample?: ProcCpuSample | null;
+  readText?: (path: string) => string | null;
+  statDisk?: (path: string) => { blocks: number; bfree: number; bavail: number; bsize: number } | null;
+}): { stats: VpsHostStats; nextCpuSample: ProcCpuSample | null } {
+  const readText =
+    options?.readText ??
+    ((filePath: string) => {
+      try {
+        return fs.readFileSync(filePath, 'utf8');
+      } catch {
+        return null;
+      }
+    });
+
+  const statDisk =
+    options?.statDisk ??
+    ((targetPath: string) => {
+      try {
+        return fs.statfsSync(targetPath);
+      } catch {
+        return null;
+      }
+    });
+
+  const procMem = readText('/proc/meminfo');
+  const parsedMem = procMem ? parseProcMeminfoText(procMem) : null;
+  const fallbackTotal = Math.max(1, os.totalmem());
+  const fallbackUsed = Math.max(0, fallbackTotal - os.freemem());
+
+  const ramUsedMb = parsedMem?.ramUsedMb ?? Number(toMb(fallbackUsed).toFixed(1));
+  const ramTotalMb = parsedMem?.ramTotalMb ?? Number(toMb(fallbackTotal).toFixed(0));
+  const ramPercent = parsedMem?.ramPercent ?? Number(((fallbackUsed / fallbackTotal) * 100).toFixed(1));
+
+  const rawStat = readText('/proc/stat');
+  const currCpuSample = rawStat ? parseProcStatCpuSample(rawStat) : null;
+  const cpuPercent = computeCpuPercentFromSamples(options?.prevCpuSample ?? null, currCpuSample);
+
+  const fsStats = statDisk('/');
+  let diskUsedGb: number | null = null;
+  let diskTotalGb: number | null = null;
+  let diskPercent: number | null = null;
+  if (fsStats && fsStats.blocks > 0 && fsStats.bsize > 0) {
+    const usedBlocks = Math.max(0, fsStats.blocks - fsStats.bfree);
+    const dfTotalBlocks = usedBlocks + Math.max(0, fsStats.bavail);
+    diskUsedGb = Number(((usedBlocks * fsStats.bsize) / 1024 ** 3).toFixed(1));
+    diskTotalGb = Number(((fsStats.blocks * fsStats.bsize) / 1024 ** 3).toFixed(1));
+    diskPercent = dfTotalBlocks > 0 ? Number(((usedBlocks / dfTotalBlocks) * 100).toFixed(1)) : 0;
+  }
+
+  return {
+    stats: {
+      ramUsedMb,
+      ramTotalMb,
+      ramPercent,
+      diskUsedGb,
+      diskTotalGb,
+      diskPercent,
+      cpuPercent,
+    },
+    nextCpuSample: currCpuSample,
+  };
 }
 
 export function readContainerResourceStats(
@@ -191,8 +320,18 @@ export class TelegramAlertService {
   private windowRequests = 0;
   private windowSlowCount = 0;
   private window5xxCount = 0;
+  private lastCpuSample: ProcCpuSample | null = null;
   private forceEnabledInTest = false;
   private fetchFn: MonitoringFetchFn = globalThis.fetch;
+
+  constructor() {
+    try {
+      const initialStat = fs.readFileSync('/proc/stat', 'utf8');
+      this.lastCpuSample = parseProcStatCpuSample(initialStat);
+    } catch {
+      this.lastCpuSample = null;
+    }
+  }
 
   /**
    * Test hook to exercise Telegram HTTP dispatch safely inside Vitest without network side effects.
@@ -362,7 +501,11 @@ export class TelegramAlertService {
   }): string {
     const mem = process.memoryUsage();
     const [loadAvg1m = 0] = os.loadavg();
-    const hostRes = readContainerResourceStats();
+    const containerStats = readContainerResourceStats();
+    const { stats: vpsStats, nextCpuSample } = readVpsHostStats({ prevCpuSample: this.lastCpuSample });
+    if (nextCpuSample) {
+      this.lastCpuSample = nextCpuSample;
+    }
     const safeRoute = escapeTelegramHtml(
       sanitizeSingleLine(`${params.method.toUpperCase()} ${redactSensitiveUrl(params.url)}`),
     );
@@ -391,13 +534,24 @@ export class TelegramAlertService {
       sectionNo += 1;
     }
 
+    const cpuLine =
+      vpsStats.cpuPercent !== null
+        ? `• VPS CPU (${containerStats.cpuCores} vCPU): <b>${vpsStats.cpuPercent}%</b> · Load ${loadAvg1m.toFixed(2)}`
+        : `• VPS Load (1m): ${loadAvg1m.toFixed(2)} (${containerStats.cpuCores} vCPU)`;
+    const vpsRamLine = `• VPS RAM: <b>${vpsStats.ramUsedMb.toFixed(0)} / ${vpsStats.ramTotalMb.toFixed(0)} MB (${vpsStats.ramPercent}%)</b>`;
+    const vpsDiskLine =
+      vpsStats.diskUsedGb !== null && vpsStats.diskTotalGb !== null && vpsStats.diskPercent !== null
+        ? [`• VPS Ổ đĩa (/): ${vpsStats.diskUsedGb} / ${vpsStats.diskTotalGb} GB (${vpsStats.diskPercent}%)`]
+        : [];
+
     sections.push(
       '',
-      `<b>${sectionNo}. Tài nguyên API &amp; VPS</b>`,
-      `• RSS thực tế: ${toMb(mem.rss).toFixed(2)} MB`,
-      `• V8 Heap: ${toMb(mem.heapUsed).toFixed(2)} MB`,
-      `• ${hostRes.ramLabel}: ${hostRes.ramUsedMb.toFixed(1)} / ${hostRes.ramLimitMb.toFixed(0)} MB (${hostRes.ramPercent}%)`,
-      `• VPS Load (1m): ${loadAvg1m.toFixed(2)} (${hostRes.cpuCores} vCPU)`,
+      `<b>${sectionNo}. Tài nguyên API &amp; Toàn VPS</b>`,
+      `• API RSS / Heap: ${toMb(mem.rss).toFixed(1)} / ${toMb(mem.heapUsed).toFixed(1)} MB`,
+      `• ${containerStats.ramLabel}: ${containerStats.ramUsedMb.toFixed(1)} / ${containerStats.ramLimitMb.toFixed(0)} MB (${containerStats.ramPercent}%)`,
+      cpuLine,
+      vpsRamLine,
+      ...vpsDiskLine,
       '',
       `<b>${sectionNo + 1}. Truy vết</b>`,
       `• Client IP: <code>${safeIp}</code>`,
