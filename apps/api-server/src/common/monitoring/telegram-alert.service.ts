@@ -75,7 +75,7 @@ export function readMonitoringConfig(env: NodeJS.ProcessEnv = process.env): Moni
   return {
     botToken: (env.FNB_TELEGRAM_BOT_TOKEN ?? '').trim(),
     chatId: (env.FNB_TELEGRAM_CHAT_ID ?? '').trim(),
-    projectName: (env.FNB_ALERT_PROJECT_NAME ?? '').trim() || 'LonaPOS',
+    projectName: (env.FNB_ALERT_PROJECT_NAME ?? '').trim() || 'Ăn Vặt Tran',
     sourceName: (env.FNB_ALERT_SOURCE_NAME ?? '').trim() || 'FNB_POS_API',
     envLabel: nodeEnv || 'PRODUCTION',
     slowMs: parsePositiveNumber(env.FNB_ALERT_SLOW_MS, DEFAULT_SLOW_MS),
