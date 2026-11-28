@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { Injectable, Logger } from '@nestjs/common';
 import { redactSensitiveUrl } from '../security/redact.util';
@@ -113,6 +114,66 @@ export function formatVnTimestamp(date: Date = new Date()): string {
 
 function toMb(bytes: number): number {
   return Number((bytes / (1024 * 1024)).toFixed(2));
+}
+
+export interface ContainerResourceStats {
+  ramLabel: string;
+  ramUsedMb: number;
+  ramLimitMb: number;
+  ramPercent: number;
+  cpuCores: number;
+}
+
+const UNLIMITED_CGROUP_BYTES = 8 * 1024 * 1024 * 1024 * 1024; // 8 TiB threshold
+
+function readNumericFileSync(filePath: string): number | null {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8').trim();
+    if (!raw || raw === 'max') return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readContainerResourceStats(
+  readFileNum: (path: string) => number | null = readNumericFileSync,
+): ContainerResourceStats {
+  const cpuCores = Math.max(1, os.cpus()?.length || 1);
+  const cgroupV2Used = readFileNum('/sys/fs/cgroup/memory.current');
+  const cgroupV2Max = readFileNum('/sys/fs/cgroup/memory.max');
+  const cgroupV1Used = cgroupV2Used === null ? readFileNum('/sys/fs/cgroup/memory/memory.usage_in_bytes') : null;
+  const cgroupV1Max = cgroupV2Max === null ? readFileNum('/sys/fs/cgroup/memory/memory.limit_in_bytes') : null;
+
+  const cgUsed = cgroupV2Used ?? cgroupV1Used;
+  const cgMax = cgroupV2Max ?? cgroupV1Max;
+
+  if (cgUsed !== null && cgMax !== null && cgMax < UNLIMITED_CGROUP_BYTES) {
+    const usedMb = toMb(cgUsed);
+    const limitMb = toMb(cgMax);
+    const pct = limitMb > 0 ? Number(((usedMb / limitMb) * 100).toFixed(1)) : 0;
+    return {
+      ramLabel: 'Container RAM',
+      ramUsedMb: usedMb,
+      ramLimitMb: limitMb,
+      ramPercent: pct,
+      cpuCores,
+    };
+  }
+
+  const totalBytes = Math.max(1, os.totalmem());
+  const usedBytes = Math.max(0, totalBytes - os.freemem());
+  const usedMb = toMb(usedBytes);
+  const limitMb = toMb(totalBytes);
+  const pct = Number(((usedBytes / totalBytes) * 100).toFixed(1));
+  return {
+    ramLabel: 'Host RAM',
+    ramUsedMb: usedMb,
+    ramLimitMb: limitMb,
+    ramPercent: pct,
+    cpuCores,
+  };
 }
 
 export function isLoopbackSocketAddress(rawAddress?: string | null): boolean {
@@ -301,6 +362,7 @@ export class TelegramAlertService {
   }): string {
     const mem = process.memoryUsage();
     const [loadAvg1m = 0] = os.loadavg();
+    const hostRes = readContainerResourceStats();
     const safeRoute = escapeTelegramHtml(
       sanitizeSingleLine(`${params.method.toUpperCase()} ${redactSensitiveUrl(params.url)}`),
     );
@@ -331,10 +393,11 @@ export class TelegramAlertService {
 
     sections.push(
       '',
-      `<b>${sectionNo}. Trạng thái tiến trình API</b>`,
+      `<b>${sectionNo}. Tài nguyên API &amp; VPS</b>`,
       `• RSS thực tế: ${toMb(mem.rss).toFixed(2)} MB`,
-      `• V8 Heap đang dùng: ${toMb(mem.heapUsed).toFixed(2)} MB`,
-      `• Load (avg 1m): ${loadAvg1m.toFixed(2)}`,
+      `• V8 Heap: ${toMb(mem.heapUsed).toFixed(2)} MB`,
+      `• ${hostRes.ramLabel}: ${hostRes.ramUsedMb.toFixed(1)} / ${hostRes.ramLimitMb.toFixed(0)} MB (${hostRes.ramPercent}%)`,
+      `• VPS Load (1m): ${loadAvg1m.toFixed(2)} (${hostRes.cpuCores} vCPU)`,
       '',
       `<b>${sectionNo + 1}. Truy vết</b>`,
       `• Client IP: <code>${safeIp}</code>`,
