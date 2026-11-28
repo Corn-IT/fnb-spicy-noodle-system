@@ -135,16 +135,15 @@ def reply_tg(chat_id: str, text: str, reply_to_message_id: int | None = None) ->
 
 def register_bot_commands() -> None:
     commands = [
-        {"command": "status", "description": "Tổng quan VPS, POS & quán hiện tại"},
+        {"command": "status", "description": "Tổng quan VPS, Docker & lưu lượng API 1h"},
         {"command": "health", "description": "Kiểm tra nhanh HTTPS, DB & dịch vụ"},
         {"command": "vps", "description": "Chi tiết CPU, RAM, Disk & Top tiến trình"},
-        {"command": "pos", "description": "Nhịp bán hàng hôm nay (đơn, bàn, QR)"},
         {"command": "logs", "description": "15 dòng log gần nhất (api|caddy|postgres)"},
         {"command": "errors", "description": "Lọc lỗi 5xx / ERROR gần đây & bộ đếm 1h"},
         {"command": "prune", "description": "Dọn Docker build cache thừa ngay"},
         {"command": "backup", "description": "Sao lưu nóng Database ngay lập tức"},
         {"command": "restart_api", "description": "Khởi động lại API (xác nhận 2 bước)"},
-        {"command": "help", "description": "Xem bảng hướng dẫn toàn bộ lệnh"},
+        {"command": "help", "description": "Xem bảng hướng dẫn 9 lệnh hạ tầng"},
     ]
     for scope in ({"type": "default"}, {"type": "all_group_chats"}):
         try:
@@ -272,48 +271,6 @@ def handle_vps() -> str:
         "",
         "<b>3. Top 5 tiến trình (RAM/CPU)</b>",
         *[f"• <code>{l}</code>" for l in top_lines],
-        f"🕒 Lúc: {vn_now_str()}",
-    ])
-
-
-def handle_pos() -> str:
-    sql = """
-      WITH day_bounds AS (
-        SELECT date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh' AS start_at
-      )
-      SELECT
-        (SELECT count(*) FROM orders, day_bounds WHERE created_at >= start_at),
-        (SELECT count(*) FROM orders, day_bounds WHERE created_at >= start_at AND status IN ('PENDING','SERVING')),
-        (SELECT count(*) FROM orders, day_bounds WHERE created_at >= start_at AND status = 'PAID'),
-        (SELECT count(*) FROM orders, day_bounds WHERE created_at >= start_at AND status = 'VOIDED'),
-        (SELECT count(*) FROM orders WHERE status = 'PENDING' AND order_source = 'QR_CODE'),
-        (SELECT count(*) FROM dining_tables WHERE status = 'OCCUPIED'),
-        (SELECT count(*) FROM dining_tables),
-        (SELECT count(*) FROM pos_drafts WHERE submitted_at IS NULL);
-    """
-    rc, out = run_cmd(
-        ["docker", "compose", "exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "fnb_pos", "-AtF|", "-c", sql],
-        cwd=PROJECT_DIR,
-        timeout=10,
-    )
-    if rc != 0 or "|" not in out:
-        return f"🔴 Lỗi truy vấn POS DB: <code>{html.escape(out[:200])}</code>"
-
-    parts = out.strip().splitlines()[-1].split("|")
-    total_today, active_today, paid_today, voided_today, qr_pending, occ_tables, total_tables, open_drafts = parts
-    proj = html.escape(PROJECT_NAME)
-    return "\n".join([
-        f"🍜 <b>[{proj}] NHỊP HOẠT ĐỘNG QUÁN</b>",
-        "────────────────",
-        "<b>1. Đơn hàng hôm nay (giờ VN)</b>",
-        f"• Tổng đơn tạo: <b>{total_today} đơn</b>",
-        f"• Đang phục vụ/chờ: <b>{active_today}</b> · Đã thanh toán: <b>{paid_today}</b>",
-        f"• Đã hủy (VOID): {voided_today}",
-        "",
-        "<b>2. Bàn &amp; Đơn chờ</b>",
-        f"• Bàn đang có khách: <b>{occ_tables}/{total_tables} bàn</b>",
-        f"• Đơn QR chờ duyệt: <b>{qr_pending}</b>",
-        f"• Đơn nháp POS đang mở: {open_drafts}",
         f"🕒 Lúc: {vn_now_str()}",
     ])
 
@@ -462,13 +419,12 @@ def handle_backup() -> str:
 def handle_help() -> str:
     proj = html.escape(PROJECT_NAME)
     return "\n".join([
-        f"🤖 <b>[{proj}] DANH SÁCH LỆNH QUẢN TRỊ</b>",
+        f"🤖 <b>[{proj}] DANH SÁCH LỆNH HẠ TẦNG &amp; SERVER</b>",
         "────────────────",
         "<b>1. Kiểm tra &amp; Theo dõi (Read-only)</b>",
-        "• /status — Tổng quan VPS, POS &amp; quán (không xóa bộ đếm 1h)",
+        "• /status — Tổng quan VPS, Docker &amp; lưu lượng API 1h",
         "• /health — Kiểm tra nhanh HTTPS, DB &amp; service",
         "• /vps — Chi tiết CPU, RAM, Swap, Disk &amp; Top tiến trình",
-        "• /pos — Số đơn hôm nay, bàn có khách, đơn QR &amp; nháp",
         "• /logs <code>[api|caddy|postgres]</code> — 15 dòng log gần nhất",
         "• /errors — Lọc lỗi 5xx / ERROR gần đây",
         "",
@@ -476,6 +432,8 @@ def handle_help() -> str:
         "• /prune — Dọn Docker build cache thừa ngay",
         "• /backup — Sao lưu nóng PostgreSQL ngay lập tức",
         "• /restart_api — Khởi động lại container API (xác nhận 2 bước)",
+        "",
+        "ℹ️ <i>Thống kê bán hàng đã tách sang bot @POS_Lona_bot ở Nhóm Thống Kê.</i>",
     ])
 
 
@@ -546,7 +504,12 @@ def main() -> int:
                 elif cmd == "/vps":
                     reply_tg(chat_id, handle_vps(), msg_id)
                 elif cmd == "/pos":
-                    reply_tg(chat_id, handle_pos(), msg_id)
+                    reply_tg(
+                        chat_id,
+                        "ℹ️ Lệnh <code>/pos</code> đã được tách sang bot <b>@POS_Lona_bot</b> ở Nhóm Thống Kê Quán.\n"
+                        "Gõ <code>/help</code> để xem 9 lệnh hạ tầng.",
+                        msg_id,
+                    )
                 elif cmd == "/logs":
                     reply_tg(chat_id, handle_logs(args), msg_id)
                 elif cmd == "/errors":
