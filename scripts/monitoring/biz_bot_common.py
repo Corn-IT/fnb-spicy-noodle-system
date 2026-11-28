@@ -34,13 +34,15 @@ FORBIDDEN_SQL_KEYWORDS = re.compile(
     re.I,
 )
 
+FORBIDDEN_SQL_ANYWHERE = re.compile(
+    r"\b(?:password_hash|web_push_vapid_keys|p256dh)\b",
+    re.I,
+)
+
 FORBIDDEN_SQL_IDENTIFIERS = re.compile(
     r"\b(?:pg_read_file|pg_read_binary_file|pg_ls_dir|pg_stat_file|pg_sleep|"
     r"pg_terminate_backend|pg_cancel_backend|lo_import|lo_export|dblink|dblink_exec|"
-    r"push_subscriptions|payment_accounts|password_hash|active_session_id|active_session_ip|"
-    r"active_session_device|active_session_agent|last_revoked_notice|ui_preferences|"
-    r"citizen_id|citizen_id_issued_place|bank_account_no|bank_account_name|attachment_urls|"
-    r"qr_token|submit_idempotency_key|ip_address|device_label)\b",
+    r"pg_shadow|pg_authid|master_data|auth)\b",
     re.I,
 )
 
@@ -311,8 +313,15 @@ def validate_readonly_sql(raw_sql: str) -> tuple[bool, str]:
     if FORBIDDEN_SQL_KEYWORDS.search(no_strings):
         return False, "Phát hiện từ khóa SQL không thuộc phạm vi đọc dữ liệu (read-only)"
 
-    if FORBIDDEN_SQL_IDENTIFIERS.search(cleaned):
-        return False, "Truy vấn chạm tới bảng/cột bảo mật bị hạn chế"
+    if FORBIDDEN_SQL_ANYWHERE.search(cleaned) or FORBIDDEN_SQL_IDENTIFIERS.search(no_strings):
+        return False, "Truy vấn chạm tới khóa mật mã kỹ thuật hoặc bảng/hàm hệ thống bị hạn chế"
+
+    if re.search(r"\b(?:users|push_subscriptions)\b", no_strings, re.I) and re.search(
+        r"(?:\bSELECT\b|,)\s*(?:[a-z_][a-z0-9_]*\.)?\*\s*(?:,|\bFROM\b)",
+        no_strings,
+        re.I,
+    ):
+        return False, "Không dùng SELECT * khi truy vấn users/push_subscriptions (vui lòng liệt kê rõ cột cần xem)"
 
     if len(cleaned) > 3500:
         return False, "Truy vấn SQL quá dài"
