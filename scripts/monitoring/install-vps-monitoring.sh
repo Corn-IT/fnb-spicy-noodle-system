@@ -23,7 +23,7 @@ sysctl --system >/dev/null
 # 2. Ensure monitoring env file exists with strict permissions
 if [[ ! -f /etc/fnb-monitor.env ]]; then
   cat <<'EOF' > /etc/fnb-monitor.env
-FNB_ALERT_PROJECT_NAME=Ăn Vặt Tran
+FNB_ALERT_PROJECT_NAME="Ăn Vặt Tran"
 FNB_DOMAIN=pos.anvattran.com
 FNB_PROJECT_DIR=/opt/fnb-pos
 FNB_TELEGRAM_BOT_TOKEN=
