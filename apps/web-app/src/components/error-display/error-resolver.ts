@@ -201,7 +201,13 @@ export function normalizeClientError(
     if (domainErrorMsg.description) {
       reason = domainErrorMsg.description;
     }
-  } else if (!options.reasonOverride && isUsefulServerMessage && !isRuntimeError && !(isGuest && statusCode === 500)) {
+  } else if (
+    !options.reasonOverride &&
+    !(!isGuest && resolvedHttpOverride.isOverridden && resolvedHttpOverride.description) &&
+    isUsefulServerMessage &&
+    !isRuntimeError &&
+    !(isGuest && (statusCode === 500 || errorCode === 'DATA_VALIDATION_ERROR'))
+  ) {
     reason = trimmedServerMsg;
   }
 

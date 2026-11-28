@@ -333,6 +333,7 @@ export function SystemErrorView({
               normalized.key === '429' ||
               normalized.key === 'NETWORK_ERROR' ||
               normalized.key === 'CHUNK_LOAD_ERROR' ||
+              normalized.key === 'DATA_VALIDATION_ERROR' ||
               normalized.key === 'RUNTIME_CRASH') && (
               <Button
                 type="button"
