@@ -6,11 +6,15 @@ import { GlobalExceptionFilter } from '../../filters/global-exception.filter';
 import { LoggingInterceptor } from '../../interceptors/logging.interceptor';
 import { InternalMetricsController } from '../internal-metrics.controller';
 import {
+  computeCpuPercentFromSamples,
   escapeTelegramHtml,
   formatVnTimestamp,
   isLoopbackSocketAddress,
+  parseProcMeminfoText,
+  parseProcStatCpuSample,
   readContainerResourceStats,
   readMonitoringConfig,
+  readVpsHostStats,
   sanitizeSingleLine,
   TelegramAlertService,
 } from '../telegram-alert.service';
@@ -82,6 +86,32 @@ describe('MonitoringModule & TelegramAlertService', () => {
     const hostFallbackStats = readContainerResourceStats(() => null);
     expect(hostFallbackStats.ramLabel).toBe('Host RAM');
     expect(hostFallbackStats.ramLimitMb).toBeGreaterThan(0);
+
+    const parsedMem = parseProcMeminfoText('MemTotal:        4010040 kB\nMemFree: 200000 kB\nMemAvailable: 3007530 kB\n');
+    expect(parsedMem).toEqual({ ramUsedMb: 979, ramTotalMb: 3916, ramPercent: 25 });
+    expect(parseProcMeminfoText('MemFree: 100 kB')).toBeNull();
+
+    const s1 = parseProcStatCpuSample('cpu  1000 0 200 8800 0 0 0 0 0 0');
+    const s2 = parseProcStatCpuSample('cpu  1200 0 250 9550 0 0 0 0 0 0');
+    expect(computeCpuPercentFromSamples(s1, s2)).toBe(25);
+    expect(computeCpuPercentFromSamples(s2, s2)).toBeNull();
+    expect(parseProcStatCpuSample('invalid')).toBeNull();
+
+    const vpsSample = readVpsHostStats({
+      prevCpuSample: s1,
+      readText: (p) =>
+        p === '/proc/meminfo'
+          ? 'MemTotal: 4010040 kB\nMemAvailable: 3007530 kB\n'
+          : 'cpu  1200 0 250 9550 0 0 0 0 0 0',
+      statDisk: () => ({ blocks: 3000, bfree: 1800, bavail: 1650, bsize: 10 * 1024 * 1024 }),
+    });
+    expect(vpsSample.stats).toMatchObject({
+      ramUsedMb: 979,
+      ramTotalMb: 3916,
+      ramPercent: 25,
+      cpuPercent: 25,
+      diskPercent: 42.1,
+    });
   });
 
   it('no-ops telegram dispatch when missing credentials or NODE_ENV=test unless forced', () => {
@@ -187,8 +217,8 @@ describe('MonitoringModule & TelegramAlertService', () => {
     expect(sentPayloads[0]?.text).toContain('• Thời gian: <b>3456.78ms</b> / 3000ms');
     expect(sentPayloads[0]?.text).toContain('• RAM tăng: <b>72.50MB</b> / 64MB');
     expect(sentPayloads[0]?.text).toContain('• CPU dùng: <b>2150.25ms</b> / 2000ms');
-    expect(sentPayloads[0]?.text).toContain('<b>3. Tài nguyên API &amp; VPS</b>');
-    expect(sentPayloads[0]?.text).toContain('• VPS Load (1m):');
+    expect(sentPayloads[0]?.text).toContain('<b>3. Tài nguyên API &amp; Toàn VPS</b>');
+    expect(sentPayloads[0]?.text).toContain('• VPS RAM:');
     expect(sentPayloads[0]?.text).toContain('• Request ID: <code>req-1234</code>');
 
     // Within 5m cooldown -> suppressed instead of spamming Telegram
