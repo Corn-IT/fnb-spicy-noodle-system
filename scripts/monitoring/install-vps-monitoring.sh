@@ -167,7 +167,7 @@ Requires=docker.service
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 ${SCRIPT_DIR}/telegram-biz-bot.py
-Restart=always
+Restart=on-failure
 RestartSec=5
 MemoryMax=96M
 

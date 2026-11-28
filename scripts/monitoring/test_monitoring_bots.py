@@ -186,6 +186,31 @@ class TestBotSeparationAndHandlers(unittest.TestCase):
         self.assertIn("/tongquan", help_txt or "")
         self.assertIn("/loinhuan", help_txt or "")
 
+        # Casual chatter ignored even inside dispatch_message
+        self.assertIsNone(bot2_mod.dispatch_message("cảm ơn bạn nhé", cfg, limiter, is_direct=False))
+
+    def test_bot2_main_registers_commands_before_exiting_when_chat_id_missing(self) -> None:
+        cfg_no_chat = {
+            "bot_token": "tok123",
+            "chat_id": "",
+            "gemini_api_key": "",
+            "gemini_model": "gemini-3.5-flash-lite",
+            "gemini_fallback_model": "gemini-flash-lite-latest",
+            "project_name": "Ăn Vặt Tran",
+            "project_dir": "/tmp",
+            "domain": "pos.anvattran.com",
+            "ro_db_user": "fnb_bot_ro",
+            "high_void_threshold": "150000",
+            "alert_state_file": "/tmp/s.json",
+        }
+        with (
+            mock.patch.object(bot2_mod, "get_biz_config", return_value=cfg_no_chat),
+            mock.patch.object(bot2_mod, "register_biz_commands") as m_reg,
+        ):
+            rc = bot2_mod.main()
+        self.assertEqual(rc, 0)
+        m_reg.assert_called_once_with("tok123")
+
     def test_daily_and_tongquan_formatters(self) -> None:
         sample_overview = {
             "kpis": {

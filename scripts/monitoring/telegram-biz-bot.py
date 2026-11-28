@@ -178,8 +178,13 @@ def main() -> int:
     cfg = get_biz_config()
     bot_token = cfg["bot_token"]
     allowed_chat_id = cfg["chat_id"]
-    if not bot_token or not allowed_chat_id:
-        print("[biz-bot] Missing FNB_BIZ_BOT_TOKEN or FNB_BIZ_CHAT_ID; exiting cleanly.", file=sys.stderr)
+    if not bot_token:
+        print("[biz-bot] Missing FNB_BIZ_BOT_TOKEN; exiting cleanly.", file=sys.stderr)
+        return 0
+
+    register_biz_commands(bot_token)
+    if not allowed_chat_id:
+        print("[biz-bot] Registered commands; missing FNB_BIZ_CHAT_ID; exiting cleanly until group chat_id is configured.", file=sys.stderr)
         return 0
 
     bot_id: int | None = None
@@ -191,7 +196,6 @@ def main() -> int:
     except Exception as err:
         print(f"[biz-bot] getMe warning: {err}", file=sys.stderr)
 
-    register_biz_commands(bot_token)
     offset = drain_stale_updates(bot_token)
     rate_limiter = AiRateLimiter()
     last_msg_at = 0.0
