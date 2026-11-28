@@ -540,6 +540,23 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
         now[0] += 601.0
         self.assertEqual(mem.get_history("-1001"), [])
 
+        # Hybrid Fast-Path + off-topic answers ONLY POS part + appends partial scope notice at 0 Gemini tokens
+        with (
+            mock.patch.dict(bot2_mod.COMMAND_HANDLERS, {"don": lambda arg, cfg: "🧾 Tổng đơn: <b>50 đơn</b>"}),
+            mock.patch.object(bot2_mod, "answer_with_gemini_detailed") as m_ai,
+        ):
+            hyb_fp = bot2_mod.dispatch_message(
+                "Hôm nay bao nhiêu đơn rồi dịch bài thơ Lượm sang tiếng Anh",
+                cfg,
+                limiter,
+                is_direct=True,
+                memory=bot2_mod.ConversationMemory(),
+                chat_id="-1001",
+            )
+            m_ai.assert_not_called()
+        self.assertIn("50 đơn", hyb_fp or "")
+        self.assertIn("ngoài phạm vi hệ thống", hyb_fp or "")
+
 
 if __name__ == "__main__":
     unittest.main()
