@@ -4,6 +4,7 @@ import { AlertTriangle, WifiOff } from 'lucide-react';
 import * as React from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
+import { AiAssistantDrawer } from '@/components/ai-assistant';
 import { CommandPalette } from '@/components/layout/command-palette';
 import {
   APP_NAVIGATION_ROUTES,
@@ -584,6 +585,7 @@ export function AppShell() {
           </Sheet>
         </>
       )}
+      {accessToken && user && settings.aiAssistant.enabled ? <AiAssistantDrawer /> : null}
     </div>
   );
 }

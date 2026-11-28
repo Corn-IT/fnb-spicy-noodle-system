@@ -44,7 +44,7 @@ describe('shared store policy compatibility contracts', () => {
   });
 
   it('keeps invalid nested cache values visible to schema validation', () => {
-    for (const field of ['qr', 'qrCard', 'receipt', 'displayScale', 'primaryTextColor', 'printTemplates']) {
+    for (const field of ['qr', 'qrCard', 'receipt', 'displayScale', 'primaryTextColor', 'printTemplates', 'aiAssistant']) {
       const merged = mergeStoreSettingsWithDefaults({ [field]: null });
       expect(StoreSettingsSchema.safeParse(merged).success, field).toBe(false);
     }

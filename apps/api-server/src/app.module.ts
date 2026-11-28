@@ -22,6 +22,7 @@ import { PaymentQrModule } from './modules/payment-qr/payment-qr.module';
 import { DiscountsModule } from './modules/discounts/discounts.module';
 import { StoreSettingsModule } from './modules/store-settings/store-settings.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     HrScheduleModule,
     StoreSettingsModule,
     DashboardModule,
+    AiAssistantModule,
     InternalBizModule,
   ],
   providers: [

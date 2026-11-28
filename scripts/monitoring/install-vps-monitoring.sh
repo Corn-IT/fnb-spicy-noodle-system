@@ -24,7 +24,8 @@ chmod +x \
   "${SCRIPT_DIR}/biz_bot_guardrail.py" \
   "${SCRIPT_DIR}/biz_bot_ai.py" \
   "${SCRIPT_DIR}/daily-biz-report.py" \
-  "${SCRIPT_DIR}/biz-alert-probe.py"
+  "${SCRIPT_DIR}/biz-alert-probe.py" \
+  "${SCRIPT_DIR}/run_coverage.py"
 
 # 1. Optimize UDP receive/send buffer sizes for Caddy HTTP/3 (QUIC)
 cat <<'EOF' > /etc/sysctl.d/99-caddy-quic.conf

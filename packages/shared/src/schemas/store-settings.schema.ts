@@ -401,6 +401,28 @@ export interface ResolvedQrCardDisplay {
   showLinkText: boolean;
 }
 
+export const AiAssistantSettingsSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    localEnabled: z.boolean().default(true),
+    geminiEnabled: z.boolean().default(true),
+    syncToTelegramBot: z.boolean().default(false),
+  })
+  .strict();
+
+export type AiAssistantSettings = z.infer<typeof AiAssistantSettingsSchema>;
+
+export const DEFAULT_AI_ASSISTANT_SETTINGS: AiAssistantSettings = {
+  enabled: true,
+  localEnabled: true,
+  geminiEnabled: true,
+  syncToTelegramBot: false,
+};
+
+export function cloneDefaultAiAssistantSettings(): AiAssistantSettings {
+  return { ...DEFAULT_AI_ASSISTANT_SETTINGS };
+}
+
 export const StoreSettingsSchema = z.object({
   storeName: PlainText(60).min(1, 'Tên cửa hàng không được để trống'),
   subtitle: PlainText(80),
@@ -454,6 +476,7 @@ export const StoreSettingsSchema = z.object({
       }),
     qrOrderPercent: DisplayScalePercentSchema,
   }).strict(),
+  aiAssistant: AiAssistantSettingsSchema.default(cloneDefaultAiAssistantSettings()),
 }).strict();
 
 export type DisplayScale = z.infer<typeof StoreSettingsSchema>['displayScale'];
@@ -559,6 +582,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   printTemplates: cloneDefaultPrintTemplates(),
   takeawayLabelFormat: TakeawayLabelFormat.NUMBER,
   displayScale: cloneDefaultDisplayScale(),
+  aiAssistant: cloneDefaultAiAssistantSettings(),
 };
 
 export const NEUTRAL_STORE_SETTINGS: PublicStoreSettingsResponse = {
@@ -592,6 +616,7 @@ export const NEUTRAL_STORE_SETTINGS: PublicStoreSettingsResponse = {
   printTemplates: cloneDefaultPrintTemplates(),
   takeawayLabelFormat: TakeawayLabelFormat.NUMBER,
   displayScale: cloneDefaultDisplayScale(),
+  aiAssistant: cloneDefaultAiAssistantSettings(),
   updatedAt: null,
   assets: {
     logo: null,
@@ -857,6 +882,11 @@ export function mergeStoreSettingsWithDefaults(rawCandidate: unknown): unknown {
       cloneDefaultDisplayScale(),
       'displayScale' in definedEntries,
       definedEntries.displayScale,
+    ),
+    aiAssistant: mergeNestedDefaults(
+      cloneDefaultAiAssistantSettings(),
+      'aiAssistant' in definedEntries,
+      definedEntries.aiAssistant,
     ),
   };
 }
