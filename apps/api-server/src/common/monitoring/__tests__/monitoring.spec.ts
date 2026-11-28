@@ -4,7 +4,7 @@ import { firstValueFrom, of, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GlobalExceptionFilter } from '../../filters/global-exception.filter';
 import { LoggingInterceptor } from '../../interceptors/logging.interceptor';
-import { InternalBizController, sanitizeDashboardOverviewForBot } from '../internal-biz.controller';
+import { InternalBizController } from '../internal-biz.controller';
 import { InternalMetricsController } from '../internal-metrics.controller';
 import {
   computeCpuPercentFromSamples,
@@ -403,7 +403,7 @@ describe('MonitoringModule & TelegramAlertService', () => {
     expect(loggerLogSpy).toHaveBeenCalled();
   });
 
-  it('excludes /internal/biz/* from windowRequests while enforcing loopback and redacting secrets in InternalBizController', async () => {
+  it('excludes /internal/biz/* from windowRequests while enforcing loopback and exposing owner fields in InternalBizController', async () => {
     const alertService = new TelegramAlertService();
     alertService.recordRequestMetric({
       method: 'GET',
@@ -538,18 +538,10 @@ describe('MonitoringModule & TelegramAlertService', () => {
 
     const overviewRes = await controller.getOverview(loopbackReq, { preset: 'today' });
     expect(getOverview).toHaveBeenCalledWith({ preset: 'today' }, expect.objectContaining({ isSuperAdmin: true }));
-    expect(overviewRes.alerts.nearLimitQrAccounts[0]?.accountNo).toBe('****1012');
-    expect(overviewRes.paymentQrAccounts[0]?.accountNo).toBe('****1012');
-    expect(overviewRes.liveTables?.tables[0]).not.toHaveProperty('qrToken');
-    expect(overviewRes.recentAuditLogs[0]?.ipAddress).toBeNull();
-    expect(overviewRes.recentAuditLogs[0]?.deviceLabel).toBeNull();
-
-    // Direct sanitize helper short account masking
-    const maskedShort = sanitizeDashboardOverviewForBot({
-      ...mockOverview,
-      paymentQrAccounts: [{ ...mockOverview.paymentQrAccounts[0]!, accountNo: '123' }],
-    } as never);
-    expect(maskedShort.paymentQrAccounts[0]?.accountNo).toBe('****');
+    expect(overviewRes.alerts.nearLimitQrAccounts[0]?.accountNo).toBe('0987654321012');
+    expect(overviewRes.paymentQrAccounts[0]?.accountNo).toBe('0987654321012');
+    expect(overviewRes.recentAuditLogs[0]?.ipAddress).toBe('14.224.1.1');
+    expect(overviewRes.recentAuditLogs[0]?.deviceLabel).toBe('Chrome');
 
     await expect(controller.getDailyItems(loopbackReq, { preset: 'today' })).resolves.toMatchObject({ summary: { totalOrders: 3 } });
     await expect(controller.getPayroll(loopbackReq, { fromDate: '2026-11-01', toDate: '2026-11-28' })).resolves.toMatchObject({ summary: { totalSalary: 15000000 } });
@@ -557,7 +549,7 @@ describe('MonitoringModule & TelegramAlertService', () => {
     await expect(controller.getCashflowPreview(loopbackReq)).resolves.toMatchObject({ expectedCashInDrawer: 500000 });
     await expect(controller.getCashflowSettlements(loopbackReq, { page: 1, limit: 10 })).resolves.toMatchObject({ total: 1 });
 
-    await expect(controller.getOverview(remoteReq, { preset: 'today' })).rejects.toThrow(ForbiddenException);
+    expect(() => controller.getOverview(remoteReq, { preset: 'today' })).toThrow(ForbiddenException);
     expect(() => controller.getDailyItems(remoteReq, { preset: 'today' })).toThrow(ForbiddenException);
     expect(() => controller.getPayroll(remoteReq, { fromDate: '2026-11-01', toDate: '2026-11-28' })).toThrow(ForbiddenException);
     expect(() => controller.getSchedule(remoteReq, { weekStartDate: '2026-11-23' })).toThrow(ForbiddenException);
