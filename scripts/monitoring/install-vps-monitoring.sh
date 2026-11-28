@@ -15,6 +15,12 @@ chmod +x \
   "${SCRIPT_DIR}/docker-prune.sh" \
   "${SCRIPT_DIR}/telegram-command-bot.py" \
   "${SCRIPT_DIR}/telegram-biz-bot.py" \
+  "${SCRIPT_DIR}/biz_bot_common.py" \
+  "${SCRIPT_DIR}/biz_bot_queries.py" \
+  "${SCRIPT_DIR}/biz_bot_nlp.py" \
+  "${SCRIPT_DIR}/biz_bot_kb.py" \
+  "${SCRIPT_DIR}/biz_bot_guardrail.py" \
+  "${SCRIPT_DIR}/biz_bot_ai.py" \
   "${SCRIPT_DIR}/daily-biz-report.py" \
   "${SCRIPT_DIR}/biz-alert-probe.py"
 

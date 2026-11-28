@@ -31,14 +31,6 @@ const INTERNAL_BIZ_PRINCIPAL: AuthPrincipal = {
   permissions: defaultUserPermissions,
 };
 
-function maskAccountNo(accountNo: string): string {
-  const trimmed = accountNo.trim();
-  if (trimmed.length <= 4) {
-    return '****';
-  }
-  return `****${trimmed.slice(-4)}`;
-}
-
 function assertLoopbackRequest(request: Request): void {
   const remoteAddress = request.socket?.remoteAddress;
   if (!isLoopbackSocketAddress(remoteAddress)) {
@@ -47,40 +39,6 @@ function assertLoopbackRequest(request: Request): void {
       message: 'Endpoint nội bộ chỉ cho phép truy cập từ loopback',
     });
   }
-}
-
-export function sanitizeDashboardOverviewForBot(overview: DashboardOverviewResponse): DashboardOverviewResponse {
-  return {
-    ...overview,
-    alerts: {
-      ...overview.alerts,
-      nearLimitQrAccounts: overview.alerts.nearLimitQrAccounts.map((acc) => ({
-        ...acc,
-        accountNo: maskAccountNo(acc.accountNo),
-      })),
-    },
-    paymentQrAccounts: overview.paymentQrAccounts.map((acc) => ({
-      ...acc,
-      accountNo: maskAccountNo(acc.accountNo),
-    })),
-    liveTables: overview.liveTables
-      ? {
-          tables: overview.liveTables.tables.map((table) => ({
-            id: table.id,
-            name: table.name,
-            status: table.status,
-            activeOrderId: table.activeOrderId,
-            activeOrder: table.activeOrder,
-          })),
-          takeaways: overview.liveTables.takeaways,
-        }
-      : null,
-    recentAuditLogs: overview.recentAuditLogs.map((entry) => ({
-      ...entry,
-      ipAddress: null,
-      deviceLabel: null,
-    })),
-  };
 }
 
 @Controller('internal/biz')
@@ -93,13 +51,12 @@ export class InternalBizController {
   ) {}
 
   @Get('overview')
-  async getOverview(
+  getOverview(
     @Req() request: Request,
     @Query(new ZodValidationPipe(DashboardQuerySchema)) query: DashboardQuery,
-  ) {
+  ): Promise<DashboardOverviewResponse> {
     assertLoopbackRequest(request);
-    const overview = await this.dashboardService.getOverview(query, INTERNAL_BIZ_PRINCIPAL);
-    return sanitizeDashboardOverviewForBot(overview);
+    return this.dashboardService.getOverview(query, INTERNAL_BIZ_PRINCIPAL);
   }
 
   @Get('daily-items')
