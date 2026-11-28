@@ -21,6 +21,7 @@ from biz_bot_common import (
     get_biz_config,
     get_staff_telegram_map,
     parse_period_spec,
+    persona_spec,
     run_readonly_sql_json,
     strip_vi,
     vn_now_str,
@@ -156,6 +157,8 @@ def _resolve_meta_faq(
     cfg: dict[str, str] | None = None,
     telemetry: TelemetryStore | None = None,
     cc_tags: list[str] | None = None,
+    cc_honorific: str = "",
+    persona_key: str = "minh_ban",
 ) -> dict[str, Any] | None:
     cfg_eff = cfg or get_biz_config()
     proj = html.escape(cfg_eff["project_name"])
@@ -219,21 +222,30 @@ def _resolve_meta_faq(
         }
 
     if any(k in norm_q for k in ("biet lam gi", "lam duoc gi", "giup duoc gi", "chuc nang gi", "gioi thieu ve", "gioi thieu em", "gioi thieu ban")):
+        p = persona_spec(persona_key)
+        self_p = p["bot"]
+        hon_prefix = f"{html.escape(cc_honorific)} " if cc_honorific else ""
         if cc_tags:
             greet_tags = " ".join(
                 t if t.startswith("<a ") else html.escape(t)
                 for t in cc_tags
             )
-            header_line = f"👋 <b>Chào {greet_tags}!</b> Mình là <b>Lona</b> (<code>@POS_Lona_bot</code>) — trợ lý thống kê &amp; hỗ trợ vận hành POS của <b>{proj}</b>:"
+            if self_p == "em":
+                header_line = f"👋 <b>Dạ em chào {hon_prefix}{greet_tags}!</b> Em là <b>Lona</b> (<code>@POS_Lona_bot</code>) — trợ lý thống kê &amp; hỗ trợ vận hành POS của <b>{proj}</b> ạ:"
+            else:
+                header_line = f"👋 <b>Chào {hon_prefix}{greet_tags}!</b> Mình là <b>Lona</b> (<code>@POS_Lona_bot</code>) — trợ lý thống kê &amp; hỗ trợ vận hành POS của <b>{proj}</b>:"
         else:
-            header_line = f"🤖 <b>[{proj}] TRỢ LÝ @POS_Lona_bot</b>"
+            if self_p == "em":
+                header_line = f"🤖 <b>[{proj}] TRỢ LÝ @POS_Lona_bot</b> — Dạ em là <b>Lona</b>, trợ lý POS phục vụ {html.escape(p['user'])} ạ:"
+            else:
+                header_line = f"🤖 <b>[{proj}] TRỢ LÝ @POS_Lona_bot</b>"
         return {
             "text": "\n".join([
                 header_line,
                 "────────────────",
                 "• <b>Tra số liệu &amp; DB 20 bảng (0 token · &lt;0,3s):</b> Doanh thu, két tiền, đơn hàng/Bàn, món bán chạy/chậm, bếp, nhập kho, QR, khuyến mãi, nhân sự, lịch trực, lương, phiên IP &amp; audit.",
                 "• <b>Giải đáp phần mềm POS:</b> Hướng dẫn 16 phân hệ, máy in 80mm/RawBT/iMin, Single-Session, 10 Hard Invariants.",
-                "• <b>Cách gọi mình:</b> Gọi <code>Lona</code> / <code>Bot</code> / <code>Trợ lý</code>, tag <code>@POS_Lona_bot</code>, Reply tin nhắn của mình hoặc gõ <code>/help</code> (đủ 20 lệnh nhanh).",
+                f"• <b>Cách gọi {self_p}:</b> Gọi <code>Lona</code> / <code>Bot</code> / <code>Trợ lý</code>, tag <code>@POS_Lona_bot</code>, Reply tin nhắn của {self_p} hoặc gõ <code>/help</code> (đủ 20 lệnh nhanh).",
             ]),
             "slots": {"intent": "meta_help"},
         }
@@ -891,6 +903,8 @@ def try_answer_locally(
     cache: EntityCache | None = None,
     telemetry: TelemetryStore | None = None,
     cc_tags: list[str] | None = None,
+    cc_honorific: str = "",
+    persona_key: str = "minh_ban",
 ) -> dict[str, Any] | None:
     """
     Attempt 0-token focused resolution before calling Gemini AI.
@@ -902,7 +916,14 @@ def try_answer_locally(
     cache = cache or EntityCache()
 
     # 1. Meta FAQs, command list & live token/quota status about the bot itself (0 tokens)
-    meta = _resolve_meta_faq(norm_q, cfg=cfg, telemetry=telemetry, cc_tags=cc_tags)
+    meta = _resolve_meta_faq(
+        norm_q,
+        cfg=cfg,
+        telemetry=telemetry,
+        cc_tags=cc_tags,
+        cc_honorific=cc_honorific,
+        persona_key=persona_key,
+    )
     if meta:
         return {**meta, "route": "local"}
 

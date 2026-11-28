@@ -487,7 +487,7 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
         # Blocked injection/off-topic turn MUST NOT consume Gemini and MUST NOT enter ConversationMemory
         captured_histories: list[Any] = []
 
-        def fake_gemini(question, cfg=None, rate_limiter=None, history=None, reply_context=None):
+        def fake_gemini(question, cfg=None, rate_limiter=None, history=None, reply_context=None, persona_key="minh_ban"):
             captured_histories.append(list(history or []))
             if "thơ" in question.lower():
                 return {"text": biz_bot_guardrail.SCOPE_REFUSAL_MSG, "is_refusal": True, "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}}
@@ -1035,7 +1035,9 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
             )
             assert intro_res is not None
             self.assertTrue(intro_res["text"].startswith("@mintuan_2030 → @ThanhLoan0206\n"))
-            self.assertIn("👋 <b>Chào @ThanhLoan0206!</b>", intro_res["text"])
+            self.assertIn("👋 <b>Dạ em chào @ThanhLoan0206!</b>", intro_res["text"])
+            self.assertIn("Em là <b>Lona</b>", intro_res["text"])
+            self.assertIn("Cách gọi em:", intro_res["text"])
             self.assertIn("20 lệnh", intro_res["text"])
 
             # 2. Tag by cue+short name ("Tag chị Loan") in full dispatch flow
@@ -1082,6 +1084,54 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
             ex2, sh2 = mem_dir2.build_alias_maps()
             self.assertEqual(ex2.get("thanh loan"), "@ThanhLoan0206")
             self.assertIn("ngan", sh2)
+
+    def test_dynamic_vietnamese_persona_mirroring(self) -> None:
+        cfg = self._base_cfg()
+        limiter = biz_bot_ai.AiRateLimiter()
+        mem = biz_bot_state.ConversationMemory()
+
+        # 1. Calling Bot "em" / self="anh" / self="chị" / self="sếp" -> mirrors "Dạ em ... anh/chị/sếp ạ", never "Tôi"
+        self.assertEqual(biz_bot_common.detect_addressing_style("Tag Thanh Loan vào và giới thiệu em làm được gì nha Lona."), "em_anhchi")
+        self.assertEqual(biz_bot_common.detect_addressing_style("Lona ơi anh hỏi thời tiết hôm nay"), "em_anh")
+        self.assertEqual(biz_bot_common.detect_addressing_style("Chị hỏi Lona ơi doanh thu hôm nay sao em?"), "em_chi")
+        self.assertEqual(biz_bot_common.detect_addressing_style("Sếp hỏi Lona chút nha"), "em_sep")
+        self.assertEqual(biz_bot_common.detect_addressing_style("Lona ơi giới thiệu bạn làm được gì"), "minh_ban")
+        # Junior staff calling THEMSELVES "em" ("cho em hỏi...") must NOT force Bot="em"
+        self.assertEqual(biz_bot_common.detect_addressing_style("Lona ơi cho em hỏi hôm nay có mấy đơn?"), "minh_ban")
+
+        # 2. Off-topic refusal adapts naturally (zero "Tôi", mirrors "Dạ em ... cho anh" & "Mình ... nhé")
+        ref_anh = bot2_mod.dispatch_message_detailed("Lona ơi anh hỏi thời tiết Hà Nội hôm nay", cfg=cfg, rate_limiter=limiter, memory=mem, chat_id="-1001")
+        assert ref_anh is not None
+        self.assertIn("Dạ em chỉ hỗ trợ", ref_anh["text"])
+        self.assertIn("cho anh", ref_anh["text"])
+        self.assertNotIn("Tôi chỉ hỗ trợ", ref_anh["text"])
+
+        ref_ban = bot2_mod.dispatch_message_detailed("Lona ơi bạn có coding được không?", cfg=cfg, rate_limiter=limiter)
+        assert ref_ban is not None
+        self.assertIn("Mình chỉ hỗ trợ", ref_ban["text"])
+        self.assertNotIn("Tôi chỉ hỗ trợ", ref_ban["text"])
+
+        # 3. ConversationMemory carries honorific persona ("em_chi") into follow-up turn even if turn 2 omits "chị"
+        with mock.patch.object(
+            biz_bot_local,
+            "call_internal_biz",
+            return_value={"summary": {"totalOrders": 10}, "items": [{"productId": 1, "name": "Mì Bò Mỹ", "qty": 5, "revenue": 225000, "sharePercent": 50}]},
+        ):
+            r_chi = bot2_mod.dispatch_message_detailed("Chị hỏi Lona hôm nay món nào bán chạy nhất?", cfg=cfg, rate_limiter=limiter, memory=mem, chat_id="-1002")
+        assert r_chi is not None
+        self.assertEqual(mem.get_slots("-1002").get("persona"), "em_chi")
+
+        reply_to_bot = {"message_id": 99, "from": {"id": 22, "username": "chi_loan"}, "chat": {"id": -1002}, "reply_to_message": {"from": {"id": 8695527449, "username": "POS_Lona_bot"}}}
+        r_fu_chi = bot2_mod.dispatch_message_detailed("Còn thời tiết Hà Nội sao?", cfg=cfg, rate_limiter=limiter, memory=mem, chat_id="-1002", msg=reply_to_bot, bot_id=8695527449)
+        assert r_fu_chi is not None
+        self.assertIn("Dạ em chỉ hỗ trợ", r_fu_chi["text"])
+        self.assertIn("cho chị", r_fu_chi["text"])
+
+        # 4. System instruction injected into Gemini adapts xưng hô dynamically too
+        sys_em = biz_bot_ai._build_system_instruction(persona_key="em_anh")
+        self.assertIn('Tự xưng "em"', sys_em)
+        self.assertIn('"anh"', sys_em)
+        self.assertIn('tuyệt đối KHÔNG xưng "Tôi"', sys_em)
 
 
 if __name__ == "__main__":
