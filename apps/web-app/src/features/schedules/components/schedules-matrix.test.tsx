@@ -1,15 +1,19 @@
 import { defaultUserPermissions } from '@fnb/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import * as excelExport from '@/lib/excel-export';
 import { useAuthStore } from '@/stores/auth.store';
 
 import { ScheduleCellMultiselect } from './schedule-cell-multiselect';
 import { SchedulesMatrixPage } from './schedules-matrix-page';
+import { UnsavedChangesDialog } from '../hooks/use-unsaved-changes-guard';
 
-const { scheduleDataMock } = vi.hoisted(() => ({
+const { scheduleDataMock, bulkSaveMock, copyWeekMock } = vi.hoisted(() => ({
+  bulkSaveMock: vi.fn(),
+  copyWeekMock: vi.fn(),
   scheduleDataMock: {
     current: {
       weekStartDate: '2026-11-16',
@@ -41,8 +45,8 @@ const { scheduleDataMock } = vi.hoisted(() => ({
 
 vi.mock('../api/schedules.api', () => ({
   useScheduleWeekQuery: () => ({ data: scheduleDataMock.current, isLoading: false, isFetching: false, isPlaceholderData: false, isError: false }),
-  useBulkSaveScheduleMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useCopyPreviousWeekMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useBulkSaveScheduleMutation: () => ({ mutateAsync: bulkSaveMock, isPending: false }),
+  useCopyPreviousWeekMutation: () => ({ mutateAsync: copyWeekMock, isPending: false }),
 }));
 
 describe('SchedulesMatrixPage & ScheduleCellMultiselect', () => {
@@ -65,7 +69,7 @@ describe('SchedulesMatrixPage & ScheduleCellMultiselect', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <SchedulesMatrixPage />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -98,11 +102,11 @@ describe('SchedulesMatrixPage & ScheduleCellMultiselect', () => {
     expect(screen.queryByTestId('schedule-option-2')).toBeNull();
   });
 
-  it('prompts confirmation before switching weeks when there are unsaved schedule changes', () => {
+  it('prompts confirmation before switching weeks when there are unsaved schedule changes', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <SchedulesMatrixPage />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -114,5 +118,43 @@ describe('SchedulesMatrixPage & ScheduleCellMultiselect', () => {
     fireEvent.click(screen.getByTestId('next-week-btn'));
 
     expect(screen.getByTestId('unsaved-week-switch-dialog')).toBeInTheDocument();
+
+    // Cancel week switch -> stays on week, then switch again and leave
+    fireEvent.click(screen.getByTestId('unsaved-week-stay-btn'));
+    expect(screen.queryByTestId('unsaved-week-switch-dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('save-schedule-btn'));
+    await waitFor(() => expect(bulkSaveMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId('copy-prev-week-btn'));
+    await waitFor(() => expect(copyWeekMock).toHaveBeenCalledTimes(1));
+
+    const exportSpy = vi.spyOn(excelExport, 'exportToExcel').mockImplementation(() => {});
+    fireEvent.click(screen.getByTestId('export-schedules-excel-btn'));
+    expect(exportSpy).toHaveBeenCalledTimes(1);
+
+    // Dirty again, then confirm discard-leave
+    fireEvent.click(triggers[2]!);
+    fireEvent.click(screen.getByTestId('schedule-option-3'));
+    fireEvent.click(screen.getByTestId('next-week-btn'));
+    fireEvent.click(screen.getByTestId('unsaved-week-leave-btn'));
+    expect(screen.queryByTestId('unsaved-week-switch-dialog')).not.toBeInTheDocument();
+  });
+
+  it('supports UnsavedChangesDialog stay/leave actions and ScheduleCellMultiselect mode switching', () => {
+    const reset = vi.fn();
+    const proceed = vi.fn();
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <UnsavedChangesDialog
+          blocker={{ state: 'blocked', reset, proceed, location: undefined } as never}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('unsaved-changes-dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('unsaved-stay-btn'));
+    expect(reset).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('unsaved-leave-btn'));
+    expect(proceed).toHaveBeenCalledTimes(1);
   });
 });

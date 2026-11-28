@@ -170,4 +170,91 @@ describe('ThermalLanPrintService & PosController LAN ESC/POS (:9100) printing', 
     expect(res.success).toBe(true);
     expect(mockPrintService.sendEscPosPayload).toHaveBeenCalledTimes(1);
   });
+
+  it('blocks ESC p cash drawer kick bytes for settings.view / invoices.reprint users without openCashDrawer/checkout/settings.update', async () => {
+    const mockPrintService = {
+      sendEscPosPayload: vi.fn(async () => ({
+        success: true,
+        host: '192.168.1.200',
+        port: 9100,
+        bytesSent: 7,
+        durationMs: 3,
+      })),
+    } as unknown as ThermalLanPrintService;
+
+    const controller = new PosController(
+      {} as PosService,
+      undefined,
+      undefined,
+      mockPrintService,
+    );
+
+    const escInitOnly = Buffer.from([0x1b, 0x40]).toString('base64');
+    const escCashDrawerKick = Buffer.from([0x1b, 0x40, 0x1b, 0x70, 0x00, 0x32, 0xfa]).toString('base64');
+
+    const settingsViewOnlyUser: AuthPrincipal = {
+      id: 14,
+      employeeId: 14,
+      username: 'settings_viewer',
+      isSuperAdmin: false,
+      permissions: UserPermissionsSchema.parse({
+        settings: { view: true, update: false },
+      }),
+    };
+
+    // Regular ESC/POS receipt print (without ESC p) still works for settings viewer preview
+    await expect(
+      controller.printLanEscPos(
+        { host: '192.168.1.200', port: 9100, payloadBase64: escInitOnly, timeoutMs: 2000 },
+        settingsViewOnlyUser,
+      ),
+    ).resolves.toMatchObject({ success: true });
+
+    // Any payload carrying ESC p (0x1b 0x70) must be blocked with 403
+    await expect(
+      controller.printLanEscPos(
+        { host: '192.168.1.200', port: 9100, payloadBase64: escCashDrawerKick, timeoutMs: 2000 },
+        settingsViewOnlyUser,
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({ code: 'RBAC_PERMISSION_DENIED' }),
+    });
+
+    const invoicesReprintOnlyUser: AuthPrincipal = {
+      id: 15,
+      employeeId: 15,
+      username: 'invoice_clerk',
+      isSuperAdmin: false,
+      permissions: UserPermissionsSchema.parse({
+        invoices: { view: true, reprint: true },
+      }),
+    };
+
+    await expect(
+      controller.printLanEscPos(
+        { host: '192.168.1.200', port: 9100, payloadBase64: escCashDrawerKick, timeoutMs: 2000 },
+        invoicesReprintOnlyUser,
+      ),
+    ).rejects.toThrow(ForbiddenException);
+
+    // Explicitly granting pos.openCashDrawer allows the drawer kick command
+    const drawerAllowedUser: AuthPrincipal = {
+      id: 16,
+      employeeId: 16,
+      username: 'drawer_staff',
+      isSuperAdmin: false,
+      permissions: UserPermissionsSchema.parse({
+        pos: { view: true, openCashDrawer: true },
+      }),
+    };
+
+    await expect(
+      controller.printLanEscPos(
+        { host: '192.168.1.200', port: 9100, payloadBase64: escCashDrawerKick, timeoutMs: 2000 },
+        drawerAllowedUser,
+      ),
+    ).resolves.toMatchObject({ success: true });
+    expect(mockPrintService.sendEscPosPayload).toHaveBeenCalledTimes(2);
+  });
 });

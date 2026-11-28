@@ -2,13 +2,13 @@
 # Hệ thống POS & Quản trị Vận hành Quán Mì Cay (`fnb-spicy-noodle-system`)
 
 > **Tài liệu:** `docs/architecture/04-audit-report.md`  
-> **Phiên bản:** 2.0.0 (Phase 2 Verified Baseline + Post-Implementation System Sync)  
+> **Phiên bản:** 2.1.0 (Phase 2 Verified Baseline + Full QA Comprehensive Audit Sync)  
 > **Vai trò thực hiện:** Principal System Architect & QA Auditor  
-> **Trạng thái:** **PASSED & SYNCED WITH PRODUCTION CODEBASE (Stories 01–21)**  
+> **Trạng thái:** **PASSED & SYNCED WITH PRODUCTION CODEBASE (Stories 01–21 + QA Comprehensive Audit)**  
 > **Ngày kiểm định gốc (Phase 2):** 2026-11-07  
-> **Ngày rà soát đồng bộ toàn hệ thống:** 2026-11-26  
+> **Ngày rà soát đồng bộ toàn hệ thống:** 2026-11-28  
 > **Tài liệu đối chiếu đầu vào:**
-> - Mã nguồn thực tế: `apps/api-server/prisma/schema.prisma` (20 bảng, 17 migrations), `apps/api-server/src/app.module.ts` (15 modules), `packages/shared/src/` (Zod schemas & enums), `apps/web-app/src/router.tsx` (16 features)
+> - Mã nguồn thực tế: `apps/api-server/prisma/schema.prisma` (20 bảng, 20 migrations), `apps/api-server/src/app.module.ts` (15 modules), `packages/shared/src/` (Zod schemas & enums), `apps/web-app/src/router.tsx` (16 features)
 > - Bộ đặc tả BMAD: `docs/bmad/01-PRD-Master.md`, `docs/bmad/02-RBAC-And-MDM-Matrix.md`, `docs/bmad/03-Edge-Cases-And-Invariants.md`
 > - Bộ Stories: `docs/stories/story-01` → `story-21`
 > - Hiến pháp kỹ thuật: `AGENTS.md` và `.agents/rules/00..07-*.md`  
@@ -35,14 +35,14 @@ Tài liệu này lưu giữ đầy đủ kết quả kiểm định chéo (Cross
 
 ### 1.2. Tổng quan Quy mô Hệ thống Thực tế (Post-Implementation Sync — 2026-11-26)
 
-| Thành phần Kiến trúc | Phase 2 Baseline (2026-11-07) | Thực tế Codebase Hiện tại (2026-11-26) |
+| Thành phần Kiến trúc | Phase 2 Baseline (2026-11-07) | Thực tế Codebase Hiện tại (2026-11-28) |
 |:---|:---|:---|
-| **Database Tables (`schema.prisma`)** | 13 bảng cốt lõi | **20 bảng vật lý** (+ `payment_accounts`, `discounts`, `discount_targets`, `audit_logs`, `push_subscriptions`, `pos_drafts`, `takeaway_sequences`) qua **17 Prisma migrations** |
+| **Database Tables (`schema.prisma`)** | 13 bảng cốt lõi | **20 bảng vật lý** (+ `payment_accounts`, `discounts`, `discount_targets`, `audit_logs`, `push_subscriptions`, `pos_drafts`, `takeaway_sequences`) qua **20 Prisma migrations** |
 | **Backend NestJS Modules (`app.module.ts`)** | 7 modules nền tảng | **15 modules** (`Prisma`, `AuditLog`, `Realtime`, `Health`, `Iam`, `Mdm`, `Menu`, `PaymentQr`, `Discounts`, `Pos`, `Inventory`, `Cashflow`, `HrSchedule`, `StoreSettings`, `Dashboard`) |
 | **Frontend Features (`apps/web-app/src/features/`)** | 10 modules (0–9) | **16 features độc lập** (tuân thủ Invariant 1): `dashboard`, `pos-counter` (gồm Desktop `/pos` & Touch Shell `/pos/touch/*`), `qr-order`, `menu`, `discounts`, `invoices`, `inventory`, `cashflow`, `payment-qr`, `employees`, `schedules`, `payroll`, `master-data`, `rbac`, `store-settings`, `profile` |
 | **RBAC Permission Modules (`rbac.schema.ts`)** | 9 nhóm quyền | **14 nhóm quyền chi tiết** (kèm normalizer tương thích ngược legacy keys `mdm:write`, `rbac:manage`) |
 | **MDM Categories (`MdmCategory`)** | 4–5 danh mục | **7 danh mục người dùng** (`POSITION`, `SPECIALTY`, `INGREDIENT`, `UNIT`, `SUPPLIER`, `MENU_CATEGORY`, `KITCHEN_STATION`) + nhóm nội bộ `SYSTEM_CONFIG` |
-| **Realtime WebSocket (`PosSocketGateway`)** | 5 sự kiện cơ bản | **15 sự kiện Socket.io** trên namespace `/pos` + **Web Push VAPID** (`push_subscriptions`) |
+| **Realtime WebSocket (`PosSocketGateway`)** | 5 sự kiện cơ bản | **16 sự kiện Socket.io** trên namespace `/pos` + **Web Push VAPID** (`push_subscriptions`) |
 | **Print & Hardware Channels** | Browser `--kiosk-printing` | **3 chế độ in 80mm** (Browser Kiosk, Android POS USB RawBT `iMin D3-505`, LAN ESC/POS `:9100` `iPOS.vn iTP6`) + **Bung két tiền RJ11** |
 
 ---
@@ -148,5 +148,5 @@ Trong quá trình rà soát toàn bộ mã nguồn so với hồ sơ Phase 2, ph
 
 ---
 
-> **KẾT LUẬN CỦA PRINCIPAL ARCHITECT & QA AUDITOR (2026-11-26):**  
-> Toàn bộ 3 sơ đồ kiến trúc (`01-verified-erd.mmd`, `02-verified-state-machines.mmd`, `03-verified-sequences.mmd`) cùng bộ tài liệu `docs/bmad/` và `docs/HUONG_DAN_SU_DUNG_VA_GIAI_PHAP.md` đã được đối chiếu trực tiếp với mã nguồn sản xuất tại lần rà soát gốc (18 bảng DB, 15 NestJS modules, 16 frontend features, Stories 01–21). POS Draft extension sau rà soát bổ sung `pos_drafts` và `takeaway_sequences`, nâng tổng lên 20 bảng / 17 migrations.
+> **KẾT LUẬN CỦA PRINCIPAL ARCHITECT & QA AUDITOR (2026-11-28):**  
+> Toàn bộ 3 sơ đồ kiến trúc (`01-verified-erd.mmd`, `02-verified-state-machines.mmd`, `03-verified-sequences.mmd`) cùng bộ tài liệu `docs/bmad/` và `docs/HUONG_DAN_SU_DUNG_VA_GIAI_PHAP.md` đã được đối chiếu và nghiệm thu toàn diện trực tiếp trên mã nguồn thực tế (20 bảng DB, 20 SQL migrations, 15 NestJS modules, 16 frontend features, 16 sự kiện Socket.io, Stories 01–21). Xem đầy đủ bằng chứng kiểm thử và các bản vá hồi quy tại `docs/qa/comprehensive-qa-ledger.md` và `docs/qa/comprehensive-qa-report.md`.

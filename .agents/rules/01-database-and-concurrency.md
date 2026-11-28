@@ -5,7 +5,7 @@ description: Prisma database schema, PostgreSQL data types, transactions, SELECT
 
 # 01 — Cơ sở Dữ liệu & Xử lý Đồng thời (Database & Concurrency Rules)
 
-> Áp dụng cho: Mọi Agent thao tác trên Prisma Schema, Migrations, Services và SQL Transactions. Đồng bộ 100% với `apps/api-server/prisma/schema.prisma` (20 bảng, 17 migrations) và `docs/architecture/01-verified-erd.mmd`.
+> Áp dụng cho: Mọi Agent thao tác trên Prisma Schema, Migrations, Services và SQL Transactions. Đồng bộ 100% với `apps/api-server/prisma/schema.prisma` (20 bảng, 20 migrations) và `docs/architecture/01-verified-erd.mmd`.
 
 ---
 
@@ -18,7 +18,7 @@ description: Prisma database schema, PostgreSQL data types, transactions, SELECT
 
 ---
 
-## 2. Schema — 18 Bảng Vật lý Chuẩn (`schema.prisma`)
+## 2. Schema — 20 Bảng Vật lý Chuẩn (`schema.prisma`)
 
 ### 2.1. `master_data`
 | Cột | Kiểu | Ràng buộc |
@@ -71,7 +71,7 @@ description: Prisma database schema, PostgreSQL data types, transactions, SELECT
 - `products`: `id`, `name`, `subtitle` (`VARCHAR(255)`), `category_id` (FK → `master_data` `ON DELETE SET NULL`), `price` (`DECIMAL(12,2)`), `station` (`BEP_NAU | BEP_CHIEN | PHA_CHE | COMBO | BEP_*`), `is_available`, `image_url`, `sort_order`, `created_at`.
 - `combo_items`: composite PK `(parent_product_id, child_product_id)`, `quantity > 0`, CHECK `parent_product_id <> child_product_id`.
 - `modifier_groups`: `id`, `product_id` (`ON DELETE CASCADE`), `name`, `is_required`, `max_select`, `is_auto_select`, `allow_substitution`.
-- `modifiers`: `id`, `group_id` (`ON DELETE CASCADE`), `name`, `extra_price` (`DECIMAL(12,2)`), `is_default_checked`, `is_available`, `default_substitute_name`.
+- `modifiers`: `id`, `group_id` (`ON DELETE CASCADE`), `name`, `extra_price` (`DECIMAL(12,2)`), `is_default_checked`, `is_available`, `default_substitute_name`, `allowed_substitute_names` (`JSONB` nullable: `null` = mọi món anh em hợp lệ, `[]` = cấm đổi).
 
 ### 2.6. `payment_accounts`
 - `id`, `label`, `bank_code`, `account_no`, `account_name`, `priority`, `is_active`, `daily_limit`, `monthly_limit`, `yearly_limit` (`DECIMAL(12,2)` nullable > 0), `created_at`, `updated_at`.
@@ -82,7 +82,7 @@ description: Prisma database schema, PostgreSQL data types, transactions, SELECT
 - `discount_targets`: `id`, `discount_id` (`ON DELETE CASCADE`), `category_id` (FK → `master_data`), `product_id` (FK → `products`), CHECK chỉ 1 trong 2 khác NULL (`chk_discount_target_one`).
 
 ### 2.8. `orders` & `order_items`
-- `orders`: `id`, `order_code` (UNIQUE `HD-YYYYMMDD-NNNN`), `order_type` (`DINE_IN | TAKEAWAY`), `order_source` (`QR_CODE | POS_COUNTER`), `table_id`, `takeaway_number`, `status` (`PENDING | SERVING | PAID | MERGED | VOIDED`), `payment_method` (`CASH | TRANSFER | SPLIT`), `payment_account_id` (FK → `payment_accounts`), `cash_amount`, `transfer_amount`, `subtotal_amount`, `discount_amount`, `discount_id` (FK → `discounts`), `discount_snapshot`, `total_amount`, `merged_into_order_id`, `table_transfer_logs`, `cashier_id`, `note`, `void_reason`, `pending_payment_edit` (`JSONB`), `created_at`, `paid_at`.
+- `orders`: `id`, `order_code` (UNIQUE `HD-YYYYMMDD-NNNN`), `order_type` (`DINE_IN | TAKEAWAY`), `order_source` (`QR_CODE | POS_COUNTER`), `table_id`, `takeaway_number`, `takeaway_label_format` (`NUMBER | LETTER` snapshot), `status` (`PENDING | SERVING | PAID | MERGED | VOIDED`), `payment_method` (`CASH | TRANSFER | SPLIT`), `payment_account_id` (FK → `payment_accounts`), `cash_amount`, `transfer_amount`, `subtotal_amount`, `discount_amount`, `discount_id` (FK → `discounts`), `discount_snapshot`, `total_amount`, `merged_into_order_id`, `table_transfer_logs`, `cashier_id`, `note`, `void_reason`, `pending_payment_edit` (`JSONB`), `created_at`, `paid_at`.
 - `order_items`: `id`, `order_id` (`ON DELETE CASCADE`), `product_id` (`ON DELETE RESTRICT`), `quantity > 0`, `unit_price` (`DECIMAL(12,2)`), `modifiers_snapshot`, `item_note`, `batch_no`, `item_source` (`POS_COUNTER | QR_CODE`), `kitchen_status` (`NEW | PRINTED | CANCELLED`), `is_takeaway` (`BOOLEAN DEFAULT FALSE`), `created_at`.
 
 ### 2.9. `inventory_imports`, `cash_drawer_settlements`, `work_schedules`
@@ -93,6 +93,10 @@ description: Prisma database schema, PostgreSQL data types, transactions, SELECT
 ### 2.10. `audit_logs` & `push_subscriptions`
 - `audit_logs`: `id`, `module` (13 modules), `action`, `actor_id` (nullable), `actor_full_name`, `actor_username`, `summary`, `ip_address`, `device_label`, `metadata`, `created_at`. Indexes: `(module, created_at DESC)`, `(ip_address)`.
 - `push_subscriptions`: `id`, `user_id` (`ON DELETE CASCADE`), `session_id`, `endpoint` (UNIQUE), `p256dh`, `auth`, `user_agent`, `device_label`, `created_at`, `updated_at`, `last_notified_at`. Index: `(user_id, session_id)`.
+
+### 2.11. `pos_drafts` & `takeaway_sequences`
+- `pos_drafts`: `id` (CUID), `order_type` (nullable), `table_id` (`ON DELETE SET NULL`), `items` (`JSONB`), `note`, `revision` (`INT DEFAULT 1`, optimistic concurrency `409`), `created_by`, `updated_by`, `submitted_order_id` (`ON DELETE SET NULL`), `submit_idempotency_key`, `submitted_at`, `created_at`, `updated_at`.
+- `takeaway_sequences`: `business_date` (PK `CHAR(8)` ngày kinh doanh `+07:00`), `last_number` (`INT`), `updated_at`. Atomic increment/reset qua `INSERT ... ON CONFLICT DO UPDATE`.
 
 ---
 

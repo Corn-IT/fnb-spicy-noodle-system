@@ -3,7 +3,7 @@
 %% PROJECT: Hệ thống POS & Quản trị Vận hành Quán Mì Cay (fnb-spicy-noodle-system)
 %% PHASE: Phase 2 Baseline + POS Draft Extension (20 Physical Tables)
 %% AUTHOR: Principal System Architect & QA Auditor
-%% LAST UPDATED: 2026-11-26 (Synced with apps/api-server/prisma/schema.prisma & 17 migrations)
+%% LAST UPDATED: 2026-11-27 (Synced with apps/api-server/prisma/schema.prisma & 20 migrations)
 %% ============================================================================
 %% QUY TẮC BẤT BIẾN ĐÃ KIỂM ĐỊNH TRONG ERD NÀY:
 %% - Hard Invariant 2 (TAKEAWAY vs DINE_IN): orders.table_id NULLABLE cho TAKEAWAY,
@@ -150,6 +150,7 @@ erDiagram
         boolean is_default_checked "NOT NULL DEFAULT FALSE"
         boolean is_available "NOT NULL DEFAULT TRUE (Tam het topping/mon thanh phan)"
         varchar default_substitute_name "NULLABLE (128): Mon thay the mac dinh khi bo tich"
+        jsonb allowed_substitute_names "NULLABLE: Ma tran danh sach mon thay the hop le (null=moi mon khac, []=cam doi)"
     }
 
     PAYMENT_ACCOUNTS {

@@ -2,23 +2,31 @@ import path from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
+const apiProxyConfig = {
+  '/api': {
+    target: 'http://localhost:3000',
+    changeOrigin: true,
+  },
+  '/socket.io': {
+    target: 'http://localhost:3000',
+    ws: true,
+    changeOrigin: true,
+  },
+};
+
 export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
     port: 5173,
     allowedHosts: true,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-      },
-      '/socket.io': {
-        target: 'http://localhost:3000',
-        ws: true,
-        changeOrigin: true,
-      },
-    },
+    proxy: apiProxyConfig,
+  },
+  preview: {
+    host: true,
+    port: 4173,
+    allowedHosts: true,
+    proxy: apiProxyConfig,
   },
   resolve: {
     alias: {
@@ -54,5 +62,30 @@ export default defineConfig({
     setupFiles: ['./src/test-setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['dist/**', 'node_modules/**'],
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'dist/**',
+        'node_modules/**',
+        'src/**/*.test.{ts,tsx}',
+        'src/**/*.spec.{ts,tsx}',
+        'src/**/__tests__/**',
+        'src/test-setup.ts',
+        'src/vitest-zlib-polyfill.cjs',
+        'src/main.tsx',
+        'src/index.ts',
+        'src/vite-env.d.ts',
+        'src/**/index.ts',
+        'src/**/*.css',
+      ],
+      reporter: ['text', 'lcov', 'html'],
+      thresholds: {
+        statements: 80,
+        branches: 72,
+        functions: 75,
+        lines: 81,
+      },
+    },
   },
 });

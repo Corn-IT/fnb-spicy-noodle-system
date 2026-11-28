@@ -5,8 +5,8 @@
 > **Phiên bản:** 2.0.0 (Synced with Production Codebase — Stories 01–21)  
 > **Vai trò thực hiện:** BMAD Business Analyst & System Architect  
 > **Trạng thái:** FINAL & SYNCED  
-> **Ngày phê duyệt gốc:** 2026-11-07 · **Ngày cập nhật đồng bộ:** 2026-11-26  
-> **Nguồn sự thật đối chiếu:** `packages/shared/src/schemas/rbac.schema.ts`, `packages/shared/src/enums/mdm-cashflow.enum.ts`, `apps/api-server/src/common/guards/rbac.guard.ts`, `apps/api-server/prisma/seed-data.ts`, và toàn bộ 15 NestJS Controllers  
+> **Ngày phê duyệt gốc:** 2026-11-07 · **Ngày cập nhật đồng bộ:** 2026-11-28  
+> **Nguồn sự thật đối chiếu:** `packages/shared/src/schemas/rbac.schema.ts`, `packages/shared/src/enums/mdm-cashflow.enum.ts`, `apps/api-server/src/common/guards/rbac.guard.ts`, `apps/api-server/prisma/seed-data.ts`, và toàn bộ NestJS Controllers (`15` modules, `20` bảng Prisma)  
 > **Quy chuẩn tuân thủ:** Hard Invariant 7 (MDM Chuẩn hoá chuỗi) & Hard Invariant 8 (RBAC 401 vs 403)
 
 ---
@@ -152,7 +152,7 @@ Hệ thống áp dụng xác thực JWT kết hợp **Chính sách Một Phiên 
 | | `POST` | `/api/v1/pos/orders/:id/table-action` | `@RequirePermission('pos', 'tableAction')` |
 | | `POST/GET/DELETE` | `/api/v1/pos/orders/:id/checkout`, `/split-checkout`, `/applicable-discounts`, `/discount` | `@RequirePermission('pos', 'checkout')` (+ strict `pos:manualDiscount` nếu giảm tay) |
 | **POS — Push & Print** | `GET/POST/DELETE` | `/api/v1/pos/push/vapid-public-key`, `/subscriptions/status`, `/subscriptions`, `/test` | `@RequirePermission('pos', 'view')` |
-| | `POST` | `/api/v1/pos/print/lan-escpos` | `JwtAuthGuard` + một trong `pos:view`, `invoices:view`, `invoices:reprint`, `settings:view` |
+| | `POST` | `/api/v1/pos/print/lan-escpos` | `JwtAuthGuard` + một trong `pos:view`, `invoices:view`, `invoices:reprint`, `settings:view` (nếu payload chứa byte `ESC p` mở két tiền bắt buộc thêm `pos:openCashDrawer`, `pos:checkout`, hoặc `settings:update`) |
 | **Menu** | `GET` | `/api/v1/menu/products` | `@RequireAnyPermission(menu:view, pos:view)` |
 | | `POST/PUT/DELETE` | `/api/v1/menu/products`, `/products/:id` | `menu:create`, `menu:update`, `menu:delete` |
 | | `POST` | `/api/v1/menu/products/import-excel` | `@RequirePermission('menu', 'import')` |
@@ -216,4 +216,4 @@ Mật khẩu khởi tạo chung cho cả 4 tài khoản seed (khi chạy `npx pr
 
 ---
 
-> **Tài liệu Ma trận Phân quyền & Master Data (v2.0.0) đã được đồng bộ 100% với `rbac.schema.ts`, `RbacGuard`, 15 NestJS Controllers và `seed-data.ts`.**
+> **Tài liệu Ma trận Phân quyền & Master Data (v2.1.0) đã được đồng bộ 100% với `rbac.schema.ts`, `RbacGuard`, 20 NestJS Controllers và `seed-data.ts`.**

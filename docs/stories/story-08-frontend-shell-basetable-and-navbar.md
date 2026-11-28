@@ -78,7 +78,7 @@ export async function executeCleanLogout(queryClient: QueryClient) {
 ## 4. TIÊU CHÍ NGHIỆM THU (ACCEPTANCE CRITERIA)
 
 - [x] **AC-08.1 (Logout Preserves UI Preferences — Invariant 9 & `EC-UI-01`):** Thay đổi theme sang Dark, kéo rộng Sidebar lên `280px`, kéo rộng cột bảng `invoices` lên `220px`, sau đó bấm **Đăng xuất** → `queryClient` cache trống rỗng, token bị xoá, nhưng `localStorage.getItem('fnb-ui-preferences')` vẫn giữ nguyên `theme: 'dark'`, `sidebarWidth: 280`, và `columnWidths`.
-- [x] **AC-08.2 (Command Palette RBAC Filtering — `EC-UI-02`):** Đăng nhập bằng tài khoản `cashier01` (không có quyền `rbac:view` và `employees:view`), nhấn `Ctrl + K` gõ `"Phân quyền"` hoặc `"Nhân viên"` → hoàn toàn không hiển thị các màn hình bị cấm.
+- [x] **AC-08.2 (Command Palette RBAC Filtering — `EC-UI-02`):** Đăng nhập bằng tài khoản `thungan` (`seed-data.ts`, spec ban đầu ghi `cashier01` — không có quyền `rbac:view` và `employees:view`), nhấn `Ctrl + K` gõ `"Phân quyền"` hoặc `"Nhân viên"` → hoàn toàn không hiển thị các màn hình bị cấm.
 - [x] **AC-08.3 (Navbar Right-Corner Order):** Góc phải Navbar hiển thị đúng thứ tự từ trái sang phải: `[Search Ctrl+K]` → `[Theme Toggle]` → `[Avatar + Tên người dùng Dropdown]`.
 - [x] **AC-08.4 (Profile Page Readonly Badges & 1-1 Sync):** Trang Hồ sơ cá nhân hiển thị `Chức vụ` và `Chuyên môn` dạng Badge readonly; sửa Số điện thoại, Địa chỉ, Tài khoản ngân hàng lưu thành công và cập nhật vào bảng `employees`.
 - [x] **AC-08.5 (Feature Isolation Invariant 1):** Kiểm tra toàn bộ imports trong `apps/web-app/src/` tuân thủ `@/features/<feature>` qua barrel `index.ts`, `pnpm -r typecheck` và `pnpm -r test` pass 100%.

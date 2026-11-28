@@ -29,7 +29,7 @@ description: JWT authentication, RBAC roles and permissions, security guards, ra
 | # | Module Key | Quyền chi tiết (`boolean`) |
 |:-:|:---|:---|
 | 1 | `dashboard` | `view`, `viewProfit`, `export` |
-| 2 | `pos` | `view`, `create`, `update`, `delete`, `splitKitchen`, `tableAction`, `checkout`, `qrSecurity` *(strict)*, `manualDiscount` *(strict)*, `openCashDrawer` *(strict)* |
+| 2 | `pos` | `view`, `create`, `update`, `delete`, `deleteDrafts` *(strict)*, `splitKitchen`, `tableAction`, `checkout`, `qrSecurity` *(strict)*, `manualDiscount` *(strict)*, `openCashDrawer` *(strict)* |
 | 3 | `menu` | `view`, `create`, `update`, `delete`, `manageStations`, `manageCategories`, `import`, `export` |
 | 4 | `invoices` | `view`, `reprint`, `update` *(gửi yêu cầu sửa PTTT)*, `approve` *(duyệt/từ chối sửa PTTT)*, `void` *(huỷ đơn PAID, `voidReason >= 10`)*, `export` |
 | 5 | `inventory` | `view`, `create`, `update`, `delete`, `export` |
@@ -49,7 +49,7 @@ description: JWT authentication, RBAC roles and permissions, security guards, ra
   1. `JwtAuthGuard` (Tầng 1): Thiếu token / token hỏng / hết hạn / phiên bị thu hồi → **`401 Unauthorized`** (**NEVER** `403`).
   2. `RbacGuard` (Tầng 2): `user.isSuperAdmin === true` → **ALLOW** (bypass toàn bộ).
   3. Nếu `@SuperAdminOnly()` → **`403 Forbidden`** (`RBAC_SUPER_ADMIN_REQUIRED`).
-  4. Kiểm tra `permissions[module][action] === true` (chỉ fallback sang `pos.create || pos.update` cho 3 sub-action `splitKitchen`, `tableAction`, `checkout` khi key chưa khai báo; `qrSecurity`, `manualDiscount`, `openCashDrawer` kiểm tra **strict**). Thiếu quyền → **`403 Forbidden`** (`RBAC_PERMISSION_DENIED`, **NEVER** `401`).
+  4. Kiểm tra `permissions[module][action] === true` (chỉ fallback sang `pos.create || pos.update` cho 3 sub-action `splitKitchen`, `tableAction`, `checkout` khi key chưa khai báo; `deleteDrafts`, `qrSecurity`, `manualDiscount`, `openCashDrawer` kiểm tra **strict**). Thiếu quyền → **`403 Forbidden`** (`RBAC_PERMISSION_DENIED`, **NEVER** `401`).
 
 ### Mapping Endpoints Chính (xem bảng đầy đủ tại `docs/bmad/02-RBAC-And-MDM-Matrix.md` §5)
 - `GET /api/v1/mdm/lookup` → **`JwtAuthGuard` (`AuthenticatedOnly` — Hard Invariant 8)**, KHÔNG đòi quyền `mdm:*`.

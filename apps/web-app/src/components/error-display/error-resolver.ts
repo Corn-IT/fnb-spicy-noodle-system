@@ -10,7 +10,7 @@ import {
 } from '@fnb/shared';
 import { isRouteErrorResponse } from 'react-router-dom';
 
-import { APP_NAVIGATION_ROUTES } from '@/components/layout/command-palette';
+import { APP_NAVIGATION_ROUTES } from '@/lib/app-navigation';
 import { resolveNavLabel } from '@/hooks/use-store-settings';
 import { ApiClientError } from '@/lib/api-client';
 import { type AuthenticatedUser } from '@/stores/auth.store';

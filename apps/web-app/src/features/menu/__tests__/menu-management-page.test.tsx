@@ -39,6 +39,24 @@ const sampleProducts: Product[] = [
   },
 ];
 
+const updateProductMutateAsync = vi.fn(async (arg: { id: number; body?: Record<string, unknown> }) => ({
+  id: arg.id,
+  ...(arg.body ?? {}),
+}));
+const deleteProductMutateAsync = vi.fn(async (id: number) => ({
+  deleted: true,
+  softDisabled: false,
+  id,
+}));
+
+vi.mock('@/lib/excel-export', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/excel-export')>();
+  return {
+    ...actual,
+    exportToExcel: vi.fn(),
+  };
+});
+
 vi.mock('../api/menu-admin.api', () => ({
   useMenuProductsQuery: () => ({
     data: sampleProducts,
@@ -54,9 +72,14 @@ vi.mock('../api/menu-admin.api', () => ({
       { id: 20, category: 'MENU_CATEGORY', name: 'Trà Trái Cây', normalizedName: 'tra trai cay', isActive: true, metadata: { defaultStation: 'PHA_CHE' } },
     ],
   }),
-  useMenuStationsQuery: () => ({ data: [] }),
-  useUpdateProductMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useDeleteProductMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useMenuStationsQuery: () => ({
+    data: [
+      { id: 1, category: 'KITCHEN_STATION', name: 'Bếp Nấu', normalizedName: 'bep nau', isActive: true, metadata: { code: 'BEP_NAU' } },
+      { id: 2, category: 'KITCHEN_STATION', name: 'Pha Chế', normalizedName: 'pha che', isActive: true, metadata: { code: 'PHA_CHE' } },
+    ],
+  }),
+  useUpdateProductMutation: () => ({ mutateAsync: updateProductMutateAsync, isPending: false }),
+  useDeleteProductMutation: () => ({ mutateAsync: deleteProductMutateAsync, isPending: false }),
   useImportMenuExcelMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCreateProductMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCreateMenuCategoryMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -73,7 +96,7 @@ function renderMenuPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <MenuManagementPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -141,5 +164,60 @@ describe('MenuManagementPage regressions', () => {
 
     expect(screen.getByText('Mì Xúc Xích')).toBeInTheDocument();
     expect(screen.queryByText('Trà Đào Cam Sả')).not.toBeInTheDocument();
+  });
+
+  it('filters by station/category, toggles availability, opens station/category/product dialogs, deletes product, and exports Excel', async () => {
+    updateProductMutateAsync.mockClear();
+    deleteProductMutateAsync.mockClear();
+
+    useAuthStore.setState({
+      accessToken: 'tok',
+      user: {
+        id: 1,
+        employeeId: 1,
+        username: 'admin',
+        fullName: 'Chủ quán',
+        isSuperAdmin: true,
+        permissions: defaultUserPermissions,
+      },
+    });
+
+    renderMenuPage();
+
+    // Filter by station BEP_NAU -> hides Pha chế
+    fireEvent.click(screen.getByTestId('menu-filter-station-BEP_NAU'));
+    expect(screen.getByText('Mì Xúc Xích')).toBeInTheDocument();
+    expect(screen.queryByText('Trà Đào Cam Sả')).not.toBeInTheDocument();
+
+    // Reset ALL, then filter by category 20 -> shows Trà Đào Cam Sả
+    fireEvent.click(screen.getByTestId('menu-filter-station-ALL'));
+    fireEvent.click(screen.getByTestId('menu-filter-category-20'));
+    expect(screen.getByText('Trà Đào Cam Sả')).toBeInTheDocument();
+    expect(screen.queryByText('Mì Xúc Xích')).not.toBeInTheDocument();
+
+    // Reset ALL and toggle product availability
+    fireEvent.click(screen.getByTestId('menu-filter-station-ALL'));
+    const statusButtons = screen.getAllByTitle('Bấm để Ẩn / Hiện món ăn trên POS & QR');
+    await act(async () => {
+      fireEvent.click(statusButtons[0]!);
+    });
+    expect(updateProductMutateAsync).toHaveBeenCalledWith({ id: 1, body: { isAvailable: false } });
+
+    // Open station manager, category manager, create & edit product drawers
+    fireEvent.click(screen.getByTestId('open-station-manager-btn'));
+    fireEvent.click(screen.getByTestId('open-category-manager-btn'));
+    fireEvent.click(screen.getByTestId('create-product-btn'));
+    fireEvent.click(screen.getByTestId('edit-product-btn-1'));
+
+    // Export Excel
+    fireEvent.click(screen.getByTestId('export-menu-excel-btn'));
+
+    // Delete product confirm flow
+    fireEvent.click(screen.getByTestId('delete-product-btn-1'));
+    expect(screen.getByTestId('delete-product-dialog')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('confirm-delete-product-btn'));
+    });
+    expect(deleteProductMutateAsync).toHaveBeenCalledWith(1);
   });
 });

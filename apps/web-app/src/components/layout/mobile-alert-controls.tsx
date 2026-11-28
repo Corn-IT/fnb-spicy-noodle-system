@@ -50,11 +50,11 @@ export function MobileAudioActivationBanner({ compact = false }: { compact?: boo
       role="status"
       data-testid="mobile-audio-unlock-banner"
       className={cn(
-        'pointer-events-none fixed left-1/2 z-[60] flex w-[min(calc(100vw-1rem),64rem)] -translate-x-1/2 flex-wrap items-center justify-between gap-2 rounded-b-lg border border-amber-500/40 bg-amber-500/95 px-3 py-2 text-xs text-amber-950 shadow-lg backdrop-blur-xs dark:bg-amber-950/95 dark:text-amber-100',
-        compact ? 'top-2 py-2.5 text-sm' : 'top-16',
+        'flex w-full shrink-0 flex-wrap items-center justify-between gap-2 border-b border-amber-500/40 bg-amber-500/95 px-3 py-1.5 text-xs text-amber-950 shadow-xs backdrop-blur-xs dark:bg-amber-950/95 dark:text-amber-100',
+        compact && 'py-2 text-sm',
       )}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <Volume2 className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 animate-pulse" />
         <span className="font-semibold leading-snug">
           Loa báo đơn trên thiết bị đang chờ kích hoạt để tránh bị trình duyệt chặn tiếng.
@@ -68,7 +68,7 @@ export function MobileAudioActivationBanner({ compact = false }: { compact?: boo
         onClick={() => {
           void activateAudioNow({ playTestChime: true, storeName: settings.storeName });
         }}
-        className="pointer-events-auto h-8 shrink-0 gap-1.5 bg-amber-600 px-3 text-xs font-bold text-white hover:bg-amber-700"
+        className="h-8 shrink-0 gap-1.5 bg-amber-600 px-3 text-xs font-bold text-white hover:bg-amber-700"
       >
         <Volume2 className="h-3.5 w-3.5" />
         <span>Chạm để bật loa báo đơn</span>

@@ -5,7 +5,7 @@
 > **Phiên bản:** 2.0.0 (Synced with Production Codebase — Stories 01–21)  
 > **Vai trò thực hiện:** BMAD Business Analyst, Principal Architect & QA Specialist  
 > **Trạng thái:** FINAL & SYNCED  
-> **Ngày phê duyệt gốc:** 2026-11-07 · **Ngày cập nhật đồng bộ:** 2026-11-26  
+> **Ngày phê duyệt gốc:** 2026-11-07 · **Ngày cập nhật đồng bộ:** 2026-11-28  
 > **Mục tiêu:** Định hình "Hiến pháp kỹ thuật", loại bỏ 100% mơ hồ nghiệp vụ và rủi ro sập hệ thống trong giờ cao điểm.
 
 ---
@@ -163,8 +163,8 @@ $$\text{cashRetainedInDrawer} = 1.000.000\text{ đ}, \quad \text{cashToHandOver}
 - Backend kiểm tra trong `$transaction` và trả `409 Conflict` (`POS_TABLE_NOT_AVAILABLE`), rollback toàn bộ giao dịch.
 
 #### `EC-POS-03`: Chuyển đổi 2 chiều giữa Đơn Mang về (`TAKEAWAY`) và Đơn Tại bàn (`DINE_IN`)
-- **`MOVE` (Mang về → Bàn trống):** Đổi `order_type = 'DINE_IN'`, gắn `table_id`, `takeaway_number = NULL`, đánh dấu các món hiện có `is_takeaway = TRUE`.
-- **`MERGE` (Mang về → Bàn đang ăn):** Chuyển toàn bộ `order_items` sang đơn đích với `is_takeaway = TRUE`, giữ nguyên `kitchen_status`, đóng đơn nguồn `status = 'MERGED'`.
+- **`MOVE` (Mang về → Bàn trống):** Đổi `order_type = 'DINE_IN'`, gắn `table_id`, `takeaway_number = NULL`, giữ nguyên/reset các món đã mang về thành `is_takeaway = FALSE` (để phiếu bếp/hoá đơn đồng bộ tại bàn).
+- **`MERGE` (Mang về → Bàn đang ăn):** Chuyển toàn bộ `order_items` sang đơn đích với `is_takeaway = FALSE`, giữ nguyên `kitchen_status`, đóng đơn nguồn `status = 'MERGED'`.
 - **`TO_TAKEAWAY` (Tại bàn → Mang về):** Giải phóng bàn nguồn (`AVAILABLE`, `active_order_id = NULL`), đổi `order_type = 'TAKEAWAY'`, cấp `takeaway_number`, reset `is_takeaway = FALSE`.
 - **Cấm `SWAP` với đơn `TAKEAWAY`:** Trả `409 Conflict` (`POS_TAKEAWAY_CANNOT_MERGE`).
 
@@ -188,7 +188,7 @@ $$\text{cashRetainedInDrawer} = 1.000.000\text{ đ}, \quad \text{cashToHandOver}
 ### 3.2. Nhóm Hoá đơn, Giảm giá, Mã QR Thanh toán & Dòng tiền
 
 #### `EC-FIN-01`: Huỷ hoá đơn đã thanh toán (`status = 'PAID'` → `'VOIDED'`)
-- Bắt buộc quyền `invoices:void` và `voidReason` ≥ 10 ký tự; tự động loại trừ khỏi doanh thu Kết ca và hạn mức Mã QR.
+- Bắt buộc quyền `invoices:void` và `voidReason` ≥ 10 ký tự; hoàn trả `used_count` mã giảm giá (khoá `orders -> discounts`), tự động loại trừ khỏi doanh thu Kết ca (kèm gọi `recalculateSettledCashflowsForTimestamp` đồng bộ lại các phiên đã kết ca trước đó qua `syncedSettlementIds`) và hạn mức Mã QR.
 
 #### `EC-FIN-02`: Thanh toán Hỗn hợp (`SPLIT`)
 - Ràng buộc cứng `chk_order_payment_amounts`: `cash_amount > 0`, `transfer_amount > 0`, `cash_amount + transfer_amount = total_amount`. Kết ca chỉ cộng `cash_amount` vào tiền mặt két.

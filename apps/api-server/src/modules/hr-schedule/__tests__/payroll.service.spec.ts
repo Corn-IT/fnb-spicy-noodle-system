@@ -183,4 +183,143 @@ describe('PayrollService', () => {
     expect(res.items.map((item) => item.employeeId)).toEqual([1]);
     expect(res.summary.totalEmployees).toBe(1);
   });
+
+  it('EC-HR-02: retains soft-deleted employees who worked or have period overrides in payroll while excluding unused deleted staff', async () => {
+    const activeEmp = {
+      id: 1,
+      fullName: 'Nguyễn Đang Làm',
+      shortName: 'Đ.Làm',
+      isDeleted: false,
+      position: { name: 'Thu ngân' },
+      specialty: null,
+    };
+    const deletedWorkedEmp = {
+      id: 9,
+      fullName: 'Trần Nghỉ Giữa Tháng',
+      shortName: 'T.Nghỉ',
+      isDeleted: true,
+      position: { name: 'Phục vụ' },
+      specialty: null,
+    };
+
+    const prisma = {
+      employee: {
+        findMany: vi.fn().mockImplementation(async (args?: { where?: { isDeleted?: boolean; id?: { in: number[] } } }) => {
+          if (args?.where?.isDeleted === false) return [activeEmp];
+          if (args?.where?.id?.in) return [deletedWorkedEmp].filter((e) => args.where!.id!.in.includes(e.id));
+          return [activeEmp];
+        }),
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+      workSchedule: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            weekStartDate: new Date('2026-11-02T00:00:00.000Z'),
+            dayOfWeek: 0,
+            timeSlot: 'Part-time',
+            employeeIds: [{ employeeId: 9, mode: 'CUSTOM_HOURS', startTime: '17:00', endTime: '22:00' }], // 5h
+          },
+        ]),
+      },
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          metadata: {
+            defaultBaseSalary: 7000000,
+            standardFullTimeDays: 28,
+            standardHoursPerDay: 12,
+            defaultPartTimeHourlyRate: 30000,
+          },
+        }),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    };
+
+    const service = new PayrollService(prisma as never);
+    const res = await service.getPayrollSummary({ fromDate: '2026-11-01', toDate: '2026-11-30' });
+
+    const deletedRow = res.items.find((r) => r.employeeId === 9);
+    expect(deletedRow).toMatchObject({
+      employeeId: 9,
+      fullName: 'Trần Nghỉ Giữa Tháng',
+      isDeleted: true,
+      shiftType: 'PART_TIME',
+      customHours: 5,
+      totalSalary: 150000,
+    });
+    expect(res.summary.totalEmployees).toBe(2);
+    expect(res.summary.totalSalary).toBe(150000);
+
+    // NotFound & Validation error branches
+    await expect(service.updatePayrollConfig({ defaultBaseSalary: -1 } as never)).rejects.toThrow();
+    await expect(
+      service.updateEmployeePayroll(999, {
+        fromDate: '2026-11-01',
+        toDate: '2026-11-30',
+        shiftType: 'FULL_TIME',
+        useCustomRate: false,
+        bonusOrAdjustment: 0,
+      }),
+    ).rejects.toThrow();
+
+    // Mixed Full-time custom hours, Part-time FULL_SHIFT, legacy numeric ID, out-of-range cell, custom profile & period override
+    const ftEmp = { id: 11, fullName: 'NV Full-time', shortName: 'FT', isDeleted: false, position: { name: 'Bếp' }, specialty: null };
+    const ptEmp = { id: 12, fullName: 'NV Part-time', shortName: 'PT', isDeleted: false, position: { name: 'Phục vụ' }, specialty: null };
+    const richPrisma = {
+      employee: {
+        findMany: vi.fn().mockImplementation(async (args?: { where?: { isDeleted?: boolean } }) =>
+          args?.where?.isDeleted === false ? [ftEmp, ptEmp] : [],
+        ),
+      },
+      workSchedule: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            weekStartDate: new Date('2026-10-26T00:00:00.000Z'), // dayOfWeek 0 = 2026-10-26 (out of Nov range)
+            dayOfWeek: 0,
+            timeSlot: 'Full-time',
+            employeeIds: [11],
+          },
+          {
+            weekStartDate: new Date('2026-11-02T00:00:00.000Z'),
+            dayOfWeek: 0,
+            timeSlot: 'Full-time',
+            employeeIds: [
+              11, // legacy integer
+              { employeeId: 12, mode: 'FULL_SHIFT' }, // part-timer doing full shift
+              { employeeId: 11, mode: 'CUSTOM_HOURS', startTime: '08:00', endTime: '12:00' }, // 4h custom in Full-time slot
+            ],
+          },
+          {
+            weekStartDate: new Date('2026-11-02T00:00:00.000Z'),
+            dayOfWeek: 1,
+            timeSlot: 'Part-time',
+            employeeIds: [
+              { employeeId: 12, mode: 'CUSTOM_HOURS', startTime: '17:00', endTime: '21:30' },
+            ],
+          },
+        ]),
+      },
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([
+          {
+            normalizedName: 'payroll_emp_profile_11',
+            metadata: { shiftType: 'FULL_TIME', useCustomRate: true, customBaseSalary: 8400000, customHourlyRate: null },
+          },
+          {
+            normalizedName: 'payroll_emp_profile_12',
+            metadata: { shiftType: 'PART_TIME', useCustomRate: true, customBaseSalary: null, customHourlyRate: 35000 },
+          },
+          {
+            normalizedName: 'payroll_period_2026-11-01_2026-11-30_emp_11',
+            metadata: { overrideFullShiftDays: 2, overrideCustomHours: 4, bonusOrAdjustment: 100000, note: 'Thưởng bếp' },
+          },
+        ]),
+      },
+    };
+    const richRes = await new PayrollService(richPrisma as never).getPayrollSummary({ fromDate: '2026-11-01', toDate: '2026-11-30' });
+    const row11 = richRes.items.find((i) => i.employeeId === 11);
+    const row12 = richRes.items.find((i) => i.employeeId === 12);
+    expect(row11).toMatchObject({ fullShiftDays: 2, customHours: 4, bonusOrAdjustment: 100000, note: 'Thưởng bếp' });
+    expect(row12).toMatchObject({ shiftType: 'PART_TIME', fullShiftDays: 1, customHours: 4.5 });
+  });
 });

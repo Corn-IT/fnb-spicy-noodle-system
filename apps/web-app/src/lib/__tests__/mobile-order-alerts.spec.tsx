@@ -2,13 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { UserPermissionsSchema } from '@fnb/shared';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   MobileAlertControlButton,
   MobileAudioActivationBanner,
 } from '@/components/layout/mobile-alert-controls';
+import { useMobileOrderAlertLifecycle } from '@/hooks/use-mobile-order-alerts';
 import { apiClient } from '@/lib/api-client';
 import {
   buildSilentKeepAliveWavBytes,
@@ -510,7 +511,11 @@ describe('Mobile 3-Layer Order Alert System', () => {
       );
 
       render(<MobileAudioActivationBanner />);
-      expect(screen.getByTestId('mobile-audio-unlock-banner')).toBeInTheDocument();
+      const banner = screen.getByTestId('mobile-audio-unlock-banner');
+      expect(banner).toBeInTheDocument();
+      // Must stay in flex layout flow (never fixed) so interactive page/touch controls are never occluded
+      expect(banner).not.toHaveClass('fixed');
+      expect(banner).toHaveClass('shrink-0');
       expect(screen.getByText(/nút gạt chuông bên hông iPhone/i)).toBeInTheDocument();
 
       fireEvent.click(screen.getByTestId('mobile-audio-unlock-btn'));
@@ -607,6 +612,31 @@ describe('Mobile 3-Layer Order Alert System', () => {
         expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/push/test', { delaySeconds: 5 });
       });
       expect(screen.getByTestId('mobile-alerts-push-message')).toHaveTextContent(/5 giây/i);
+    });
+
+    it('unlocks lifecycle audio on click/keydown rather than pointerdown/touchend so banner never shifts mid-tap', async () => {
+      stubUserAgent(
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+        5,
+      );
+      const { unmount } = renderHook(() =>
+        useMobileOrderAlertLifecycle({ enabled: true, storeName: 'Mì Cay Test' }),
+      );
+
+      await act(async () => {
+        window.dispatchEvent(new Event('pointerdown'));
+        window.dispatchEvent(new Event('touchend'));
+      });
+      expect(getQrAudioUnlockState()).not.toBe('unlocked');
+
+      await act(async () => {
+        window.dispatchEvent(new Event('click'));
+      });
+      await waitFor(() => {
+        expect(getQrAudioUnlockState()).toBe('unlocked');
+      });
+
+      unmount();
     });
   });
 });

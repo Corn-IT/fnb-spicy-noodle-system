@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 
 import { SystemErrorView } from '@/components/error-display';
-import { type PermissionModuleKey } from '@/components/layout/command-palette';
+import { type PermissionModuleKey } from '@/lib/app-navigation';
 import { useAuthStore } from '@/stores/auth.store';
 
 export interface RbacRouteGuardProps {

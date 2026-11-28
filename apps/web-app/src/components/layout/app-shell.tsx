@@ -4,11 +4,11 @@ import { AlertTriangle, WifiOff } from 'lucide-react';
 import * as React from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
+import { CommandPalette } from '@/components/layout/command-palette';
 import {
   APP_NAVIGATION_ROUTES,
-  CommandPalette,
   getAccessibleRoutes,
-} from '@/components/layout/command-palette';
+} from '@/lib/app-navigation';
 import { MobileAudioActivationBanner } from '@/components/layout/mobile-alert-controls';
 import { MobileSidebarNav, ResizableSidebar, TabletIconRail } from '@/components/layout/resizable-sidebar';
 import { TopNavbar } from '@/components/layout/top-navbar';

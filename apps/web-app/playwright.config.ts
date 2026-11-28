@@ -59,5 +59,10 @@ export default defineConfig({
       testMatch: /.*(display-scale|responsive|account-preferences).*\.spec\.ts/,
       use: { ...devices['Desktop Safari'], viewport: { width: 1180, height: 820 } },
     },
+    {
+      name: 'webkit-desktop',
+      testMatch: /.*(display-scale|responsive|account-preferences).*\.spec\.ts/,
+      use: { ...devices['Desktop Safari'], viewport: { width: 1440, height: 900 } },
+    },
   ],
 });

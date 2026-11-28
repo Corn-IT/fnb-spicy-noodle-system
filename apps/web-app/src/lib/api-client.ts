@@ -154,7 +154,7 @@ export async function refreshAccessToken(): Promise<string | null> {
   return attemptTokenRefresh();
 }
 
-export function getJwtExpirationMs(token: string | null | undefined): number | null {
+function decodeJwtPayload(token: string | null | undefined): Record<string, unknown> | null {
   if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
   if (parts.length !== 3 || !parts[1]) return null;
@@ -165,13 +165,25 @@ export function getJwtExpirationMs(token: string | null | undefined): number | n
       typeof window !== 'undefined' && typeof window.atob === 'function'
         ? window.atob(padded)
         : Buffer.from(padded, 'base64').toString('utf8');
-    const payload = JSON.parse(decoded) as { exp?: unknown };
-    return typeof payload.exp === 'number' && Number.isFinite(payload.exp)
-      ? payload.exp * 1000
-      : null;
+    const payload = JSON.parse(decoded) as unknown;
+    return typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : null;
   } catch {
     return null;
   }
+}
+
+export function getJwtExpirationMs(token: string | null | undefined): number | null {
+  const payload = decodeJwtPayload(token);
+  return typeof payload?.exp === 'number' && Number.isFinite(payload.exp)
+    ? payload.exp * 1000
+    : null;
+}
+
+export function getJwtSessionId(token: string | null | undefined): string | null {
+  const payload = decodeJwtPayload(token);
+  return typeof payload?.sid === 'string' && payload.sid.trim().length > 0
+    ? payload.sid.trim()
+    : null;
 }
 
 export async function bootstrapAuthSession(): Promise<string | null> {

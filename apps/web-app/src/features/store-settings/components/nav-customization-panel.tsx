@@ -7,7 +7,7 @@ import {
   type AppNavigationGroupKey,
   type AppNavigationRoute,
   buildOrderedNavigationSections,
-} from '@/components/layout/command-palette';
+} from '@/lib/app-navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { sortNavRoutes } from '@/hooks/use-store-settings';

@@ -39,6 +39,7 @@ describe('HR and schedule HTTP endpoints', () => {
     createEmployee: vi.fn(async (body: unknown, actor: unknown) => ({ body, actor })),
     updateEmployee: vi.fn(async (id: number, body: unknown) => ({ id, body })),
     softDeleteEmployee: vi.fn(async (id: number) => ({ id, isDeleted: true })),
+    permanentDeleteEmployee: vi.fn(async (id: number) => ({ id, deleted: true })),
     setEmployeeActiveStatus: vi.fn(async (id: number, isActive: boolean) => ({ id, isDeleted: !isActive, isActive })),
     getScheduleWeek: vi.fn(async (weekStartDate: string) => ({ weekStartDate, cells: [], availableEmployees: [] })),
     bulkSaveSchedule: vi.fn(async (body: unknown, userId: number) => ({ body, userId })),
@@ -109,6 +110,7 @@ describe('HR and schedule HTTP endpoints', () => {
       body: JSON.stringify({ phone: '0900000000' }),
     });
     const remove = await fetch(`${baseUrl}/api/v1/employees/12`, { method: 'DELETE', headers });
+    const permRemove = await fetch(`${baseUrl}/api/v1/employees/12/permanent`, { method: 'DELETE', headers });
 
     expect(create.status).toBe(201);
     expect(hrScheduleService.createEmployee).toHaveBeenCalledWith(
@@ -123,6 +125,8 @@ describe('HR and schedule HTTP endpoints', () => {
     );
     expect(remove.status).toBe(200);
     expect(hrScheduleService.softDeleteEmployee).toHaveBeenCalledWith(12, expect.objectContaining({ id: 4 }));
+    expect(permRemove.status).toBe(200);
+    expect(hrScheduleService.permanentDeleteEmployee).toHaveBeenCalledWith(12, expect.objectContaining({ id: 4 }));
   });
 
   it('serves employee activation status updates to permitted managers', async () => {

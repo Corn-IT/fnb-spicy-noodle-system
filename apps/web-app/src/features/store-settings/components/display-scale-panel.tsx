@@ -10,7 +10,7 @@ import {
 } from '@fnb/shared';
 import { Monitor, RotateCcw, Smartphone } from 'lucide-react';
 
-import { APP_NAVIGATION_ROUTE_MAP } from '@/components/layout/command-palette';
+import { APP_NAVIGATION_ROUTE_MAP } from '@/lib/app-navigation';
 import { Button } from '@/components/ui/button';
 import { resolveNavLabel } from '@/hooks/use-store-settings';
 
