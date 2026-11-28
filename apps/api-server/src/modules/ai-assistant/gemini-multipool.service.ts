@@ -33,6 +33,8 @@ export const WEB_GEMINI_POOL: readonly GeminiPoolModelSpec[] = [
 
 const SOFT_RPM_OVERFLOW_THRESHOLD = 11;
 const MAX_TOOL_ROUNDS = 5;
+const DEFAULT_GEMINI_ATTEMPT_TIMEOUT_MS = 12_000;
+const DEFAULT_GEMINI_TOTAL_TIMEOUT_MS = 45_000;
 
 interface ModelCooldown {
   untilMs: number;
@@ -117,6 +119,16 @@ export class GeminiMultiPoolService {
   private getReserveRpd(): number {
     const parsed = Number(process.env.FNB_AI_WEB_RESERVE_RPD ?? '300');
     return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 300;
+  }
+
+  private resolveAttemptTimeoutMs(): number {
+    const parsed = Number(process.env.FNB_GEMINI_ATTEMPT_TIMEOUT_MS ?? DEFAULT_GEMINI_ATTEMPT_TIMEOUT_MS);
+    return Number.isFinite(parsed) && parsed >= 1000 ? Math.trunc(parsed) : DEFAULT_GEMINI_ATTEMPT_TIMEOUT_MS;
+  }
+
+  private resolveTotalTimeoutMs(): number {
+    const parsed = Number(process.env.FNB_GEMINI_TOTAL_TIMEOUT_MS ?? DEFAULT_GEMINI_TOTAL_TIMEOUT_MS);
+    return Number.isFinite(parsed) && parsed >= 2000 ? Math.trunc(parsed) : DEFAULT_GEMINI_TOTAL_TIMEOUT_MS;
   }
 
   private rollDailyBuckets(now: Date): void {
@@ -572,16 +584,29 @@ export class GeminiMultiPoolService {
     const tools = this.buildToolDeclarations(params.principal);
     let totalTokens = 0;
     let modelUsed: string | null = null;
-    const nowMs = now.getTime();
     const userBucketKey = `${todayIso}:${params.principal.id}`;
+    const totalBudgetMs = this.resolveTotalTimeoutMs();
+    const baseAttemptTimeoutMs = this.resolveAttemptTimeoutMs();
+    const deadlineAt = Date.now() + totalBudgetMs;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-      const models = this.selectOrderedModels(nowMs);
+      if (Date.now() >= deadlineAt) {
+        break;
+      }
+      const models = this.selectOrderedModels(Date.now());
       let respJson: Record<string, unknown> | null = null;
       let lastError = 'Không kết nối được Gemini API.';
-      const isFinalSynthesisRound = round === MAX_TOOL_ROUNDS - 1;
+      const remainingRoundMs = deadlineAt - Date.now();
+      const isFinalSynthesisRound = round === MAX_TOOL_ROUNDS - 1 || remainingRoundMs < 15_000;
 
       for (const model of models) {
+        const remainingMs = deadlineAt - Date.now();
+        if (remainingMs < 1500) {
+          lastError = 'Hết thời gian chờ tổng hợp từ Gemini API.';
+          break;
+        }
+        const perCallTimeoutMs = Math.min(baseAttemptTimeoutMs, Math.max(1500, remainingMs - 200));
+
         this.recordRpm(model, Date.now());
         this.poolRequestsToday += 1;
         this.userDailyCounts.set(userBucketKey, (this.userDailyCounts.get(userBucketKey) ?? 0) + 1);
@@ -602,6 +627,7 @@ export class GeminiMultiPoolService {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payloadBody),
+              signal: AbortSignal.timeout(perCallTimeoutMs),
             },
           );
           if (!res.ok) {

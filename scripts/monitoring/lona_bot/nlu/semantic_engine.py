@@ -60,6 +60,19 @@ def extract_order_type_filter(raw_or_norm: str) -> str | None:
     return None
 
 
+def extract_order_status_filter(raw_or_norm: str) -> str | None:
+    norm_text = strip_vi(raw_or_norm)
+    if has_phrase(norm_text, ["chua thanh toan", "chua tra tien", "con no", "chua xong"]):
+        return "UNPAID"
+    if has_phrase(norm_text, ["cho xac nhan", "cho duyet", "don moi gui"]):
+        return "PENDING"
+    if has_phrase(norm_text, ["da thanh toan", "da tra tien"]):
+        return "PAID"
+    if has_phrase(norm_text, ["dang phuc vu"]) and not has_phrase(norm_text, ["ban dang phuc vu", "bao nhieu ban"]):
+        return "SERVING"
+    return None
+
+
 def _detect_entities(raw_lower: str, norm_text: str, spec: dict[str, Any]) -> list[str]:
     found: list[str] = []
     for entity_key, rule in (spec.get("entities") or {}).items():
@@ -124,6 +137,7 @@ def match_semantic_intent(raw_text: str, bot_username: str = "POS_Lona_bot") -> 
     intent_map = {str(d["id"]): d for d in (spec.get("intentDefinitions") or []) if isinstance(d, dict) and d.get("id")}
     top_limit, explicit_limit = extract_limit_with_flag(norm_clean, 5)
     order_type_filter = extract_order_type_filter(norm_clean)
+    order_status_filter = extract_order_status_filter(norm_clean)
 
     base = {
         "clean_text": clean_text,
@@ -136,12 +150,39 @@ def match_semantic_intent(raw_text: str, bot_username: str = "POS_Lona_bot") -> 
         "top_limit": top_limit,
         "explicit_limit": explicit_limit,
         "order_type_filter": order_type_filter,
+        "order_status_filter": order_status_filter,
         "order_code": order_m.group(1).upper() if order_m else None,
         "table_number": int(table_m.group(1)) if table_m else None,
     }
 
-    if has_phrase(norm_clean, spec.get("systemDocCues") or ()) and not has_phrase(
-        norm_clean, ["hom nay", "hom qua", "tuan nay", "thang nay"]
+    has_e = set(entities).__contains__
+    has_m = set(metrics).__contains__
+    is_analytics_override = has_phrase(
+        norm_clean,
+        ["phan tich chi tiet", "phan tich sau", "xu huong", "du bao", "du doan", "nhan dinh", "chien luoc", "de xuat", "goi y cai thien", "tu van giup"],
+    )
+    has_numerical_cue = (
+        has_e("revenue")
+        or has_m("popularity_high")
+        or has_m("popularity_low")
+        or has_m("density_high")
+        or has_m("density_low")
+        or has_phrase(
+            norm_clean,
+            ["hom qua", "tuan nay", "thang nay", "7 ngay", "30 ngay", "bao nhieu don", "co may don", "bao nhieu ban", "co may ban", "bao nhieu tien", "ban duoc", "da ban", "hom nay co may"],
+        )
+    )
+    is_system_why = (
+        has_phrase(norm_clean, ["tai sao", "vi sao"])
+        and has_phrase(
+            norm_clean,
+            ["tam tinh", "chuyen khoan", "ket tien", "mang ve", "tach bep", "combo", "dang xuat", "bi da", "bi vang", "401", "403", "blind mode", "single session"],
+        )
+        and not has_numerical_cue
+    )
+
+    if not is_analytics_override and (
+        (has_phrase(norm_clean, spec.get("systemDocCues") or ()) and not has_numerical_cue) or is_system_why
     ):
         return _build_result("system_docs", "system_kb", base, intent_map, 0.96)
 
@@ -164,8 +205,6 @@ def match_semantic_intent(raw_text: str, bot_username: str = "POS_Lona_bot") -> 
     card = spec.get("cardinality") or {}
     has_superlative = has_phrase(norm_clean, card.get("superlativeCues") or ())
     has_list_cue = has_phrase(norm_clean, card.get("listCues") or ())
-    has_e = set(entities).__contains__
-    has_m = set(metrics).__contains__
 
     if has_phrase(norm_clean, ["so sanh", "so voi", "chenh lech", "tang hay giam", "vs "]) and has_phrase(
         norm_clean, ["hom qua", "tuan truoc", "thang truoc"]
@@ -197,8 +236,58 @@ def match_semantic_intent(raw_text: str, bot_username: str = "POS_Lona_bot") -> 
         if has_e("staff") and (has_m("popularity_high") or has_m("density_high") or has_m("revenue_high") or has_superlative):
             return _build_result("staff_top_orders", "local_semantic", base, intent_map, 0.93)
 
+    if has_phrase(norm_clean, ["ai dang dang nhap", "dang dang nhap", "phien dang nhap", "thiet bi nao dang", "ai dang online", "ip dang nhap"]):
+        return _build_result("active_sessions", "fast_path", base, intent_map, 0.93)
+
+    if has_phrase(norm_clean, ["danh sach nhan vien", "co bao nhieu nhan vien", "co may nhan vien", "tong so nhan vien", "tong nhan su", "nhan su gom", "ai la nhan vien"]):
+        return _build_result("staff_list", "fast_path", base, intent_map, 0.93)
+
     if base["order_code"]:
-        return _build_result("fast_path_overview", "fast_path", base, intent_map, 0.85)
+        return _build_result("order_detail", "local_semantic", base, intent_map, 0.95)
+
+    is_cashflow_kw = has_phrase(norm_clean, ["ket", "ket tien", "chot ca", "ket ca", "dau ca", "kiem ket", "chenh lech ket", "trong ket"])
+    has_qr_order_slice = has_phrase(norm_clean, ["don qr", "don khach quet qr", "khach quet qr", "khach tu dat", "dat qua qr"])
+    is_payment_slice = has_qr_order_slice or (
+        not has_phrase(norm_clean, ["han muc", "tai khoan ngan hang", "tai khoan nhan"])
+        and not has_m("recent_list")
+        and (
+            has_phrase(norm_clean, ["chuyen khoan", "phuong thuc thanh toan", "tien mat hay chuyen khoan", "thu tien mat", "doanh thu tien mat"])
+            or (
+                not is_cashflow_kw
+                and has_phrase(norm_clean, ["tien mat", "thu mat"])
+                and has_phrase(norm_clean, ["doanh thu", "thu", "thanh toan", "bao nhieu", "vs"])
+            )
+        )
+    )
+    if is_payment_slice:
+        return _build_result("payment_breakdown", "local_semantic", base, intent_map, 0.93)
+
+    has_explicit_menu_cue = has_phrase(
+        norm_clean,
+        [
+            "thuc don", "menu", "bang gia", "tam het", "het mon", "tam ngung",
+            "gia bao nhieu", "bao nhieu tien", "gia mon", "con ban khong",
+            "mon dat nhat", "mon re nhat", "bao nhieu mon", "co may mon",
+            "tong so mon", "ban duoc may", "ban duoc bao nhieu phan",
+            "bao nhieu phan", "may phan", "may ly", "may to",
+        ],
+    )
+    has_generic_menu_list = (
+        not has_m("popularity_high")
+        and not has_m("popularity_low")
+        and not has_e("order")
+        and has_phrase(norm_clean, ["danh sach mon", "cac mon an", "nhung mon an", "ban nhung mon gi", "co nhung mon gi", "co mon gi", "co mon nao"])
+    )
+    if (
+        (has_explicit_menu_cue or has_generic_menu_list)
+        and not has_phrase(norm_clean, ["mon do", "mon nay", "don do", "don nay"])
+        and not has_e("order")
+        and not has_e("table")
+        and not has_e("cashflow")
+        and not has_e("payroll")
+        and not has_e("schedule")
+    ):
+        return _build_result("menu_catalog", "local_semantic", base, intent_map, 0.92)
 
     if (
         not has_e("void")
@@ -206,16 +295,24 @@ def match_semantic_intent(raw_text: str, bot_username: str = "POS_Lona_bot") -> 
         and not has_e("revenue")
         and not has_e("profit")
         and not has_e("qr")
-        and (has_e("order") or (order_type_filter is not None and (has_m("recent_list") or has_m("count_query"))))
+        and (
+            has_e("order")
+            or order_status_filter is not None
+            or (order_type_filter is not None and (has_m("recent_list") or has_m("count_query")))
+        )
     ):
         if has_m("revenue_high") and has_superlative:
             return _build_result("order_top_value", "local_semantic", base, intent_map, 0.93)
-        if has_m("recent_list"):
-            return _build_result("recent_orders", "local_semantic", base, intent_map, 0.94)
         if has_m("count_query"):
             return _build_result("order_count", "local_semantic", base, intent_map, 0.94)
+        if (
+            has_m("recent_list")
+            or order_status_filter is not None
+            or has_phrase(norm_clean, ["cac don", "nhung don", "don nao", "liet ke don", "danh sach don", "xem don"])
+        ):
+            return _build_result("recent_orders", "local_semantic", base, intent_map, 0.94)
 
-    if has_e("table") and (has_m("status_active") or has_superlative or base["table_number"] is not None or "ban" in norm_clean):
+    if base["table_number"] is not None or (has_e("table") and (has_m("status_active") or has_superlative or "ban" in norm_clean)):
         return _build_result("table_live_status", "fast_path", base, intent_map, 0.91)
 
     fast_map = (

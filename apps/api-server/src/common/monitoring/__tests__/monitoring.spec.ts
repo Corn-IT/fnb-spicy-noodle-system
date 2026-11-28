@@ -556,4 +556,35 @@ describe('MonitoringModule & TelegramAlertService', () => {
     expect(() => controller.getCashflowPreview(remoteReq)).toThrow(ForbiddenException);
     expect(() => controller.getCashflowSettlements(remoteReq, { page: 1, limit: 10 })).toThrow(ForbiddenException);
   });
+
+  it('never sends Telegram slow-request or 5xx alerts for /api/v1/ai-assistant endpoints', () => {
+    const service = new TelegramAlertService();
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    service.configureForTests({ fetchFn: fetchMock, forceEnabled: true });
+
+    service.recordRequestMetric({
+      method: 'POST',
+      url: '/api/v1/ai-assistant/chat',
+      handler: 'AiAssistantController.chat',
+      durationMs: 42_000,
+      ramDiffMb: 120,
+      cpuDiffMs: 6_000,
+      clientIp: '14.224.144.211',
+    });
+    service.reportServerError({
+      statusCode: 500,
+      method: 'POST',
+      url: '/api/v1/ai-assistant/chat?clientSessionId=pos_1',
+      handler: 'AiAssistantController.chat',
+      errorSummary: 'Gemini upstream timeout',
+      clientIp: '14.224.144.211',
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(service.getMetricsSnapshot()).toMatchObject({
+      windowRequests: 0,
+      windowSlowCount: 0,
+      window5xxCount: 0,
+    });
+  });
 });
