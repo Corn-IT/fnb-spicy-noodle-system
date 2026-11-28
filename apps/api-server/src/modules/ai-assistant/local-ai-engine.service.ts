@@ -11,9 +11,9 @@ import type {
 import {
   TakeawayLabelFormat,
   classifyFastPathCommand,
-  detectSystemDocQuestion,
   formatTakeawayLabel,
   matchSemanticIntent,
+  stripVietnamese,
 } from '@fnb/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { businessDateString, dateAtVietnamMidnight } from '../../common/utils/business-date.util';
@@ -206,9 +206,9 @@ export class LocalAiEngineService {
     if (meta) return { ...meta, period: sem.period, match: sem };
 
     // 2. System Doc KB (available to every logged-in account)
-    if (sem.intentId === 'system_docs' || detectSystemDocQuestion(sem.normText)) {
-      const docs = this.systemKb.searchDocs(sem.cleanText, null, 2);
-      const formatted = docs.map((d) => `📘 ${d.title}\n${d.content}`).join('\n\n');
+    if (sem.intentId === 'system_docs') {
+      const docs = this.systemKb.searchDocs(sem.cleanText, null, 3);
+      const formatted = docs.map((d) => `📘 **${d.title}**\n${d.content}`).join('\n\n');
       return {
         handled: true,
         route: 'system_kb',
@@ -224,7 +224,25 @@ export class LocalAiEngineService {
       return { handled: false, guardBlocked: true, period: sem.period, match: sem };
     }
 
-    // 4. Contextual follow-up shift ("còn hôm qua?") or refinement ("một đơn thôi", "chỉ đơn mang về", "top 3")
+    // 4. Contextual follow-up shift ("còn hôm qua?") or refinement ("một đơn thôi", "đơn đó gồm món gì")
+    if (!sem.matched && !sem.tableNumber && !sem.orderCode && params.slots?.lastOrderCode) {
+      const prevCode = String(params.slots.lastOrderCode);
+      const norm = sem.normText;
+      if (
+        norm.includes('don do') ||
+        norm.includes('don nay') ||
+        norm.includes('don vua roi') ||
+        (!norm.includes('ban ') && (norm.includes('goi mon gi') || norm.includes('goi gi') || norm.includes('chi tiet')))
+      ) {
+        return this.executeSemanticIntent(
+          { ...sem, matched: true, intentId: 'order_detail', orderCode: prevCode },
+          principal,
+          persona,
+          now,
+        );
+      }
+    }
+
     if (!sem.matched && params.slots?.lastIntent && !sem.guardBlocked) {
       const prevIntent = params.slots.lastIntent as SemanticIntentId;
       const prevOrderType =
@@ -527,6 +545,267 @@ export class LocalAiEngineService {
       };
     }
 
+    if (intentId === 'order_detail' && sem.orderCode) {
+      const ord = await this.prisma.order.findFirst({
+        where: { orderCode: sem.orderCode },
+        select: {
+          orderCode: true,
+          orderType: true,
+          takeawayNumber: true,
+          takeawayLabelFormat: true,
+          status: true,
+          paymentMethod: true,
+          subtotalAmount: true,
+          discountAmount: true,
+          totalAmount: true,
+          createdAt: true,
+          table: { select: { name: true } },
+          cashier: { select: { username: true, employee: { select: { shortName: true } } } },
+          discount: { select: { code: true } },
+          items: {
+            where: { kitchenStatus: { not: 'CANCELLED' } },
+            select: { quantity: true, unitPrice: true, product: { select: { name: true } } },
+            take: 20,
+          },
+        },
+      });
+      if (!ord) {
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          period: sem.period,
+          reply: `${g} không tìm thấy hóa đơn mã **${sem.orderCode}** trên hệ thống${e}.`,
+        };
+      }
+      const loc =
+        ord.table?.name ??
+        (ord.takeawayNumber !== null && ord.takeawayNumber !== undefined
+          ? formatTakeawayLabel(
+              ord.takeawayNumber,
+              ord.takeawayLabelFormat === TakeawayLabelFormat.LETTER
+                ? TakeawayLabelFormat.LETTER
+                : TakeawayLabelFormat.NUMBER,
+            )
+          : ord.orderType === 'TAKEAWAY'
+            ? 'Mang về'
+            : 'Tại bàn');
+      const statusViMap: Record<string, string> = {
+        PAID: 'Đã thanh toán',
+        SERVING: 'Đang phục vụ',
+        PENDING: 'Chờ xác nhận',
+        VOIDED: 'Đã hủy',
+      };
+      const stLabel = statusViMap[ord.status ?? ''] ?? (ord.status ?? 'Đã ghi nhận');
+      const itemText = (ord.items ?? [])
+        .map((it) => `${it.quantity}x ${it.product?.name ?? 'Món'}`)
+        .join(', ');
+      const discVal = Number(ord.discountAmount ?? 0);
+      const cashierName = ord.cashier?.employee?.shortName ?? ord.cashier?.username;
+      const pmLabel =
+        ord.paymentMethod === 'CASH'
+          ? 'Tiền mặt'
+          : ord.paymentMethod === 'TRANSFER'
+            ? 'Chuyển khoản'
+            : ord.paymentMethod === 'SPLIT'
+              ? 'Kết hợp'
+              : null;
+      return {
+        handled: true,
+        route: 'local_semantic',
+        intentId,
+        period: sem.period,
+        updatedSlots: { lastIntent: 'order_detail', lastOrderCode: ord.orderCode },
+        reply:
+          `🧾 Chi tiết đơn **${ord.orderCode}** (${loc} · ${stLabel}): **${fmtVnd(ord.totalAmount)}**` +
+          (pmLabel ? ` · ${pmLabel}` : '') +
+          (discVal > 0 ? ` · Giảm ${fmtVnd(discVal)}${ord.discount?.code ? ` (${ord.discount.code})` : ''}` : '') +
+          (cashierName ? ` · TN ${cashierName}` : '') +
+          (itemText ? `\n• Món gồm: ${itemText}` : ''),
+      };
+    }
+
+    if (intentId === 'menu_catalog') {
+      const products = await this.prisma.product.findMany({
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          station: true,
+          isAvailable: true,
+          category: { select: { name: true } },
+        },
+        orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+        take: 300,
+      });
+      if (products.length === 0) {
+        return { handled: true, route: 'local_semantic', intentId, reply: `${g} thực đơn hiện chưa có món nào${e}.` };
+      }
+
+      if (/\b(?:tam het|het mon|tam ngung)\b/.test(sem.normText)) {
+        const paused = products.filter((p) => p.isAvailable === false);
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          updatedSlots: { lastIntent: intentId },
+          reply:
+            paused.length > 0
+              ? `⏸ Hiện có **${paused.length}/${products.length} món** đang tạm hết: ${paused.slice(0, 12).map((p) => p.name).join(', ')}.`
+              : `${g} hiện chưa có món nào tạm hết — cả **${products.length} món** trong thực đơn đều đang mở bán${e}.`,
+        };
+      }
+
+      const paddedQ = ` ${sem.normText} `;
+      const matchedProd = [...products]
+        .map((p) => ({ prod: p, normName: stripVietnamese(p.name) }))
+        .filter((x) => x.normName.length >= 4 && paddedQ.includes(` ${x.normName} `))
+        .sort((a, b) => b.normName.length - a.normName.length)[0]?.prod;
+
+      if (matchedProd) {
+        const availTxt = matchedProd.isAvailable === false ? 'Tạm hết' : 'Đang mở bán';
+        const wantsSales = /\b(?:ban duoc|bao nhieu phan|may phan|may ly|may to|doanh thu)\b/.test(sem.normText);
+        if (wantsSales && (principal.isSuperAdmin || principal.permissions.dashboard.view) && this.dashboardService) {
+          const sales = await this.dashboardService.getDailyItemSales(dashQuery, principal);
+          const stat = sales.items.find((it) => it.productId === matchedProd.id);
+          const soldQty = stat?.qty ?? 0;
+          const soldRev = stat?.revenue ?? 0;
+          return {
+            handled: true,
+            route: 'local_semantic',
+            intentId,
+            period: sem.period,
+            updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
+            reply: `🍜 **${matchedProd.name}** (${periodSpec.label}): đã bán **${soldQty} phần** (${fmtVnd(soldRev)}) · Giá thực đơn ${fmtVnd(matchedProd.price)} · ${availTxt}.`,
+          };
+        }
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          updatedSlots: { lastIntent: intentId },
+          reply:
+            `🍜 **${matchedProd.name}**: giá niêm yết **${fmtVnd(matchedProd.price)}** · ${availTxt}` +
+            (matchedProd.category?.name ? ` · Nhóm ${matchedProd.category.name}` : '') +
+            '.',
+        };
+      }
+
+      if (/\b(?:dat nhat|re nhat)\b/.test(sem.normText)) {
+        const asc = /\bre nhat\b/.test(sem.normText);
+        const sorted = [...products].sort((a, b) =>
+          asc ? Number(a.price) - Number(b.price) : Number(b.price) - Number(a.price),
+        );
+        const top3 = sorted.slice(0, 3).map((p, i) => `${i + 1}. ${p.name} (${fmtVnd(p.price)})`).join(' · ');
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          updatedSlots: { lastIntent: intentId },
+          reply: `${g} món giá ${asc ? 'thấp' : 'cao'} nhất trên thực đơn hiện tại là **${sorted[0]!.name}** (${fmtVnd(sorted[0]!.price)})${e}.\n• Top 3: ${top3}`,
+        };
+      }
+
+      const active = products.filter((p) => p.isAvailable !== false);
+      const pausedCount = products.length - active.length;
+      const prices = products.map((p) => Number(p.price ?? 0)).filter((v) => Number.isFinite(v) && v > 0);
+      const priceSpan =
+        prices.length > 0 ? ` · Giá từ ${fmtVnd(Math.min(...prices))}–${fmtVnd(Math.max(...prices))}` : '';
+      const catNames = [...new Set(products.map((p) => p.category?.name).filter(Boolean))];
+      const sample = active.slice(0, 8).map((p) => `${p.name} (${fmtVnd(p.price)})`).join(', ');
+      return {
+        handled: true,
+        route: 'local_semantic',
+        intentId,
+        updatedSlots: { lastIntent: intentId },
+        reply:
+          `📋 Thực đơn có **${products.length} món** (${active.length} đang bán${pausedCount > 0 ? `, ${pausedCount} tạm hết` : ''}` +
+          (catNames.length > 0 ? ` · ${catNames.length} danh mục` : '') +
+          `)${priceSpan}.` +
+          (sample ? `\n• Một số món: ${sample}${active.length > 8 ? '...' : ''}` : ''),
+      };
+    }
+
+    if (intentId === 'payment_breakdown' && this.dashboardService) {
+      const ov = await this.dashboardService.getOverview(dashQuery, principal, now);
+      const rev = ov.kpis.revenue;
+      const cash = ov.kpis.cashDrawer;
+      const trans = ov.kpis.transfer;
+      const qrCnt = rev?.qrSourceCount ?? 0;
+      const paidCnt = rev?.paidOrderCount ?? 0;
+      const posCnt = Math.max(0, paidCnt - qrCnt);
+      if (/\b(?:don qr|quet qr|khach tu dat|dat qua qr)\b/.test(sem.normText)) {
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          period: sem.period,
+          updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
+          reply: `📱 Kỳ ${periodSpec.label} ghi nhận **${qrCnt} đơn khách quét QR** đã thanh toán (trên tổng **${paidCnt} đơn** · Quầy POS ${posCnt} đơn)${e}.`,
+        };
+      }
+      const transferVal = Number(trans?.totalTransferSales ?? 0);
+      const cashText =
+        cash?.totalCashSales === null || cash?.totalCashSales === undefined
+          ? 'Ẩn (Blind Mode)'
+          : `**${fmtVnd(cash.totalCashSales)}**`;
+      return {
+        handled: true,
+        route: 'local_semantic',
+        intentId,
+        period: sem.period,
+        updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
+        reply: `${g} cơ cấu thanh toán kỳ ${periodSpec.label}: Tiền mặt ${cashText} · Chuyển khoản **${fmtVnd(transferVal)}** · Tổng thực thu **${fmtVnd(rev?.netPaidAmount ?? 0)}** (${paidCnt} đơn)${e}.`,
+      };
+    }
+
+    if (intentId === 'staff_list') {
+      const employeeDelegate = (this.prisma as { employee?: { findMany?: (args: unknown) => Promise<Array<{ fullName: string; shortName: string; position?: { name?: string | null } | null }>> } }).employee;
+      const emps = employeeDelegate?.findMany
+        ? await employeeDelegate.findMany({
+            where: { isDeleted: false },
+            select: { fullName: true, shortName: true, position: { select: { name: true } } },
+            orderBy: { id: 'asc' },
+            take: 50,
+          })
+        : [];
+      if (emps.length === 0) {
+        return { handled: true, route: 'fast_path', intentId, reply: `${g} chưa ghi nhận danh sách nhân sự hoạt động${e}.` };
+      }
+      const list = emps.slice(0, 15).map((em) => `${em.shortName || em.fullName}${em.position?.name ? ` (${em.position.name})` : ''}`).join(', ');
+      return {
+        handled: true,
+        route: 'fast_path',
+        intentId,
+        updatedSlots: { lastIntent: intentId },
+        reply: `👥 Quán hiện có **${emps.length} nhân sự**: ${list}${emps.length > 15 ? '...' : ''}.`,
+      };
+    }
+
+    if (intentId === 'active_sessions') {
+      const userDelegate = (this.prisma as { user?: { findMany?: (args: unknown) => Promise<Array<{ username: string; activeSessionIp?: string | null; activeSessionDevice?: string | null; employee?: { shortName?: string | null } | null }>> } }).user;
+      const sessions = userDelegate?.findMany
+        ? await userDelegate.findMany({
+            where: { isActive: true, activeSessionId: { not: null } },
+            select: { username: true, activeSessionIp: true, activeSessionDevice: true, employee: { select: { shortName: true } } },
+            take: 30,
+          })
+        : [];
+      if (sessions.length === 0) {
+        return { handled: true, route: 'fast_path', intentId, reply: `${g} hiện không ghi nhận phiên POS nào đang giữ khóa hoạt động${e}.` };
+      }
+      const lines = sessions.map(
+        (u) => `• ${u.employee?.shortName ?? u.username} (${u.username}): ${u.activeSessionDevice ?? 'Thiết bị POS'} · IP ${u.activeSessionIp ?? '—'}`,
+      );
+      return {
+        handled: true,
+        route: 'fast_path',
+        intentId,
+        updatedSlots: { lastIntent: intentId },
+        reply: `🔐 Đang có **${sessions.length} phiên POS** hoạt động:\n${lines.join('\n')}`,
+      };
+    }
+
     if (intentId === 'order_count') {
       const rows = await this.prisma.order.findMany({
         where: {
@@ -541,6 +820,30 @@ export class LocalAiEngineService {
       const servingCount = activeRows.filter((r) => r.status === 'SERVING').length;
       const pendingCount = activeRows.filter((r) => r.status === 'PENDING').length;
       const voidCount = rows.length - activeRows.length;
+      if (sem.orderStatusFilter) {
+        const matchingStatus = activeRows.filter((r) => {
+          const st = r.status ?? 'PAID';
+          if (sem.orderStatusFilter === 'UNPAID') return st === 'PENDING' || st === 'SERVING';
+          return st === sem.orderStatusFilter;
+        });
+        const statusText =
+          sem.orderStatusFilter === 'UNPAID'
+            ? 'chưa thanh toán'
+            : sem.orderStatusFilter === 'PENDING'
+              ? 'chờ xác nhận'
+              : sem.orderStatusFilter === 'SERVING'
+                ? 'đang phục vụ'
+                : 'đã thanh toán';
+        const stSum = matchingStatus.reduce((acc, r) => acc + Number(r.totalAmount ?? 0), 0);
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          period: sem.period,
+          updatedSlots: { lastIntent: intentId, lastPeriod: sem.period, lastOrderType: sem.orderTypeFilter ?? '' },
+          reply: `${g} kỳ ${periodSpec.label} có **${matchingStatus.length} đơn ${statusText}** (tổng ${fmtVnd(stSum)})${e}.`,
+        };
+      }
       const totalVal = activeRows.reduce((acc, r) => acc + Number(r.totalAmount ?? 0), 0);
       const typeLabel =
         sem.orderTypeFilter === 'TAKEAWAY'
@@ -575,9 +878,15 @@ export class LocalAiEngineService {
 
     if (intentId === 'recent_orders') {
       const limit = sem.explicitLimit ? Math.min(20, Math.max(1, sem.topLimit)) : 5;
+      const statusClause =
+        sem.orderStatusFilter === 'UNPAID'
+          ? { status: { in: ['PENDING', 'SERVING'] } }
+          : sem.orderStatusFilter
+            ? { status: sem.orderStatusFilter }
+            : { status: { not: 'VOIDED' } };
       const rows = await this.prisma.order.findMany({
         where: {
-          status: { not: 'VOIDED' },
+          ...statusClause,
           ...(sem.orderTypeFilter ? { orderType: sem.orderTypeFilter } : {}),
           ...(sem.explicitPeriod ? { createdAt: { gte: startUtc, lt: endUtc } } : {}),
         },
@@ -687,18 +996,48 @@ export class LocalAiEngineService {
       const grid = await this.posService?.getTableGrid();
       const tables = grid?.tables ?? [];
       const busy = tables.filter((t) => t.status !== 'AVAILABLE');
+      const availableTables = tables.filter((t) => t.status === 'AVAILABLE');
       if (sem.tableNumber !== null) {
-        const found = tables.find((t) => t.name.includes(String(sem.tableNumber)));
+        const paddedNo = String(sem.tableNumber).padStart(2, '0');
+        const found =
+          tables.find((t) => new RegExp(`(?:^|\\D)0*${sem.tableNumber}(?:\\D|$)`).test(t.name)) ??
+          tables.find((t) => t.name.includes(paddedNo) || t.name.includes(String(sem.tableNumber)));
         if (!found) {
           return { handled: true, route: 'fast_path', intentId, reply: `${g} không tìm thấy Bàn ${sem.tableNumber} trong sơ đồ bàn${e}.` };
+        }
+        let orderedItemsText = '';
+        const activeOrderId = (found.activeOrder as { id?: number } | null | undefined)?.id;
+        if (typeof activeOrderId === 'number') {
+          const ordItems = await this.prisma.orderItem.findMany({
+            where: { orderId: activeOrderId, kitchenStatus: { not: 'CANCELLED' } },
+            select: { quantity: true, product: { select: { name: true } } },
+            take: 15,
+          });
+          if (ordItems.length > 0) {
+            orderedItemsText = `\n• Món đang gọi: ${ordItems.map((it) => `${it.quantity}x ${it.product?.name ?? 'Món'}`).join(', ')}`;
+          }
         }
         return {
           handled: true,
           route: 'fast_path',
           intentId,
+          updatedSlots: { lastIntent: intentId, lastOrderCode: found.activeOrder?.orderCode ?? '' },
           reply: found.activeOrder
-            ? `🪑 **${found.name}** (${found.status}): đơn ${found.activeOrder.orderCode} · tạm tính ${fmtVnd(found.activeOrder.totalAmount)}.`
+            ? `🪑 **${found.name}** (${found.status}): đơn **${found.activeOrder.orderCode}** · tạm tính **${fmtVnd(found.activeOrder.totalAmount)}**.${orderedItemsText}`
             : `✅ **${found.name}** hiện đang TRỐNG.`,
+        };
+      }
+      if (/\b(?:ban trong|con trong|con ban nao|ban nao trong)\b/.test(sem.normText)) {
+        const emptyList = availableTables.slice(0, 12).map((t) => t.name).join(', ');
+        return {
+          handled: true,
+          route: 'fast_path',
+          intentId,
+          updatedSlots: { lastIntent: intentId },
+          reply:
+            availableTables.length > 0
+              ? `✅ Hiện còn **${availableTables.length}/${tables.length} bàn TRỐNG**: ${emptyList}${availableTables.length > 12 ? '...' : ''}.`
+              : `${g} hiện toàn bộ **${tables.length} bàn** đều đang có khách${e}.`,
         };
       }
       const busyList = busy.slice(0, 6).map((t) => `${t.name} (${fmtVnd(t.activeOrder?.totalAmount ?? 0)})`).join(', ');
@@ -708,10 +1047,10 @@ export class LocalAiEngineService {
         intentId,
         updatedSlots: { lastIntent: intentId },
         reply:
-          `${g} hiện đang có **${busy.length}/${tables.length} bàn** có khách` +
+          `${g} hiện đang có **${busy.length}/${tables.length} bàn** có khách (${availableTables.length} bàn trống)` +
           (grid?.takeaways.length ? ` và **${grid.takeaways.length} đơn mang về** đang mở` : '') +
           `${e}.` +
-          (busyList ? `\n• Chi tiết: ${busyList}` : ''),
+          (busyList ? `\n• Đang phục vụ: ${busyList}` : ''),
       };
     }
 

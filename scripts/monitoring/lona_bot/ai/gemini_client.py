@@ -6,6 +6,7 @@ import datetime as dt
 import html
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,27 +41,32 @@ from .pool_manager import (
 from .prompt_builder import TOOL_DECLARATIONS, _build_system_instruction, execute_ai_tool
 
 MAX_AI_PER_MINUTE = 28
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 5
+TOTAL_GEMINI_DEADLINE_SEC = 48.0
 
 
 def _call_gemini(
     contents: list[dict[str, Any]],
     system_instruction: str,
     cfg: dict[str, str],
+    disable_tools: bool = False,
+    timeout_sec: float = 20.0,
 ) -> dict[str, Any]:
     api_key = cfg.get("gemini_api_key", "").strip()
     if not api_key:
         raise GeminiApiError(0, "Chưa cấu hình FNB_GEMINI_API_KEY")
 
-    payload = json.dumps({
+    req_body: dict[str, Any] = {
         "systemInstruction": {"parts": [{"text": system_instruction}]},
         "contents": contents,
-        "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
         "generationConfig": {
             "temperature": 0.1,
             "maxOutputTokens": 1200,
         },
-    }).encode("utf-8")
+    }
+    if not disable_tools and TOOL_DECLARATIONS:
+        req_body["tools"] = [{"functionDeclarations": TOOL_DECLARATIONS}]
+    payload = json.dumps(req_body).encode("utf-8")
 
     models_to_try = _select_ordered_models(cfg)
 
@@ -75,7 +81,7 @@ def _call_gemini(
         )
         _record_model_rpm(model)
         try:
-            with urllib.request.urlopen(req, timeout=18) as resp:
+            with urllib.request.urlopen(req, timeout=max(3.0, float(timeout_sec))) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 data["_model_used"] = model
                 return data
@@ -195,9 +201,18 @@ def answer_with_gemini_detailed(
     model_requests: dict[str, int] = {}
     model_tokens: dict[str, int] = {}
     model_used = cfg.get("gemini_model", "gemini-3.5-flash-lite")
+    deadline_ts = time.monotonic() + TOTAL_GEMINI_DEADLINE_SEC
 
-    for _ in range(MAX_TOOL_ROUNDS):
-        resp = _call_gemini(contents, sys_inst, cfg)
+    for round_idx in range(MAX_TOOL_ROUNDS):
+        remaining_sec = deadline_ts - time.monotonic()
+        if remaining_sec < 2.0:
+            break
+        is_final_round = (round_idx == MAX_TOOL_ROUNDS - 1) or (remaining_sec < 15.0)
+        resp = (
+            _call_gemini(contents, sys_inst, cfg, disable_tools=True, timeout_sec=min(20.0, remaining_sec))
+            if is_final_round
+            else _call_gemini(contents, sys_inst, cfg)
+        )
         api_requests += 1
         round_model = str(resp.get("_model_used") or model_used)
         model_used = round_model

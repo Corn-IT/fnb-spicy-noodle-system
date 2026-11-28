@@ -26,6 +26,7 @@ export interface SemanticMatchResult {
   readonly topLimit: number;
   readonly explicitLimit: boolean;
   readonly orderTypeFilter: 'TAKEAWAY' | 'DINE_IN' | null;
+  readonly orderStatusFilter?: 'PAID' | 'SERVING' | 'PENDING' | 'UNPAID' | null;
   readonly orderCode: string | null;
   readonly tableNumber: number | null;
   readonly persona: AiPersonaProfile;
@@ -235,6 +236,26 @@ export function extractOrderTypeFilter(inputText: string): 'TAKEAWAY' | 'DINE_IN
   return null;
 }
 
+/** Extracts explicit order lifecycle status filter when caller asks about unpaid/pending/serving/paid orders. */
+export function extractOrderStatusFilter(
+  inputText: string,
+): 'PAID' | 'SERVING' | 'PENDING' | 'UNPAID' | null {
+  const normText = stripVietnamese(inputText);
+  if (hasPhrase(normText, ['chua thanh toan', 'chua tra tien', 'con no', 'chua xong'])) {
+    return 'UNPAID';
+  }
+  if (hasPhrase(normText, ['cho xac nhan', 'cho duyet', 'don moi gui'])) {
+    return 'PENDING';
+  }
+  if (hasPhrase(normText, ['da thanh toan', 'da tra tien'])) {
+    return 'PAID';
+  }
+  if (hasPhrase(normText, ['dang phuc vu']) && !hasPhrase(normText, ['ban dang phuc vu', 'bao nhieu ban'])) {
+    return 'SERVING';
+  }
+  return null;
+}
+
 /** Extracts explicit table number (`bàn 05`, `bàn số 12`) when asked directly. */
 export function extractTableNumber(inputText: string): number | null {
   const normText = stripVietnamese(inputText);
@@ -244,9 +265,9 @@ export function extractTableNumber(inputText: string): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-/** Extracts explicit order code (`ORD-...` / `#ORD-...`). */
+/** Extracts explicit order code (`HD-...` or `ORD-...`). */
 export function extractOrderCode(rawText: string): string | null {
-  const match = rawText.match(/\b(ORD-[A-Za-z0-9-]+)\b/i);
+  const match = rawText.match(/\b((?:HD|ORD)-[A-Za-z0-9-]+)\b/i);
   return match ? match[1]!.toUpperCase() : null;
 }
 
@@ -344,6 +365,7 @@ function buildMatchResult(
     topLimit: number;
     explicitLimit: boolean;
     orderTypeFilter: 'TAKEAWAY' | 'DINE_IN' | null;
+    orderStatusFilter?: 'PAID' | 'SERVING' | 'PENDING' | 'UNPAID' | null;
     orderCode: string | null;
     tableNumber: number | null;
     persona: AiPersonaProfile;
@@ -371,6 +393,7 @@ function buildMatchResult(
     topLimit: ctx.topLimit,
     explicitLimit: ctx.explicitLimit,
     orderTypeFilter: ctx.orderTypeFilter,
+    orderStatusFilter: ctx.orderStatusFilter ?? null,
     orderCode: ctx.orderCode,
     tableNumber: ctx.tableNumber,
     persona: ctx.persona,
@@ -395,6 +418,7 @@ export function matchSemanticIntent(
   const metrics = detectMetrics(normClean);
   const { topLimit, explicitLimit } = extractLimitWithFlag(normClean, 5);
   const orderTypeFilter = extractOrderTypeFilter(normClean);
+  const orderStatusFilter = extractOrderStatusFilter(normClean);
   const orderCode = extractOrderCode(cleanText);
   const tableNumber = extractTableNumber(normClean);
 
@@ -409,13 +433,68 @@ export function matchSemanticIntent(
     topLimit,
     explicitLimit,
     orderTypeFilter,
+    orderStatusFilter,
     orderCode,
     tableNumber,
     persona,
   };
 
-  // 0. System / Manual Q&A takes priority over data metrics unless numerical breakdown requested
-  if (detectSystemDocQuestion(normClean) && !hasPhrase(normClean, ['hom nay', 'hom qua', 'tuan nay', 'thang nay'])) {
+  // 0. System / Manual Q&A takes priority over negativeGuards & data metrics unless pure analytics requested
+  const isAnalyticsOverride = hasPhrase(normClean, [
+    'phan tich chi tiet',
+    'phan tich sau',
+    'xu huong',
+    'du bao',
+    'du doan',
+    'nhan dinh',
+    'chien luoc',
+    'de xuat',
+    'goi y cai thien',
+    'tu van giup',
+  ]);
+  const hasEntity = (e: SemanticEntityKey): boolean => entities.includes(e);
+  const hasMetric = (m: SemanticMetricKey): boolean => metrics.includes(m);
+  const hasNumericalAnalyticsCue =
+    hasEntity('revenue') ||
+    hasMetric('popularity_high') ||
+    hasMetric('popularity_low') ||
+    hasMetric('density_high') ||
+    hasMetric('density_low') ||
+    hasPhrase(normClean, [
+      'hom qua',
+      'tuan nay',
+      'thang nay',
+      '7 ngay',
+      '30 ngay',
+      'bao nhieu don',
+      'co may don',
+      'bao nhieu ban',
+      'co may ban',
+      'bao nhieu tien',
+      'ban duoc',
+      'da ban',
+      'hom nay co may',
+    ]);
+  const isSystemRuleWhyQuestion =
+    hasPhrase(normClean, ['tai sao', 'vi sao']) &&
+    hasPhrase(normClean, [
+      'tam tinh',
+      'chuyen khoan',
+      'ket tien',
+      'mang ve',
+      'tach bep',
+      'combo',
+      'dang xuat',
+      'bi da',
+      'bi vang',
+      '401',
+      '403',
+      'blind mode',
+      'single session',
+    ]) &&
+    !hasNumericalAnalyticsCue;
+
+  if (!isAnalyticsOverride && ((detectSystemDocQuestion(normClean) && !hasNumericalAnalyticsCue) || isSystemRuleWhyQuestion)) {
     return buildMatchResult('system_docs', 'system_kb', { ...baseCtx, confidence: 0.96 });
   }
 
@@ -440,6 +519,7 @@ export function matchSemanticIntent(
         topLimit,
         explicitLimit,
         orderTypeFilter,
+        orderStatusFilter,
         orderCode,
         tableNumber,
         persona,
@@ -450,8 +530,6 @@ export function matchSemanticIntent(
 
   const hasSuperlative = hasPhrase(normClean, SEMANTIC_INTENT_SPEC.cardinality.superlativeCues);
   const hasListCue = hasPhrase(normClean, SEMANTIC_INTENT_SPEC.cardinality.listCues);
-  const hasMetric = (m: SemanticMetricKey): boolean => metrics.includes(m);
-  const hasEntity = (e: SemanticEntityKey): boolean => entities.includes(e);
 
   // 2. Period comparison ("hom nay so voi hom qua", "so sanh doanh thu hom nay voi hom qua")
   if (
@@ -520,8 +598,69 @@ export function matchSemanticIntent(
     }
   }
 
+  if (hasPhrase(normClean, ['ai dang dang nhap', 'dang dang nhap', 'phien dang nhap', 'thiet bi nao dang', 'ai dang online', 'ip dang nhap'])) {
+    return buildMatchResult('active_sessions', 'fast_path', { ...baseCtx, confidence: 0.93 });
+  }
+
+  if (hasPhrase(normClean, ['danh sach nhan vien', 'co bao nhieu nhan vien', 'co may nhan vien', 'tong so nhan vien', 'tong nhan su', 'nhan su gom', 'ai la nhan vien'])) {
+    return buildMatchResult('staff_list', 'fast_path', { ...baseCtx, confidence: 0.93 });
+  }
+
   if (orderCode) {
-    return buildMatchResult('fast_path_overview', 'fast_path', { ...baseCtx, confidence: 0.85 });
+    return buildMatchResult('order_detail', 'local_semantic', { ...baseCtx, confidence: 0.95 });
+  }
+
+  const isCashflowKeyword = hasPhrase(normClean, ['ket', 'ket tien', 'chot ca', 'ket ca', 'dau ca', 'kiem ket', 'chenh lech ket', 'trong ket']);
+  const hasQrOrderSlice = hasPhrase(normClean, ['don qr', 'don khach quet qr', 'khach quet qr', 'khach tu dat', 'dat qua qr']);
+  const isPaymentSlice =
+    hasQrOrderSlice ||
+    (!hasPhrase(normClean, ['han muc', 'tai khoan ngan hang', 'tai khoan nhan']) &&
+      !hasMetric('recent_list') &&
+      (hasPhrase(normClean, ['chuyen khoan', 'phuong thuc thanh toan', 'tien mat hay chuyen khoan', 'thu tien mat', 'doanh thu tien mat']) ||
+        (!isCashflowKeyword && hasPhrase(normClean, ['tien mat', 'thu mat']) && hasPhrase(normClean, ['doanh thu', 'thu', 'thanh toan', 'bao nhieu', 'vs']))));
+  if (isPaymentSlice) {
+    return buildMatchResult('payment_breakdown', 'local_semantic', { ...baseCtx, confidence: 0.93 });
+  }
+
+  const hasExplicitMenuCue = hasPhrase(normClean, [
+    'thuc don',
+    'menu',
+    'bang gia',
+    'tam het',
+    'het mon',
+    'tam ngung',
+    'gia bao nhieu',
+    'bao nhieu tien',
+    'gia mon',
+    'con ban khong',
+    'mon dat nhat',
+    'mon re nhat',
+    'bao nhieu mon',
+    'co may mon',
+    'tong so mon',
+    'ban duoc may',
+    'ban duoc bao nhieu phan',
+    'bao nhieu phan',
+    'may phan',
+    'may ly',
+    'may to',
+  ]);
+  const hasGenericMenuListCue =
+    !hasMetric('popularity_high') &&
+    !hasMetric('popularity_low') &&
+    !hasEntity('order') &&
+    hasPhrase(normClean, ['danh sach mon', 'cac mon an', 'nhung mon an', 'ban nhung mon gi', 'co nhung mon gi', 'co mon gi', 'co mon nao']);
+
+  if (
+    (hasExplicitMenuCue || hasGenericMenuListCue) &&
+    !hasPhrase(normClean, ['mon do', 'mon nay', 'don do', 'don nay']) &&
+    !hasEntity('order') &&
+    !hasEntity('table') &&
+    !hasEntity('cashflow') &&
+    !hasEntity('payroll') &&
+    !hasEntity('schedule')
+  ) {
+    return buildMatchResult('menu_catalog', 'local_semantic', { ...baseCtx, confidence: 0.92 });
   }
 
   if (
@@ -530,20 +669,29 @@ export function matchSemanticIntent(
     !hasEntity('revenue') &&
     !hasEntity('profit') &&
     !hasEntity('qr') &&
-    (hasEntity('order') || (orderTypeFilter !== null && (hasMetric('recent_list') || hasMetric('count_query'))))
+    (hasEntity('order') ||
+      orderStatusFilter !== null ||
+      (orderTypeFilter !== null && (hasMetric('recent_list') || hasMetric('count_query'))))
   ) {
     if (hasMetric('revenue_high') && hasSuperlative) {
       return buildMatchResult('order_top_value', 'local_semantic', { ...baseCtx, confidence: 0.93 });
     }
-    if (hasMetric('recent_list')) {
-      return buildMatchResult('recent_orders', 'local_semantic', { ...baseCtx, confidence: 0.94 });
-    }
     if (hasMetric('count_query')) {
       return buildMatchResult('order_count', 'local_semantic', { ...baseCtx, confidence: 0.94 });
     }
+    if (
+      hasMetric('recent_list') ||
+      orderStatusFilter !== null ||
+      hasPhrase(normClean, ['cac don', 'nhung don', 'don nao', 'liet ke don', 'danh sach don', 'xem don'])
+    ) {
+      return buildMatchResult('recent_orders', 'local_semantic', { ...baseCtx, confidence: 0.94 });
+    }
   }
 
-  if (hasEntity('table') && (hasMetric('status_active') || hasSuperlative || tableNumber !== null || normClean.includes('ban'))) {
+  if (
+    tableNumber !== null ||
+    (hasEntity('table') && (hasMetric('status_active') || hasSuperlative || normClean.includes('ban')))
+  ) {
     return buildMatchResult('table_live_status', 'fast_path', { ...baseCtx, confidence: 0.91 });
   }
 
@@ -604,6 +752,7 @@ export function matchSemanticIntent(
     topLimit,
     explicitLimit,
     orderTypeFilter,
+    orderStatusFilter,
     orderCode,
     tableNumber,
     persona,
