@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib-telegram.sh"
 
 HOUR_VN="$(vn_hour)"
-# Allow forcing report manually with --force
 if [[ "${1:-}" != "--force" ]]; then
   if (( 10#${HOUR_VN} < 7 || 10#${HOUR_VN} > 23 )); then
     exit 0
@@ -21,7 +20,7 @@ HEALTH_URL="${FNB_HEALTH_URL:-https://${FNB_DOMAIN}/api/v1/health}"
 
 # 1. Measure public HTTPS endpoint health & latency
 health_summary="$(python3 - "${HEALTH_URL}" <<'PY'
-import json, sys, time, urllib.request
+import html, json, sys, time, urllib.request
 t0 = time.monotonic()
 try:
     req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "LonaPOS-HourlyReport/1.0"})
@@ -29,11 +28,13 @@ try:
         ms = int((time.monotonic() - t0) * 1000)
         body = json.loads(r.read().decode("utf-8"))
         if r.status == 200 and body.get("status") == "ok" and body.get("database") == "connected":
-            print(f"🟢 Status: HEALTHY (HTTPS 200 · {ms}ms)")
+            print(f"🟢 Trạng thái: <b>Ổn định</b> (HTTPS 200 · {ms}ms)")
         else:
-            print(f"🟡 Status: DEGRADED (HTTP {r.status} · db={body.get('database')})")
+            db_st = html.escape(str(body.get("database")))
+            print(f"🟡 Trạng thái: <b>Cảnh báo</b> (HTTP {r.status} · DB={db_st})")
 except Exception as err:
-    print(f"🔴 Status: UNREACHABLE ({err})")
+    err_s = html.escape(str(err))
+    print(f"🔴 Trạng thái: <b>Mất kết nối</b> ({err_s})")
 PY
 )"
 
@@ -62,8 +63,8 @@ docker_stats_text="$(docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}
   short="${short%-1}"
   st="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cname}" 2>/dev/null || echo 'unknown')"
   mem_used="${mem%%/*}"
-  echo "• ${short}: ${st} (${mem_used// /})"
-done || echo '• unavailable')"
+  echo "• <code>${short}</code>: ${st} (${mem_used// /})"
+done || echo '• Không lấy được dữ liệu')"
 
 # 4. VPS Memory, Disk & Load
 vps_ram_line="$(free -h | awk '/Mem:/ {printf "%s / %s", $3, $2}')"
@@ -80,25 +81,29 @@ pos_counts="$(docker compose exec -T postgres psql -U postgres -d fnb_pos -Atc "
 " 2>/dev/null || echo '0 0 0')"
 read -r orders_today occupied_tables total_tables <<<"${pos_counts}"
 
-msg="📊 [${FNB_ALERT_PROJECT_NAME}] HOURLY HEALTH REPORT
-────────────────────
-📍 Project: ${FNB_ALERT_PROJECT_NAME} | Env: PRODUCTION
-🌐 Domain: ${FNB_DOMAIN}
-────────────────────
+proj_html="$(escape_tg_html "${FNB_ALERT_PROJECT_NAME}")"
+domain_html="$(escape_tg_html "${FNB_DOMAIN}")"
+
+msg="📊 <b>[${proj_html}] BÁO CÁO HỆ THỐNG (1H)</b>
+────────────────
+<b>1. Tổng quan</b>
 ${health_summary}
-🐳 Containers:
+🌐 Tên miền: <code>${domain_html}</code>
+🕒 Lúc: $(vn_timestamp)
+
+<b>2. Container Docker</b>
 ${docker_stats_text}
-────────────────────
-📦 Process & VPS Status:
-• 🏠 API RSS / V8 Heap: ${api_rss_mb} MB / ${api_heap_mb} MB
-• 💾 VPS RAM: ${vps_ram_line} (${vps_ram_pct})
-• 💽 Disk (/): ${vps_disk_line}
-• 📈 Load Avg (1m/5m): ${load_1m_5m}
-────────────────────
-🧾 Activity (Hôm nay + 1h qua):
-• Đơn hôm nay: ${orders_today} đơn | Bàn đang phục vụ: ${occupied_tables}/${total_tables}
-• 1h qua: ${win_reqs} req | 🐢 Slow: ${win_slow} | 🔥 5xx: ${win_5xx}
-────────────────────
-⏰ At: $(vn_timestamp)"
+
+<b>3. Tài nguyên API &amp; VPS</b>
+• RAM VPS: ${vps_ram_line} (${vps_ram_pct})
+• Ổ đĩa (/): ${vps_disk_line}
+• Load (1m/5m): ${load_1m_5m}
+• API RSS: ${api_rss_mb} MB
+• V8 Heap: ${api_heap_mb} MB
+
+<b>4. Hoạt động quán</b>
+• Đơn hôm nay: <b>${orders_today} đơn</b>
+• Bàn đang có khách: <b>${occupied_tables}/${total_tables} bàn</b>
+• 1h qua: <b>${win_reqs} req</b> · Chậm: <b>${win_slow}</b> · 5xx: <b>${win_5xx}</b>"
 
 send_telegram_message "${msg}"

@@ -30,11 +30,11 @@ try:
         if resp.status == 200 and body.get("status") == "ok" and body.get("database") == "connected":
             print(f"OK {ms}")
             sys.exit(0)
-        print(f"FAIL status={resp.status} db={body.get('database')} ({ms}ms)")
+        print(f"HTTP {resp.status} · DB={body.get('database')} ({ms}ms)")
         sys.exit(1)
 except Exception as err:
     ms = int((time.monotonic() - t0) * 1000)
-    print(f"FAIL {err} ({ms}ms)")
+    print(f"{err} ({ms}ms)")
     sys.exit(1)
 PY
 }
@@ -44,7 +44,6 @@ probe_ok=1
 if probe_out="$(check_health_once)"; then
   probe_ok=0
 else
-  # Retry once after 5s to suppress transient network hiccups
   sleep 5
   if probe_out="$(check_health_once)"; then
     probe_ok=0
@@ -57,6 +56,10 @@ load_1m="$(cut -d ' ' -f1 /proc/loadavg 2>/dev/null || echo '0.00')"
 mem_info="$(free -m | awk '/Mem:/ {printf "%d/%d MiB (%.0f%%)", $3, $2, ($3*100/$2)}')"
 disk_pct="$(df -P / | awk 'NR==2 {gsub("%","",$5); print $5}')"
 
+proj_html="$(escape_tg_html "${FNB_ALERT_PROJECT_NAME}")"
+url_html="$(escape_tg_html "${HEALTH_URL}")"
+probe_html="$(escape_tg_html "${probe_out}")"
+
 if (( probe_ok == 0 )); then
   if [[ "${prev_state}" == "DOWN" ]]; then
     down_since="$(cat "${DOWN_SINCE_FILE}" 2>/dev/null || echo "${now}")"
@@ -65,16 +68,17 @@ if (( probe_ok == 0 )); then
     echo "UP" > "${STATE_FILE}"
     rm -f "${DOWN_SINCE_FILE}" "${LAST_REMIND_FILE}"
 
-    send_telegram_message "🟢 [${FNB_ALERT_PROJECT_NAME}] SERVICE RECOVERED
-────────────────────
-📍 Project: ${FNB_ALERT_PROJECT_NAME} | Env: PRODUCTION
-🌐 Endpoint: ${HEALTH_URL}
-────────────────────
-✅ Status: HEALTHY (${latency_ms}ms)
-⏱️ Downtime: ${downtime_sec} giây
-📦 VPS: RAM ${mem_info} | Disk ${disk_pct}% | Load ${load_1m}
-────────────────────
-⏰ At: $(vn_timestamp)"
+    send_telegram_message "🟢 <b>[${proj_html}] HỆ THỐNG ĐÃ HỒI PHỤC</b>
+────────────────
+<b>1. Trạng thái dịch vụ</b>
+• Kiểm tra: <b>Ổn định</b> (${latency_ms}ms)
+• Thời gian gián đoạn: <b>${downtime_sec} giây</b>
+• Đường dẫn: <code>${url_html}</code>
+
+<b>2. Tài nguyên VPS</b>
+• RAM VPS: ${mem_info}
+• Ổ đĩa (/): ${disk_pct}% | Load: ${load_1m}
+• Lúc: $(vn_timestamp)"
   else
     echo "UP" > "${STATE_FILE}"
   fi
@@ -84,15 +88,16 @@ else
     echo "${now}" > "${DOWN_SINCE_FILE}"
     echo "${now}" > "${LAST_REMIND_FILE}"
 
-    send_telegram_message "🔴 [${FNB_ALERT_PROJECT_NAME}] SERVICE DOWN
-────────────────────
-📍 Project: ${FNB_ALERT_PROJECT_NAME} | Env: PRODUCTION
-🌐 Endpoint: ${HEALTH_URL}
-────────────────────
-🚨 Issue: ${probe_out}
-📦 VPS: RAM ${mem_info} | Disk ${disk_pct}% | Load ${load_1m}
-────────────────────
-⏰ At: $(vn_timestamp)"
+    send_telegram_message "🔴 <b>[${proj_html}] MẤT KẾT NỐI HỆ THỐNG</b>
+────────────────
+<b>1. Chi tiết sự cố</b>
+• Lỗi: <code>${probe_html}</code>
+• Đường dẫn: <code>${url_html}</code>
+
+<b>2. Tài nguyên VPS</b>
+• RAM VPS: ${mem_info}
+• Ổ đĩa (/): ${disk_pct}% | Load: ${load_1m}
+• Lúc: $(vn_timestamp)"
   else
     last_rem="$(cat "${LAST_REMIND_FILE}" 2>/dev/null || echo 0)"
     if (( now - last_rem >= DOWN_REMIND_SEC )); then
@@ -100,39 +105,37 @@ else
       down_min="$(( (now - down_since) / 60 ))"
       echo "${now}" > "${LAST_REMIND_FILE}"
 
-      send_telegram_message "🔴 [${FNB_ALERT_PROJECT_NAME}] STILL DOWN (${down_min} phút)
-────────────────────
-🌐 Endpoint: ${HEALTH_URL}
-🚨 Issue: ${probe_out}
-📦 VPS: RAM ${mem_info} | Disk ${disk_pct}% | Load ${load_1m}
-────────────────────
-⏰ At: $(vn_timestamp)"
+      send_telegram_message "🔴 <b>[${proj_html}] VẪN ĐANG GIÁN ĐOẠN (${down_min} phút)</b>
+────────────────
+<b>1. Chi tiết sự cố</b>
+• Lỗi: <code>${probe_html}</code>
+• Đường dẫn: <code>${url_html}</code>
+
+<b>2. Tài nguyên VPS</b>
+• RAM VPS: ${mem_info}
+• Ổ đĩa (/): ${disk_pct}% | Load: ${load_1m}
+• Lúc: $(vn_timestamp)"
     fi
   fi
 fi
 
-# Resource threshold checks (independent of healthcheck status, 30m cooldown)
 ram_pct="$(free -m | awk '/Mem:/ {printf "%d", ($3*100/$2)}')"
 if (( disk_pct >= DISK_WARN_PCT )); then
   if check_and_update_cooldown "vps_disk_high" 1800; then
-    send_telegram_message "⚠️ [${FNB_ALERT_PROJECT_NAME}] HIGH DISK USAGE
-────────────────────
-📍 Project: ${FNB_ALERT_PROJECT_NAME} | Env: PRODUCTION
-💽 Disk (/): ${disk_pct}% / ngưỡng ${DISK_WARN_PCT}%
-📦 RAM: ${mem_info} | Load: ${load_1m}
-────────────────────
-⏰ At: $(vn_timestamp)"
+    send_telegram_message "⚠️ <b>[${proj_html}] Ổ ĐĨA VPS SẮP ĐẦY</b>
+────────────────
+• Ổ đĩa (/): <b>${disk_pct}%</b> (ngưỡng ${DISK_WARN_PCT}%)
+• RAM VPS: ${mem_info} | Load: ${load_1m}
+• Lúc: $(vn_timestamp)"
   fi
 fi
 
 if (( ram_pct >= RAM_WARN_PCT )); then
   if check_and_update_cooldown "vps_ram_high" 1800; then
-    send_telegram_message "⚠️ [${FNB_ALERT_PROJECT_NAME}] HIGH VPS MEMORY
-────────────────────
-📍 Project: ${FNB_ALERT_PROJECT_NAME} | Env: PRODUCTION
-💾 VPS RAM: ${mem_info} (ngưỡng ${RAM_WARN_PCT}%)
-💽 Disk (/): ${disk_pct}% | Load: ${load_1m}
-────────────────────
-⏰ At: $(vn_timestamp)"
+    send_telegram_message "⚠️ <b>[${proj_html}] RAM VPS ĐANG CAO</b>
+────────────────
+• RAM VPS: <b>${mem_info}</b> (ngưỡng ${RAM_WARN_PCT}%)
+• Ổ đĩa (/): ${disk_pct}% | Load: ${load_1m}
+• Lúc: $(vn_timestamp)"
   fi
 fi
