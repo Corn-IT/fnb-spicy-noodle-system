@@ -168,6 +168,27 @@ export class LocalAiEngineService {
         reply: `${this.greet(persona)} các câu hỏi tra cứu trực diện (món bán chạy/chậm, giờ cao điểm, bàn trống, két tiền, QR, lịch trực, hướng dẫn máy in) đều chạy cục bộ 0 token (~0.1s)${this.end(persona)}.`,
       };
     }
+    const wordCount = normText.split(/\s+/).filter(Boolean).length;
+    if (
+      wordCount <= 6 &&
+      /^(?:chao(?:\s+(?:em|lona|bot|ban|anh|chi|oi))*|hi|hello|halo|alo|lona(?:\s+(?:oi|a|ne))*|cam on(?:\s+(?:em|lona|bot|ban|nhieu|lam|qua|nhe|nha|a))*|ok(?:\s+cam\s+on)?|tuyet|tam biet|bye|thank(?:\s+you)?)(?:\s+(?:em|anh|chi|nha|nhe|a|nhieu))*$/.test(
+        normText,
+      )
+    ) {
+      const isThanks = /cam on|thank|ok|tuyet/.test(normText);
+      const isBye = /tam biet|bye/.test(normText);
+      const reply = isBye
+        ? `${this.greet(persona)} chào ${persona.userCall}, cần tra số liệu hay hỗ trợ POS cứ nhắn ${persona.botSelf} nhé${this.end(persona)}!`
+        : isThanks
+          ? `${this.greet(persona)} không có chi ạ! ${persona.userCall} cần kiểm tra thêm số liệu hay thao tác POS cứ hỏi ${persona.botSelf} nhé${this.end(persona)}.`
+          : `${this.greet(persona)} chào ${persona.userCall}! ${persona.botSelf} là Lona AI — ${persona.userCall} cần tra doanh thu, món bán chạy, bàn, hóa đơn hay hướng dẫn POS ạ?`;
+      return {
+        handled: true,
+        route: 'local_semantic',
+        intentId: null,
+        reply,
+      };
+    }
     return null;
   }
 
@@ -208,15 +229,17 @@ export class LocalAiEngineService {
     // 2. System Doc KB (available to every logged-in account)
     if (sem.intentId === 'system_docs') {
       const docs = this.systemKb.searchDocs(sem.cleanText, null, 3);
-      const formatted = docs.map((d) => `📘 **${d.title}**\n${d.content}`).join('\n\n');
-      return {
-        handled: true,
-        route: 'system_kb',
-        intentId: 'system_docs',
-        period: sem.period,
-        match: sem,
-        reply: `${this.greet(persona)} thông tin từ tài liệu POS Ăn Vặt Tran cho ${persona.userCall}:\n\n${formatted}`,
-      };
+      if (docs.length > 0) {
+        const formatted = docs.map((d) => `📘 **${d.title}**\n${d.content}`).join('\n\n');
+        return {
+          handled: true,
+          route: 'system_kb',
+          intentId: 'system_docs',
+          period: sem.period,
+          match: sem,
+          reply: `${this.greet(persona)} thông tin từ tài liệu POS Ăn Vặt Tran cho ${persona.userCall}:\n\n${formatted}`,
+        };
+      }
     }
 
     // 3. Negative guard (causal / deep analysis) -> defer cleanly to Gemini
@@ -232,7 +255,13 @@ export class LocalAiEngineService {
         norm.includes('don do') ||
         norm.includes('don nay') ||
         norm.includes('don vua roi') ||
-        (!norm.includes('ban ') && (norm.includes('goi mon gi') || norm.includes('goi gi') || norm.includes('chi tiet')))
+        (!norm.includes('ban ') &&
+          (norm.includes('goi mon gi') ||
+            norm.includes('goi gi') ||
+            norm.includes('chi tiet') ||
+            norm.includes('thu ngan') ||
+            norm.includes('thanh toan chua') ||
+            norm.includes('bao nhieu tien')))
       ) {
         return this.executeSemanticIntent(
           { ...sem, matched: true, intentId: 'order_detail', orderCode: prevCode },
@@ -251,8 +280,9 @@ export class LocalAiEngineService {
           : null;
       const prevLimit = Number(params.slots.lastLimit ?? 5) || 5;
       const prevPeriod = (params.slots.lastPeriod as AiPeriodCode | undefined) ?? sem.period;
+      const words = sem.normText.split(/\s+/).filter(Boolean).length;
 
-      if (sem.explicitPeriod && /^(?:con|the|vay)/.test(sem.normText)) {
+      if (sem.explicitPeriod && (/^(?:con|the|vay|xem)/.test(sem.normText) || words <= 5)) {
         const resumed: SemanticMatchResult = {
           ...sem,
           matched: true,
@@ -264,8 +294,7 @@ export class LocalAiEngineService {
         return this.executeSemanticIntent(resumed, principal, persona, now);
       }
 
-      const words = sem.normText.split(/\s+/).filter(Boolean).length;
-      const bareNumMatch = sem.normText.match(/^(?:chi|lay|xem|cho|top)?\s*(?:(\d{1,2})|mot|hai|ba|bon|nam)\s*(?:don|hoa don|mon|cai|ban)?\s*(?:thoi|nhe|nha|nhe|a)?$/);
+      const bareNumMatch = sem.normText.match(/^(?:chi|lay|xem|cho|top)?\s*(?:(\d{1,2})|mot|hai|ba|bon|nam)\s*(?:don(?:\s+mang\s+ve|\s+tai\s+ban)?|hoa don|mon|cai|ban)?\s*(?:thoi|nhe|nha|a)?$/);
       const wordMap: Record<string, number> = { mot: 1, hai: 2, ba: 3, bon: 4, nam: 5 };
       let refinedLimit = sem.topLimit;
       let hasRefinedLimit = sem.explicitLimit;
@@ -706,12 +735,97 @@ export class LocalAiEngineService {
         };
       }
 
+      const catNames = [...new Set(products.map((p) => p.category?.name).filter((n): n is string => Boolean(n)))];
+
+      if (/\b(?:danh muc|nhom mon|loai mon|nhung nhom)\b/.test(sem.normText)) {
+        const byCat = new Map<string, number>();
+        for (const p of products) {
+          const cname = p.category?.name ?? 'Khác';
+          byCat.set(cname, (byCat.get(cname) ?? 0) + 1);
+        }
+        const catLines = [...byCat.entries()].map(([name, cnt]) => `${name} (${cnt} món)`).join(', ');
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          updatedSlots: { lastIntent: intentId },
+          reply: `📂 Thực đơn hiện có **${byCat.size} danh mục** (tổng ${products.length} món): ${catLines}.`,
+        };
+      }
+
+      const MENU_QUERY_FILLERS = new Set([
+        'quan', 'minh', 'co', 'ban', 'khong', 'het', 'roi', 'chua', 'con', 'gia', 'bao',
+        'nhieu', 'phan', 'to', 'ly', 'mon', 'nhung', 'nao', 'may', 'loai', 'them', 'oi',
+        'a', 'em', 'anh', 'chi', 'giup', 'xem', 'tim', 'kiem', 'tra', 'hom', 'nay', 'qua',
+        'tuan', 'thang', 'duoc', 'dang', 'ban_hang', 'tien', 'mat', 'hay', 'la', 'gi',
+      ]);
+      const queryKeywords = sem.normText
+        .split(/\s+/)
+        .filter((t) => t.length >= 2 && !MENU_QUERY_FILLERS.has(t));
+      const searchFrag = queryKeywords.join(' ');
+      if (
+        !matchedProd &&
+        searchFrag.length >= 3 &&
+        !/\b(?:thuc don|menu|bang gia|dat nhat|re nhat|tam het|het mon|tam ngung)\b/.test(sem.normText)
+      ) {
+        const fragMatches = products.filter((p) => {
+          const pn = stripVietnamese(p.name);
+          const cn = stripVietnamese(p.category?.name ?? '');
+          return (
+            pn.includes(searchFrag) ||
+            cn.includes(searchFrag) ||
+            (queryKeywords.length >= 2 && queryKeywords.every((kw) => pn.includes(kw) || cn.includes(kw)))
+          );
+        });
+        if (fragMatches.length > 0) {
+          const wantsSales = /\b(?:ban duoc|bao nhieu phan|may phan|may ly|may to|doanh thu)\b/.test(sem.normText);
+          if (wantsSales && (principal.isSuperAdmin || principal.permissions.dashboard.view) && this.dashboardService) {
+            const sales = await this.dashboardService.getDailyItemSales(dashQuery, principal);
+            const idSet = new Set(fragMatches.map((m) => m.id));
+            const matchingSales = sales.items.filter((it) => idSet.has(it.productId));
+            const totalQty = matchingSales.reduce((acc, it) => acc + it.qty, 0);
+            const totalRev = matchingSales.reduce((acc, it) => acc + it.revenue, 0);
+            const detailList = matchingSales
+              .slice(0, 5)
+              .map((it) => `${it.name}: ${it.qty} phần`)
+              .join(', ');
+            return {
+              handled: true,
+              route: 'local_semantic',
+              intentId,
+              period: sem.period,
+              updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
+              reply:
+                `🍜 Nhóm/món **${searchFrag}** (${periodSpec.label}): đã bán **${totalQty} phần** (${fmtVnd(totalRev)})` +
+                (detailList ? ` (${detailList})` : '') +
+                '.',
+            };
+          }
+          const activeMatches = fragMatches.filter((m) => m.isAvailable !== false);
+          const pausedMatches = fragMatches.filter((m) => m.isAvailable === false);
+          const sampleM = fragMatches
+            .slice(0, 6)
+            .map((m) => `${m.name} (${fmtVnd(m.price)}${m.isAvailable === false ? ' · Tạm hết' : ''})`)
+            .join(', ');
+          const leadM =
+            pausedMatches.length === fragMatches.length
+              ? `⏸ Hiện toàn bộ **${fragMatches.length} món** phù hợp "${searchFrag}" đều đang **Tạm hết**`
+              : `✅ Quán có **${activeMatches.length}/${fragMatches.length} món** "${searchFrag}" đang mở bán`;
+          return {
+            handled: true,
+            route: 'local_semantic',
+            intentId,
+            updatedSlots: { lastIntent: intentId },
+            reply: `${leadM}: ${sampleM}${fragMatches.length > 6 ? '...' : ''}.`,
+          };
+        }
+      }
+
       const active = products.filter((p) => p.isAvailable !== false);
       const pausedCount = products.length - active.length;
       const prices = products.map((p) => Number(p.price ?? 0)).filter((v) => Number.isFinite(v) && v > 0);
       const priceSpan =
         prices.length > 0 ? ` · Giá từ ${fmtVnd(Math.min(...prices))}–${fmtVnd(Math.max(...prices))}` : '';
-      const catNames = [...new Set(products.map((p) => p.category?.name).filter(Boolean))];
       const sample = active.slice(0, 8).map((p) => `${p.name} (${fmtVnd(p.price)})`).join(', ');
       return {
         handled: true,
@@ -863,6 +977,8 @@ export class LocalAiEngineService {
       if (pendingCount > 0) statusParts.push(`${pendingCount} chờ xác nhận`);
       if (voidCount > 0) statusParts.push(`${voidCount} đã hủy`);
       const statusDetail = statusParts.length > 0 ? ` — ${statusParts.join(' · ')}` : '';
+      const isCustomerAsk = /\b(?:bao nhieu khach|may khach|luot khach|co may khach)\b/.test(sem.normText);
+      const customerNote = isCustomerAsk ? ' (ước tính tối thiểu tương đương số lượt khách/nhóm đặt món)' : '';
       return {
         handled: true,
         route: 'local_semantic',
@@ -871,7 +987,7 @@ export class LocalAiEngineService {
         updatedSlots: { lastIntent: intentId, lastPeriod: sem.period, lastOrderType: sem.orderTypeFilter ?? '' },
         reply:
           activeRows.length > 0
-            ? `${g} kỳ ${periodSpec.label} có **${activeRows.length} ${typeLabel}**${extraType}${statusDetail} · tổng giá trị **${fmtVnd(totalVal)}**${e}.`
+            ? `${g} kỳ ${periodSpec.label} có **${activeRows.length} ${typeLabel}**${customerNote}${extraType}${statusDetail} · tổng giá trị **${fmtVnd(totalVal)}**${e}.`
             : `${g} kỳ ${periodSpec.label} chưa có ${typeLabel} nào${voidCount > 0 ? ` (có ${voidCount} đơn đã hủy)` : ''}${e}.`,
       };
     }
@@ -1017,14 +1133,15 @@ export class LocalAiEngineService {
             orderedItemsText = `\n• Món đang gọi: ${ordItems.map((it) => `${it.quantity}x ${it.product?.name ?? 'Món'}`).join(', ')}`;
           }
         }
+        const asksPayment = /\b(?:da thanh toan|thanh toan chua|tra tien chua|xong chua)\b/.test(sem.normText);
         return {
           handled: true,
           route: 'fast_path',
           intentId,
           updatedSlots: { lastIntent: intentId, lastOrderCode: found.activeOrder?.orderCode ?? '' },
           reply: found.activeOrder
-            ? `🪑 **${found.name}** (${found.status}): đơn **${found.activeOrder.orderCode}** · tạm tính **${fmtVnd(found.activeOrder.totalAmount)}**.${orderedItemsText}`
-            : `✅ **${found.name}** hiện đang TRỐNG.`,
+            ? `🪑 **${found.name}** (${asksPayment ? 'CHƯA thanh toán · ' : ''}${found.status}): đơn **${found.activeOrder.orderCode}** · tạm tính **${fmtVnd(found.activeOrder.totalAmount)}**.${orderedItemsText}`
+            : `✅ **${found.name}** hiện đang TRỐNG${asksPayment ? ' (đã thanh toán hết)' : ''}.`,
         };
       }
       if (/\b(?:ban trong|con trong|con ban nao|ban nao trong)\b/.test(sem.normText)) {
@@ -1058,10 +1175,38 @@ export class LocalAiEngineService {
     if (intentId === 'fast_path_cashflow' && this.cashflowService) {
       const allowProfit = principal.isSuperAdmin || principal.permissions.dashboard.viewProfit;
       const preview = await this.cashflowService.preview(now, allowProfit);
+      const asksSettlement = /\b(?:chot ca|ai chot|lich su|da chot)\b/.test(sem.normText);
+      let settlementNote = '';
+      if (asksSettlement && typeof this.cashflowService.listSettlements === 'function') {
+        try {
+          const settled = await this.cashflowService.listSettlements({
+            page: 1,
+            limit: 3,
+            fromDate: periodSpec.fromDate,
+            toDate: periodSpec.toDate,
+          });
+          const latest = settled?.items?.[0] as
+            | {
+                shiftName?: string;
+                actualCountedCash?: number | string | null;
+                discrepancyAmount?: number | string | null;
+                closedByName?: string | null;
+                closedByUsername?: string | null;
+              }
+            | undefined;
+          if (latest) {
+            const who = latest.closedByName ?? latest.closedByUsername ?? 'Thu ngân';
+            const disc = Number(latest.discrepancyAmount ?? 0);
+            settlementNote = ` (Ca đã chốt gần nhất: ${latest.shiftName ?? 'Ca'} bởi ${who}, thực đếm ${fmtVnd(latest.actualCountedCash ?? 0)}, lệch ${disc >= 0 ? '+' : '-'}${fmtVnd(Math.abs(disc))})`;
+          }
+        } catch {
+          settlementNote = '';
+        }
+      }
       const reply =
         preview.blindMode || preview.expectedCashInDrawer === null
-          ? `${g} ca hiện tại (${preview.shiftName}) đang bật Blind Mode — tiền đầu ca ${fmtVnd(preview.openingBudget)}; số thu tiền mặt & két lý thuyết được ẩn theo phân quyền${e}.`
-          : `${g} đối soát két tiền hiện tại: Đầu ca ${fmtVnd(preview.openingBudget)} · Thu tiền mặt ${fmtVnd(preview.totalCashSales ?? 0)} · Nhập kho từ két ${fmtVnd(preview.totalCashImports ?? 0)} → **Két lý thuyết ${fmtVnd(preview.expectedCashInDrawer)}**${e}.`;
+          ? `${g} ca hiện tại (${preview.shiftName}) đang bật Blind Mode — tiền đầu ca ${fmtVnd(preview.openingBudget)}; số thu tiền mặt & két lý thuyết được ẩn theo phân quyền${settlementNote}${e}.`
+          : `${g} đối soát két tiền hiện tại: Đầu ca ${fmtVnd(preview.openingBudget)} · Thu tiền mặt ${fmtVnd(preview.totalCashSales ?? 0)} · Nhập kho từ két ${fmtVnd(preview.totalCashImports ?? 0)} → **Két lý thuyết ${fmtVnd(preview.expectedCashInDrawer)}**${settlementNote}${e}.`;
       return {
         handled: true,
         route: 'fast_path',
@@ -1114,25 +1259,47 @@ export class LocalAiEngineService {
     }
 
     if (intentId === 'fast_path_schedule' && this.schedulesService) {
-      const todayIso = businessDateString(now);
-      const d = new Date(`${todayIso}T00:00:00.000Z`);
+      const targetIso = sem.period === 'tuan' || sem.period === 'tuantruoc' ? periodSpec.fromDate : periodSpec.fromDate;
+      const d = new Date(`${targetIso}T00:00:00.000Z`);
       const monOffset = (d.getUTCDay() + 6) % 7;
-      const weekStart = addDaysIso(todayIso, -monOffset);
+      const weekStart = addDaysIso(targetIso, -monOffset);
       const sched = await this.schedulesService.getScheduleWeek(weekStart);
       const canSeeAll = principal.isSuperAdmin || principal.permissions.schedules.view;
-      const todayDow = monOffset;
-      const cells = sched.cells.filter((c) => c.dayOfWeek === todayDow && c.employees.length > 0);
+      const isWeekScope = sem.period === 'tuan' || sem.period === 'tuantruoc';
+      const dowLabels = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'CN'];
+
+      let cells = sched.cells.filter((c) => (isWeekScope ? true : c.dayOfWeek === monOffset) && c.employees.length > 0);
+      if (/\b(?:ca toi|toi nay|ca dem)\b/.test(sem.normText)) {
+        const evening = cells.filter((c) => /(?:17|18|19|20|21|22|toi|dem)/i.test(c.timeSlot));
+        if (evening.length > 0) cells = evening;
+      } else if (/\b(?:ca sang|sang nay)\b/.test(sem.normText)) {
+        const morning = cells.filter((c) => /(?:06|07|08|09|10|11|sang)/i.test(c.timeSlot));
+        if (morning.length > 0) cells = morning;
+      } else if (/\b(?:ca chieu|chieu nay)\b/.test(sem.normText)) {
+        const afternoon = cells.filter((c) => /(?:12|13|14|15|16|chieu)/i.test(c.timeSlot));
+        if (afternoon.length > 0) cells = afternoon;
+      }
+
       const visible = canSeeAll
-        ? cells.map((c) => `• ${c.timeSlot}: ${c.employees.map((em) => em.shortName).join(', ')}`)
+        ? cells.map(
+            (c) =>
+              `• ${isWeekScope ? `${dowLabels[c.dayOfWeek] ?? `T${c.dayOfWeek + 2}`} · ` : ''}${c.timeSlot}: ${c.employees.map((em) => em.shortName).join(', ')}`,
+          )
         : cells
             .filter((c) => c.employees.some((em) => em.id === principal.employeeId))
-            .map((c) => `• ${c.timeSlot}: Ca làm việc của ${persona.userCall}`);
+            .map(
+              (c) =>
+                `• ${isWeekScope ? `${dowLabels[c.dayOfWeek] ?? `T${c.dayOfWeek + 2}`} · ` : ''}${c.timeSlot}: Ca làm việc của ${persona.userCall}`,
+            );
       return {
         handled: true,
         route: 'fast_path',
         intentId,
-        updatedSlots: { lastIntent: intentId },
-        reply: visible.length ? `📅 Lịch trực hôm nay:\n${visible.join('\n')}` : `${g} hôm nay chưa ghi nhận ca trực phù hợp${e}.`,
+        period: sem.period,
+        updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
+        reply: visible.length
+          ? `📅 Lịch trực (${periodSpec.label}):\n${visible.join('\n')}`
+          : `${g} kỳ ${periodSpec.label} chưa ghi nhận ca trực phù hợp${e}.`,
       };
     }
 
@@ -1193,13 +1360,34 @@ export class LocalAiEngineService {
       }
       if (intentId === 'fast_path_voids') {
         const dr = ov.discountsAndRisk;
+        const voidCnt = dr?.voidedOrderCount ?? 0;
+        let detailLines = '';
+        if (voidCnt > 0) {
+          try {
+            const voidRows = await this.prisma.order.findMany({
+              where: { status: 'VOIDED', createdAt: { gte: startUtc, lt: endUtc } },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 5,
+              select: { orderCode: true, totalAmount: true, voidReason: true, table: { select: { name: true } } },
+            });
+            const formatted = voidRows
+              .filter((r) => Boolean(r.orderCode))
+              .map(
+                (r) =>
+                  `• **${r.orderCode}** (${r.table?.name ?? 'Mang về'}): ${fmtVnd(r.totalAmount)}${r.voidReason ? ` — ${r.voidReason}` : ''}`,
+              );
+            if (formatted.length > 0) detailLines = `\n${formatted.join('\n')}`;
+          } catch {
+            detailLines = '';
+          }
+        }
         return {
           handled: true,
           route: 'fast_path',
           intentId,
           period: sem.period,
           updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
-          reply: `${g} kỳ ${periodSpec.label} có **${dr?.voidedOrderCount ?? 0} đơn hủy** (ước tính ${fmtVnd(dr?.voidedAmount ?? 0)})${e}.`,
+          reply: `${g} kỳ ${periodSpec.label} có **${voidCnt} đơn hủy** (ước tính ${fmtVnd(dr?.voidedAmount ?? 0)})${detailLines}${e}.`,
         };
       }
       if (intentId === 'period_comparison') {
@@ -1216,16 +1404,17 @@ export class LocalAiEngineService {
           reply: `${g} ${periodSpec.label} đạt **${fmtVnd(cur)}** vs kỳ trước **${fmtVnd(prev)}** (${diff >= 0 ? '+' : '-'}${fmtVnd(Math.abs(diff))}${rev?.growthPercent !== null && rev?.growthPercent !== undefined ? ` · ${rev.growthPercent > 0 ? '+' : ''}${rev.growthPercent.toFixed(1)}%` : ''})${e}.`,
         };
       }
-      // Overview / revenue
-      const rev = ov.kpis.revenue;
-      return {
-        handled: true,
-        route: 'fast_path',
-        intentId,
-        period: sem.period,
-        updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
-        reply: `${g} kỳ ${periodSpec.label}: thực thu **${fmtVnd(rev?.netPaidAmount ?? 0)}** qua **${rev?.paidOrderCount ?? 0} đơn** (TB ${fmtVnd(rev?.averageOrderValue ?? 0)}/đơn)${e}.`,
-      };
+      if (intentId === 'fast_path_overview' || intentId === 'fast_path_revenue') {
+        const rev = ov.kpis.revenue;
+        return {
+          handled: true,
+          route: 'fast_path',
+          intentId,
+          period: sem.period,
+          updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
+          reply: `${g} kỳ ${periodSpec.label}: thực thu **${fmtVnd(rev?.netPaidAmount ?? 0)}** qua **${rev?.paidOrderCount ?? 0} đơn** (TB ${fmtVnd(rev?.averageOrderValue ?? 0)}/đơn)${e}.`,
+        };
+      }
     }
 
     return { handled: false, guardBlocked: false, period: sem.period, match: sem };

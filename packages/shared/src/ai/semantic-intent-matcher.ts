@@ -138,12 +138,13 @@ export function stripBotAddressing(
     }
   }
 
-  const normClean = stripVietnamese(clean);
+  const finalClean = clean || String(rawText ?? '').trim();
+  const normClean = stripVietnamese(finalClean);
   if (!directlyAddressed && hasPhrase(normClean, SEMANTIC_INTENT_SPEC.botAliases)) {
     directlyAddressed = true;
   }
 
-  return { cleanText: clean || String(rawText ?? '').trim(), normClean, directlyAddressed };
+  return { cleanText: finalClean, normClean, directlyAddressed };
 }
 
 /** Detects natural Vietnamese addressing profile (never falling back to robotic "Tôi"). */
@@ -215,6 +216,9 @@ export function extractLimitWithFlag(
     if (mapped) {
       return { topLimit: mapped, explicitLimit: true };
     }
+  }
+  if (hasPhrase(normText, ['don vua roi', 'don cuoi cung', 'don sau cung'])) {
+    return { topLimit: 1, explicitLimit: true };
   }
   return { topLimit: fallback, explicitLimit: false };
 }
@@ -322,6 +326,27 @@ function detectEntities(rawLower: string, normText: string): SemanticEntityKey[]
     if (!hasPhrase(normText, rule.keywords)) continue;
     const disamb = rule.accentDisambiguation;
     if (disamb?.requireNoneRaw?.some((bad) => rawLower.includes(bad))) {
+      continue;
+    }
+    if (
+      entityKey === 'hour' &&
+      hasPhrase(normText, ['mo cua', 'dong cua', 'gio mo cua', 'gio dong cua', 'tu may gio', 'mo tu may gio', 'dong cua may gio', 'gio tam', 'luu tam', 'gio hang'])
+    ) {
+      continue;
+    }
+    if (
+      entityKey === 'schedule' &&
+      hasPhrase(normText, ['chot ca', 'ket ca', 'dau ca', 'ket tien']) &&
+      !hasPhrase(normText, ['ai lam', 'ai truc', 'co ai', 'lich truc', 'lich lam', 'di lam', 'ca sang', 'ca chieu', 'ca toi', 'ca dem'])
+    ) {
+      continue;
+    }
+    if (
+      entityKey === 'payroll' &&
+      hasPhrase(normText, ['so luong']) &&
+      !rawLower.includes('lương') &&
+      !hasPhrase(normText, ['bang luong', 'quy luong', 'tien luong', 'chi phi luong', 'tinh luong'])
+    ) {
       continue;
     }
     if (disamb?.disqualifyIfRawOnly?.some((sellWord) => rawLower.includes(sellWord))) {
@@ -439,7 +464,7 @@ export function matchSemanticIntent(
     persona,
   };
 
-  // 0. System / Manual Q&A takes priority over negativeGuards & data metrics unless pure analytics requested
+  // 0. System / Manual Q&A takes priority over negativeGuards & data metrics unless pure analytics/advice requested
   const isAnalyticsOverride = hasPhrase(normClean, [
     'phan tich chi tiet',
     'phan tich sau',
@@ -451,9 +476,32 @@ export function matchSemanticIntent(
     'de xuat',
     'goi y cai thien',
     'tu van giup',
+    'lam sao de ban',
+    'lam sao de tang',
+    'lam sao de dong',
+    'lam sao de giam',
+    'cach tang',
+    'cach cai thien',
+    'tang doanh thu',
+    'tang khach',
+    'thu hut khach',
+    'ban chay hon',
+    'giam that thoat',
+    'han che huy',
   ]);
   const hasEntity = (e: SemanticEntityKey): boolean => entities.includes(e);
   const hasMetric = (m: SemanticMetricKey): boolean => metrics.includes(m);
+  const isTroubleshootingQuery =
+    hasPhrase(normClean, [
+      'khong duoc',
+      'bi loi',
+      'khac phuc',
+      'sua loi',
+      'khong quet duoc',
+      'khong ket noi',
+      'khong in duoc',
+      'khong hoat dong',
+    ]) && hasPhrase(normClean, ['qr', 'may in', 'rawbt', 'wifi', 'gps', 'pos', 'bep', 'in']);
   const hasNumericalAnalyticsCue =
     hasEntity('revenue') ||
     hasMetric('popularity_high') ||
@@ -494,7 +542,12 @@ export function matchSemanticIntent(
     ]) &&
     !hasNumericalAnalyticsCue;
 
-  if (!isAnalyticsOverride && ((detectSystemDocQuestion(normClean) && !hasNumericalAnalyticsCue) || isSystemRuleWhyQuestion)) {
+  if (
+    !isAnalyticsOverride &&
+    (isTroubleshootingQuery ||
+      (detectSystemDocQuestion(normClean) && !hasNumericalAnalyticsCue) ||
+      isSystemRuleWhyQuestion)
+  ) {
     return buildMatchResult('system_docs', 'system_kb', { ...baseCtx, confidence: 0.96 });
   }
 
@@ -602,19 +655,50 @@ export function matchSemanticIntent(
     return buildMatchResult('active_sessions', 'fast_path', { ...baseCtx, confidence: 0.93 });
   }
 
-  if (hasPhrase(normClean, ['danh sach nhan vien', 'co bao nhieu nhan vien', 'co may nhan vien', 'tong so nhan vien', 'tong nhan su', 'nhan su gom', 'ai la nhan vien'])) {
+  if (
+    hasPhrase(normClean, [
+      'danh sach nhan vien',
+      'co bao nhieu nhan vien',
+      'co may nhan vien',
+      'so luong nhan vien',
+      'so luong nhan su',
+      'nhan su hien tai',
+      'nhan vien hien tai',
+      'bao nhieu nhan su',
+      'co may nhan su',
+      'tong so nhan vien',
+      'tong nhan su',
+      'nhan su gom',
+      'ai la nhan vien',
+    ])
+  ) {
     return buildMatchResult('staff_list', 'fast_path', { ...baseCtx, confidence: 0.93 });
+  }
+
+  if (hasEntity('audit') && !hasPhrase(normClean, ['huy don', 'huy hoa don'])) {
+    return buildMatchResult('fast_path_audit', 'fast_path', { ...baseCtx, confidence: 0.92 });
+  }
+
+  if (hasEntity('schedule') && !hasEntity('cashflow') && !hasEntity('order')) {
+    return buildMatchResult('fast_path_schedule', 'fast_path', { ...baseCtx, confidence: 0.92 });
   }
 
   if (orderCode) {
     return buildMatchResult('order_detail', 'local_semantic', { ...baseCtx, confidence: 0.95 });
   }
 
+  if (tableNumber !== null && !hasEntity('void') && !(hasEntity('order') && hasMetric('revenue_high') && hasSuperlative)) {
+    return buildMatchResult('table_live_status', 'fast_path', { ...baseCtx, confidence: 0.92 });
+  }
+
   const isCashflowKeyword = hasPhrase(normClean, ['ket', 'ket tien', 'chot ca', 'ket ca', 'dau ca', 'kiem ket', 'chenh lech ket', 'trong ket']);
-  const hasQrOrderSlice = hasPhrase(normClean, ['don qr', 'don khach quet qr', 'khach quet qr', 'khach tu dat', 'dat qua qr']);
+  const hasQrOrderSlice =
+    !isTroubleshootingQuery &&
+    hasPhrase(normClean, ['don qr', 'don khach quet qr', 'khach quet qr', 'khach tu dat', 'dat qua qr']);
   const isPaymentSlice =
     hasQrOrderSlice ||
     (!hasPhrase(normClean, ['han muc', 'tai khoan ngan hang', 'tai khoan nhan']) &&
+      !isTroubleshootingQuery &&
       !hasMetric('recent_list') &&
       (hasPhrase(normClean, ['chuyen khoan', 'phuong thuc thanh toan', 'tien mat hay chuyen khoan', 'thu tien mat', 'doanh thu tien mat']) ||
         (!isCashflowKeyword && hasPhrase(normClean, ['tien mat', 'thu mat']) && hasPhrase(normClean, ['doanh thu', 'thu', 'thanh toan', 'bao nhieu', 'vs']))));
@@ -626,6 +710,11 @@ export function matchSemanticIntent(
     'thuc don',
     'menu',
     'bang gia',
+    'danh muc mon',
+    'bao nhieu danh muc',
+    'co may danh muc',
+    'nhom mon',
+    'co nhung nhom',
     'tam het',
     'het mon',
     'tam ngung',
@@ -644,7 +733,14 @@ export function matchSemanticIntent(
     'may phan',
     'may ly',
     'may to',
+    'quan co ban',
   ]);
+  const hasProductAvailabilityLookup =
+    !hasPhrase(normClean, ['het bao nhieu', 'het may tien', 'het quota', 'het luot', 'het han muc']) &&
+    !rawLower.includes('bàn') &&
+    (hasPhrase(normClean, ['co ban ', 'con ban ']) ||
+      /\bhet\s+[a-z0-9\s]{2,28}\s+(?:roi|chua|khong)\b/.test(normClean) ||
+      /\bcon\s+(?!ban\s+nao\b|bao\s+nhieu\s+ban\b|khach\b)[a-z0-9\s]{2,28}\s+khong\b/.test(normClean));
   const hasGenericMenuListCue =
     !hasMetric('popularity_high') &&
     !hasMetric('popularity_low') &&
@@ -652,16 +748,23 @@ export function matchSemanticIntent(
     hasPhrase(normClean, ['danh sach mon', 'cac mon an', 'nhung mon an', 'ban nhung mon gi', 'co nhung mon gi', 'co mon gi', 'co mon nao']);
 
   if (
-    (hasExplicitMenuCue || hasGenericMenuListCue) &&
+    (hasExplicitMenuCue || hasGenericMenuListCue || hasProductAvailabilityLookup) &&
     !hasPhrase(normClean, ['mon do', 'mon nay', 'don do', 'don nay']) &&
     !hasEntity('order') &&
     !hasEntity('table') &&
     !hasEntity('cashflow') &&
     !hasEntity('payroll') &&
-    !hasEntity('schedule')
+    !hasEntity('schedule') &&
+    !hasEntity('inventory') &&
+    !hasEntity('qr')
   ) {
     return buildMatchResult('menu_catalog', 'local_semantic', { ...baseCtx, confidence: 0.92 });
   }
+
+  const hasCustomerCountCue =
+    !hasEntity('hour') &&
+    !hasEntity('table') &&
+    hasPhrase(normClean, ['bao nhieu khach', 'may khach', 'bao nhieu luot khach', 'co may khach']);
 
   if (
     !hasEntity('void') &&
@@ -671,18 +774,19 @@ export function matchSemanticIntent(
     !hasEntity('qr') &&
     (hasEntity('order') ||
       orderStatusFilter !== null ||
+      hasCustomerCountCue ||
       (orderTypeFilter !== null && (hasMetric('recent_list') || hasMetric('count_query'))))
   ) {
     if (hasMetric('revenue_high') && hasSuperlative) {
       return buildMatchResult('order_top_value', 'local_semantic', { ...baseCtx, confidence: 0.93 });
     }
-    if (hasMetric('count_query')) {
+    if (hasMetric('count_query') || hasCustomerCountCue) {
       return buildMatchResult('order_count', 'local_semantic', { ...baseCtx, confidence: 0.94 });
     }
     if (
       hasMetric('recent_list') ||
       orderStatusFilter !== null ||
-      hasPhrase(normClean, ['cac don', 'nhung don', 'don nao', 'liet ke don', 'danh sach don', 'xem don'])
+      hasPhrase(normClean, ['cac don', 'nhung don', 'don nao', 'liet ke don', 'danh sach don', 'xem don', 'don vua roi', 'don cuoi cung', 'don ca dem'])
     ) {
       return buildMatchResult('recent_orders', 'local_semantic', { ...baseCtx, confidence: 0.94 });
     }
@@ -705,7 +809,7 @@ export function matchSemanticIntent(
   if (hasEntity('qr')) {
     return buildMatchResult('fast_path_qr', 'fast_path', { ...baseCtx, confidence: 0.92 });
   }
-  if (hasEntity('kitchen')) {
+  if (hasEntity('kitchen') && !hasEntity('staff')) {
     return buildMatchResult('fast_path_kitchen', 'fast_path', { ...baseCtx, confidence: 0.9 });
   }
   if (hasEntity('inventory')) {
@@ -720,7 +824,7 @@ export function matchSemanticIntent(
   if (hasEntity('audit')) {
     return buildMatchResult('fast_path_audit', 'fast_path', { ...baseCtx, confidence: 0.9 });
   }
-  if (hasEntity('schedule')) {
+  if (hasEntity('schedule') && !hasEntity('cashflow') && !hasEntity('order')) {
     return buildMatchResult('fast_path_schedule', 'fast_path', { ...baseCtx, confidence: 0.91 });
   }
   if (hasEntity('payroll')) {
@@ -729,7 +833,29 @@ export function matchSemanticIntent(
   if (hasEntity('revenue')) {
     return buildMatchResult('fast_path_revenue', 'fast_path', { ...baseCtx, confidence: 0.91 });
   }
-  if (hasPhrase(normClean, ['tong quan', 'tinh hinh kinh doanh', 'bao cao nhanh', 'hom nay ban sao', 'tinh hinh quan'])) {
+  if (
+    hasPhrase(normClean, [
+      'tong quan',
+      'tinh hinh kinh doanh',
+      'bao cao nhanh',
+      'hom nay ban sao',
+      'tinh hinh quan',
+      'tinh hinh hom nay',
+      'tinh hinh ban hang',
+      'ban hang hom nay',
+      'tong ket hom nay',
+      'bua nay dong khach khong',
+      'hom nay dong khach khong',
+      'ban duoc gi',
+    ]) ||
+    (hasPhrase(normClean, ['hom nay', 'bua nay', 'hom qua', 'tuan nay', 'thang nay']) &&
+      hasPhrase(normClean, ['the nao', 'ra sao', 'on khong', 'ban sao', 'sao roi']) &&
+      !hasEntity('product') &&
+      !hasEntity('hour') &&
+      !hasEntity('staff') &&
+      !hasEntity('table') &&
+      !hasEntity('order'))
+  ) {
     return buildMatchResult('fast_path_overview', 'fast_path', { ...baseCtx, confidence: 0.9 });
   }
 

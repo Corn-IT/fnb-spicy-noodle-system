@@ -117,7 +117,7 @@ const SYSTEM_KB_SECTIONS: readonly KnowledgeSection[] = [
     topic: 'qr',
     title: 'QR Khách hàng (/q/:token), Bảo mật Wi-Fi/GPS & Xoay vòng hạn mức VietQR',
     keywords: [
-      'qr', 'quang ma qr', 'quet qr', 'wifi', 'geofencing', 'gps', 'vi tri',
+      'qr', 'quang ma qr', 'quet qr', 'khong quet duoc', 'loi qr', 'wifi', 'geofencing', 'gps', 'vi tri',
       'han muc', 'xoay vong', 'vietqr', 'web push', 'giong noi', 'tu huy qua han',
     ],
     content:
@@ -213,12 +213,21 @@ const SYSTEM_KB_SECTIONS: readonly KnowledgeSection[] = [
   },
 ];
 
+const KB_STOP_WORDS = new Set([
+  'la', 'gi', 'the', 'nao', 'nhu', 'cach', 'lam', 'sao', 'cho', 'toi', 'minh', 'ban',
+  'hoi', 've', 'cua', 'trong', 'co', 'khong', 'duoc', 'nhung', 'cac', 'mot', 'tai', 'vi',
+  'de', 'can', 'muon', 'thi', 'roi', 'nay', 'kia', 'do', 'day', 'oi', 'a', 'nhe', 'nha',
+  'giup', 'em', 'anh', 'chi', 'sep', 'va', 'hay', 'voi', 'bi', 'bi_gi', 'sao_vay', 'vay',
+]);
+
 @Injectable()
 export class SystemKbService {
   searchDocs(query: string, topic?: string | null, limit = 2): KnowledgeSection[] {
     const normQuery = stripVietnamese(query);
     const normTopic = topic ? stripVietnamese(topic) : '';
-    const tokens = normQuery.split(/\s+/).filter((t) => t.length >= 2);
+    const tokens = normQuery
+      .split(/\s+/)
+      .filter((t) => t.length >= 2 && !KB_STOP_WORDS.has(t));
     const paddedQuery = ` ${normQuery} `;
 
     const scored = SYSTEM_KB_SECTIONS.map((sec) => {
@@ -229,7 +238,7 @@ export class SystemKbService {
       for (const kw of sec.keywords) {
         const cleanKw = stripVietnamese(kw);
         if (!cleanKw) continue;
-        if (paddedQuery.includes(` ${cleanKw} `) || normQuery.includes(cleanKw)) {
+        if (paddedQuery.includes(` ${cleanKw} `) || (cleanKw.length >= 4 && normQuery.includes(cleanKw))) {
           score += cleanKw.includes(' ') ? 8 : 4;
         }
       }
@@ -239,11 +248,9 @@ export class SystemKbService {
       }
       return { sec, score };
     })
-      .filter((item) => item.score > 0)
+      .filter((item) => item.score >= 3.5)
       .sort((a, b) => b.score - a.score);
 
-    const picked =
-      scored.length > 0 ? scored.map((s) => s.sec) : [SYSTEM_KB_SECTIONS[0]!, SYSTEM_KB_SECTIONS[2]!];
-    return picked.slice(0, Math.max(1, limit));
+    return scored.slice(0, Math.max(1, limit)).map((s) => s.sec);
   }
 }

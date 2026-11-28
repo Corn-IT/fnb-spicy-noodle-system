@@ -359,5 +359,61 @@ describe('Shared AI Semantic NLU, Guardrails & Settings Contracts', () => {
     expect(matchSemanticIntent('đơn hàng').matched).toBe(false);
     expect(matchSemanticIntent('nhân viên').matched).toBe(false);
     expect(matchSemanticIntent('khung giờ').matched).toBe(false);
+    expect(matchSemanticIntent('Quán mở từ mấy giờ?').matched).toBe(false);
+
+    // Homograph & collision regression guards
+    const nowTopSell = matchSemanticIntent('Bây giờ món nào bán chạy nhất?');
+    expect(nowTopSell.matched).toBe(true);
+    expect(nowTopSell.intentId).toBe('product_top_popularity');
+    expect(nowTopSell.entities).not.toContain('hour');
+
+    const staffQty = matchSemanticIntent('Số lượng nhân viên hiện tại?');
+    expect(staffQty.matched).toBe(true);
+    expect(staffQty.intentId).toBe('staff_list');
+
+    const tblPaidCheck = matchSemanticIntent('Bàn 10 đã thanh toán chưa?');
+    expect(tblPaidCheck.matched).toBe(true);
+    expect(tblPaidCheck.intentId).toBe('table_live_status');
+    expect(tblPaidCheck.tableNumber).toBe(10);
+
+    const qrTrouble = matchSemanticIntent('Khách quét QR không được thì sao?');
+    expect(qrTrouble.matched).toBe(true);
+    expect(qrTrouble.intentId).toBe('system_docs');
+
+    const auditPrice = matchSemanticIntent('Ai sửa giá món?');
+    expect(auditPrice.matched).toBe(true);
+    expect(auditPrice.intentId).toBe('fast_path_audit');
+
+    const kitchenStaffSched = matchSemanticIntent('Nhân viên bếp hôm nay ai làm?');
+    expect(kitchenStaffSched.matched).toBe(true);
+    expect(kitchenStaffSched.intentId).toBe('fast_path_schedule');
+
+    const nightOrders = matchSemanticIntent('Đơn ca đêm hôm qua?');
+    expect(nightOrders.matched).toBe(true);
+    expect(nightOrders.intentId).toBe('recent_orders');
+    expect(nightOrders.period).toBe('homqua');
+
+    const lastOrder = matchSemanticIntent('Đơn vừa rồi bàn mấy?');
+    expect(lastOrder.matched).toBe(true);
+    expect(lastOrder.intentId).toBe('recent_orders');
+    expect(lastOrder.topLimit).toBe(1);
+
+    const bizAdvice = matchSemanticIntent('Làm sao để bán đông khách hơn?');
+    expect(bizAdvice.matched).toBe(false);
+    expect(bizAdvice.guardBlocked).toBe(true);
+
+    const naturalSalesCases: Array<{ q: string; intent: string }> = [
+      { q: 'Hôm nay bán thế nào?', intent: 'fast_path_revenue' },
+      { q: 'Bữa nay quán bán sao rồi?', intent: 'fast_path_overview' },
+      { q: 'Quán có bán nước ngọt không?', intent: 'menu_catalog' },
+      { q: 'Có bao nhiêu danh mục món?', intent: 'menu_catalog' },
+      { q: 'Hết mì cay rồi à?', intent: 'menu_catalog' },
+      { q: 'Hôm nay có bao nhiêu khách?', intent: 'order_count' },
+    ];
+    for (const c of naturalSalesCases) {
+      const m = matchSemanticIntent(c.q);
+      expect(m.matched, c.q).toBe(true);
+      expect(m.intentId, c.q).toBe(c.intent);
+    }
   });
 });
