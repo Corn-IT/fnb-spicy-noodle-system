@@ -26,6 +26,7 @@ export interface AuthNoticeMeta {
 }
 
 interface AuthState {
+  sessionRevision: number;
   accessToken: string | null;
   user: AuthenticatedUser | null;
   authNotice: AuthNoticeReason | null;
@@ -40,19 +41,20 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
+      sessionRevision: 0,
       accessToken: null,
       user: null,
       authNotice: null,
       authNoticeMeta: null,
       setAuth: ({ accessToken, user }) =>
-        set({ accessToken, user, authNotice: null, authNoticeMeta: null }),
+        set((state) => ({ accessToken, user, authNotice: null, authNoticeMeta: null, sessionRevision: state.sessionRevision + 1 })),
       setAccessToken: (accessToken) => set({ accessToken }),
       updateUser: (partial) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...partial } : null,
         })),
       clearAuth: (reason = null, meta = null) =>
-        set({ accessToken: null, user: null, authNotice: reason, authNoticeMeta: meta }),
+        set((state) => ({ accessToken: null, user: null, authNotice: reason, authNoticeMeta: meta, sessionRevision: state.sessionRevision + 1 })),
       clearAuthNotice: () => set({ authNotice: null, authNoticeMeta: null }),
     }),
     {

@@ -16,6 +16,7 @@ import {
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
+import { PageSkeleton } from '@/components/loading';
 import { SystemErrorView } from '@/components/error-display';
 import { executeCleanLogout } from '@/components/layout/top-navbar';
 import { TOUCH_PATHS, TouchCashDrawerButton, useTouchShell } from '@/components/touch-shell';
@@ -316,6 +317,8 @@ export function PosTouchPage() {
       </div>
     );
   }
+
+  if (!gridData) return <PageSkeleton variant="pos" />;
 
   return (
     <div

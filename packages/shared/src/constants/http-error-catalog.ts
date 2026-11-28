@@ -17,6 +17,7 @@ export const SystemErrorCodeValues = [
   'NETWORK_ERROR',
   'CHUNK_LOAD_ERROR',
   'RUNTIME_CRASH',
+  'DATA_VALIDATION_ERROR',
 ] as const;
 
 export type SystemErrorCodeKey = (typeof SystemErrorCodeValues)[number];
@@ -280,6 +281,19 @@ export const HTTP_ERROR_CATALOG: readonly HttpErrorCatalogEntry[] = [
     guestRecoveryHint: 'Bấm "Tải lại thực đơn" để tiếp tục.',
   },
   {
+    key: 'DATA_VALIDATION_ERROR',
+    httpStatus: null,
+    statusLabel: 'Dữ liệu phản hồi',
+    messageKey: 'error.http.DATA_VALIDATION_ERROR',
+    severity: 'warning',
+    defaultTitle: 'Dữ liệu phản hồi chưa đúng cấu trúc',
+    defaultDescription: 'Dữ liệu nhận được chưa phù hợp với phiên bản ứng dụng đang mở.',
+    recoveryHint: 'Bấm Thử tải lại. Nếu lỗi tiếp tục, sao chép mã tra cứu và báo bộ phận kỹ thuật.',
+    guestTitle: 'Dữ liệu thực đơn chưa sẵn sàng',
+    guestDescription: 'Thực đơn nhận được chưa đúng cấu trúc ứng dụng mong đợi.',
+    guestRecoveryHint: 'Vui lòng thử tải lại hoặc gọi nhân viên hỗ trợ.',
+  },
+  {
     key: 'RUNTIME_CRASH',
     httpStatus: null,
     statusLabel: 'Lỗi hiển thị',
@@ -311,6 +325,7 @@ export function resolveHttpErrorKey(input: {
   isChunkError?: boolean;
   isRuntimeError?: boolean;
 }): SystemErrorCodeKey {
+  if (input.code === 'DATA_VALIDATION_ERROR') return 'DATA_VALIDATION_ERROR';
   if (input.isChunkError) return 'CHUNK_LOAD_ERROR';
   if (input.code === 'NETWORK_ERROR' || input.statusCode === 0) {
     return 'NETWORK_ERROR';

@@ -1,0 +1,46 @@
+[WebServer] $ vite --port 5173 --strictPort --host 127.0.0.1
+[WebServer] (node:34698) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 30 tests using 2 workers
+
+(node:34729) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:34730) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 [chromium-desktop] › e2e/pos-touch-shell.spec.ts:65:3 › POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*) › runs 1-tap out-of-stock toggle and 2-step cash drawer confirmation from Touch Hub (3.7s)
+  ✓   2 [chromium-desktop] › e2e/pos-touch-shell.spec.ts:8:3 › POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*) › switches seamlessly between Bán hàng, Hoá đơn, Kết ca, and Quản lý Hub while staying in touch mode (4.2s)
+  ✓   3 [chromium-desktop] › e2e/pos-touch-shell.spec.ts:112:3 › POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*) › hides the header Mở két button when account lacks pos.openCashDrawer permission (1.1s)
+  ✓   4 [chromium-desktop] › e2e/pos-touch-shell.spec.ts:144:3 › POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*) › exits to the matching desktop screen from a touch subpage (1.2s)
+  ✓   5 [chromium-desktop] › e2e/pos-touch-shell.spec.ts:161:5 › POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*) › keeps zero horizontal overflow on Touch Hub & Bottom Nav at 960×540 (950ms)
+  ✓   6 [chromium-desktop] › e2e/pos-touch-shell.spec.ts:161:5 › POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*) › keeps zero horizontal overflow on Touch Hub & Bottom Nav at 1024×600 (931ms)
+  ✓   7 [chromium-desktop] › e2e/pos-touch-shell.spec.ts:161:5 › POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*) › keeps zero horizontal overflow on Touch Hub & Bottom Nav at 1280×720 (1.0s)
+  ✓   8 [chromium-desktop] › e2e/pos-touch-shell.spec.ts:161:5 › POS Touch Shell & Trung tâm Quản lý kiểu iPOS (/pos/touch/*) › keeps zero horizontal overflow on Touch Hub & Bottom Nav at 1920×1080 (1.0s)
+  ✓   9 [chromium-desktop] › e2e/pos-touch.spec.ts:9:3 › POS cảm ứng toàn màn hình (/pos/touch) › hides the admin shell and runs table → order → send to kitchen by tapping (1.6s)
+  ✓  10 [chromium-desktop] › e2e/pos-touch.spec.ts:49:3 › POS cảm ứng toàn màn hình (/pos/touch) › kiosk menu returns to the full /pos screen with the shell (1.7s)
+  ✓  12 [chromium-desktop] › e2e/pos-touch.spec.ts:85:3 › POS cảm ứng — bố cục và kích thước chạm › checkout dialog buttons get touch-sized hit areas (>= 44px) (1.5s)
+  ✓  11 [chromium-desktop] › e2e/pos-touch.spec.ts:63:3 › POS cảm ứng — bố cục và kích thước chạm › applies the store /pos zoom (150%) consistently in touch and regular POS (2.1s)
+  ✓  14 [chromium-desktop] › e2e/pos-touch.spec.ts:127:3 › POS cảm ứng — điện thoại › shows a notice with a way back to the regular POS instead of a broken layout (772ms)
+  ✓  13 [chromium-desktop] › e2e/pos-touch.spec.ts:103:3 › POS cảm ứng — màn thấp 960×540 (Android DPR 2) › uses the compact cart footer so the item list keeps enough room (1.2s)
+  ✓  15 [chromium-desktop] › e2e/pos-touch.spec.ts:141:3 › POS cảm ứng — đơn mang về › creates a TAKEAWAY order with tableId null from the All tab tile (1.4s)
+  ✓  16 [chromium-desktop] › e2e/pos-touch.spec.ts:215:3 › POS cảm ứng — đơn mang về › creates a TAKEAWAY order by tapping the new-order tile in the Takeaway tab (1.2s)
+  ✓  17 [chromium-desktop] › e2e/pos-touch.spec.ts:231:3 › POS cảm ứng — các tab của sơ đồ bàn › shows new takeaway and numbered orders before tables in the All grid (1.0s)
+  ✓  18 [chromium-desktop] › e2e/pos-touch.spec.ts:310:3 › POS cảm ứng — các tab của sơ đồ bàn › switches between the Tables and Takeaway tabs (1.2s)
+  ✓  19 [chromium-desktop] › e2e/pos-touch.spec.ts:324:3 › POS cảm ứng — các tab của sơ đồ bàn › does not overflow the header or viewport at supported touch widths (1.2s)
+  ✓  20 [chromium-desktop] › e2e/pos-touch.spec.ts:364:3 › POS cảm ứng — các tab của sơ đồ bàn › opens the saved-drafts tab at the minimum supported width (1.1s)
+  ✓  21 [chromium-desktop] › e2e/pos-touch.spec.ts:388:3 › POS cảm ứng — bố cục số cột theo máy › auto: 6 tables and 4 dishes per row at 1280×720 (1.1s)
+  ✓  23 [chromium-desktop] › e2e/pos-touch.spec.ts:417:3 › POS cảm ứng — bố cục số cột theo máy › a choice too wide for the screen is reduced with a notice (5 dishes at 960×540) (1.1s)
+  ✓  22 [chromium-desktop] › e2e/pos-touch.spec.ts:399:3 › POS cảm ứng — bố cục số cột theo máy › picking 4 tables / 3 dishes applies instantly and survives a reload (2.5s)
+  ✓  24 [chromium-desktop] › e2e/pos-touch.spec.ts:439:3 › POS cảm ứng — thông báo không chặn thao tác › a tile under a toast still receives the tap (toasts pass taps through) (1.2s)
+[]
+  ✓  25 [chromium-desktop] › e2e/store-settings-layout-regression.spec.ts:11:3 › 150% controls fit /invoices at 320px (1.1s)
+[]
+  ✓  26 [chromium-desktop] › e2e/store-settings-layout-regression.spec.ts:11:3 › 150% controls fit /q/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa at 390px (931ms)
+[]
+  ✓  27 [chromium-desktop] › e2e/store-settings-layout-regression.spec.ts:11:3 › 150% controls fit /pos/touch/printer at 1024px (1.1s)
+  ✓  29 [chromium-desktop] › e2e/store-settings-layout-regression.spec.ts:24:3 › layout audit verifies scroll reachability without accepting false clipping (79ms)
+  ✓  30 [chromium-desktop] › e2e/store-settings-layout-regression.spec.ts:24:3 › layout audit verifies scroll reachability without accepting hidden actions (83ms)
+[]
+  ✓  28 [chromium-desktop] › e2e/store-settings-layout-regression.spec.ts:11:3 › 150% controls fit /menu at 768px (1.1s)
+
+  30 passed (22.8s)

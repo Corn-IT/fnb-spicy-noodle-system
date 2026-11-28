@@ -1,0 +1,3 @@
+Command: pnpm -r typecheck
+Result: PASS
+packages/shared, apps/api-server (application and spec configs), apps/web-app

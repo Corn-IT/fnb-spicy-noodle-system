@@ -8,6 +8,7 @@ import {
   type SystemErrorCodeKey,
   type SystemErrorSeverity,
 } from '@fnb/shared';
+import { ZodError } from 'zod';
 import { isRouteErrorResponse } from 'react-router-dom';
 
 import { APP_NAVIGATION_ROUTES } from '@/lib/app-navigation';
@@ -79,6 +80,24 @@ function extractFieldErrors(details: unknown): FieldValidationSummary[] {
   return summaries;
 }
 
+export function sanitizeDiagnosticPath(path: string): string {
+  try {
+    const pathname = new URL(path, 'https://diagnostic.invalid').pathname;
+    return pathname.replace(/^(\/(?:q|qr))\/.*$/i, '$1/[redacted]');
+  } catch {
+    return '/';
+  }
+}
+
+export function safeErrorClass(error: unknown): string {
+  if (error instanceof ZodError) return 'ZodError';
+  if (error instanceof ApiClientError) return 'ApiClientError';
+  if (error instanceof Error) {
+    return ['Error', 'TypeError', 'SyntaxError', 'RangeError', 'ReferenceError', 'AbortError'].includes(error.name) ? error.name : 'Error';
+  }
+  return 'Unknown';
+}
+
 /**
  * Normalizes any thrown client/API/Router error into structured, user-safe Vietnamese
  * explanations with store overrides applied and internal stack traces stripped.
@@ -108,7 +127,9 @@ export function normalizeClientError(
     }
   }
 
-  if (error instanceof ApiClientError) {
+  if (error instanceof ZodError) {
+    errorCode = 'DATA_VALIDATION_ERROR';
+  } else if (error instanceof ApiClientError) {
     statusCode = error.statusCode;
     errorCode = error.code;
     rawMessage = error.message;
@@ -201,7 +222,7 @@ export function normalizeClientError(
     retryAfterSeconds,
     fieldErrors: extractFieldErrors(details),
     requestId,
-    path: options.path,
+    path: options.path ? sanitizeDiagnosticPath(options.path) : undefined,
   };
 }
 

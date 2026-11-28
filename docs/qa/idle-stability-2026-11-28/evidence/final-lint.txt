@@ -1,0 +1,3 @@
+Command: pnpm -r lint
+Result: PASS
+packages/shared, apps/api-server, apps/web-app

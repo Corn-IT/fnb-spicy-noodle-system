@@ -1,0 +1,53 @@
+{
+  "sampledAt": "2026-11-28T12:21:01.162Z",
+  "authenticated": false,
+  "domain": "https://pos.anvattran.com",
+  "assets": [
+    {
+      "name": "/assets/index-Be86oXL_.js",
+      "status": 200,
+      "sha256": "02d69fbb56228bc4874b8822c0388f610bf071a2216b719072287cc7b9477d11",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "snippets": [
+        {
+          "needle": "/api/v1/pos/tables",
+          "text": "e(!1),O=Gt(t.pathname),j=f&&Bt(t.pathname);gn(t.pathname);let M=Xe({queryKey:H,queryFn:async()=>{try{let e=await N.get(`/api/v1/pos/tables`),t=_.safeParse(e);return t.success?t.data:null}catch{return null}},enabled:!!(u&&f),retry:!1,staleTime:1e4,refetchInterval:b?12e3:25e3}),te=!(!u||!f||!v||b||M.isFetching||E),P=zi(M.data,te),F=U.useRef(null),I=U.useRef(null);U.useEffect(()=>{if(!u||!f||typeof document>`u`)return;let t=!0,n=()=>{if(document.visibilityState!==`visible`){I.current===null&&(I.current=Date.now());return}let n=I.current===null?0:Date.now()-I.current;I.current=null,D(!0),e.refetchQueries({queryKey:H}).then(()=>{if(!t)re"
+        }
+      ]
+    },
+    {
+      "name": "/assets/socket-provider-DGN8S_SW.js",
+      "status": 200,
+      "sha256": "9000b67a301ea90fbb46220385b7815369fd4aa46db3f69a5fc73d5186adad92",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "snippets": []
+    },
+    {
+      "name": "/assets/dialog-DW3qEOzs.js",
+      "status": 200,
+      "sha256": "d9c52cae31e40b39e7e6580e7fd5e1d48e545034c38455ad095151f8164568dd",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "snippets": [
+        {
+          "needle": "/api/v1/auth/refresh",
+          "text": "REVOKED`,meta:n}}async function Rc(){return Ic||(Ic=(async()=>{let e=$.getState().user!==null;try{let t=await fetch(Wc(`/api/v1/auth/refresh`),{method:`POST`,credentials:`include`,headers:{Accept:`application/json`,\"Content-Type\":`application/json`}});if(!t.ok){if(t.status===401||t.status===403){let n={};try{n=await t.json()}catch{}let r=Lc(n);r?$.getState().clearAuth(r.noticeReason,r.meta):$.getState().clearAuth(e?`SESSION_EXPIRED`:null)}return null}let n=await t.json();return n?.accessToken?($.getState().setAccessToken(n.accessToken),n.user&&($.getState().updateUser({id:n.user.id,employeeId:n.user.employeeId,username:n.user.userna"
+        }
+      ]
+    }
+  ],
+  "health": {
+    "status": 200,
+    "requestId": "151621fd-bdb6-4ee4-84b5-6ea99f0cc980",
+    "body": {
+      "status": "ok",
+      "timestamp": "2026-11-28T12:21:01.114Z",
+      "database": "connected",
+      "uptime": 4227.764422739
+    }
+  },
+  "serviceWorker": {
+    "status": 200,
+    "cacheControl": "no-cache",
+    "hasFetchHandler": false
+  }
+}

@@ -189,9 +189,9 @@ describe('MESSAGE_CATALOG & Store Messages Contracts (Story 17)', () => {
     expect(validUpdate.success).toBe(true);
   });
 
-  it('registers all 18 HTTP_ERROR_CATALOG entries in SYSTEM_ERROR and maps status/codes accurately', () => {
-    expect(HTTP_ERROR_CATALOG).toHaveLength(18);
-    expect(HTTP_ERROR_CATALOG_BY_KEY.size).toBe(18);
+  it('registers all 19 HTTP_ERROR_CATALOG entries in SYSTEM_ERROR and maps status/codes accurately', () => {
+    expect(HTTP_ERROR_CATALOG).toHaveLength(19);
+    expect(HTTP_ERROR_CATALOG_BY_KEY.size).toBe(19);
     for (const httpItem of HTTP_ERROR_CATALOG) {
       const catEntry = MESSAGE_CATALOG_BY_KEY.get(httpItem.messageKey);
       expect(catEntry).toBeDefined();

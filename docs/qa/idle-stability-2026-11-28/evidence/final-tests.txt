@@ -1,0 +1,6 @@
+Command: PATH=<Node 22.23.5>:$PATH pnpm -r test --maxWorkers=2
+Result: PASS
+packages/shared: 11 files, 103 tests passed
+apps/api-server: 55 files, 531 tests passed
+apps/web-app: 108 files, 566 tests passed
+Total: 174 files, 1,200 tests passed

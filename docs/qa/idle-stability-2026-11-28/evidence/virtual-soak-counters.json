@@ -1,0 +1,14 @@
+{
+  "virtualMinutes": 120,
+  "before": {
+    "documents": 1,
+    "nodes": 984,
+    "jsEventListeners": 257
+  },
+  "after": {
+    "documents": 1,
+    "nodes": 1017,
+    "jsEventListeners": 257
+  },
+  "pageErrors": []
+}

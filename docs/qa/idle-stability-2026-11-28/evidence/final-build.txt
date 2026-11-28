@@ -1,0 +1,3 @@
+Command: pnpm -r build
+Result: PASS
+packages/shared, apps/api-server, apps/web-app (Vite production build)

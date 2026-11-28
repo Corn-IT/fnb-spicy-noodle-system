@@ -48,6 +48,7 @@ export interface SocketProviderProps {
 }
 
 export function SocketProvider({ children }: SocketProviderProps) {
+  const sessionRevision = useAuthStore((state) => state.sessionRevision);
   const accessToken = useAuthStore((state) => state.accessToken);
   const userId = useAuthStore((state) => state.user?.id ?? null);
   const sessionSid = React.useMemo(() => getJwtSessionId(accessToken), [accessToken]);
@@ -84,7 +85,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
       disconnectPosSocket('staff');
       setIsConnected(false);
     };
-  }, [hasStaffSession, userId, sessionSid]);
+  }, [hasStaffSession, userId, sessionSid, sessionRevision]);
 
   // Proactive JWT access token refresh ~90s before expiry so mobile Socket.io never hits
   // expired-token Unauthorized loops on long shifts or overnight sessions.
@@ -95,12 +96,20 @@ export function SocketProvider({ children }: SocketProviderProps) {
     if (!expMs) return;
 
     const delayMs = Math.max(5_000, expMs - Date.now() - PROACTIVE_REFRESH_BUFFER_MS);
-    const timer = window.setTimeout(() => {
-      void refreshAccessToken();
-    }, delayMs);
+    let disposed = false;
+    const revision = useAuthStore.getState().sessionRevision;
+    let timer: number;
+    const attempt = async () => {
+      if (disposed || useAuthStore.getState().sessionRevision !== revision) return;
+      const freshToken = document.visibilityState === 'visible' ? await refreshAccessToken() : null;
+      if (!freshToken && !disposed && useAuthStore.getState().sessionRevision === revision && useAuthStore.getState().user) {
+        timer = window.setTimeout(() => { void attempt(); }, 30_000);
+      }
+    };
+    timer = window.setTimeout(() => { void attempt(); }, delayMs);
 
-    return () => window.clearTimeout(timer);
-  }, [accessToken, userId]);
+    return () => { disposed = true; window.clearTimeout(timer); };
+  }, [accessToken, userId, sessionRevision]);
 
   // Reactive auth recovery on connect_error + immediate wake-up recovery on visibility/online
   React.useEffect(() => {
@@ -109,10 +118,22 @@ export function SocketProvider({ children }: SocketProviderProps) {
       return;
     }
 
+    let disposed = false;
+    const revision = useAuthStore.getState().sessionRevision;
+    const ownsSession = () => !disposed && useAuthStore.getState().sessionRevision === revision && useAuthStore.getState().user?.id === userId;
+    const reconcile = () => {
+      if (!ownsSession()) return;
+      for (const prefix of ['store-settings', 'store-messages', 'mdm', 'menu-products', 'menu', 'pos', 'public-menu', 'employees', 'schedules', 'payroll']) {
+        void queryClient.invalidateQueries({ queryKey: [prefix] });
+      }
+      for (const module of ['SCHEDULES', 'PAYROLL', 'SETTINGS']) {
+        void queryClient.invalidateQueries({ queryKey: ['audit-logs', module] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['admin-store-settings'], refetchType: 'none' });
+    };
     const handleConnect = () => {
       setIsConnected(true);
-      void queryClient.invalidateQueries({ queryKey: ['store-settings'] });
-      void queryClient.invalidateQueries({ queryKey: ['store-messages'] });
+      reconcile();
     };
     const handleDisconnect = () => {
       setIsConnected(false);
@@ -129,7 +150,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
       if ((isAuthFailure || isTokenExpiredOrNear) && now - lastReactiveRefreshAtRef.current >= MIN_REACTIVE_REFRESH_INTERVAL_MS) {
         lastReactiveRefreshAtRef.current = now;
         void refreshAccessToken().then((freshToken) => {
-          if (freshToken && !socket.connected) {
+          if (freshToken && ownsSession() && !socket.connected) {
             socket.connect();
           }
         });
@@ -137,7 +158,8 @@ export function SocketProvider({ children }: SocketProviderProps) {
     };
 
     const recoverConnection = () => {
-      if (!useAuthStore.getState().user) return;
+      if (!ownsSession()) return;
+      reconcile();
       const token = useAuthStore.getState().accessToken;
       const expMs = getJwtExpirationMs(token);
       const needsRefresh = !token || (expMs !== null && expMs - Date.now() <= PROACTIVE_REFRESH_BUFFER_MS);
@@ -145,7 +167,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
       if (needsRefresh) {
         lastReactiveRefreshAtRef.current = Date.now();
         void refreshAccessToken().then((freshToken) => {
-          if (freshToken && !socket.connected) {
+          if (freshToken && ownsSession() && !socket.connected) {
             socket.connect();
           }
         });
@@ -167,13 +189,14 @@ export function SocketProvider({ children }: SocketProviderProps) {
     window.addEventListener('online', recoverConnection);
 
     return () => {
+      disposed = true;
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('connect_error', handleConnectError);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', recoverConnection);
     };
-  }, [socket, queryClient]);
+  }, [socket, queryClient, userId]);
 
   React.useEffect(() => {
     if (!socket) return;

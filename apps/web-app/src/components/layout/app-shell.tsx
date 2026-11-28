@@ -1,4 +1,4 @@
-import { PosTableGridResponseSchema, QrAutoCancelledPayloadSchema, SocketEvents, type PosTableGridResponse } from '@fnb/shared';
+import { QrAutoCancelledPayloadSchema, SocketEvents, type PosTableGridResponse } from '@fnb/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, WifiOff } from 'lucide-react';
 import * as React from 'react';
@@ -26,8 +26,7 @@ import { useDisplayScale } from '@/hooks/use-display-scale';
 import { useMobileOrderAlertLifecycle } from '@/hooks/use-mobile-order-alerts';
 import { resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
 import { useSyncAccountPreferencesOnFocus } from '@/hooks/use-sync-account-preferences-on-focus';
-import { apiClient } from '@/lib/api-client';
-import { POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
+import { fetchPosTableGrid, POS_TABLE_GRID_QUERY_KEY } from '@/lib/pos-table-grid-query';
 import {
   useQrPendingReminderMonitor,
   collectPendingQrItems,
@@ -139,17 +138,9 @@ export function AppShell() {
     canReceivePosAlerts && isPosTouchShellPath(location.pathname);
   useDisplayScale(location.pathname);
 
-  const globalTableGridQuery = useQuery<PosTableGridResponse | null>({
+  const globalTableGridQuery = useQuery<PosTableGridResponse>({
     queryKey: POS_TABLE_GRID_QUERY_KEY,
-    queryFn: async () => {
-      try {
-        const raw = await apiClient.get<unknown>('/api/v1/pos/tables');
-        const parsed = PosTableGridResponseSchema.safeParse(raw);
-        return parsed.success ? parsed.data : null;
-      } catch {
-        return null;
-      }
-    },
+    queryFn: fetchPosTableGrid,
     enabled: Boolean(accessToken && canReceivePosAlerts),
     retry: false,
     staleTime: 10_000,

@@ -37,9 +37,69 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown;
   params?: Record<string, string | number | boolean | undefined | null>;
   skipAuthRefresh?: boolean;
+  timeoutMs?: number;
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+
 let refreshPromise: Promise<string | null> | null = null;
+let refreshOwner: { revision: number; token: string | null; userId: number | null } | null = null;
+
+// Race the entire IO operation so even a stalled body (or a fetch ignoring abort) is bounded.
+async function boundedIo<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  callerSignal?: AbortSignal | null,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  if (callerSignal?.aborted) throw new DOMException('Request cancelled', 'AbortError');
+  const effectiveTimeoutMs =
+    typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : DEFAULT_REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancel: (() => void) | undefined;
+  const stopped = new Promise<never>((_, reject) => {
+    cancel = () => {
+      reject(new DOMException('Request cancelled', 'AbortError'));
+      controller.abort();
+    };
+    callerSignal?.addEventListener('abort', cancel, { once: true });
+    timer = setTimeout(() => {
+      const seconds = Math.max(1, Math.round(effectiveTimeoutMs / 1000));
+      reject(new ApiClientError({
+        statusCode: 408, error: 'Request Timeout', code: 'NETWORK_ERROR',
+        message: `Máy chủ phản hồi quá thời gian chờ (${seconds} giây). Vui lòng kiểm tra kết nối mạng và thử lại.`,
+      }));
+      controller.abort();
+    }, effectiveTimeoutMs);
+    if (callerSignal?.aborted) cancel();
+  });
+  try {
+    return await Promise.race([stopped, operation(controller.signal)]);
+  } finally {
+    clearTimeout(timer);
+    if (cancel) callerSignal?.removeEventListener('abort', cancel);
+  }
+}
+
+// A caller may stop waiting for refresh without cancelling the shared refresh for others.
+async function waitForRefresh(signal?: AbortSignal | null): Promise<string | null> {
+  if (!signal) return attemptTokenRefresh();
+  if (signal.aborted) throw new DOMException('Request cancelled', 'AbortError');
+  let cancel: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      attemptTokenRefresh(),
+      new Promise<never>((_, reject) => {
+        cancel = () => reject(new DOMException('Request cancelled', 'AbortError'));
+        signal.addEventListener('abort', cancel, { once: true });
+      }),
+    ]);
+  } finally {
+    if (cancel) signal.removeEventListener('abort', cancel);
+  }
+}
 
 function extractSessionRevokeFromError(payload: {
   code?: string;
@@ -70,30 +130,34 @@ function extractSessionRevokeFromError(payload: {
 }
 
 async function attemptTokenRefresh(): Promise<string | null> {
-  if (refreshPromise) return refreshPromise;
-
-  refreshPromise = (async () => {
-    const hadUserSession = useAuthStore.getState().user !== null;
+  const state = useAuthStore.getState();
+  if (refreshPromise && refreshOwner?.revision === state.sessionRevision && refreshOwner.token === state.accessToken && refreshOwner.userId === (state.user?.id ?? null)) return refreshPromise;
+  const owner = { revision: state.sessionRevision, token: state.accessToken, userId: state.user?.id ?? null };
+  refreshOwner = owner;
+  const stillOwnsSession = () => useAuthStore.getState().sessionRevision === owner.revision && useAuthStore.getState().accessToken === owner.token && (useAuthStore.getState().user?.id ?? null) === owner.userId;
+  const pending = (async () => {
+    const hadUserSession = state.user !== null;
     try {
-      const response = await fetch(buildUrl('/api/v1/auth/refresh'), {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
+      const { response, data: refreshData } = await boundedIo(async (signal) => {
+        const response = await fetch(buildUrl('/api/v1/auth/refresh'), {
+          signal,
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+        });
+        const data: unknown = await response.json().catch(() => null);
+        return { response, data };
       });
+      if (!stillOwnsSession()) return null;
 
       if (!response.ok) {
-        // Chỉ xoá phiên đăng nhập khi Refresh Token thực sự không hợp lệ / bị thu hồi (401/403).
+        // Chỉ xoá phiên đăng nhập khi Refresh Token thực sự không hợp lệ / bị thu hồi (401).
         // Nếu lỗi mạng hoặc Server bảo trì / sập tạm thời (500/502/503/504), giữ nguyên phiên làm việc!
-        if (response.status === 401 || response.status === 403) {
-          let errPayload: { code?: string; details?: unknown } = {};
-          try {
-            errPayload = (await response.json()) as { code?: string; details?: unknown };
-          } catch {
-            // Ignore empty/non-JSON body
-          }
+        if (response.status === 401) {
+          const errPayload = (refreshData ?? {}) as { code?: string; details?: unknown };
           const revoked = extractSessionRevokeFromError(errPayload);
           if (revoked) {
             useAuthStore.getState().clearAuth(revoked.noticeReason, revoked.meta);
@@ -104,7 +168,7 @@ async function attemptTokenRefresh(): Promise<string | null> {
         return null;
       }
 
-      const data = (await response.json()) as {
+      const data = refreshData as {
         accessToken?: string;
         user?: {
           id: number;
@@ -137,17 +201,19 @@ async function attemptTokenRefresh(): Promise<string | null> {
         return data.accessToken;
       }
 
-      useAuthStore.getState().clearAuth(hadUserSession ? 'SESSION_EXPIRED' : null);
       return null;
     } catch {
       // Lỗi đứt mạng tạm thời (Failed to fetch) -> tuyệt đối KHÔNG xoá phiên đăng nhập của thu ngân
       return null;
     } finally {
-      refreshPromise = null;
+      if (refreshOwner === owner) {
+        refreshPromise = null;
+        refreshOwner = null;
+      }
     }
   })();
-
-  return refreshPromise;
+  refreshPromise = pending;
+  return pending;
 }
 
 export async function refreshAccessToken(): Promise<string | null> {
@@ -215,7 +281,7 @@ function buildUrl(
   return url.toString();
 }
 
-async function parseErrorResponse(response: Response): Promise<ApiErrorResponse> {
+async function parseErrorResponse(response: Response, bodyText: string): Promise<ApiErrorResponse> {
   const headerRequestId = response.headers.get('x-request-id') ?? undefined;
   const rawRetryAfter = response.headers.get('retry-after');
   const retryAfterSeconds =
@@ -224,7 +290,7 @@ async function parseErrorResponse(response: Response): Promise<ApiErrorResponse>
       : undefined;
 
   try {
-    const raw = await response.json();
+    const raw = JSON.parse(bodyText) as unknown;
     const parsed = ApiErrorResponseSchema.safeParse(raw);
     if (parsed.success) {
       return {
@@ -275,10 +341,10 @@ async function parseErrorResponse(response: Response): Promise<ApiErrorResponse>
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body, params, headers: customHeaders, skipAuthRefresh, ...rest } = options;
+  const { body, params, headers: customHeaders, skipAuthRefresh, timeoutMs, ...rest } = options;
   const url = buildUrl(path, params);
 
-  const executeFetch = async (token: string | null): Promise<Response> => {
+  const executeFetch = async (token: string | null): Promise<{ response: Response; bodyText: string }> => {
     const headers = new Headers(customHeaders);
     headers.set('Accept', 'application/json');
     if (body !== undefined && !(body instanceof FormData)) {
@@ -288,43 +354,31 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       headers.set('Authorization', `Bearer ${token}`);
     }
 
-    const controller = !rest.signal && typeof AbortController === 'function' ? new AbortController() : null;
-    const timeoutId =
-      controller && typeof setTimeout === 'function'
-        ? setTimeout(() => controller.abort(), 15_000)
-        : null;
-
     try {
-      return await fetch(url, {
-        ...rest,
-        ...(controller ? { signal: controller.signal } : {}),
-        headers,
-        credentials: 'include',
-        body:
-          body === undefined
-            ? undefined
-            : body instanceof FormData
-              ? body
-              : JSON.stringify(body),
-      });
+      return await boundedIo(async (signal) => {
+        const response = await fetch(url, {
+          ...rest, signal, headers, credentials: 'include',
+          body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
+        });
+        const bodyText = response.status === 204 ? '' : await response.text();
+        return { response, bodyText };
+      }, rest.signal, timeoutMs);
     } catch (error) {
-      const isTimeout = error instanceof Error && error.name === 'AbortError';
+      if (rest.signal?.aborted || error instanceof ApiClientError) throw error;
       throw new ApiClientError({
-        statusCode: isTimeout ? 408 : 0,
-        error: isTimeout ? 'Request Timeout' : 'Network Error',
-        code: 'NETWORK_ERROR',
-        message: isTimeout
-          ? 'Máy chủ phản hồi quá thời gian chờ (15 giây). Vui lòng kiểm tra kết nối mạng và thử lại.'
-          : 'Mất kết nối tới máy chủ hoặc đường truyền mạng bị gián đoạn. Vui lòng kiểm tra Wi-Fi/mạng và thử lại.',
+        statusCode: 0, error: 'Network Error', code: 'NETWORK_ERROR',
+        message: 'Mất kết nối tới máy chủ hoặc đường truyền mạng bị gián đoạn. Vui lòng kiểm tra Wi-Fi/mạng và thử lại.',
       });
-    } finally {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-      }
     }
   };
 
-  let currentToken = useAuthStore.getState().accessToken;
+  const initialAuth = useAuthStore.getState();
+  const requestOwner = { revision: initialAuth.sessionRevision, userId: initialAuth.user?.id ?? null };
+  const ownsRequest = () => {
+    const current = useAuthStore.getState();
+    return current.sessionRevision === requestOwner.revision && (current.user?.id ?? null) === requestOwner.userId;
+  };
+  let currentToken = initialAuth.accessToken;
   let didBootstrapRefresh = false;
   if (
     !currentToken &&
@@ -335,7 +389,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     !path.includes('/api/v1/auth/refresh')
   ) {
     didBootstrapRefresh = true;
-    currentToken = await bootstrapAuthSession();
+    currentToken = await waitForRefresh(rest.signal);
     if (!currentToken && !useAuthStore.getState().user) {
       throw new ApiClientError({
         statusCode: 401,
@@ -345,7 +399,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       });
     }
   }
-  let response = await executeFetch(currentToken);
+  if (!ownsRequest()) throw new DOMException('Session changed', 'AbortError');
+  let { response, bodyText } = await executeFetch(currentToken);
 
   if (
     response.status === 401 &&
@@ -356,25 +411,31 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   ) {
     let directRevoke: ReturnType<typeof extractSessionRevokeFromError> = null;
     try {
-      const cloned = response.clone();
-      const rawJson = (await cloned.json()) as { code?: string; details?: unknown };
+      const rawJson = JSON.parse(bodyText) as { code?: string; details?: unknown };
       directRevoke = extractSessionRevokeFromError(rawJson);
     } catch {
       // Ignore parse failure; proceed with normal token refresh
     }
 
+    if (!ownsRequest()) {
+      throw new DOMException('Session changed', 'AbortError');
+    }
     if (directRevoke) {
       useAuthStore.getState().clearAuth(directRevoke.noticeReason, directRevoke.meta);
     } else {
-      const refreshedToken = await attemptTokenRefresh();
+      const refreshedToken = await waitForRefresh(rest.signal);
+      if (!ownsRequest() && useAuthStore.getState().user) {
+        throw new DOMException('Session changed', 'AbortError');
+      }
       if (refreshedToken) {
-        response = await executeFetch(refreshedToken);
+        if (!ownsRequest()) throw new DOMException('Session changed', 'AbortError');
+        ({ response, bodyText } = await executeFetch(refreshedToken));
       }
     }
   }
 
   if (!response.ok) {
-    const errorPayload = await parseErrorResponse(response);
+    const errorPayload = await parseErrorResponse(response, bodyText);
     const detailsVars =
       errorPayload.details && typeof errorPayload.details === 'object' && !Array.isArray(errorPayload.details)
         ? (errorPayload.details as MessageVars)
@@ -410,8 +471,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     return undefined as T;
   }
 
-  const text = await response.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  return (bodyText ? JSON.parse(bodyText) : undefined) as T;
 }
 
 export const apiClient = {

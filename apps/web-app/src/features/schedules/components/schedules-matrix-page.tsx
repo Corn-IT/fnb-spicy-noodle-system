@@ -16,6 +16,7 @@ import { cn } from '@/utils/cn';
 
 import {
   type ScheduleEmployeeInfo,
+  type ScheduleWeekResponse,
   useBulkSaveScheduleMutation,
   useCopyPreviousWeekMutation,
   useScheduleWeekQuery,
@@ -57,6 +58,17 @@ interface DraftCellValue {
 }
 
 type CellMap = Record<string, DraftCellValue>;
+
+function buildCellMap(cells: ScheduleWeekResponse['cells']): CellMap {
+  const map: CellMap = {};
+  for (const cell of cells) {
+    map[buildCellKey(cell.dayOfWeek, cell.timeSlot)] = {
+      employeeIds: [...cell.employeeIds],
+      attendances: cell.attendances ? [...cell.attendances] : [],
+    };
+  }
+  return map;
+}
 
 function serializeCell(cell: DraftCellValue | undefined): string {
   if (!cell) return '';
@@ -125,22 +137,20 @@ export function SchedulesMatrixPage() {
   }, [data]);
   const timeSlots = React.useMemo(() => [...DEFAULT_TIME_SLOTS], []);
 
-  const initialCells = React.useMemo<CellMap>(() => {
-    const map: CellMap = {};
-    for (const cell of data?.cells ?? []) {
-      map[buildCellKey(cell.dayOfWeek, cell.timeSlot)] = {
-        employeeIds: [...cell.employeeIds],
-        attendances: cell.attendances ? [...cell.attendances] : [],
-      };
-    }
-    return map;
-  }, [data]);
+  const initialCells = React.useMemo(() => buildCellMap(data?.cells ?? []), [data]);
 
   const [draftCells, setDraftCells] = React.useState<CellMap>({});
 
+  const previousServerCells = React.useRef<{ weekStartDate: string; cells: CellMap }>({ weekStartDate: '', cells: {} });
   React.useEffect(() => {
-    setDraftCells(initialCells);
-  }, [initialCells]);
+    const previous = previousServerCells.current;
+    setDraftCells((draft) => {
+      const keys = new Set([...Object.keys(previous.cells), ...Object.keys(draft)]);
+      const hasLocalChanges = [...keys].some((key) => serializeCell(previous.cells[key]) !== serializeCell(draft[key]));
+      return previous.weekStartDate === weekStartDate && hasLocalChanges ? draft : initialCells;
+    });
+    previousServerCells.current = { weekStartDate, cells: initialCells };
+  }, [initialCells, weekStartDate]);
 
   const isDirty = React.useMemo(() => {
     const keys = new Set([...Object.keys(initialCells), ...Object.keys(draftCells)]);
@@ -201,6 +211,12 @@ export function SchedulesMatrixPage() {
         sourceWeekStartDate: formatDateIso(prevMonday),
         targetWeekStartDate: weekStartDate,
       });
+      const refreshed = await scheduleQuery.refetch({ throwOnError: true });
+      if (refreshed.data && previousServerCells.current.weekStartDate === weekStartDate) {
+        const cells = buildCellMap(refreshed.data.cells);
+        previousServerCells.current = { weekStartDate, cells };
+        setDraftCells(cells);
+      }
       notify('schedules.copyWeekSuccess', { variant: 'success' });
     } catch {
       notify('schedules.copyWeekError', { variant: 'destructive' });

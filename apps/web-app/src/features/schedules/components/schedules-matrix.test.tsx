@@ -1,6 +1,6 @@
 import { defaultUserPermissions } from '@fnb/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,7 +11,8 @@ import { ScheduleCellMultiselect } from './schedule-cell-multiselect';
 import { SchedulesMatrixPage } from './schedules-matrix-page';
 import { UnsavedChangesDialog } from '../hooks/use-unsaved-changes-guard';
 
-const { scheduleDataMock, bulkSaveMock, copyWeekMock } = vi.hoisted(() => ({
+const { scheduleDataMock, bulkSaveMock, copyWeekMock, refetchMock } = vi.hoisted(() => ({
+  refetchMock: vi.fn(),
   bulkSaveMock: vi.fn(),
   copyWeekMock: vi.fn(),
   scheduleDataMock: {
@@ -44,7 +45,7 @@ const { scheduleDataMock, bulkSaveMock, copyWeekMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../api/schedules.api', () => ({
-  useScheduleWeekQuery: () => ({ data: scheduleDataMock.current, isLoading: false, isFetching: false, isPlaceholderData: false, isError: false }),
+  useScheduleWeekQuery: () => ({ data: scheduleDataMock.current, isLoading: false, isFetching: false, isPlaceholderData: false, isError: false, refetch: refetchMock }),
   useBulkSaveScheduleMutation: () => ({ mutateAsync: bulkSaveMock, isPending: false }),
   useCopyPreviousWeekMutation: () => ({ mutateAsync: copyWeekMock, isPending: false }),
 }));
@@ -52,6 +53,7 @@ vi.mock('../api/schedules.api', () => ({
 describe('SchedulesMatrixPage & ScheduleCellMultiselect', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    refetchMock.mockImplementation(async () => ({ data: scheduleDataMock.current }));
     useAuthStore.getState().setAuth({
       accessToken: 'token',
       user: {
@@ -85,6 +87,53 @@ describe('SchedulesMatrixPage & ScheduleCellMultiselect', () => {
     expect(phucVuTag.className).toContain('bg-emerald-100');
     expect(deletedTag).toHaveTextContent('Đ.Nghỉ (08:30-12:30) (Đã nghỉ)');
     expect(deletedTag.className).toContain('line-through');
+  });
+
+  it('preserves edited cells when reconnect replaces server schedule data', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = <QueryClientProvider client={qc}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><SchedulesMatrixPage /></MemoryRouter></QueryClientProvider>;
+    const view = render(ui);
+    fireEvent.click(screen.getAllByTestId('schedule-cell-trigger')[1]!);
+    fireEvent.click(screen.getByTestId('schedule-option-1'));
+    const original = scheduleDataMock.current;
+    try {
+      scheduleDataMock.current = { ...original, cells: [...original.cells, { ...original.cells[0]!, dayOfWeek: 2 }] };
+      await act(async () => { view.rerender(<QueryClientProvider client={qc}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><SchedulesMatrixPage /></MemoryRouter></QueryClientProvider>); });
+      fireEvent.click(screen.getByTestId('save-schedule-btn'));
+      await waitFor(() => expect(bulkSaveMock).toHaveBeenCalledWith(expect.objectContaining({ cells: expect.arrayContaining([expect.objectContaining({ dayOfWeek: 1, timeSlot: 'Full-time', employeeIds: [1] })]) })));
+    } finally { scheduleDataMock.current = original; }
+  });
+
+  it.each([true, false])('hydrates a dirty matrix only after a successful explicit week copy (success=%s)', async (success) => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={qc}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><SchedulesMatrixPage /></MemoryRouter></QueryClientProvider>);
+    fireEvent.click(screen.getAllByTestId('schedule-cell-trigger')[1]!);
+    fireEvent.click(screen.getByTestId('schedule-option-1'));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    const original = scheduleDataMock.current;
+    const copied = { ...original, cells: [{ ...original.cells[0]!, dayOfWeek: 2 }] };
+    if (success) copyWeekMock.mockResolvedValueOnce({ copied: 1 });
+    else copyWeekMock.mockRejectedValueOnce(new Error('Copy failed'));
+    refetchMock.mockImplementationOnce(async () => {
+      scheduleDataMock.current = copied;
+      return { data: copied };
+    });
+    try {
+      await act(async () => { fireEvent.click(screen.getByTestId('copy-prev-week-btn')); });
+      view.rerender(<QueryClientProvider client={qc}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><SchedulesMatrixPage /></MemoryRouter></QueryClientProvider>);
+      if (success) {
+        expect(refetchMock).toHaveBeenCalledTimes(1);
+        expect(screen.getByTestId('save-schedule-btn')).toBeDisabled();
+        // A later edit/save must include the copied week, never the discarded pre-copy draft.
+        fireEvent.click(screen.getAllByTestId('schedule-cell-trigger')[1]!);
+        fireEvent.click(screen.getByTestId('schedule-option-3'));
+      } else expect(refetchMock).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId('save-schedule-btn'));
+      await waitFor(() => expect(bulkSaveMock).toHaveBeenCalledTimes(1));
+      const cells = bulkSaveMock.mock.calls[0]![0].cells;
+      expect(cells).toEqual(expect.arrayContaining([expect.objectContaining({ dayOfWeek: 1, timeSlot: 'Full-time', employeeIds: success ? [3] : [1] })]));
+      if (success) expect(cells).toEqual(expect.arrayContaining([expect.objectContaining({ dayOfWeek: 2, timeSlot: 'Full-time', employeeIds: [1, 2, 3, 4] })]));
+    } finally { scheduleDataMock.current = original; }
   });
 
   it('does not offer unselected soft-deleted employees in unrelated cells', () => {

@@ -22,6 +22,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import {
   normalizeClientError,
+  safeErrorClass,
   resolveStaffHomeDestination,
   type ErrorAudience,
   type NormalizedClientError,
@@ -138,7 +139,9 @@ export function SystemErrorView({
 
   const [showTechDetails, setShowTechDetails] = React.useState(false);
   const [copiedTrace, setCopiedTrace] = React.useState(false);
-  const [occurredAt] = React.useState(() => new Date().toLocaleTimeString('vi-VN'));
+  const copyTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  React.useEffect(() => () => clearTimeout(copyTimer.current), []);
+  const [occurredAt] = React.useState(() => new Date().toISOString());
 
   const audience: ErrorAudience = variant === 'guest' ? 'guest' : 'staff';
   const normalized = React.useMemo(
@@ -150,7 +153,7 @@ export function SystemErrorView({
         recoveryHintOverride,
         audience,
         customMessages,
-        path: `${location.pathname}${location.search}`,
+        path: location.pathname,
       }),
     [
       audience,
@@ -208,21 +211,32 @@ export function SystemErrorView({
     }
   };
 
+  const errorClass = safeErrorClass(error);
+  const browser = typeof navigator === 'undefined' ? 'Unknown' :
+    navigator.userAgent.match(/(?:Edg|Chrome|Firefox|Version)\/[\d.]+/)?.[0] ?? 'Unknown';
+  const entryAsset = typeof document === 'undefined' ? undefined : Array.from(document.scripts).map((script) => {
+    try {
+      const url = new URL(script.src, window.location.href);
+      return url.origin === window.location.origin && /^\/assets\/index-[\w-]+\.js$/.test(url.pathname) ? url.pathname.split('/').pop() : undefined;
+    } catch { return undefined; }
+  }).find(Boolean);
+  const safeRequestId = normalized.requestId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized.requestId) ? normalized.requestId : undefined;
   const handleCopyTrace = () => {
     const traceSummary = [
-      `Mã lỗi: ${normalized.statusLabel}`,
-      normalized.errorCode ? `ErrorCode: ${normalized.errorCode}` : null,
-      normalized.requestId ? `RequestId: ${normalized.requestId}` : null,
+      `Mã lỗi: ${normalized.key}`,
+      safeRequestId ? `RequestId: ${safeRequestId}` : null,
       normalized.path ? `Path: ${normalized.path}` : null,
       `Time: ${occurredAt}`,
-    ]
-      .filter(Boolean)
-      .join(' | ');
+      `Class: ${errorClass}`,
+      `Browser: ${browser}`,
+      entryAsset ? `Build: ${entryAsset}` : null,
+    ].filter(Boolean).join(' | ');
 
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       void navigator.clipboard.writeText(traceSummary);
       setCopiedTrace(true);
-      setTimeout(() => setCopiedTrace(false), 2500);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopiedTrace(false), 2500);
     }
   };
 
@@ -394,11 +408,14 @@ export function SystemErrorView({
                 <span>Mã hệ thống:</span>
                 <span className="text-foreground">{normalized.errorCode ?? normalized.key}</span>
                 <span>Request ID:</span>
-                <span className="text-foreground">{normalized.requestId ?? 'Không có (Lỗi client/proxy)'}</span>
+                <span className="text-foreground">{safeRequestId ?? 'Không có (Lỗi client/proxy)'}</span>
                 <span>Đường dẫn:</span>
                 <span className="text-foreground">{normalized.path ?? '/'}</span>
                 <span>Thời điểm:</span>
                 <span className="text-foreground">{occurredAt}</span>
+                <span>Loại lỗi:</span><span>{errorClass}</span>
+                <span>Trình duyệt:</span><span>{browser}</span>
+                {entryAsset ? <><span>Phiên bản:</span><span>{entryAsset}</span></> : null}
               </div>
               <div className="flex items-center justify-between gap-2 pt-1 border-t font-sans">
                 <span className="text-[11px] text-muted-foreground">

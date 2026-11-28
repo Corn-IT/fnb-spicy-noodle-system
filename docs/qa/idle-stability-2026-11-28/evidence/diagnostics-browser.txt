@@ -1,0 +1,17 @@
+[WebServer] $ vite --port 5173 --strictPort --host 127.0.0.1
+[WebServer] (node:36159) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 7 tests using 1 worker
+
+(node:36167) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 ../../docs/qa/idle-stability-2026-11-28/browser.audit.mts:6:1 › table request pending: POS claims no configured tables before a response exists (1.2s)
+  ✓  2 ../../docs/qa/idle-stability-2026-11-28/browser.audit.mts:25:1 › background API 503: AppShell polling replaces a loaded grid with null and shows 0/0 (998ms)
+  ✓  3 ../../docs/qa/idle-stability-2026-11-28/browser.audit.mts:48:1 › settings schema error uses the same runtime-crash wording without a React render exception (2.0s)
+  ✓  4 ../../docs/qa/idle-stability-2026-11-28/browser.audit.mts:61:1 › two virtual hours on POS: existing polling survives and loaded cards remain (4.3s)
+  ✓  5 ../../docs/qa/idle-stability-2026-11-28/browser.audit.mts:88:1 › foreground refetch using the POS query preserves stale cards on a network error (2.8s)
+  ✓  6 ../../docs/qa/idle-stability-2026-11-28/browser.audit.mts:104:1 › a successful empty table response legitimately shows the empty state (825ms)
+  ✓  7 ../../docs/qa/idle-stability-2026-11-28/browser.audit.mts:112:1 › settings draft survives thirty virtual minutes and foreground refetch without save requests (944ms)
+
+  7 passed (14.1s)

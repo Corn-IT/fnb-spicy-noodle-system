@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { HTTP_ERROR_CATALOG, UserPermissionsSchema } from '@fnb/shared';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
@@ -98,6 +99,15 @@ describe('System Error Display & Recovery Suite', () => {
     expect(normalizedCrash.reason).not.toContain('InternalDb.query');
   });
 
+  it('classifies response validation separately and strips data issues and QR secrets', () => {
+    const error = z.object({ privateField: z.number() }).safeParse({ privateField: 'sensitive-payload' }).error!;
+    const normalized = normalizeClientError(error, { path: '/q/private-token?jwt=secret#sensitive' });
+    expect(normalized.key).toBe('DATA_VALIDATION_ERROR');
+    expect(normalized.path).toBe('/q/[redacted]');
+    expect(JSON.stringify(normalized)).not.toMatch(/privateField|private-token|sensitive-payload|jwt=secret/);
+    expect(normalizeClientError(new Error('runtime')).key).toBe('RUNTIME_CRASH');
+  });
+
   it('parses non-JSON 502 Caddy/Proxy HTML responses into crisp Vietnamese ApiClientError with X-Request-Id header', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('<html><body>502 Bad Gateway</body></html>', {
@@ -151,6 +161,28 @@ describe('System Error Display & Recovery Suite', () => {
 
     fireEvent.click(screen.getByTestId('error-retry-btn'));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('copies only safe diagnostics including ISO time, error class, browser and public entry filename', () => {
+    const copy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: copy }, configurable: true });
+    const script = document.createElement('script');
+    script.src = `${window.location.origin}/assets/index-public-build.js?secret=hidden`;
+    document.head.append(script);
+    const error = new Error('private-message payload=secret');
+    error.name = 'secret-custom-class'; error.stack = 'private-stack';
+    try {
+      renderWithQueryAndRouter(<SystemErrorView error={error} />, ['/qr/private-token?auth=private-query#private-hash']);
+      fireEvent.click(screen.getByTestId('error-tech-details-toggle'));
+      fireEvent.click(screen.getByTestId('error-copy-trace-btn'));
+      const diagnostic = copy.mock.calls[0]?.[0] as string;
+      expect(diagnostic).toContain('Path: /qr/[redacted]');
+      expect(diagnostic).toMatch(/Time: \d{4}-\d{2}-\d{2}T/);
+      expect(diagnostic).toContain('Class: Error');
+      expect(diagnostic).toContain('Browser:');
+      expect(diagnostic).toContain('Build: index-public-build.js');
+      expect(diagnostic).not.toMatch(/private|secret|stack|payload/);
+    } finally { script.remove(); }
   });
 
   it('resolves smart home routes by role permissions cleanly on 403 Forbidden without clearing auth', () => {
@@ -307,7 +339,7 @@ describe('System Error Display & Recovery Suite', () => {
     expect(banner).toHaveTextContent('401 — Phiên đăng nhập đã hết hạn hoặc bị thu hồi');
   });
 
-  it('allows previewing all 18 HTTP/System error screens and Guest/Staff modes in ErrorGalleryDialog', () => {
+  it('allows previewing all 19 HTTP/System error screens and Guest/Staff modes in ErrorGalleryDialog', () => {
     renderWithQueryAndRouter(
       <ErrorGalleryDialog open onOpenChange={() => {}} />,
       ['/settings'],
