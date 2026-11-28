@@ -70,8 +70,8 @@ POS_DOMAIN_CONTEXT_PATTERN = re.compile(
 OUTPUT_LEAK_PATTERNS = re.compile(
     r"(?:"
     r"systeminstruction|tool_declarations|hierarchical instruction|system_map_summary|"
-    r"fnb_gemini_api_key|password_hash|\$2[aby]\$\d{2}\$|aq\.ab8rn6|aiza[0-9a-za-z_-]{15,}|"
-    r"begin [a-z ]*private key|web_push_vapid_keys"
+    r"fnb_gemini_api_key|fnb_bot_token|\$2[aby]\$\d{2}\$|aq\.ab8rn6|aiza[0-9a-za-z_-]{15,}|"
+    r"begin [a-z ]*private key"
     r")",
     re.I,
 )
@@ -119,6 +119,10 @@ def sanitize_ai_output(raw_reply: str) -> tuple[str, bool]:
 
     if OUTPUT_LEAK_PATTERNS.search(txt) or OUTPUT_CODE_BLOCK_PATTERN.search(txt):
         return SCOPE_REFUSAL_MSG, True
+
+    # Normalize stray inline Markdown (**bold**, `code`) to Telegram HTML tags safely
+    txt = re.sub(r"\*\*([^\n*]{1,200}?)\*\*", r"<b>\1</b>", txt)
+    txt = re.sub(r"`([^\n`]{1,120}?)`", r"<code>\1</code>", txt)
 
     is_refusal = txt.startswith("🤖 Tôi chỉ hỗ trợ") or "chỉ hỗ trợ tra cứu dữ liệu" in txt.lower()
     return txt, is_refusal
