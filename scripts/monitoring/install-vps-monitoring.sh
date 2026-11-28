@@ -148,6 +148,7 @@ Requires=docker.service
 
 [Service]
 Type=simple
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 ${SCRIPT_DIR}/telegram-command-bot.py
 Restart=always
 RestartSec=5
@@ -166,6 +167,7 @@ Requires=docker.service
 
 [Service]
 Type=simple
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 ${SCRIPT_DIR}/telegram-biz-bot.py
 Restart=on-failure
 RestartSec=5
