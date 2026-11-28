@@ -242,6 +242,118 @@ def execute_ai_tool(name: str, args: dict[str, Any], cfg: dict[str, str] | None 
         return {"ok": False, "error": str(err)[:300]}
 
 
+_PROBE_CACHE: dict[str, Any] = {"ts": 0.0, "result": None}
+
+
+class GeminiApiError(RuntimeError):
+    def __init__(self, http_code: int, message: str) -> None:
+        super().__init__(message)
+        self.http_code = http_code
+        self.detail = message
+
+
+def _scrub_key(text: str, api_key: str) -> str:
+    if not text:
+        return ""
+    cleaned = text.replace(api_key, "***") if api_key else text
+    return re.sub(r"key=AIza[0-9A-Za-z_-]+", "key=***", cleaned)
+
+
+def probe_gemini_status(
+    cfg: dict[str, str] | None = None,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """
+    Zero-token health/metadata check against Gemini Developer API /v1beta/models/{model}.
+    Confirms API key validity, active primary/fallback models, and context limits.
+    """
+    cfg = cfg or get_biz_config()
+    api_key = cfg.get("gemini_api_key", "").strip()
+    models_to_check: list[tuple[str, str]] = [("Chính", cfg.get("gemini_model", "gemini-3.5-flash-lite"))]
+    fb = (cfg.get("gemini_fallback_model") or "").strip()
+    if fb and fb != models_to_check[0][1]:
+        models_to_check.append(("Dự phòng", fb))
+
+    now = time.monotonic()
+    cached_res = _PROBE_CACHE.get("result")
+    if (
+        not force_refresh
+        and cached_res is not None
+        and cached_res.get("_key_hint") == (api_key[-4:] if api_key else "")
+        and now - float(_PROBE_CACHE.get("ts") or 0) < 60.0
+    ):
+        return cached_res
+
+    if not api_key:
+        res = {"configured": False, "key_valid": False, "models": [], "_key_hint": ""}
+        return res
+
+    model_results: list[dict[str, Any]] = []
+    any_valid = False
+    for role_lbl, model_name in models_to_check:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}?key={api_key}"
+        req = urllib.request.Request(url, method="GET")
+        t0 = time.monotonic()
+        try:
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                ms = round((time.monotonic() - t0) * 1000)
+                meta = json.loads(resp.read().decode("utf-8"))
+                any_valid = True
+                model_results.append({
+                    "role": role_lbl,
+                    "model": model_name,
+                    "ok": True,
+                    "status_code": 200,
+                    "latency_ms": ms,
+                    "display_name": str(meta.get("displayName") or model_name),
+                    "version": str(meta.get("version") or ""),
+                    "input_limit": int(meta.get("inputTokenLimit") or 0),
+                    "output_limit": int(meta.get("outputTokenLimit") or 0),
+                    "error": "",
+                })
+        except urllib.error.HTTPError as err:
+            ms = round((time.monotonic() - t0) * 1000)
+            body_err = _scrub_key(err.read().decode("utf-8", "replace")[:200], api_key)
+            if err.code == 429:
+                any_valid = True
+            model_results.append({
+                "role": role_lbl,
+                "model": model_name,
+                "ok": False,
+                "status_code": int(err.code),
+                "latency_ms": ms,
+                "display_name": model_name,
+                "version": "",
+                "input_limit": 0,
+                "output_limit": 0,
+                "error": f"HTTP {err.code}: {body_err}",
+            })
+        except Exception as err:
+            ms = round((time.monotonic() - t0) * 1000)
+            model_results.append({
+                "role": role_lbl,
+                "model": model_name,
+                "ok": False,
+                "status_code": 0,
+                "latency_ms": ms,
+                "display_name": model_name,
+                "version": "",
+                "input_limit": 0,
+                "output_limit": 0,
+                "error": _scrub_key(str(err)[:160], api_key),
+            })
+
+    res = {
+        "configured": True,
+        "key_valid": any_valid,
+        "models": model_results,
+        "_key_hint": api_key[-4:],
+    }
+    _PROBE_CACHE["ts"] = now
+    _PROBE_CACHE["result"] = res
+    return res
+
+
 def _call_gemini(
     contents: list[dict[str, Any]],
     system_instruction: str,
@@ -249,7 +361,7 @@ def _call_gemini(
 ) -> dict[str, Any]:
     api_key = cfg.get("gemini_api_key", "").strip()
     if not api_key:
-        raise RuntimeError("Chưa cấu hình FNB_GEMINI_API_KEY")
+        raise GeminiApiError(0, "Chưa cấu hình FNB_GEMINI_API_KEY")
 
     payload = json.dumps({
         "systemInstruction": {"parts": [{"text": system_instruction}]},
@@ -276,18 +388,20 @@ def _call_gemini(
         )
         try:
             with urllib.request.urlopen(req, timeout=18) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                data = json.loads(resp.read().decode("utf-8"))
+                data["_model_used"] = model
+                return data
         except urllib.error.HTTPError as err:
-            body_err = err.read().decode("utf-8", "replace")[:260]
-            last_err = RuntimeError(f"Gemini HTTP {err.code}: {body_err}")
+            body_err = _scrub_key(err.read().decode("utf-8", "replace")[:260], api_key)
+            last_err = GeminiApiError(int(err.code), f"Gemini HTTP {err.code} ({model}): {body_err}")
             if idx + 1 < len(models_to_try) and err.code in (404, 429, 500, 503):
                 continue
             raise last_err from err
         except Exception as err:
-            last_err = err
+            last_err = GeminiApiError(0, _scrub_key(str(err)[:220], api_key))
             if idx + 1 < len(models_to_try):
                 continue
-            raise
+            raise last_err from err
     assert last_err is not None
     raise last_err
 
@@ -315,12 +429,12 @@ def _build_gemini_contents(
     reply_context: str | None = None,
 ) -> list[dict[str, Any]]:
     contents: list[dict[str, Any]] = []
-    for turn in (history or [])[-4:]:
+    for turn in (history or [])[-3:]:
         prev_q = (turn.get("q") or "").strip()
         prev_a = (turn.get("a") or "").strip()
         if prev_q and prev_a:
-            contents.append({"role": "user", "parts": [{"text": prev_q[:300]}]})
-            contents.append({"role": "model", "parts": [{"text": prev_a[:500]}]})
+            contents.append({"role": "user", "parts": [{"text": prev_q[:220]}]})
+            contents.append({"role": "model", "parts": [{"text": prev_a[:360]}]})
 
     if reply_context:
         user_payload = (
@@ -376,9 +490,12 @@ def answer_with_gemini_detailed(
     total_prompt = 0
     total_out = 0
     total_tok = 0
+    model_used = cfg.get("gemini_model", "gemini-3.5-flash-lite")
 
     for _ in range(MAX_TOOL_ROUNDS):
         resp = _call_gemini(contents, sys_inst, cfg)
+        if resp.get("_model_used"):
+            model_used = str(resp["_model_used"])
         um = resp.get("usageMetadata") if isinstance(resp.get("usageMetadata"), dict) else {}
         p_tok = int(um.get("promptTokenCount") or 0)
         o_tok = int(um.get("candidatesTokenCount") or 0)
@@ -395,6 +512,7 @@ def answer_with_gemini_detailed(
                 return {
                     "text": sanitize_telegram_html(filtered),
                     "is_refusal": is_refusal,
+                    "model_used": model_used,
                     "usage": {
                         "prompt_tokens": total_prompt,
                         "output_tokens": total_out,

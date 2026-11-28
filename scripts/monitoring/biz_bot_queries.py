@@ -901,8 +901,9 @@ def handle_help(cfg: dict[str, str] | None = None) -> str:
         "<b>5. Cách gọi Bot &amp; Hỏi tự do Hệ thống/DB</b>",
         "• 4 cách gọi Bot: <code>Lona</code> / <code>Bot</code> / <code>Trợ lý</code>, tag <code>@POS_Lona_bot</code>, <b>Reply</b> tin nhắn của Bot, hoặc lệnh <code>/...</code>",
         "• Emoji trạng thái: 👀 tiếp nhận · ⚡ cục bộ 0-token · 🤔 Gemini AI · 👍 hoàn tất · 🫡 ngoài phạm vi",
-        "• VD 0-token: <i>\"Lona ơi món nào bán chạy nhất tuần này?\"</i>, <i>\"Bot doanh thu tiền mặt hôm nay?\"</i>",
-        "• Lệnh phụ: <code>/token</code> (tỷ lệ 0-token), <code>/hoi &lt;câu hỏi&gt;</code>, <code>/quen</code> (xóa ngữ cảnh)",
+        "• VD 0-token: <i>\"Lona ơi món nào bán chạy nhất tuần này?\"</i>, <i>\"Bot đơn vừa gọi thêm?\"</i>",
+        "• Lệnh kiểm tra AI: <code>/token</code> hoặc <code>/gemini</code> (trạng thái Key, Model, giờ reset quota, tỷ lệ 0-token)",
+        "• Lệnh phụ: <code>/hoi &lt;câu hỏi&gt;</code>, <code>/quen</code> (xóa ngữ cảnh)",
         "• Tham số <code>[ky]</code>: <code>homnay</code>, <code>homqua</code>, <code>tuan</code>, <code>thang</code>, <code>dd/mm</code>, <code>dd/mm-dd/mm</code>",
         "• <i>Phạm vi bảo mật: Chỉ hỏi đáp trong hệ thống POS &amp; Database Ăn Vặt Tran.</i>",
     ])
