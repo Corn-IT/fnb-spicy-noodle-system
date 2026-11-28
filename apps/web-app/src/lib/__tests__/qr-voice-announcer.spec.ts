@@ -422,5 +422,102 @@ describe('qr-voice-announcer (Hybrid Voice Alert & FIFO Queue)', () => {
       expect(playChimeFn).toHaveBeenCalledTimes(3);
       expect(spokenTexts).toEqual(['Nhắc lại: Bàn 3, Bàn VIP 1 đang chờ xác nhận đơn']);
     });
+
+    it('covers defaultPlayAudioClip HTMLAudio playback/error and defaultSpeakWebSpeechTts synthesis branches', async () => {
+      const { defaultPlayAudioClip, defaultSpeakWebSpeechTts } = await import(
+        '../qr-voice-announcer'
+      );
+
+      const OrigAudio = window.Audio;
+      const origUa = navigator.userAgent;
+      const origSpeech = (window as { speechSynthesis?: unknown }).speechSynthesis;
+      const OrigUtterance = (window as { SpeechSynthesisUtterance?: unknown })
+        .SpeechSynthesisUtterance;
+
+      try {
+        Object.defineProperty(navigator, 'userAgent', {
+          configurable: true,
+          value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)',
+        });
+
+        let shouldFailPlay = false;
+
+        class MockAudio {
+          src = '';
+          preload = '';
+          playbackRate = 1;
+          defaultPlaybackRate = 1;
+          volume = 1;
+          preservesPitch = false;
+          onended: (() => void) | null = null;
+          onerror: (() => void) | null = null;
+          constructor(src?: string) {
+            this.src = src ?? '';
+          }
+          play = vi.fn(async () => {
+            if (shouldFailPlay) {
+              queueMicrotask(() => this.onerror?.());
+            } else {
+              queueMicrotask(() => this.onended?.());
+            }
+          });
+        }
+        window.Audio = MockAudio as unknown as typeof Audio;
+
+        await expect(
+          defaultPlayAudioClip('/audio/vi/ban.mp3', 1.2, 0.8),
+        ).resolves.toBeUndefined();
+
+        shouldFailPlay = true;
+        await expect(
+          defaultPlayAudioClip('/audio/vi/missing.mp3', 1.0, 0.8),
+        ).rejects.toThrow(/Failed to load audio clip/);
+
+        // 2. defaultSpeakWebSpeechTts selects Vietnamese voice and finishes on onend
+        const speakSpy = vi.fn((utt: { onend?: () => void }) => {
+          queueMicrotask(() => utt.onend?.());
+        });
+        Object.defineProperty(window, 'speechSynthesis', {
+          configurable: true,
+          value: {
+            getVoices: () => [{ lang: 'en-US' }, { lang: 'vi-VN' }],
+            speak: speakSpy,
+            cancel: vi.fn(),
+          },
+        });
+        class MockUtterance {
+          lang = '';
+          rate = 1;
+          volume = 1;
+          pitch = 1;
+          voice: unknown = null;
+          onend: (() => void) | null = null;
+          onerror: (() => void) | null = null;
+          constructor(public readonly text: string) {}
+        }
+        Object.defineProperty(window, 'SpeechSynthesisUtterance', {
+          configurable: true,
+          value: MockUtterance,
+        });
+
+        await expect(
+          defaultSpeakWebSpeechTts('Đơn QR mới tại Bàn 5', 'vi-VN', {
+            voiceProfile: 'vi-female-bright',
+            rate: 1.1,
+            volume: 0.9,
+            chimeEnabled: true,
+          }),
+        ).resolves.toBeUndefined();
+        expect(speakSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        window.Audio = OrigAudio;
+        Object.defineProperty(navigator, 'userAgent', { configurable: true, value: origUa });
+        Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: origSpeech });
+        Object.defineProperty(window, 'SpeechSynthesisUtterance', {
+          configurable: true,
+          value: OrigUtterance,
+        });
+      }
+    });
   });
 });

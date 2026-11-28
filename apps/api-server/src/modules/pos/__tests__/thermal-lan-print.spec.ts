@@ -257,4 +257,53 @@ describe('ThermalLanPrintService & PosController LAN ESC/POS (:9100) printing', 
     ).resolves.toMatchObject({ success: true });
     expect(mockPrintService.sendEscPosPayload).toHaveBeenCalledTimes(2);
   });
+
+  it('covers empty payload, whitespace-padded base64, socket timeout, and missing printer service on PosController', async () => {
+    await expect(
+      service.sendEscPosPayload({
+        host: '127.0.0.1',
+        port: 9100,
+        payloadBase64: '   ',
+        timeoutMs: 1000,
+      }),
+    ).rejects.toThrow(BadRequestException);
+
+    // Server accepts TCP connection and never closes -> triggers socket timeout branch -> ServiceUnavailableException
+    const openSockets = new Set<net.Socket>();
+    const hangingServer = net.createServer((sock) => {
+      openSockets.add(sock);
+      sock.on('close', () => openSockets.delete(sock));
+    });
+    await new Promise<void>((resolve) => hangingServer.listen(0, '127.0.0.1', () => resolve()));
+    const hangingPort = (hangingServer.address() as net.AddressInfo).port;
+    try {
+      await expect(
+        service.sendEscPosPayload({
+          host: '127.0.0.1',
+          port: hangingPort,
+          payloadBase64: Buffer.from([0x1b, 0x40]).toString('base64'),
+          timeoutMs: 40,
+        }),
+      ).rejects.toThrow(ServiceUnavailableException);
+    } finally {
+      for (const s of openSockets) s.destroy();
+      await new Promise<void>((resolve) => hangingServer.close(() => resolve()));
+    }
+
+    // PosController without injected ThermalLanPrintService -> ServiceUnavailableException
+    const controllerWithoutPrinter = new PosController({} as PosService);
+    const adminUser: AuthPrincipal = {
+      id: 1,
+      employeeId: 1,
+      username: 'admin',
+      isSuperAdmin: true,
+      permissions: UserPermissionsSchema.parse({}),
+    };
+    await expect(
+      controllerWithoutPrinter.printLanEscPos(
+        { host: '127.0.0.1', port: 9100, payloadBase64: 'G0A=' },
+        adminUser,
+      ),
+    ).rejects.toThrow(ServiceUnavailableException);
+  });
 });

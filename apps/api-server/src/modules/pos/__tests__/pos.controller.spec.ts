@@ -12,6 +12,7 @@ import { InvoicesController } from '../invoices.controller';
 import { InvoicesService } from '../invoices.service';
 import { PosController } from '../pos.controller';
 import { PosService } from '../pos.service';
+import { ThermalLanPrintService } from '../thermal-lan-print.service';
 
 describe('POS and invoice HTTP routes', () => {
   const posService = {
@@ -33,6 +34,7 @@ describe('POS and invoice HTTP routes', () => {
     voidInvoice: vi.fn(async () => ({ orderId: 43, status: 'VOIDED' })),
   };
   const qrSecurityService = {
+    getConfigResponse: vi.fn(async () => ({ wifiProtectionEnabled: false })),
     updateConfig: vi.fn(async () => ({ wifiProtectionEnabled: true })),
     verifyGuestQrAccess: vi.fn(async () => undefined),
     recordPosClientIp: vi.fn(),
@@ -201,6 +203,10 @@ describe('POS and invoice HTTP routes', () => {
       rotateTakeawayQr: vi.fn(async () => ({ qrToken: 'new-takeaway-qr' })),
       shortenLegacyQrTokens: vi.fn(async () => ({ updatedCount: 3 })),
       cancelOrder: vi.fn(async () => ({ orderId: 43, status: 'VOIDED' })),
+      approveQrOrder: vi.fn(async () => ({ orderId: 43, status: 'SERVING' })),
+      patchOrderItems: vi.fn(async () => ({ orderId: 43, totalAmount: 90000 })),
+      tableAction: vi.fn(async () => ({ action: 'MOVE' })),
+      deletePosDraft: vi.fn(async () => ({ id: 'draft-new', deleted: true })),
       getSplitProvisionalBill: vi.fn(async () => ({ orderId: 43 })),
       splitCheckout: vi.fn(async () => ({ paidAmount: 50000 })),
       reprintKitchen: vi.fn(async () => ({ tickets: [] })),
@@ -209,6 +215,9 @@ describe('POS and invoice HTTP routes', () => {
       removeDiscount: vi.fn(async () => ({ orderId: 43 })),
       checkQrOrderStillPending: vi.fn(async () => ({ stillPending: true })),
     };
+    const thermalLanPrintService = { sendEscPosPayload: vi.fn(async () => ({ success: true, host: '192.168.1.200', port: 9100, bytesSent: 4, durationMs: 2 })) };
+    const noPrintUser = { id: 3, employeeId: 3, username: 'noprint', isSuperAdmin: false, isActive: true, permissions: UserPermissionsSchema.parse({}) };
+    const invoiceOnlyUser = { id: 4, employeeId: 4, username: 'invview', isSuperAdmin: false, isActive: true, permissions: UserPermissionsSchema.parse({ invoices: { view: true } }) };
 
     class FullPosControllerModule {}
     Module({
@@ -217,8 +226,25 @@ describe('POS and invoice HTTP routes', () => {
         { provide: PosService, useValue: extPosService },
         { provide: QrSecurityService, useValue: qrSecurityService },
         { provide: PosSocketGateway, useValue: gateway },
-        { provide: JwtService, useValue: { verifyAsync: async () => ({ sub: 1, tokenType: 'access' }) } },
-        { provide: PrismaService, useValue: { user: { findUnique: async () => adminRecord } } },
+        { provide: ThermalLanPrintService, useValue: thermalLanPrintService },
+        {
+          provide: JwtService,
+          useValue: {
+            verifyAsync: async (token: string) => ({
+              sub: token === 'no-print' ? 3 : token === 'inv-only' ? 4 : 1,
+              tokenType: 'access',
+            }),
+          },
+        },
+        {
+          provide: PrismaService,
+          useValue: {
+            user: {
+              findUnique: async ({ where }: { where: { id: number } }) =>
+                where.id === 3 ? noPrintUser : where.id === 4 ? invoiceOnlyUser : adminRecord,
+            },
+          },
+        },
         {
           provide: JwtAuthGuard,
           useFactory: (jwt: JwtService, prisma: PrismaService) => new JwtAuthGuard(jwt, prisma),
@@ -286,6 +312,47 @@ describe('POS and invoice HTTP routes', () => {
         body: JSON.stringify({ code: 'GIAM10' }),
       })).status).toBe(201);
       expect((await fetch(`${extBase}/api/v1/pos/orders/43/discount`, { method: 'DELETE', headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/qr-security-config`, { headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/drafts/draft-new?revision=2`, { method: 'DELETE', headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/approve`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ approved: true }),
+      })).status).toBe(201);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/cancel`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ voidReason: 'Khách báo đổi bàn khác' }),
+      })).status).toBe(201);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/items`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ removeItemIds: [1] }),
+      })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/provisional-bill`, { headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/table-action`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'TO_TAKEAWAY', reason: 'Khách xin gói mang về' }),
+      })).status).toBe(201);
+
+      // LAN ESC/POS print: 403 no print perm, 403 cash drawer kick without perm, 200 superadmin
+      const escKickBase64 = Buffer.from([0x1b, 0x40, 0x1b, 0x70, 0x00, 0x32, 0xfa]).toString('base64');
+      expect((await fetch(`${extBase}/api/v1/pos/print/lan-escpos`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer no-print', 'content-type': 'application/json' },
+        body: JSON.stringify({ host: '192.168.1.200', port: 9100, payloadBase64: 'G0AK', timeoutMs: 2000 }),
+      })).status).toBe(403);
+      expect((await fetch(`${extBase}/api/v1/pos/print/lan-escpos`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer inv-only', 'content-type': 'application/json' },
+        body: JSON.stringify({ host: '192.168.1.200', port: 9100, payloadBase64: escKickBase64, timeoutMs: 2000 }),
+      })).status).toBe(403);
+      expect((await fetch(`${extBase}/api/v1/pos/print/lan-escpos`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ host: '192.168.1.200', port: 9100, payloadBase64: escKickBase64, timeoutMs: 2000 }),
+      })).status).toBe(200);
 
       // TTS blank text -> 400; mocked upstream -> audio/mpeg cache hit
       expect((await fetch(`${extBase}/api/v1/public/tts?text=%20%20`)).status).toBe(400);

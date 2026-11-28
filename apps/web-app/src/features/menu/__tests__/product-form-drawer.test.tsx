@@ -187,4 +187,126 @@ describe('ProductFormDrawer — Đổi món substitution matrix', () => {
       'Ngao',
     );
   });
+
+  it('creates a new product, switches stations, manages modifier groups/availability, and validates empty names', async () => {
+    renderDrawer(null);
+
+    // Submitting without name stays blocked
+    fireEvent.click(screen.getByTestId('save-product-submit-btn'));
+    expect(mockCreateMutateAsync).not.toHaveBeenCalled();
+
+    // Fill basic fields + switch station to COMBO and back to BEP_NAU
+    fireEvent.click(screen.getByTestId('product-station-COMBO'));
+    fireEvent.click(screen.getByTestId('product-station-BEP_NAU'));
+    fireEvent.change(screen.getByTestId('product-name-input'), {
+      target: { value: 'Mì Cay Bạch Tuộc' },
+    });
+    fireEvent.change(screen.getByTestId('product-subtitle-input'), {
+      target: { value: 'Đặc biệt cay 7 cấp' },
+    });
+    fireEvent.change(screen.getByTestId('product-price-input'), {
+      target: { value: '68000' },
+    });
+    fireEvent.change(screen.getByTestId('product-sort-input'), {
+      target: { value: '4' },
+    });
+
+    // Add blank modifier group, fill its group + modifier names, toggle availability, and save
+    fireEvent.click(screen.getByTestId('add-blank-modifier-group-btn'));
+    expect(screen.getByTestId('modifier-group-card-0')).toBeInTheDocument();
+    // Blank group blocks submit cleanly before filling names
+    fireEvent.click(screen.getByTestId('save-product-submit-btn'));
+    expect(mockCreateMutateAsync).not.toHaveBeenCalled();
+
+    fireEvent.change(
+      screen.getByPlaceholderText('VD: Cấp độ cay, Đồ ăn mặc định (0đ), Đồ ăn thêm...'),
+      { target: { value: 'Độ cay' } },
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText('Tên món (VD: Tôm, Xúc xích, Cấp 1)...'),
+      { target: { value: 'Cấp 3' } },
+    );
+    const toggleAvail = screen.queryByTestId('modifier-unavailable-toggle-0-0');
+    if (toggleAvail) {
+      fireEvent.click(toggleAvail);
+    }
+
+    fireEvent.click(screen.getByTestId('save-product-submit-btn'));
+    await waitFor(() => expect(mockCreateMutateAsync).toHaveBeenCalledTimes(1));
+    expect(mockCreateMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Mì Cay Bạch Tuộc',
+        price: 68000,
+        station: 'BEP_NAU',
+      }),
+    );
+  });
+
+  it('builds a COMBO product with components and inserts quick modifier presets', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const physicalA: Product = { ...legacySeafoodProduct, id: 101, name: 'Mì Cay Bò', station: 'BEP_NAU', modifierGroups: [] };
+    const physicalB: Product = { ...legacySeafoodProduct, id: 102, name: 'Trà Đào', station: 'PHA_CHE', modifierGroups: [] };
+
+    render(
+      <QueryClientProvider client={client}>
+        <ProductFormDrawer
+          open
+          onOpenChange={vi.fn()}
+          editingProduct={null}
+          allProducts={[physicalA, physicalB]}
+          categories={[
+            {
+              id: 10,
+              category: 'MENU_CATEGORY',
+              name: 'Mì Cay',
+              normalizedName: 'mi cay',
+              isActive: true,
+              metadata: { defaultStation: 'BEP_NAU' },
+              createdAt: '2026-11-27T00:00:00.000Z',
+            },
+          ]}
+          onOpenCategoryManager={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('product-station-COMBO'));
+    fireEvent.change(screen.getByTestId('product-name-input'), { target: { value: 'Combo Đôi Cay' } });
+    fireEvent.change(screen.getByTestId('product-price-input'), { target: { value: '129000' } });
+
+    // Add combo item row and configure quantity
+    fireEvent.click(screen.getByRole('button', { name: /Thêm thành phần/i }));
+    const comboSelect = document.querySelectorAll('select')[1] as HTMLSelectElement;
+    fireEvent.change(comboSelect, { target: { value: '102' } });
+
+    // Exercise all 5 quick-insert presets & add/remove modifier row
+    fireEvent.click(screen.getByRole('button', { name: /Size Pha chế/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Cấp độ cay/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Đồ ăn mặc định/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Đồ ăn chính \(Đổi món thông minh\)/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Đồ ăn thêm/i }));
+
+    expect(screen.getByTestId('modifier-group-card-4')).toBeInTheDocument();
+    // Add one extra modifier line inside group 0, fill its name, then remove group 4
+    fireEvent.click(screen.getAllByRole('button', { name: /Thêm dòng tuỳ chọn/i })[0]);
+    const blankNameInput = screen
+      .getAllByPlaceholderText('Tên món (VD: Tôm, Xúc xích, Cấp 1)...')
+      .find((input) => (input as HTMLInputElement).value === '');
+    expect(blankNameInput).toBeTruthy();
+    fireEvent.change(blankNameInput!, { target: { value: 'XL' } });
+    const removeGroupBtns = screen.getAllByTitle('Xoá nhóm tuỳ chọn này');
+    fireEvent.click(removeGroupBtns[4]);
+
+    fireEvent.click(screen.getByTestId('save-product-submit-btn'));
+    await waitFor(() => expect(mockCreateMutateAsync).toHaveBeenCalledTimes(1));
+    expect(mockCreateMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Combo Đôi Cay',
+        station: 'COMBO',
+        comboItems: [{ productId: 102, quantity: 1 }],
+      }),
+    );
+  });
 });

@@ -997,4 +997,206 @@ describe('POS cảm ứng (/pos/touch)', () => {
       expect(screen.getByTestId('touch-draft-item-0')).toHaveTextContent('Không ớt');
     });
   });
+
+  it('exercises touch-cart-panel addon takeaway toggle, batch reprint, printed item cancel, and cancel-order custom reason dialog', async () => {
+    mockGetApi();
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/orders/700/reprint-kitchen') {
+        return {
+          orderId: 700,
+          orderCode: 'HD-20261123-0020',
+          orderType: 'DINE_IN',
+          tableLabel: 'Bàn 07',
+          tickets: [],
+        };
+      }
+      if (url === '/api/v1/pos/orders/700/cancel') {
+        return {
+          orderId: 700,
+          status: 'VOIDED',
+          requireCancellationSlip: true,
+          kitchenCancellationSlips: [],
+        };
+      }
+      return {};
+    });
+    const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValue({
+      orderId: 700,
+      totalAmount: 30000,
+      requireCancellationSlip: true,
+      kitchenCancellationSlips: [],
+    });
+
+    renderTouchPage();
+
+    fireEvent.click(await screen.findByTestId('touch-table-card-7'));
+    expect(await screen.findByTestId('touch-order-item-9001')).toBeInTheDocument();
+
+    // Addon mode selector toggle
+    fireEvent.click(screen.getByTestId('touch-addon-mode-takeaway'));
+    expect(screen.getByTestId('touch-addon-mode-takeaway')).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByTestId('touch-addon-mode-dine-in'));
+    expect(screen.getByTestId('touch-addon-mode-dine-in')).toHaveAttribute('aria-pressed', 'true');
+
+    // Reprint printed batch 1
+    fireEvent.click(screen.getByTestId('touch-reprint-batch-1'));
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/orders/700/reprint-kitchen', { batchNo: 1 });
+    });
+
+    // Cancel printed item 9001 with confirm dialog
+    fireEvent.click(screen.getByTestId('touch-cancel-printed-9001'));
+    const confirmCancelItemBtn = await screen.findByRole('button', { name: 'Huỷ món' });
+    fireEvent.click(confirmCancelItemBtn);
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith('/api/v1/pos/orders/700/items', {
+        removeItemIds: [9001],
+      });
+    });
+
+    // Open More actions -> Cancel Order -> Custom reason -> Confirm
+    fireEvent.click(screen.getByTestId('touch-more-actions'));
+    fireEvent.click(await screen.findByTestId('touch-sheet-action-cancel-order'));
+    expect(await screen.findByTestId('cancel-order-confirm-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('cancel-order-printed-warning')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('cancel-reason-chip-custom'));
+    const reasonInput = screen.getByTestId('cancel-order-custom-reason-input');
+    fireEvent.change(reasonInput, { target: { value: 'Ngắn' } });
+    expect(screen.getByTestId('cancel-order-reason-error')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-cancel-order-confirm')).toBeDisabled();
+
+    fireEvent.change(reasonInput, { target: { value: 'Khách báo đổi món khác' } });
+    fireEvent.click(screen.getByTestId('btn-cancel-order-confirm'));
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/orders/700/cancel', {
+        voidReason: 'Khách báo đổi món khác',
+      });
+    });
+  });
+
+  it('exercises live workspace applyDiscount, split-provisional (qrOverLimit), and split-checkout (partial & full) from Touch mode', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/tables') return grid;
+      if (url === '/api/v1/pos/drafts') return { drafts: [] };
+      if (url === '/api/v1/menu/products') return products;
+      if (url === '/api/v1/pos/orders/700') return servingOrder;
+      if (url === '/api/v1/pos/orders/700/applicable-discounts') {
+        return {
+          subtotalAmount: 85000,
+          currentDiscountSnapshot: null,
+          items: [
+            {
+              id: 1,
+              code: 'GIAM10',
+              name: 'Giảm 10%',
+              valueType: 'PERCENT',
+              value: 10,
+              maxDiscountAmount: 20000,
+              scope: 'ORDER',
+              minOrderAmount: null,
+              targetCategoryIds: [],
+              targetProductIds: [],
+              endsAt: null,
+              usageLimit: null,
+              usedCount: 0,
+              remainingCount: null,
+              estimatedDiscountAmount: 8500,
+              isEligibleForCurrentOrder: true,
+              warningCode: null,
+              warningMessage: null,
+            },
+          ],
+        };
+      }
+      return [];
+    });
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/orders/700/discount') {
+        return { ...servingOrder, subtotalAmount: 85000, discountAmount: 8500, totalAmount: 76500 };
+      }
+      if (url === '/api/v1/pos/orders/700/split-provisional-bill') {
+        return {
+          orderId: 700,
+          orderCode: 'HD-20261123-0020',
+          orderType: 'DINE_IN',
+          tableId: 7,
+          takeawayNumber: null,
+          subtotalAmount: 55000,
+          discountAmount: 0,
+          totalAmount: 55000,
+          status: 'SERVING',
+          items: [
+            {
+              name: 'Mì Kim Chi Bò Mỹ',
+              quantity: 1,
+              unitPrice: 55000,
+              lineTotal: 55000,
+              modifiers: [],
+              note: null,
+            },
+          ],
+          paymentAccount: {
+            id: 1,
+            label: 'TK VPBank',
+            bankCode: 'VPB',
+            bankName: 'VPBank',
+            accountNo: '123',
+            accountName: 'CHU QUAN',
+          },
+          qrOverLimit: true,
+          qrRotated: false,
+        };
+      }
+      if (url === '/api/v1/pos/orders/700/split-checkout') {
+        return {
+          paidOrderId: 799,
+          paidOrderCode: 'HD-20261123-0799',
+          paidAt: '2026-11-28T02:00:00.000Z',
+          isFullCheckout: false,
+          remainingTotalAmount: 30000,
+        };
+      }
+      return {};
+    });
+
+    renderTouchPage();
+    fireEvent.click(await screen.findByTestId('touch-table-card-7'));
+    expect(await screen.findByTestId('touch-open-discount')).toBeEnabled();
+
+    // Apply discount code via PosDiscountDialog
+    fireEvent.click(screen.getByTestId('touch-open-discount'));
+    expect(await screen.findByTestId('applicable-discount-GIAM10')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('applicable-discount-GIAM10'));
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/orders/700/discount', { code: 'GIAM10' });
+    });
+
+    // Open Split Provisional via More Actions sheet
+    fireEvent.click(screen.getByTestId('touch-more-actions'));
+    fireEvent.click(await screen.findByTestId('touch-sheet-action-split-provisional'));
+    expect(await screen.findByTestId('split-order-items-dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('split-item-toggle-9001'));
+    fireEvent.click(screen.getByTestId('confirm-split-provisional-btn'));
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/api/v1/pos/orders/700/split-provisional-bill',
+        expect.objectContaining({ items: [{ orderItemId: 9001, quantity: 1 }] }),
+      );
+    });
+    expect(toastTexts()).toContain('Đã in phiếu tạm tính tách đơn');
+
+    // Open Split Checkout via More Actions sheet
+    fireEvent.click(screen.getByTestId('touch-more-actions'));
+    fireEvent.click(await screen.findByTestId('touch-sheet-action-split-checkout'));
+    expect(await screen.findByTestId('split-order-items-dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('split-item-toggle-9002'));
+    fireEvent.click(screen.getByTestId('confirm-split-checkout-print-btn'));
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/api/v1/pos/orders/700/split-checkout',
+        expect.objectContaining({ paymentMethod: 'CASH', printReceipt: true }),
+      );
+    });
+  });
 });

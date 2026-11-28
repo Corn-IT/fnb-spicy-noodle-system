@@ -443,6 +443,157 @@ describe('IamService additional failure and success paths', () => {
       }),
     );
   });
+
+  it('guards revokeUserSession 404/super-admin 403, getUserSessionHistory 404, and updateUserAccount identity revocation + P2002 collisions', async () => {
+    const emitSessionRevoked = vi.fn();
+    const actor = {
+      id: 1,
+      employeeId: 1,
+      username: 'superadmin',
+      isSuperAdmin: true,
+      permissions,
+    };
+    const otherSuperAdmin = activeUser({ id: 9, isSuperAdmin: true, activeSessionId: 'sid-9' });
+    const staffUser = activeUser({
+      id: 12,
+      employeeId: 2,
+      username: 'staff12',
+      activeSessionId: 'sid-12',
+    });
+
+    const userRepo = {
+      findUnique: vi.fn(async ({ where }: { where: { id?: number; username?: string } }) => {
+        if (where.id === 999) return null;
+        if (where.id === 9) return otherSuperAdmin;
+        if (where.id === 12) return staffUser;
+        return null;
+      }),
+      update: vi
+        .fn()
+        .mockResolvedValueOnce({ ...staffUser, username: 'staff12_new', activeSessionId: null })
+        .mockRejectedValueOnce(knownUniqueError(['username']))
+        .mockRejectedValueOnce(knownUniqueError(['employee_id'])),
+    };
+    const service = new IamService(
+      withTransaction({ user: userRepo, pushSubscription: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) } }) as never,
+      {} as never,
+      { get: vi.fn().mockReturnValue('7d') } as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      { emitSessionRevoked, isSessionOnline: vi.fn(() => false) } as never,
+    );
+
+    await expect(service.revokeUserSession(999, actor)).rejects.toMatchObject({ status: 404 });
+    await expect(service.revokeUserSession(9, actor)).rejects.toMatchObject({ status: 403 });
+    await expect(service.getUserSessionHistory(999, 5)).rejects.toMatchObject({ status: 404 });
+
+    await service.updateUserAccount(12, { username: 'staff12_new' }, actor);
+    expect(emitSessionRevoked).toHaveBeenCalledWith(
+      'sid-12',
+      expect.objectContaining({ reason: 'ADMIN_REVOKED' }),
+    );
+
+    await expect(
+      service.updateUserAccount(12, { username: 'taken' }, actor),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      service.updateUserAccount(12, { username: 'staff12' }, actor),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('covers uploadMyAvatar, deleteMyAvatar, getPublicAvatarBinary, and login disabled/deleted/conflict/force branches', async () => {
+    const validPngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const userRow = activeUser({
+      roleLabel: null,
+      activeSessionId: 'sid-old',
+      activeSessionIp: '10.0.0.5',
+      activeSessionDevice: 'Chrome',
+      activeSessionAt: new Date('2026-11-28T01:00:00.000Z'),
+    });
+
+    const masterUpsert = vi.fn().mockResolvedValue({});
+    const masterUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const masterFindUnique = vi.fn();
+    const empUpdate = vi.fn().mockResolvedValue({});
+    const userFindUnique = vi.fn().mockResolvedValue(userRow);
+    const userUpdate = vi.fn().mockResolvedValue({});
+    const auditRecord = vi.fn().mockResolvedValue(undefined);
+    const emitSessionRevoked = vi.fn();
+    const isSessionOnline = vi.fn(() => true);
+
+    const svc = new IamService(
+      {
+        user: { findUnique: userFindUnique, update: userUpdate },
+        employee: { update: empUpdate },
+        masterData: { upsert: masterUpsert, updateMany: masterUpdateMany, findUnique: masterFindUnique },
+        pushSubscription: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      } as never,
+      { signAsync: vi.fn().mockResolvedValue('jwt-token') } as never,
+      { get: vi.fn().mockReturnValue('7d') } as never,
+      { record: auditRecord } as never,
+      { emitSessionRevoked, isSessionOnline } as never,
+    );
+
+    // Avatar upload/delete/public-binary
+    userFindUnique.mockResolvedValueOnce(null);
+    await expect(
+      svc.uploadMyAvatar(999, { mime: 'image/png', base64: validPngBase64 }),
+    ).rejects.toMatchObject({ status: 404 });
+
+    const uploaded = await svc.uploadMyAvatar(4, {
+      mime: 'image/png',
+      base64: `data:image/png;base64,${validPngBase64}`,
+    });
+    expect(masterUpsert).toHaveBeenCalled();
+    expect(empUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 2 },
+        data: expect.objectContaining({ avatarUrl: expect.stringContaining('/api/v1/public/avatars/2?v=') }),
+      }),
+    );
+    expect(uploaded.id).toBe(4);
+
+    userFindUnique.mockResolvedValueOnce(null);
+    await expect(svc.deleteMyAvatar(999)).rejects.toMatchObject({ status: 404 });
+    await svc.deleteMyAvatar(4);
+    expect(masterUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { isActive: false } }),
+    );
+    expect(empUpdate).toHaveBeenLastCalledWith({ where: { id: 2 }, data: { avatarUrl: null } });
+
+    masterFindUnique.mockResolvedValueOnce({ isActive: false, metadata: { base64: validPngBase64 } });
+    await expect(svc.getPublicAvatarBinary(2)).rejects.toMatchObject({ status: 404 });
+    masterFindUnique.mockResolvedValueOnce({ isActive: true, metadata: { base64: 'not-image-bytes' } });
+    await expect(svc.getPublicAvatarBinary(2)).rejects.toMatchObject({ status: 404 });
+    masterFindUnique.mockResolvedValueOnce({ isActive: true, metadata: { base64: validPngBase64 } });
+    const bin = await svc.getPublicAvatarBinary(2);
+    expect(bin.mime).toBe('image/png');
+    expect(bin.buffer.byteLength).toBeGreaterThan(0);
+
+    // Login: deleted employee, inactive account, online conflict (no force), and force takeover
+    const compare = vi.spyOn(bcrypt, 'compare');
+    compare.mockResolvedValue(true);
+    try {
+      userFindUnique.mockResolvedValueOnce(activeUser({ employee: { ...userRow.employee, isDeleted: true } }));
+      await expect(svc.login({ username: 'cashier01', password: 'pw' })).rejects.toMatchObject({ status: 401 });
+
+      userFindUnique.mockResolvedValueOnce(activeUser({ isActive: false }));
+      await expect(svc.login({ username: 'cashier01', password: 'pw' })).rejects.toMatchObject({ status: 401 });
+
+      userFindUnique.mockResolvedValueOnce(userRow);
+      await expect(svc.login({ username: 'cashier01', password: 'pw', force: false })).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: 'AUTH_SESSION_CONFLICT_ONLINE' }),
+      });
+
+      userFindUnique.mockResolvedValueOnce(userRow);
+      const loginOk = await svc.login({ username: 'cashier01', password: 'pw', force: true });
+      expect(loginOk.accessToken).toBe('jwt-token');
+      expect(emitSessionRevoked).toHaveBeenCalledWith('sid-old', expect.objectContaining({ reason: 'NEW_LOGIN' }));
+    } finally {
+      compare.mockRestore();
+    }
+  });
 });
 
 describe('durationToMilliseconds', () => {

@@ -114,4 +114,93 @@ describe('store-theme utilities (AC-14.8, AC-15.2..AC-15.4)', () => {
     expect(() => validateClientImageFile(pngFile)).not.toThrow();
     expect(() => validateClientImageFile(icoFile)).not.toThrow();
   });
+
+  it('resizes PNG/LOGO/FAVICON uploads via Canvas with webp->png fallback and handles Canvas/Image errors', async () => {
+    const { StoreAssetKind } = await import('@fnb/shared');
+    const { resizeImageFileToUploadPayload } = await import('../store-theme');
+
+    const origCreateObjectURL = URL.createObjectURL;
+    const origRevokeObjectURL = URL.revokeObjectURL;
+    const origCreateElement = document.createElement.bind(document);
+    const OrigImage = globalThis.Image;
+
+    let shouldFailImg = false;
+    let mockMimeData = 'data:image/webp;base64,V0VCUF9EQVRB';
+    let mockPngData = 'data:image/png;base64,UE5HX0RBVEE=';
+    let mockCtx: Record<string, unknown> | null = {
+      clearRect: () => undefined,
+      drawImage: () => undefined,
+    };
+
+    URL.createObjectURL = () => 'blob:mock-image';
+    URL.revokeObjectURL = () => undefined;
+
+    class MockImage {
+      width = 1024;
+      height = 512;
+      naturalWidth = 1024;
+      naturalHeight = 512;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_val: string) {
+        queueMicrotask(() => {
+          if (shouldFailImg) this.onerror?.();
+          else this.onload?.();
+        });
+      }
+    }
+    globalThis.Image = MockImage as unknown as typeof Image;
+
+    document.createElement = ((tag: string) => {
+      if (tag === 'canvas') {
+        return {
+          width: 0,
+          height: 0,
+          getContext: () => mockCtx,
+          toDataURL: (mime: string) => (mime === 'image/png' ? mockPngData : mockMimeData),
+        } as unknown as HTMLCanvasElement;
+      }
+      return origCreateElement(tag);
+    }) as typeof document.createElement;
+
+    try {
+      const pngFile = new File([new Uint8Array([1, 2, 3])], 'icon.png', { type: 'image/png' });
+
+      // 1. FAVICON -> 64x64 PNG
+      const fav = await resizeImageFileToUploadPayload(pngFile, StoreAssetKind.FAVICON);
+      expect(fav).toEqual({ mime: 'image/png', base64: 'UE5HX0RBVEE=' });
+
+      // 2. LOGO -> 512x256 WebP
+      const logo = await resizeImageFileToUploadPayload(pngFile, StoreAssetKind.LOGO);
+      expect(logo).toEqual({ mime: 'image/webp', base64: 'V0VCUF9EQVRB' });
+
+      // 3. LOGO fallback to PNG when WebP encoder returns non-webp data URL
+      mockMimeData = 'data:image/png;base64,RkFMTEJBQ0tfUE5H';
+      const fallback = await resizeImageFileToUploadPayload(pngFile, StoreAssetKind.LOGO);
+      expect(fallback).toEqual({ mime: 'image/png', base64: 'UE5HX0RBVEE=' });
+
+      // 4. Empty base64 error branch
+      mockPngData = 'data:image/png;base64,';
+      await expect(
+        resizeImageFileToUploadPayload(pngFile, StoreAssetKind.FAVICON),
+      ).rejects.toThrow(/Không thể nén ảnh/);
+
+      // 5. Missing 2d canvas context error branch
+      mockCtx = null;
+      await expect(
+        resizeImageFileToUploadPayload(pngFile, StoreAssetKind.LOGO),
+      ).rejects.toThrow(/Canvas/);
+
+      // 6. Broken image decode error branch
+      shouldFailImg = true;
+      await expect(
+        resizeImageFileToUploadPayload(pngFile, StoreAssetKind.LOGO),
+      ).rejects.toThrow(/Không thể đọc/);
+    } finally {
+      URL.createObjectURL = origCreateObjectURL;
+      URL.revokeObjectURL = origRevokeObjectURL;
+      document.createElement = origCreateElement;
+      globalThis.Image = OrigImage;
+    }
+  });
 });

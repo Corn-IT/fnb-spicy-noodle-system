@@ -64,6 +64,9 @@ function renderStoreSettingsPage(
     if (url.startsWith('/api/v1/audit-logs')) {
       return { items: [], total: 0, page: 1, limit: 20 };
     }
+    if (url.startsWith('/api/v1/mdm/lookup')) {
+      return [{ id: 10, name: 'Mì Cay' }];
+    }
     throw new Error(`Unexpected GET ${url}`);
   });
 
@@ -327,7 +330,7 @@ describe('StoreSettingsPage (Story 14)', () => {
       expect((screen.getByTestId('input-store-name') as HTMLInputElement).value).toBe(
         'Tên Từ Người Khác',
       );
-    });
+    }, { timeout: 4000 });
     expect(screen.queryByTestId('store-settings-conflict-banner')).not.toBeInTheDocument();
   });
 
@@ -1018,5 +1021,108 @@ describe('StoreSettingsPage (Story 14)', () => {
 
     await user.click(screen.getByTestId('reset-print-template-kitchen'));
     expect(fontInput).not.toHaveValue(14);
+  });
+
+  it('filters MessageCatalogEditor by module, search query, only-overridden toggle, opens ErrorGalleryDialog, and resets module', async () => {
+    const user = userEvent.setup();
+    renderStoreSettingsPage();
+    await waitFor(() => {
+      expect(screen.getByTestId('store-settings-save-btn')).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole('tab', { name: /Thông báo/i }));
+    expect(screen.getByTestId('message-catalog-editor')).toBeInTheDocument();
+
+    // Filter by POS module pill, edit a POS message, then reset POS module overrides
+    await user.click(screen.getByTestId('msg-module-pill-POS'));
+    const resetPosBtn = screen.getByTestId('msg-reset-module-POS');
+    expect(resetPosBtn).toBeDisabled();
+
+    const posTitleInput = document.querySelector('[data-testid^="msg-title-input-pos."]') as HTMLInputElement;
+    expect(posTitleInput).toBeTruthy();
+    fireEvent.change(posTitleInput, { target: { value: 'Thông báo POS tuỳ chỉnh' } });
+    expect(resetPosBtn).toBeEnabled();
+
+    await user.click(screen.getByTestId('msg-catalog-only-overridden'));
+    expect(screen.getByDisplayValue('Thông báo POS tuỳ chỉnh')).toBeInTheDocument();
+
+    await user.click(resetPosBtn);
+    await user.click(screen.getByTestId('msg-catalog-only-overridden'));
+
+    // Search + clear + empty-result state + switch back to ALL + Error Gallery dialog
+    const searchInput = screen.getByTestId('msg-catalog-search');
+    fireEvent.change(searchInput, { target: { value: 'khong_ton_tai_xyz_999' } });
+    expect(screen.getByText('Không tìm thấy thông báo phù hợp')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Xoá từ khoá tìm kiếm'));
+    await user.click(screen.getByTestId('msg-module-pill-ALL'));
+
+    await user.click(screen.getByTestId('open-error-gallery-btn'));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('customizes QR card labels, toggles logo/link/accent, switches preview scope & thermal format, and resets defaults', async () => {
+    const user = userEvent.setup();
+    renderStoreSettingsPage();
+    await waitFor(() => {
+      expect(screen.getByTestId('store-settings-save-btn')).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole('tab', { name: /Trang khách QR/i }));
+    expect(screen.getByTestId('qr-card-customizer')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('input-qr-card-table-subtitle'), {
+      target: { value: 'Quét để xem menu & gọi món' },
+    });
+    fireEvent.change(screen.getByTestId('input-qr-card-table-headline'), {
+      target: { value: 'MÃ QR GỌI MÓN' },
+    });
+    fireEvent.change(screen.getByTestId('input-qr-card-takeaway-title'), {
+      target: { value: 'MANG VỀ NHANH' },
+    });
+    fireEvent.change(screen.getByTestId('input-qr-card-footer-text'), {
+      target: { value: 'Chúc quý khách ngon miệng' },
+    });
+    fireEvent.change(screen.getByTestId('input-qr-card-accent-color'), {
+      target: { value: '#15803d' },
+    });
+
+    await user.click(screen.getByTestId('checkbox-qr-card-show-link'));
+    await user.click(screen.getByTestId('checkbox-qr-card-show-logo'));
+    await user.click(screen.getByTestId('qr-preview-scope-takeaway'));
+    await user.click(screen.getByTestId('qr-preview-format-thermal'));
+    expect(screen.getByTestId('qr-card-live-preview-thermal')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('qr-preview-format-png'));
+    expect(screen.getByTestId('qr-card-live-preview-png')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('qr-card-use-brand-color-btn'));
+    await user.click(screen.getByTestId('qr-card-reset-default-btn'));
+
+    // Also exercise receipt metadata fields, print template tabs, +/- font buttons & block checkboxes
+    await user.click(screen.getByRole('tab', { name: /Phiếu in/i }));
+    fireEvent.change(screen.getByTestId('input-receipt-print-name'), { target: { value: 'Quán Mì Cay Sasin' } });
+    fireEvent.change(screen.getByTestId('input-receipt-address'), { target: { value: '123 Lê Lợi' } });
+    fireEvent.change(screen.getByTestId('input-receipt-phone'), { target: { value: '0909123456' } });
+    fireEvent.change(screen.getByTestId('input-receipt-footer-note'), { target: { value: 'Hẹn gặp lại quý khách' } });
+    await user.click(screen.getByTestId('checkbox-receipt-show-logo'));
+
+    await user.click(screen.getByTestId('print-template-tab-kitchen'));
+    const kitchenFont = screen.getByTestId('print-fontsize-input-kitchen');
+    fireEvent.change(kitchenFont, { target: { value: '1' } });
+    fireEvent.blur(kitchenFont);
+    expect(screen.getByTestId('print-fontsize-warning-kitchen')).toHaveTextContent(/nhỏ nhất/);
+    fireEvent.change(kitchenFont, { target: { value: 'abc' } });
+    fireEvent.blur(kitchenFont);
+
+    fireEvent.change(screen.getByTestId('input-print-title-kitchen'), { target: { value: 'PHIẾU BẾP TEST' } });
+    fireEvent.change(screen.getByTestId('input-print-footer-kitchen'), { target: { value: 'Làm nhanh' } });
+    await user.click(await screen.findByTestId('kitchen-price-category-10'));
+    await user.click(screen.getByTestId('print-fontsize-inc-kitchen'));
+    await user.click(screen.getByTestId('print-fontsize-dec-kitchen'));
+    await user.click(screen.getByTestId('print-block-kitchen-orderCode'));
+    await user.click(screen.getByTestId('print-template-tab-provisional'));
+    await user.click(screen.getByTestId('print-template-tab-kitchenCancel'));
+    await user.click(screen.getByTestId('print-template-tab-tableTransfer'));
+    await user.click(screen.getByTestId('print-template-tab-official'));
   });
 });

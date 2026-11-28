@@ -526,4 +526,84 @@ describe('InventoryService', () => {
     });
     expect(listFallback.items).toHaveLength(1);
   });
+
+  it('guards createBatch, list, updateImport, and softDelete error & lookup branches (403/404/409/422)', async () => {
+    const h = createHarness();
+    h.tx.masterData.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => {
+      if (where.id === 501) return { id: 501, category: MdmCategory.SUPPLIER, name: 'NCC A', isActive: true };
+      if (where.id === 502) return { id: 502, category: MdmCategory.INGREDIENT, name: 'Ớt Bột', isActive: true };
+      if (where.id === 503) return { id: 503, category: MdmCategory.SUPPLIER, name: 'NCC Ẩn', isActive: false };
+      return null;
+    });
+    h.tx.inventoryImport.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: 99,
+      ...data,
+    }));
+
+    const svc = new InventoryService(h.prisma as never, h.mdm as unknown as MdmService);
+
+    await expect(
+      svc.createBatch({ items: [], supplierName: 'NCC', paymentSource: PaymentSource.CASH_DRAWER, importDate: '2026-11-28' } as never, 1),
+    ).rejects.toMatchObject({ status: 422 });
+
+    await expect(
+      svc.createBatch({
+        items: [{ ingredientMdmId: 502, unitName: 'Kg', unitPrice: 10000, quantity: 1 }],
+        supplierMdmId: 503,
+        paymentSource: PaymentSource.CASH_DRAWER,
+        importDate: '2026-11-28',
+      }, 1),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    await expect(
+      svc.createBatch({
+        items: [{ ingredientMdmId: 999, unitName: 'Kg', unitPrice: 10000, quantity: 1 }],
+        supplierMdmId: 501,
+        paymentSource: PaymentSource.CASH_DRAWER,
+        importDate: '2026-11-28',
+      }, 1),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    // Valid lookup via supplierMdmId + ingredientMdmId
+    const byIds = await svc.createBatch({
+      items: [{ ingredientMdmId: 502, unitName: 'Kg', unitPrice: 50000, quantity: 2 }],
+      supplierMdmId: 501,
+      paymentSource: PaymentSource.EXTERNAL,
+      importDate: '2026-11-28',
+    }, 1);
+    expect(byIds.totalCost).toBe(100000);
+
+    await expect(svc.list({ page: -1, limit: 20 } as never)).rejects.toMatchObject({ status: 422 });
+
+    await expect(
+      svc.updateImport(1, { ingredientName: '', unitName: 'Kg', unitPrice: 1000, quantity: 1, paymentSource: PaymentSource.CASH_DRAWER, importDate: '2026-11-28' } as never, cashier()),
+    ).rejects.toMatchObject({ status: 422 });
+
+    h.tx.inventoryImport.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      svc.updateImport(999, { ingredientName: 'Bò', unitName: 'Kg', unitPrice: 1000, quantity: 1, paymentSource: PaymentSource.CASH_DRAWER, importDate: '2026-11-28' }, cashier()),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    h.tx.inventoryImport.findUnique.mockResolvedValueOnce({ id: 5, isDeleted: true });
+    await expect(
+      svc.updateImport(5, { ingredientName: 'Bò', unitName: 'Kg', unitPrice: 1000, quantity: 1, paymentSource: PaymentSource.CASH_DRAWER, importDate: '2026-11-28' }, cashier()),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    h.tx.inventoryImport.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.softDelete(999, cashier())).rejects.toBeInstanceOf(NotFoundException);
+
+    h.tx.inventoryImport.findUnique.mockResolvedValueOnce({ id: 5, isDeleted: true });
+    await expect(svc.softDelete(5, cashier())).rejects.toBeInstanceOf(ConflictException);
+
+    // Non-manager cashier cannot delete past-day import -> 403
+    h.tx.inventoryImport.findUnique.mockResolvedValueOnce({
+      id: 6,
+      isDeleted: false,
+      createdAt: new Date('2020-01-01T01:00:00.000Z'),
+      totalCost: new Prisma.Decimal('50000'),
+      paymentSource: 'CASH_DRAWER',
+      itemNameSnapshot: 'Hành',
+    });
+    await expect(svc.softDelete(6, cashier())).rejects.toBeInstanceOf(ForbiddenException);
+  });
 });

@@ -333,4 +333,67 @@ describe('QrAutoCancelService (12-minute auto-cancel & row-lock safety)', () => 
     expect(voidEvents).toHaveLength(1);
     expect(voidEvents[0]).toMatchObject({ orderId: 401, kind: 'NEW', cancelledItemCount: 2 });
   });
+
+  it('covers interval lifecycle hooks, malformed reminder metadata, non-SERVING addon skip, and resolved reminder cleanup', async () => {
+    const h = createHarness();
+    const webPush = { notifyQrOverdueReminder: vi.fn().mockResolvedValue(undefined) };
+    const service = new QrAutoCancelService(h.prisma as never, h.gateway as never, h.auditLogService as never, webPush as never);
+
+    // 1. Non-test NODE_ENV/VITEST branch starts timer onModuleInit & clears it onModuleDestroy
+    const origEnv = process.env.NODE_ENV;
+    const origVitest = process.env.VITEST;
+    vi.useFakeTimers();
+    try {
+      process.env.NODE_ENV = 'production';
+      delete process.env.VITEST;
+      service.onModuleInit();
+      await vi.advanceTimersByTimeAsync(16_000);
+      service.onModuleDestroy();
+    } finally {
+      process.env.NODE_ENV = origEnv;
+      if (origVitest !== undefined) process.env.VITEST = origVitest;
+      vi.useRealTimers();
+    }
+
+    // 2. Malformed/inactive metadata safely falls back to defaults
+    h.prisma.masterData.findUnique.mockResolvedValueOnce({
+      isActive: true,
+      metadata: { messages: { 'pos.voice.reminderConfig': 'not-an-object' } },
+    });
+    const defaultCfg = await service.getReminderConfig();
+    expect(defaultCfg.autoCancelMinutes).toBeGreaterThan(0);
+
+    // 3. sweepExpiredQrRequests clears ADDON branch when order is no longer SERVING or has 0 expired addons
+    h.prisma.masterData.findUnique.mockResolvedValueOnce({
+      isActive: true,
+      metadata: { messages: { 'pos.voice.reminderConfig': { title: 'rem=1|remDelay=2|remInt=30|remMax=2|autoCancel=1|autoCancelMin=10' } } },
+    });
+    h.prisma.order.findMany.mockResolvedValueOnce([]);
+    h.prisma.orderItem.findMany.mockResolvedValueOnce([{ orderId: 501 }, { orderId: 502 }]);
+    h.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 501, status: 'PAID', table: null })
+      .mockResolvedValueOnce({ id: 502, status: 'SERVING', table: { id: 2, name: 'Bàn 02' } });
+    h.tx.orderItem.findMany.mockResolvedValueOnce([]);
+
+    await expect(service.sweepExpiredQrRequests(new Date('2026-11-17T12:30:00.000Z'))).resolves.toEqual([]);
+
+    // 4. sweepOverdueQrPushReminders removes stale entries from sentReminderStages when no longer pending
+    const now = new Date('2026-11-17T12:30:00.000Z');
+    h.prisma.masterData.findUnique.mockResolvedValue({
+      isActive: true,
+      metadata: { messages: { 'pos.voice.reminderConfig': { title: 'rem=1|remDelay=2|remInt=30|remMax=2|autoCancel=1|autoCancelMin=10' } } },
+    });
+    h.prisma.order.findMany.mockResolvedValueOnce([
+      { id: 601, orderCode: 'HD-601', orderType: 'DINE_IN', takeawayNumber: null, createdAt: new Date(now.getTime() - 4 * 60_000), table: { name: 'Bàn 06' } },
+    ]);
+    h.prisma.orderItem.findMany.mockResolvedValueOnce([]);
+    const firstDue = await service.sweepOverdueQrPushReminders(now);
+    expect(firstDue).toHaveLength(1);
+
+    // Next tick: HD-601 resolved -> sentReminderStages entry evicted
+    h.prisma.order.findMany.mockResolvedValueOnce([]);
+    h.prisma.orderItem.findMany.mockResolvedValueOnce([]);
+    const secondDue = await service.sweepOverdueQrPushReminders(now);
+    expect(secondDue).toEqual([]);
+  });
 });

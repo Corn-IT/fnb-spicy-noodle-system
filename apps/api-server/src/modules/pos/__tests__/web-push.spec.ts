@@ -845,4 +845,107 @@ describe('End-to-end wiring: PosService QR order & IamService session revocation
       await posService.checkQrOrderStillPending({ orderId: 2, kind: 'QR_ADDON', batchNo: 2 }),
     ).toEqual({ stillPending: false });
   });
+
+  it('should cover addon/reminder notifications, immediate self-test push, and 404/410/500/error delivery handling', async () => {
+    const keys = generateVapidKeyPair();
+    const uaEcdh = createECDH('prime256v1');
+    uaEcdh.generateKeys();
+    const validSub = (id: number, endpoint: string) => ({
+      id,
+      userId: 10,
+      sessionId: 'sid-live',
+      endpoint,
+      p256dh: encodeBase64Url(uaEcdh.getPublicKey()),
+      auth: encodeBase64Url(randomBytes(16)),
+      user: {
+        id: 10,
+        isActive: true,
+        isSuperAdmin: true,
+        permissions: makePermissions(true),
+        activeSessionId: 'sid-live',
+      },
+    });
+
+    const deletedBatches: number[][] = [];
+    const updatedDelivered: number[][] = [];
+    const prisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 1,
+          metadata: { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: 'mailto:test@fnb.local' },
+        }),
+      },
+      pushSubscription: {
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([
+            validSub(1, 'https://push.example/ok'),
+            validSub(2, 'https://push.example/gone'),
+            validSub(3, 'https://push.example/server-err'),
+            validSub(4, 'https://push.example/net-err'),
+            {
+              id: 5,
+              userId: 11,
+              sessionId: 'sid-stale',
+              endpoint: 'https://push.example/stale',
+              p256dh: 'x'.repeat(20),
+              auth: 'y'.repeat(12),
+              user: { id: 11, isActive: false, isSuperAdmin: false, permissions: makePermissions(true), activeSessionId: 'sid-other' },
+            },
+          ])
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([validSub(1, 'https://push.example/ok')]),
+        count: vi.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(1),
+        deleteMany: vi.fn(async ({ where }: { where: { id: { in: number[] } } }) => {
+          deletedBatches.push(where.id.in);
+          return { count: where.id.in.length };
+        }),
+        updateMany: vi.fn(async ({ where }: { where: { id: { in: number[] } } }) => {
+          updatedDelivered.push(where.id.in);
+          return { count: where.id.in.length };
+        }),
+      },
+    };
+
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith('/ok')) return new Response(null, { status: 201 });
+      if (url.endsWith('/gone')) return new Response(null, { status: 410 });
+      if (url.endsWith('/server-err')) return new Response(null, { status: 500 });
+      throw new Error('ECONNRESET');
+    });
+
+    const svc = new WebPushService(prisma as never);
+    (svc as unknown as { fetchFn: typeof fetchFn }).fetchFn = fetchFn;
+
+    const addonSummary = await svc.notifyQrAddonOrder({
+      orderId: 55,
+      orderCode: 'HD-55',
+      tableLabel: 'Bàn 05',
+      batchNo: 3,
+    });
+    expect(addonSummary).toEqual({ attempted: 4, delivered: 1, pruned: 2, failed: 2 });
+    expect(deletedBatches).toEqual([[5], [2]]);
+    expect(updatedDelivered).toEqual([[1]]);
+
+    // Overdue reminders: empty, single (ADDON + NEW), and multi
+    await expect(svc.notifyQrOverdueReminder([])).resolves.toEqual({ attempted: 0, delivered: 0, pruned: 0, failed: 0 });
+    await expect(
+      svc.notifyQrOverdueReminder([
+        { orderId: 10, orderCode: 'HD-10', tableLabel: 'Bàn 10', kind: 'ADDON', elapsedMinutes: 4 },
+      ]),
+    ).resolves.toEqual({ attempted: 0, delivered: 0, pruned: 0, failed: 0 });
+
+    const principal = {
+      id: 10,
+      employeeId: 10,
+      username: 'cashier01',
+      isSuperAdmin: true,
+      permissions: makePermissions(true),
+    };
+    const noSubTest = await svc.sendTestPushToUser(principal as never, 0);
+    expect(noSubTest).toEqual({ scheduled: false, delaySeconds: 0, activeSubscriptions: 0 });
+
+    const immediateTest = await svc.sendTestPushToUser(principal as never, 0);
+    expect(immediateTest).toEqual({ scheduled: true, delaySeconds: 0, activeSubscriptions: 1 });
+  });
 });

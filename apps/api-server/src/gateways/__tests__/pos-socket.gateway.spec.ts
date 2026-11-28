@@ -267,4 +267,94 @@ describe('PosSocketGateway', () => {
       },
     ]);
   });
+
+  it('tracks staff session presence, revokes rooms, broadcasts drafts/auto-cancel, and handles transferred QR guests', async () => {
+    vi.useFakeTimers();
+    try {
+      const emissions: Array<{ room: string; event: string; payload: unknown }> = [];
+      const disconnectSockets = vi.fn();
+      const jwt = { verifyAsync: vi.fn().mockResolvedValue({ sub: 3, tokenType: 'access', sid: 'sid-1' }) };
+      const prisma = {
+        user: { findUnique: vi.fn().mockResolvedValue({ ...staff, activeSessionId: 'sid-1' }) },
+        diningTable: {
+          findUnique: vi
+            .fn()
+            .mockResolvedValueOnce({ id: 9, name: 'Bàn 09' })
+            .mockResolvedValueOnce(null),
+        },
+        masterData: {
+          findUnique: vi.fn().mockResolvedValue({ metadata: { qrToken: 'c'.repeat(64) } }),
+        },
+        order: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: 77,
+            orderCode: 'HD-77',
+            tableId: 12,
+            orderType: 'DINE_IN',
+            orderSource: 'QR_CODE',
+            status: 'SERVING',
+            tableTransferLogs: [{ fromTable: 'Bàn 09', toTable: 'Bàn 12' }],
+          }),
+        },
+      };
+
+      const gateway = new PosSocketGateway(jwt as unknown as JwtService, prisma as never);
+      (gateway as unknown as { server: unknown }).server = {
+        emit: vi.fn(),
+        to: (room: string) => ({ emit: (event: string, payload: unknown) => emissions.push({ room, event, payload }) }),
+        in: () => ({ disconnectSockets }),
+      };
+
+      const staffSocket = { ...createClient({ token: 'tok' }), id: 'sock-1' };
+      await gateway.handleConnection(staffSocket as never);
+      expect(gateway.isSessionOnline('sid-1')).toBe(true);
+      expect(gateway.isSessionOnline(null)).toBe(false);
+
+      gateway.emitSessionRevoked('sid-1', {
+        reason: 'FORCED_LOGOUT',
+        revokedAt: '2026-11-28T00:00:00.000Z',
+        message: 'Đã đăng xuất',
+      });
+      expect(gateway.isSessionOnline('sid-1')).toBe(false);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(disconnectSockets).toHaveBeenCalledWith(true);
+
+      // Connect another staff socket & disconnect cleanly
+      const staffSocket2 = { ...createClient({ token: 'tok' }), id: 'sock-2' };
+      await gateway.handleConnection(staffSocket2 as never);
+      gateway.handleDisconnect(staffSocket2 as never);
+      expect(gateway.isSessionOnline('sid-1')).toBe(false);
+
+      // Transferred table QR guest still authenticates for old table -> redirected room works
+      const transferredGuest = createClient({ qrToken: 'a'.repeat(64), orderId: 77 });
+      await gateway.handleConnection(transferredGuest as never);
+      expect(transferredGuest.join).toHaveBeenCalledWith(SocketRooms.orderSession(77));
+
+      // Takeaway guest without orderId joins PUBLIC_MENU
+      const takeawayPublicGuest = createClient({ qrToken: 'c'.repeat(64) });
+      await gateway.handleConnection(takeawayPublicGuest as never);
+      expect(takeawayPublicGuest.join).toHaveBeenCalledWith(SocketRooms.PUBLIC_MENU);
+
+      // Extra event emitters + catalog revision
+      const revBefore = gateway.getMenuCatalogRevision();
+      gateway.emitMenuUpdated({ updatedAt: 't2' });
+      expect(gateway.getMenuCatalogRevision()).toBe(revBefore + 1);
+      gateway.emitPosDraftsUpdated({ action: 'UPSERT', draftId: 5, revision: 2 });
+      gateway.emitQrAutoCancelled(77, {
+        orderId: 77,
+        orderCode: 'HD-77',
+        tableId: 12,
+        tableLabel: 'Bàn 12',
+        kind: 'NEW',
+        cancelledItemCount: 2,
+        autoCancelMinutes: 12,
+        reason: 'Expired',
+        cancelledAt: '2026-11-28T00:00:00.000Z',
+      });
+      expect(emissions.some((e) => e.event === SocketEvents.POS_DRAFTS_UPDATED)).toBe(true);
+      expect(emissions.some((e) => e.event === SocketEvents.ORDER_QR_AUTO_CANCELLED)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
