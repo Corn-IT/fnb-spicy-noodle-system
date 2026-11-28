@@ -18,6 +18,8 @@ chmod +x \
   "${SCRIPT_DIR}/biz_bot_common.py" \
   "${SCRIPT_DIR}/biz_bot_queries.py" \
   "${SCRIPT_DIR}/biz_bot_nlp.py" \
+  "${SCRIPT_DIR}/biz_bot_local.py" \
+  "${SCRIPT_DIR}/biz_bot_state.py" \
   "${SCRIPT_DIR}/biz_bot_kb.py" \
   "${SCRIPT_DIR}/biz_bot_guardrail.py" \
   "${SCRIPT_DIR}/biz_bot_ai.py" \

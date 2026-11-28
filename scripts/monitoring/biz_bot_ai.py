@@ -164,6 +164,7 @@ QUY TẮC TRA CỨU & ĐỊNH DẠNG:
 - Với câu hỏi về cách dùng phần mềm, quy trình thao tác, lỗi vận hành, máy in RawBT/LAN/iMin/iTP6, RBAC, Single-Session, 10 Hard Invariants hoặc công thức tính của hệ thống: BẮT BUỘC gọi search_system_docs để trích dẫn từ tài liệu chính thức, KHÔNG tự bịa đặt.
 - Doanh thu thực thu CHỈ tính orders WHERE status = 'PAID' lọc theo paid_at (quy về ngày VN: paid_at AT TIME ZONE 'Asia/Ho_Chi_Minh'). KHÔNG tính đơn VOIDED vào doanh thu. Nhập kho chỉ lấy is_deleted = FALSE.
 - KHÔNG bịa số liệu hay tính năng. Nếu không có dữ liệu thì nói rõ không có.
+- TRỌNG TÂM TRƯỚC, CHI TIẾT SAU: Luôn chốt thẳng đáp án trọng tâm ngay dòng 1–2 (1–2 câu rõ ràng), không mở bài rườm rà và không đổ danh sách dài nếu người dùng chỉ hỏi 1 đối tượng/con số cụ thể.
 - Trả lời tiếng Việt súc tích, dễ đọc trên điện thoại. Chỉ dùng thẻ HTML Telegram đơn giản (<b>, <code>, <i>), KHÔNG dùng Markdown ** hoặc ##. Tiền tệ định dạng 1.250.000đ.
 
 {SYSTEM_MAP_SUMMARY}
@@ -344,12 +345,14 @@ def answer_with_gemini_detailed(
     history: list[dict[str, str]] | None = None,
     reply_context: str | None = None,
 ) -> dict[str, Any]:
+    empty_usage = {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     cfg = cfg or get_biz_config()
     clean_q = re.sub(r"@pos_lona_bot\b", "", question or "", flags=re.I).strip()
     if not clean_q:
         return {
             "text": "🤖 Bạn hãy nhập câu hỏi liên quan đến hoạt động quán Ăn Vặt Tran nhé!",
             "is_refusal": True,
+            "usage": empty_usage,
         }
 
     # Layer 1: Zero-token pre-guardrail (prompt injection, secret probing, pure off-topic)
@@ -358,19 +361,31 @@ def answer_with_gemini_detailed(
         return {
             "text": pre_refusal or SCOPE_REFUSAL_MSG,
             "is_refusal": True,
+            "usage": empty_usage,
         }
 
     if rate_limiter and not rate_limiter.allow():
         return {
             "text": "⏳ Nhóm đang hỏi AI hơi dồn dập (tối đa 15 câu/phút). Vui lòng thử lại sau ít giây hoặc dùng lệnh <code>/tongquan</code>, <code>/doanhthu</code>...",
             "is_refusal": True,
+            "usage": empty_usage,
         }
 
     sys_inst = _build_system_instruction()
     contents = _build_gemini_contents(clean_q, history=history, reply_context=reply_context)
+    total_prompt = 0
+    total_out = 0
+    total_tok = 0
 
     for _ in range(MAX_TOOL_ROUNDS):
         resp = _call_gemini(contents, sys_inst, cfg)
+        um = resp.get("usageMetadata") if isinstance(resp.get("usageMetadata"), dict) else {}
+        p_tok = int(um.get("promptTokenCount") or 0)
+        o_tok = int(um.get("candidatesTokenCount") or 0)
+        t_tok = int(um.get("totalTokenCount") or (p_tok + o_tok))
+        total_prompt += p_tok
+        total_out += o_tok
+        total_tok += t_tok
         model_parts, func_calls, text_reply = _extract_model_parts(resp)
 
         if not func_calls:
@@ -380,6 +395,11 @@ def answer_with_gemini_detailed(
                 return {
                     "text": sanitize_telegram_html(filtered),
                     "is_refusal": is_refusal,
+                    "usage": {
+                        "prompt_tokens": total_prompt,
+                        "output_tokens": total_out,
+                        "total_tokens": total_tok or (total_prompt + total_out),
+                    },
                 }
             break
 
@@ -400,6 +420,11 @@ def answer_with_gemini_detailed(
     return {
         "text": "🤖 Xin lỗi, mình chưa tổng hợp được câu trả lời cho câu hỏi này. Bạn có thể hỏi ngắn gọn hơn hoặc dùng <code>/help</code> để xem các lệnh sẵn có.",
         "is_refusal": True,
+        "usage": {
+            "prompt_tokens": total_prompt,
+            "output_tokens": total_out,
+            "total_tokens": total_tok or (total_prompt + total_out),
+        },
     }
 
 

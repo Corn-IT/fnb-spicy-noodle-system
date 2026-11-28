@@ -48,7 +48,7 @@ OFF_TOPIC_PATTERNS = re.compile(
     r"\b(?:"
     r"thoi tiet|nhiet do|du bao mua|xo so|vietlott|lo de|bong da|ty so|"
     r"chung khoan|co phieu|vnindex|crypto|bitcoin|eth|gia vang|ty gia usd|"
-    r"viet code|lap trinh|python|javascript|typescript|html|css|java|c\+\+|"
+    r"viet code|lap trinh|coding|python|javascript|typescript|html|css|java|c\+\+|"
     r"lam tho|viet tho|bai tho|viet van|ke chuyen|truyen cuoi|"
     r"dich sang tieng|translate into|giai toan|phuong trinh|tich phan|"
     r"tu vi|boi toan|chinh tri|bau cu|uong thuoc|chua benh|benh ly"
