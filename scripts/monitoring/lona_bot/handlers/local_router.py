@@ -41,6 +41,139 @@ from .local_superlatives import (
 )
 from ..nlu.semantic_engine import match_semantic_intent
 
+def _answer_order_count(
+    period_arg: str,
+    order_type_filter: str | None = None,
+    cfg: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    period = parse_period_spec(period_arg or "homnay")
+    start_sql, end_sql = _vn_bounds_sql(period["fromDate"], period["toDate"])
+    type_clause = f" AND o.order_type = {_sql_quote(order_type_filter)}" if order_type_filter else ""
+    rows = run_readonly_sql_json(
+        f"""
+        SELECT
+          COUNT(*) FILTER (WHERE o.status <> 'VOIDED') AS active_total,
+          COUNT(*) FILTER (WHERE o.status = 'PAID') AS paid_count,
+          COUNT(*) FILTER (WHERE o.status = 'SERVING') AS serving_count,
+          COUNT(*) FILTER (WHERE o.status = 'PENDING') AS pending_count,
+          COUNT(*) FILTER (WHERE o.status = 'VOIDED') AS void_count,
+          COUNT(*) FILTER (WHERE o.status <> 'VOIDED' AND o.order_type = 'TAKEAWAY') AS takeaway_count,
+          COUNT(*) FILTER (WHERE o.status <> 'VOIDED' AND o.order_type = 'DINE_IN') AS dine_in_count,
+          COALESCE(SUM(o.total_amount) FILTER (WHERE o.status <> 'VOIDED'), 0) AS total_amount
+        FROM orders o
+        WHERE o.created_at >= {start_sql} AND o.created_at < {end_sql}{type_clause}
+        """,
+        max_rows=1,
+        cfg=cfg,
+    )
+    r = rows[0] if rows else {}
+    active = int(r.get("active_total") or 0)
+    paid = int(r.get("paid_count") or 0)
+    serving = int(r.get("serving_count") or 0)
+    pending = int(r.get("pending_count") or 0)
+    voided = int(r.get("void_count") or 0)
+    tw_cnt = int(r.get("takeaway_count") or 0)
+    di_cnt = int(r.get("dine_in_count") or 0)
+    total_amt = fmt_vnd(r.get("total_amount") or 0)
+
+    type_lbl = (
+        "đơn Mang về"
+        if order_type_filter == "TAKEAWAY"
+        else ("đơn Tại bàn" if order_type_filter == "DINE_IN" else "đơn hàng")
+    )
+    extra = f" ({tw_cnt} Mang về · {di_cnt} Tại bàn)" if (not order_type_filter and active > 0) else ""
+    parts = []
+    if paid > 0:
+        parts.append(f"{paid} đã thanh toán")
+    if serving > 0:
+        parts.append(f"{serving} đang phục vụ")
+    if pending > 0:
+        parts.append(f"{pending} chờ xác nhận")
+    if voided > 0:
+        parts.append(f"{voided} đã hủy")
+    detail = f" — {' · '.join(parts)}" if parts else ""
+    text = (
+        f"📦 Kỳ <b>{html.escape(period['label'])}</b> có <b>{active} {type_lbl}</b>{extra}{detail} · tổng giá trị <b>{total_amt}</b>."
+        if active > 0
+        else f"📦 Kỳ <b>{html.escape(period['label'])}</b> chưa ghi nhận {type_lbl} nào" + (f" (có {voided} đơn đã hủy)." if voided > 0 else ".")
+    )
+    return {
+        "text": text,
+        "slots": {"intent": "order_count", "period_raw": period_arg or "homnay", "order_type_filter": order_type_filter or ""},
+    }
+
+
+def _answer_recent_orders_filtered(
+    period_arg: str,
+    order_type_filter: str | None = None,
+    limit: int = 5,
+    explicit_period: bool = False,
+    cfg: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    lim = max(1, min(20, int(limit or 5)))
+    where_parts = ["o.status <> 'VOIDED'"]
+    if order_type_filter:
+        where_parts.append(f"o.order_type = {_sql_quote(order_type_filter)}")
+    if explicit_period and period_arg:
+        period = parse_period_spec(period_arg)
+        s_sql, e_sql = _vn_bounds_sql(period["fromDate"], period["toDate"])
+        where_parts.append(f"o.created_at >= {s_sql} AND o.created_at < {e_sql}")
+
+    rows = run_readonly_sql_json(
+        f"""
+        SELECT o.order_code, o.order_type, o.takeaway_number, dt.name AS table_name,
+               o.status, o.total_amount,
+               to_char(o.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI dd/mm') AS created_vn
+        FROM orders o
+        LEFT JOIN dining_tables dt ON dt.id = o.table_id
+        WHERE {' AND '.join(where_parts)}
+        ORDER BY o.created_at DESC, o.id DESC
+        """,
+        max_rows=lim,
+        cfg=cfg,
+    )
+    type_lbl = (
+        "đơn mang về"
+        if order_type_filter == "TAKEAWAY"
+        else ("đơn tại bàn" if order_type_filter == "DINE_IN" else "đơn hàng")
+    )
+    slots = {
+        "intent": "recent_orders",
+        "period_raw": period_arg or "homnay",
+        "order_type_filter": order_type_filter or "",
+        "limit": lim,
+        "explicit_period": explicit_period,
+    }
+    if rows:
+        slots["order_code"] = str(rows[0]["order_code"])
+
+    status_vi = {"PAID": "Đã thanh toán", "SERVING": "Đang phục vụ", "PENDING": "Chờ xác nhận"}
+    if not rows:
+        return {"text": f"🧾 Chưa ghi nhận {type_lbl} nào gần đây.", "slots": slots}
+
+    if lim == 1:
+        r = rows[0]
+        loc = r.get("table_name") or (f"Mang về #{r['takeaway_number']}" if r.get("takeaway_number") else "Mang về")
+        st_lbl = status_vi.get(str(r.get("status") or ""), str(r.get("status") or ""))
+        return {
+            "text": (
+                f"🧾 {type_lbl.capitalize()} gần nhất là <code>{html.escape(str(r['order_code']))}</code> "
+                f"({html.escape(str(loc))}) · <b>{fmt_vnd(r['total_amount'])}</b> · {html.escape(st_lbl)} lúc {html.escape(str(r['created_vn']))}."
+            ),
+            "slots": slots,
+        }
+
+    lines = [f"🧾 <b>{len(rows)} {type_lbl} gần nhất</b>"]
+    for r in rows[:lim]:
+        loc = r.get("table_name") or (f"Mang về #{r['takeaway_number']}" if r.get("takeaway_number") else "Mang về")
+        st_lbl = status_vi.get(str(r.get("status") or ""), str(r.get("status") or ""))
+        lines.append(
+            f"• <code>{html.escape(str(r['order_code']))}</code> ({html.escape(str(loc))}) — "
+            f"<b>{fmt_vnd(r['total_amount'])}</b> · {html.escape(st_lbl)} ({html.escape(str(r['created_vn']))})"
+        )
+    return {"text": "\n".join(lines), "slots": slots}
+
+
 def _handle_followup_local(
     norm_q: str,
     slots: dict[str, Any],
@@ -49,7 +182,27 @@ def _handle_followup_local(
     if not slots:
         return None
 
-    # 1. Expand "xem đủ top 10"
+    # 1. Refine previous list/order query limit or takeaway filter ("một đơn thôi", "top 3", "xem đủ")
+    last_intent_val = str(slots.get("intent") or "")
+    if last_intent_val in ("recent_orders", "order_count", "topmon_best", "topmon_slow"):
+        m_num = re.match(
+            r"^(?:chi|lay|xem|cho|top)?\s*(?:(\d{1,2})|(mot|hai|ba|bon|nam))\s*(?:don|hoa don|mon|cai|ban)?\s*(?:thoi|nhe|nha|a)?$",
+            norm_q,
+        )
+        word_nums = {"mot": 1, "hai": 2, "ba": 3, "bon": 4, "nam": 5}
+        if m_num and len(norm_q.split()) <= 6:
+            new_lim = int(m_num.group(1)) if m_num.group(1) else word_nums.get(str(m_num.group(2) or ""), 5)
+            new_lim = max(1, min(20, new_lim))
+            if last_intent_val == "recent_orders":
+                return _answer_recent_orders_filtered(
+                    str(slots.get("period_raw") or "homnay"),
+                    order_type_filter=str(slots.get("order_type_filter") or "") or None,
+                    limit=new_lim,
+                    explicit_period=bool(slots.get("explicit_period")),
+                    cfg=cfg,
+                )
+
+    # 1b. Expand "xem đủ top 10"
     if any(k in norm_q for k in ("xem du", "top 10", "ca danh sach", "danh sach day du")) and slots.get("intent") in ("topmon_best", "topmon_slow"):
         p_arg = str(slots.get("period_raw") or "")
         arg = f"cham {p_arg}".strip() if slots.get("intent") == "topmon_slow" else p_arg
@@ -183,7 +336,22 @@ def _dispatch_semantic_match(sem: dict[str, Any], cfg: dict[str, str] | None = N
     if iid == "table_live_status":
         return {"text": handle_ban(cfg=cfg), "slots": {"intent": "ban"}, "route": "fast_path", "intent_id": iid}
     if iid == "recent_orders":
-        return {"text": handle_don(period_arg, cfg=cfg), "slots": {"intent": "don", "period_raw": period_arg}, "route": "fast_path", "intent_id": iid}
+        lim = int(sem.get("top_limit") or 5) if sem.get("explicit_limit") else 5
+        res = _answer_recent_orders_filtered(
+            period_arg,
+            order_type_filter=sem.get("order_type_filter"),
+            limit=lim,
+            explicit_period=bool(sem.get("explicit_period")),
+            cfg=cfg,
+        )
+        return {**res, "route": "local_semantic", "intent_id": iid}
+    if iid == "order_count":
+        res = _answer_order_count(
+            period_arg,
+            order_type_filter=sem.get("order_type_filter"),
+            cfg=cfg,
+        )
+        return {**res, "route": "local_semantic", "intent_id": iid}
     if iid == "period_comparison":
         cmp_res = _handle_period_comparison(str(sem.get("norm_text") or ""), cfg=cfg)
         if cmp_res:
@@ -293,6 +461,8 @@ def try_answer_locally(
         "staff_top_void",
         "staff_top_orders",
         "order_top_value",
+        "recent_orders",
+        "order_count",
         "period_comparison",
     }
 

@@ -157,13 +157,30 @@ class TestLocalHandlers(unittest.TestCase):
             )
             self.assertIn("32.000đ", fu_price["text"])
 
-        # Additional slices: cash, transfer, takeaway, QR + explicit order code
+        # Additional slices: cash, transfer, QR + takeaway count / recent / 1-order follow-up
         ov_slice = {"kpis": {"revenue": {"netPaidAmount": 3000000, "paidOrderCount": 30, "takeawayCount": 8, "dineInCount": 22, "qrSourceCount": 10, "posSourceCount": 20}, "cashDrawer": {"totalCashSales": 1800000, "cashOnlySales": 1600000, "splitCashSales": 200000}, "transfer": {"totalTransferSales": 1200000}}}
         with mock.patch.object(local_entities, "call_internal_biz", return_value=ov_slice):
             self.assertIn("Tiền mặt", local_router.try_answer_locally("Doanh thu tiền mặt hôm nay?", cfg=self.cfg)["text"])
             self.assertIn("Chuyển khoản", local_router.try_answer_locally("Tiền chuyển khoản hôm nay?", cfg=self.cfg)["text"])
-            self.assertIn("Mang về", local_router.try_answer_locally("Hôm nay có mấy đơn mang về?", cfg=self.cfg)["text"])
             self.assertIn("quét QR", local_router.try_answer_locally("Hôm nay có mấy đơn khách quét QR?", cfg=self.cfg)["text"])
+
+        with mock.patch.object(local_router, "run_readonly_sql_json", return_value=[{"active_total": 14, "paid_count": 12, "serving_count": 2, "pending_count": 0, "void_count": 1, "takeaway_count": 14, "dine_in_count": 0, "total_amount": 1650000}]):
+            cnt_tw = local_router.try_answer_locally("Hôm nay có mấy đơn mang về?", cfg=self.cfg)
+            self.assertIn("14 đơn Mang về", cnt_tw["text"])
+            self.assertEqual(cnt_tw["slots"]["order_type_filter"], "TAKEAWAY")
+
+        tw_recent_rows = [
+            {"order_code": "HD-20261128-0122", "order_type": "TAKEAWAY", "takeaway_number": 8, "table_name": None, "status": "PAID", "total_amount": 110000, "created_vn": "18:55 28/11"},
+            {"order_code": "HD-20261128-0120", "order_type": "TAKEAWAY", "takeaway_number": 7, "table_name": None, "status": "SERVING", "total_amount": 95000, "created_vn": "18:40 28/11"},
+        ]
+        with mock.patch.object(local_router, "run_readonly_sql_json", return_value=tw_recent_rows):
+            rec_tw = local_router.try_answer_locally("Đơn mang về gần nhất?", cfg=self.cfg)
+            self.assertIn("HD-20261128-0122", rec_tw["text"])
+            self.assertIn("HD-20261128-0120", rec_tw["text"])
+        with mock.patch.object(local_router, "run_readonly_sql_json", return_value=tw_recent_rows[:1]):
+            fu_one = local_router.try_answer_locally("Một đơn thôi", cfg=self.cfg, slots=rec_tw["slots"])
+            self.assertIn("HD-20261128-0122", fu_one["text"])
+            self.assertNotIn("0120", fu_one["text"])
 
         # Follow-up on order_code, table_name, topmon expand, and period shift
         ord_fu_row = [{"order_code": "ORD-777", "order_type": "DINE_IN", "takeaway_number": None, "table_name": "Bàn 05", "status": "PAID", "payment_method": "CASH", "total_amount": 150000, "cashier_name": "Loan", "created_vn": "18:00 28/11"}]

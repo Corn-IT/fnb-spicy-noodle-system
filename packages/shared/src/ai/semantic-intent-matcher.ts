@@ -13,7 +13,7 @@ export interface SemanticMatchResult {
   readonly requiredPermission: string | null;
   readonly commandEquivalent: string | null;
   readonly sortBy?: 'quantity' | 'revenue' | 'slow';
-  readonly mode?: 'single' | 'list' | 'snapshot' | 'comparison' | 'report' | 'knowledge';
+  readonly mode?: 'single' | 'list' | 'snapshot' | 'comparison' | 'report' | 'knowledge' | 'count';
   readonly cleanText: string;
   readonly normText: string;
   readonly entities: readonly SemanticEntityKey[];
@@ -24,6 +24,8 @@ export interface SemanticMatchResult {
   readonly guardBlocked: boolean;
   readonly guardId: string | null;
   readonly topLimit: number;
+  readonly explicitLimit: boolean;
+  readonly orderTypeFilter: 'TAKEAWAY' | 'DINE_IN' | null;
   readonly orderCode: string | null;
   readonly tableNumber: number | null;
   readonly persona: AiPersonaProfile;
@@ -88,13 +90,12 @@ export function stripVietnamese(input: string): string {
 }
 
 function hasPhrase(haystack: string, phrases: readonly string[]): boolean {
-  const padded = ` ${haystack} `;
+  const cleanHay = haystack.replace(/[?!.,;:()[\]{}"'`]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const padded = ` ${cleanHay} `;
   for (const rawPhrase of phrases) {
     const phrase = rawPhrase.trim();
     if (!phrase) continue;
-    if (phrase.includes(' ')) {
-      if (haystack.includes(phrase)) return true;
-    } else if (padded.includes(` ${phrase} `)) {
+    if (padded.includes(` ${phrase} `)) {
       return true;
     }
   }
@@ -177,14 +178,61 @@ export function extractPeriodCode(inputText: string): {
   return { period: 'homnay', label: 'Hôm nay', explicit: false };
 }
 
+const VI_SMALL_NUMBERS: Readonly<Record<string, number>> = {
+  mot: 1,
+  hai: 2,
+  ba: 3,
+  bon: 4,
+  nam: 5,
+  sau: 6,
+  bay: 7,
+  tam: 8,
+  chin: 9,
+  muoi: 10,
+};
+
+/** Extracts explicit ranking/item size and flags whether caller specified a count explicitly. */
+export function extractLimitWithFlag(
+  inputText: string,
+  fallback = 5,
+): { topLimit: number; explicitLimit: boolean } {
+  const normText = stripVietnamese(inputText);
+  const digitMatch = normText.match(
+    /\btop\s*(\d{1,2})\b|\b(\d{1,2})\s+(?:mon|don(?:\s+mang\s+ve|\s+tai\s+ban|\s+tai\s+quan)?|hoa\s+don|cai|ban)\b/,
+  );
+  if (digitMatch) {
+    const val = Number(digitMatch[1] ?? digitMatch[2]);
+    if (Number.isFinite(val) && val >= 1) {
+      return { topLimit: Math.min(20, Math.max(1, Math.trunc(val))), explicitLimit: true };
+    }
+  }
+  const wordMatch = normText.match(
+    /\b(mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi)\s+(?:don(?:\s+mang\s+ve|\s+tai\s+ban|\s+tai\s+quan)?|hoa\s+don|mon|cai)\b/,
+  );
+  if (wordMatch) {
+    const mapped = VI_SMALL_NUMBERS[wordMatch[1] ?? ''];
+    if (mapped) {
+      return { topLimit: mapped, explicitLimit: true };
+    }
+  }
+  return { topLimit: fallback, explicitLimit: false };
+}
+
 /** Extracts explicit ranking size (`top 5`, `10 mon`, default 5 bounded to 1..20). */
 export function extractTopLimit(inputText: string, fallback = 5): number {
+  return extractLimitWithFlag(inputText, fallback).topLimit;
+}
+
+/** Extracts explicit order fulfillment filter (`TAKEAWAY` vs `DINE_IN`) when specified. */
+export function extractOrderTypeFilter(inputText: string): 'TAKEAWAY' | 'DINE_IN' | null {
   const normText = stripVietnamese(inputText);
-  const match = normText.match(/\btop\s*(\d{1,2})\b|\b(\d{1,2})\s+mon\b/);
-  if (!match) return fallback;
-  const val = Number(match[1] ?? match[2]);
-  if (!Number.isFinite(val) || val < 1) return fallback;
-  return Math.min(20, Math.max(1, Math.trunc(val)));
+  if (hasPhrase(normText, ['mang ve', 'takeaway', 'mua ve', 'ship', 'giao di', 'don ngoai'])) {
+    return 'TAKEAWAY';
+  }
+  if (hasPhrase(normText, ['tai ban', 'an tai quan', 'tai quan', 'tai cho', 'dine in'])) {
+    return 'DINE_IN';
+  }
+  return null;
 }
 
 /** Extracts explicit table number (`bàn 05`, `bàn số 12`) when asked directly. */
@@ -294,6 +342,8 @@ function buildMatchResult(
     periodLabel: string;
     explicitPeriod: boolean;
     topLimit: number;
+    explicitLimit: boolean;
+    orderTypeFilter: 'TAKEAWAY' | 'DINE_IN' | null;
     orderCode: string | null;
     tableNumber: number | null;
     persona: AiPersonaProfile;
@@ -319,6 +369,8 @@ function buildMatchResult(
     guardBlocked: false,
     guardId: null,
     topLimit: ctx.topLimit,
+    explicitLimit: ctx.explicitLimit,
+    orderTypeFilter: ctx.orderTypeFilter,
     orderCode: ctx.orderCode,
     tableNumber: ctx.tableNumber,
     persona: ctx.persona,
@@ -341,7 +393,8 @@ export function matchSemanticIntent(
   const { period, label: periodLabel, explicit: explicitPeriod } = extractPeriodCode(normClean);
   const entities = detectEntities(rawLower, normClean);
   const metrics = detectMetrics(normClean);
-  const topLimit = extractTopLimit(normClean, 5);
+  const { topLimit, explicitLimit } = extractLimitWithFlag(normClean, 5);
+  const orderTypeFilter = extractOrderTypeFilter(normClean);
   const orderCode = extractOrderCode(cleanText);
   const tableNumber = extractTableNumber(normClean);
 
@@ -354,6 +407,8 @@ export function matchSemanticIntent(
     periodLabel,
     explicitPeriod,
     topLimit,
+    explicitLimit,
+    orderTypeFilter,
     orderCode,
     tableNumber,
     persona,
@@ -383,6 +438,8 @@ export function matchSemanticIntent(
         guardBlocked: true,
         guardId: guard.id,
         topLimit,
+        explicitLimit,
+        orderTypeFilter,
         orderCode,
         tableNumber,
         persona,
@@ -467,12 +524,22 @@ export function matchSemanticIntent(
     return buildMatchResult('fast_path_overview', 'fast_path', { ...baseCtx, confidence: 0.85 });
   }
 
-  if (hasEntity('order')) {
+  if (
+    !hasEntity('void') &&
+    !hasEntity('staff') &&
+    !hasEntity('revenue') &&
+    !hasEntity('profit') &&
+    !hasEntity('qr') &&
+    (hasEntity('order') || (orderTypeFilter !== null && (hasMetric('recent_list') || hasMetric('count_query'))))
+  ) {
     if (hasMetric('revenue_high') && hasSuperlative) {
       return buildMatchResult('order_top_value', 'local_semantic', { ...baseCtx, confidence: 0.93 });
     }
     if (hasMetric('recent_list')) {
-      return buildMatchResult('recent_orders', 'local_semantic', { ...baseCtx, confidence: 0.92 });
+      return buildMatchResult('recent_orders', 'local_semantic', { ...baseCtx, confidence: 0.94 });
+    }
+    if (hasMetric('count_query')) {
+      return buildMatchResult('order_count', 'local_semantic', { ...baseCtx, confidence: 0.94 });
     }
   }
 
@@ -535,6 +602,8 @@ export function matchSemanticIntent(
     guardBlocked: false,
     guardId: null,
     topLimit,
+    explicitLimit,
+    orderTypeFilter,
     orderCode,
     tableNumber,
     persona,

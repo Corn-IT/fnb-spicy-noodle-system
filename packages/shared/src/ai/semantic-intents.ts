@@ -25,7 +25,8 @@ export type SemanticMetricKey =
   | 'density_low'
   | 'void_action'
   | 'status_active'
-  | 'recent_list';
+  | 'recent_list'
+  | 'count_query';
 
 export type SemanticIntentId =
   | 'product_top_revenue'
@@ -39,6 +40,7 @@ export type SemanticIntentId =
   | 'staff_top_orders'
   | 'order_top_value'
   | 'recent_orders'
+  | 'order_count'
   | 'table_live_status'
   | 'period_comparison'
   | 'fast_path_overview'
@@ -279,8 +281,25 @@ export const SEMANTIC_INTENT_SPEC: SemanticIntentSpec = {
         'hoa don',
         'don hang',
         'don mang ve',
+        'don tai ban',
+        'don tai quan',
+        'bao nhieu don',
+        'may don',
+        'so don',
+        'tong don',
+        'tong so don',
+        'cac don',
+        'nhung don',
+        'mot don',
+        '1 don',
+        '2 don',
+        '3 don',
+        '5 don',
+        '10 don',
         'ma don',
         'don nao',
+        'don gan nhat',
+        'don moi nhat',
         'order',
         'bill',
         'phieu tinh tien',
@@ -451,6 +470,18 @@ export const SEMANTIC_INTENT_SPEC: SemanticIntentSpec = {
       'trang thai',
     ],
     recent_list: ['gan nhat', 'moi nhat', 'vua tao', 'vua len', 'vua thanh toan', 'vua roi'],
+    count_query: [
+      'bao nhieu',
+      'co may',
+      'may don',
+      'may mon',
+      'may ban',
+      'so luong',
+      'tong so',
+      'tong cong',
+      'tong don',
+      'dem',
+    ],
   },
   cardinality: {
     superlativeCues: [
@@ -605,6 +636,13 @@ export const SEMANTIC_INTENT_SPEC: SemanticIntentSpec = {
       requiredPermission: 'invoices.view',
       commandEquivalent: 'don',
       mode: 'list',
+    },
+    {
+      id: 'order_count',
+      description: 'Count of orders (optionally filtered by TAKEAWAY / DINE_IN) in period',
+      requiredPermission: 'invoices.view',
+      commandEquivalent: 'don',
+      mode: 'count',
     },
     {
       id: 'table_live_status',

@@ -622,4 +622,199 @@ describe('AiAssistantModule', () => {
     });
     expect(netFail.reply).toContain('tạm quá tải');
   });
+
+  it('answers takeaway order counts, filtered recent takeaway orders, and "Một đơn thôi" follow-up cleanly at 0 tokens', async () => {
+    const owner = makePrincipal();
+
+    // Seed mixed DINE_IN + TAKEAWAY orders in prismaMock
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      { id: 101, orderType: 'TAKEAWAY', status: 'PAID', totalAmount: 110000 },
+      { id: 102, orderType: 'TAKEAWAY', status: 'SERVING', totalAmount: 85000 },
+      { id: 103, orderType: 'TAKEAWAY', status: 'VOIDED', totalAmount: 50000 },
+    ] as never);
+
+    const cntRes = await service.chat(
+      { message: 'Hôm nay có bao nhiêu đơn mang về?', clientSessionId: 'takeaway_tab' },
+      owner,
+    );
+    expect(cntRes.route).toBe('local_semantic');
+    expect(cntRes.intentId).toBe('order_count');
+    expect(cntRes.tokensUsed).toBe(0);
+    expect(cntRes.reply).toContain('2 đơn mang về');
+
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      {
+        id: 122,
+        orderCode: 'HD-20261128-0122',
+        orderType: 'TAKEAWAY',
+        takeawayNumber: 8,
+        takeawayLabelFormat: 'LETTER',
+        status: 'PAID',
+        totalAmount: 110000,
+        createdAt: new Date('2026-11-28T11:55:00.000Z'),
+        table: null,
+      },
+      {
+        id: 120,
+        orderCode: 'HD-20261128-0120',
+        orderType: 'TAKEAWAY',
+        takeawayNumber: 7,
+        takeawayLabelFormat: 'LETTER',
+        status: 'SERVING',
+        totalAmount: 95000,
+        createdAt: new Date('2026-11-28T11:40:00.000Z'),
+        table: null,
+      },
+    ] as never);
+
+    const recentTw = await service.chat(
+      { message: 'Đơn mang về gần nhất?', clientSessionId: 'takeaway_tab' },
+      owner,
+    );
+    expect(recentTw.route).toBe('local_semantic');
+    expect(recentTw.intentId).toBe('recent_orders');
+    expect(recentTw.tokensUsed).toBe(0);
+    expect(recentTw.reply).toContain('HD-20261128-0122');
+    expect(recentTw.reply).toContain('Mang về #AD');
+    expect(recentTw.reply).not.toContain('Bàn ');
+
+    // Follow-up refinement: "Một đơn thôi" must NOT fall through to Gemini or error out!
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      {
+        id: 122,
+        orderCode: 'HD-20261128-0122',
+        orderType: 'TAKEAWAY',
+        takeawayNumber: 8,
+        takeawayLabelFormat: 'LETTER',
+        status: 'PAID',
+        totalAmount: 110000,
+        createdAt: new Date('2026-11-28T11:55:00.000Z'),
+        table: null,
+      },
+    ] as never);
+    const fuOne = await service.chat(
+      { message: 'Một đơn thôi', clientSessionId: 'takeaway_tab' },
+      owner,
+    );
+    expect(fuOne.route).toBe('local_semantic');
+    expect(fuOne.tokensUsed).toBe(0);
+    expect(fuOne.reply).toContain('HD-20261128-0122');
+    expect(fuOne.reply).not.toContain('0120');
+
+    // Direct 1-order query also limits to 1 takeaway order cleanly
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      {
+        id: 122,
+        orderCode: 'HD-20261128-0122',
+        orderType: 'TAKEAWAY',
+        takeawayNumber: 8,
+        takeawayLabelFormat: 'LETTER',
+        status: 'PAID',
+        totalAmount: 110000,
+        createdAt: new Date('2026-11-28T11:55:00.000Z'),
+        table: null,
+      },
+    ] as never);
+    const singleDirect = await service.chat(
+      { message: 'Một đơn mang về gần nhất?', clientSessionId: 'takeaway_tab2' },
+      owner,
+    );
+    expect(singleDirect.route).toBe('local_semantic');
+    expect(singleDirect.tokensUsed).toBe(0);
+    expect(singleDirect.reply).toContain('HD-20261128-0122');
+
+    // Gemini get_recent_orders_and_counts tool works cleanly with RBAC
+    process.env.FNB_WEB_GEMINI_API_KEY = 'AIzaSyWebSecretKey987654321';
+    geminiPool.resetRuntimeStateForTests();
+    let gStep = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        gStep += 1;
+        if (gStep === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              candidates: [{
+                content: {
+                  parts: [{
+                    functionCall: {
+                      name: 'get_recent_orders_and_counts',
+                      args: { from_date: '2026-11-28', to_date: '2026-11-28', order_type: 'TAKEAWAY', limit: 2 },
+                    },
+                  }],
+                },
+              }],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [{ content: { parts: [{ text: 'Dạ hôm nay có 14 đơn mang về ạ.' }] } }],
+            usageMetadata: { totalTokenCount: 22 },
+          }),
+        };
+      }),
+    );
+    const toolRes = await geminiPool.generateReply({
+      question: 'Tóm tắt tình hình mang về tuần này giúp em',
+      principal: owner,
+      persona: { mode: 'em_anh_chi', botSelf: 'em', userCall: 'anh/chị' },
+    });
+    expect(toolRes.tokensUsed).toBe(22);
+    expect(toolRes.reply).toContain('14 đơn mang về');
+
+    // Additional branch coverage for order_count (mixed/DINE_IN/empty/PENDING) & recent_orders (DINE_IN/empty/NUMBER/period follow-up)
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      { id: 1, orderType: 'TAKEAWAY', status: 'PAID', totalAmount: 100000 },
+      { id: 2, orderType: 'DINE_IN', status: 'PENDING', totalAmount: 90000 },
+    ] as never);
+    const mixedCnt = await service.chat({ message: 'Hôm nay tổng cộng bao nhiêu đơn hàng?' }, owner);
+    expect(mixedCnt.reply).toContain('1 mang về');
+    expect(mixedCnt.reply).toContain('1 tại bàn');
+    expect(mixedCnt.reply).toContain('1 chờ xác nhận');
+
+    prismaMock.order.findMany.mockResolvedValueOnce([] as never);
+    const emptyDineIn = await service.chat({ message: 'Hôm qua có mấy đơn tại bàn?' }, owner);
+    expect(emptyDineIn.reply).toContain('chưa có đơn tại bàn');
+
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      {
+        id: 201,
+        orderCode: 'HD-201',
+        orderType: 'DINE_IN',
+        takeawayNumber: null,
+        takeawayLabelFormat: 'NUMBER',
+        status: 'PENDING',
+        totalAmount: 130000,
+        createdAt: new Date('2026-11-28T11:00:00.000Z'),
+        table: { name: 'Bàn 09' },
+      },
+      {
+        id: 202,
+        orderCode: 'HD-202',
+        orderType: 'TAKEAWAY',
+        takeawayNumber: 3,
+        takeawayLabelFormat: 'NUMBER',
+        status: 'PAID',
+        totalAmount: 75000,
+        createdAt: null,
+        table: null,
+      },
+    ] as never);
+    const recAll = await service.chat({ message: '2 đơn hôm nay gần nhất?', clientSessionId: 'br_tab' }, owner);
+    expect(recAll.reply).toContain('Bàn 09');
+    expect(recAll.reply).toContain('#03');
+
+    prismaMock.order.findMany.mockResolvedValueOnce([] as never);
+    const fuYest = await service.chat({ message: 'Còn hôm qua thì sao?', clientSessionId: 'br_tab' }, owner);
+    expect(fuYest.reply).toContain('chưa ghi nhận');
+
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      { id: 301, orderCode: 'HD-301', orderType: 'DINE_IN', takeawayNumber: null, takeawayLabelFormat: 'NUMBER', status: 'SERVING', totalAmount: 55000, createdAt: new Date('2026-11-28T10:00:00.000Z'), table: { name: 'Bàn 01' } },
+    ] as never);
+    const fuDineIn = await service.chat({ message: 'Chỉ đơn tại bàn', clientSessionId: 'br_tab' }, owner);
+    expect(fuDineIn.reply).toContain('Bàn 01');
+  });
 });

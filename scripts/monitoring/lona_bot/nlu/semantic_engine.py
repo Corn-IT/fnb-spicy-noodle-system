@@ -11,7 +11,16 @@ from .semantic_spec import has_phrase, load_semantic_spec
 
 _ORDER_CODE_RE = re.compile(r"\b((?:ORD|HD)-[A-Za-z0-9-]+)\b", re.I)
 _TABLE_NO_RE = re.compile(r"\bban(?:\s+so)?\s*#?(\d{1,3})\b")
-_TOP_LIMIT_RE = re.compile(r"\btop\s*(\d{1,2})\b|\b(\d{1,2})\s+mon\b")
+_TOP_LIMIT_RE = re.compile(
+    r"\btop\s*(\d{1,2})\b|\b(\d{1,2})\s+(?:mon|don(?:\s+mang\s+ve|\s+tai\s+ban|\s+tai\s+quan)?|hoa\s+don|cai|ban)\b"
+)
+_WORD_LIMIT_RE = re.compile(
+    r"\b(mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi)\s+(?:don(?:\s+mang\s+ve|\s+tai\s+ban|\s+tai\s+quan)?|hoa\s+don|mon|cai)\b"
+)
+_VI_SMALL_NUMBERS = {
+    "mot": 1, "hai": 2, "ba": 3, "bon": 4, "nam": 5,
+    "sau": 6, "bay": 7, "tam": 8, "chin": 9, "muoi": 10,
+}
 
 
 def extract_period_code(raw_or_norm: str, spec: dict[str, Any] | None = None) -> tuple[str, str, bool]:
@@ -23,15 +32,32 @@ def extract_period_code(raw_or_norm: str, spec: dict[str, Any] | None = None) ->
     return "homnay", "Hôm nay", False
 
 
-def extract_top_limit(raw_or_norm: str, fallback: int = 5) -> int:
+def extract_limit_with_flag(raw_or_norm: str, fallback: int = 5) -> tuple[int, bool]:
     norm_text = strip_vi(raw_or_norm)
     m = _TOP_LIMIT_RE.search(norm_text)
-    if not m:
-        return fallback
-    val = int(m.group(1) or m.group(2))
-    if val < 1:
-        return fallback
-    return min(20, max(1, val))
+    if m:
+        val = int(m.group(1) or m.group(2))
+        if val >= 1:
+            return min(20, max(1, val)), True
+    mw = _WORD_LIMIT_RE.search(norm_text)
+    if mw:
+        val = _VI_SMALL_NUMBERS.get(mw.group(1), 0)
+        if val >= 1:
+            return val, True
+    return fallback, False
+
+
+def extract_top_limit(raw_or_norm: str, fallback: int = 5) -> int:
+    return extract_limit_with_flag(raw_or_norm, fallback=fallback)[0]
+
+
+def extract_order_type_filter(raw_or_norm: str) -> str | None:
+    norm_text = strip_vi(raw_or_norm)
+    if has_phrase(norm_text, ["mang ve", "takeaway", "mua ve", "ship", "giao di", "don ngoai"]):
+        return "TAKEAWAY"
+    if has_phrase(norm_text, ["tai ban", "an tai quan", "tai quan", "tai cho", "dine in"]):
+        return "DINE_IN"
+    return None
 
 
 def _detect_entities(raw_lower: str, norm_text: str, spec: dict[str, Any]) -> list[str]:
@@ -96,6 +122,8 @@ def match_semantic_intent(raw_text: str, bot_username: str = "POS_Lona_bot") -> 
     order_m = _ORDER_CODE_RE.search(clean_text)
     table_m = _TABLE_NO_RE.search(norm_clean)
     intent_map = {str(d["id"]): d for d in (spec.get("intentDefinitions") or []) if isinstance(d, dict) and d.get("id")}
+    top_limit, explicit_limit = extract_limit_with_flag(norm_clean, 5)
+    order_type_filter = extract_order_type_filter(norm_clean)
 
     base = {
         "clean_text": clean_text,
@@ -105,7 +133,9 @@ def match_semantic_intent(raw_text: str, bot_username: str = "POS_Lona_bot") -> 
         "period": period,
         "period_label": period_label,
         "explicit_period": explicit_period,
-        "top_limit": extract_top_limit(norm_clean, 5),
+        "top_limit": top_limit,
+        "explicit_limit": explicit_limit,
+        "order_type_filter": order_type_filter,
         "order_code": order_m.group(1).upper() if order_m else None,
         "table_number": int(table_m.group(1)) if table_m else None,
     }
@@ -170,11 +200,20 @@ def match_semantic_intent(raw_text: str, bot_username: str = "POS_Lona_bot") -> 
     if base["order_code"]:
         return _build_result("fast_path_overview", "fast_path", base, intent_map, 0.85)
 
-    if has_e("order"):
+    if (
+        not has_e("void")
+        and not has_e("staff")
+        and not has_e("revenue")
+        and not has_e("profit")
+        and not has_e("qr")
+        and (has_e("order") or (order_type_filter is not None and (has_m("recent_list") or has_m("count_query"))))
+    ):
         if has_m("revenue_high") and has_superlative:
             return _build_result("order_top_value", "local_semantic", base, intent_map, 0.93)
         if has_m("recent_list"):
-            return _build_result("recent_orders", "local_semantic", base, intent_map, 0.92)
+            return _build_result("recent_orders", "local_semantic", base, intent_map, 0.94)
+        if has_m("count_query"):
+            return _build_result("order_count", "local_semantic", base, intent_map, 0.94)
 
     if has_e("table") and (has_m("status_active") or has_superlative or base["table_number"] is not None or "ban" in norm_clean):
         return _build_result("table_live_status", "fast_path", base, intent_map, 0.91)
