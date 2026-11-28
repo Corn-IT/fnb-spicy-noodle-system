@@ -1,0 +1,12 @@
+[run]
+source = .
+omit =
+    tests/*
+    test_*.py
+    run_coverage.py
+    telegram-command-bot.py
+
+[report]
+show_missing = True
+fail_under = 85
+skip_empty = True
