@@ -9,6 +9,7 @@ import {
   escapeTelegramHtml,
   formatVnTimestamp,
   isLoopbackSocketAddress,
+  readContainerResourceStats,
   readMonitoringConfig,
   sanitizeSingleLine,
   TelegramAlertService,
@@ -64,6 +65,23 @@ describe('MonitoringModule & TelegramAlertService', () => {
     expect(isLoopbackSocketAddress('::ffff:127.0.0.1')).toBe(true);
     expect(isLoopbackSocketAddress('103.252.136.192')).toBe(false);
     expect(isLoopbackSocketAddress(undefined)).toBe(false);
+
+    const cgStats = readContainerResourceStats((p) => {
+      if (p === '/sys/fs/cgroup/memory.current') return 120 * 1024 * 1024;
+      if (p === '/sys/fs/cgroup/memory.max') return 1200 * 1024 * 1024;
+      return null;
+    });
+    expect(cgStats).toMatchObject({
+      ramLabel: 'Container RAM',
+      ramUsedMb: 120,
+      ramLimitMb: 1200,
+      ramPercent: 10,
+    });
+    expect(cgStats.cpuCores).toBeGreaterThanOrEqual(1);
+
+    const hostFallbackStats = readContainerResourceStats(() => null);
+    expect(hostFallbackStats.ramLabel).toBe('Host RAM');
+    expect(hostFallbackStats.ramLimitMb).toBeGreaterThan(0);
   });
 
   it('no-ops telegram dispatch when missing credentials or NODE_ENV=test unless forced', () => {
@@ -169,6 +187,8 @@ describe('MonitoringModule & TelegramAlertService', () => {
     expect(sentPayloads[0]?.text).toContain('• Thời gian: <b>3456.78ms</b> / 3000ms');
     expect(sentPayloads[0]?.text).toContain('• RAM tăng: <b>72.50MB</b> / 64MB');
     expect(sentPayloads[0]?.text).toContain('• CPU dùng: <b>2150.25ms</b> / 2000ms');
+    expect(sentPayloads[0]?.text).toContain('<b>3. Tài nguyên API &amp; VPS</b>');
+    expect(sentPayloads[0]?.text).toContain('• VPS Load (1m):');
     expect(sentPayloads[0]?.text).toContain('• Request ID: <code>req-1234</code>');
 
     // Within 5m cooldown -> suppressed instead of spamming Telegram
