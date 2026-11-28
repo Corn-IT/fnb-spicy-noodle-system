@@ -83,6 +83,11 @@ OUTPUT_CODE_BLOCK_PATTERN = re.compile(
 )
 
 
+def contains_off_topic_content(raw_text: str) -> bool:
+    norm = strip_vi(re.sub(r"@pos_lona_bot\b", "", raw_text or "", flags=re.I))
+    return bool(norm and OFF_TOPIC_PATTERNS.search(norm))
+
+
 def check_pre_guardrail(raw_text: str) -> tuple[bool, str | None]:
     """
     Layer 1 fast pre-check before touching Gemini:
