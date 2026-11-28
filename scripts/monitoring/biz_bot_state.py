@@ -39,6 +39,7 @@ SLOT_KEYS = (
     "employee_name",
     "table_name",
     "order_code",
+    "persona",
 )
 
 

@@ -24,15 +24,24 @@ from biz_bot_ai import (
     probe_gemini_status,
 )
 from biz_bot_common import (
+    detect_addressing_style,
+    extract_target_honorific,
     extract_third_party_mentions,
     format_sender_mention,
     get_biz_config,
+    persona_spec,
     send_chat_action,
     send_tg_message,
     set_message_reaction,
     tg_api,
 )
-from biz_bot_guardrail import check_pre_guardrail, contains_off_topic_content
+from biz_bot_guardrail import (
+    SCOPE_REFUSAL_MSG,
+    check_pre_guardrail,
+    contains_off_topic_content,
+    format_hybrid_offtopic_tail,
+    format_scope_refusal,
+)
 from biz_bot_local import EntityCache, try_answer_locally
 from biz_bot_nlp import (
     classify_fast_path,
@@ -260,6 +269,10 @@ def dispatch_message_detailed(
     else:
         header_tag = mention_html
 
+    persona_key = detect_addressing_style(raw_text, prev_persona=slots.get("persona"))
+    p_spec = persona_spec(persona_key)
+    cc_honorific = extract_target_honorific(raw_text)
+
     def emit(stage: str) -> None:
         if status_cb:
             status_cb(stage)
@@ -275,7 +288,10 @@ def dispatch_message_detailed(
             emit("local")
             if memory is not None:
                 memory.clear(mem_key)
-            body = "🧹 Đã xóa trí nhớ hội thoại gần đây. Bạn có thể hỏi sang chủ đề POS &amp; Database mới nhé!"
+            if p_spec["bot"] == "em":
+                body = f"🧹 Dạ em đã xóa trí nhớ hội thoại gần đây rồi ạ. {p_spec['user'].capitalize()} có thể hỏi sang chủ đề POS &amp; Database mới nhé!"
+            else:
+                body = "🧹 Mình đã xóa trí nhớ hội thoại gần đây. Bạn có thể hỏi sang chủ đề POS &amp; Database mới nhé!"
             return {
                 "text": _wrap_reply_text(body, header_tag, "local"),
                 "route": "local",
@@ -347,13 +363,14 @@ def dispatch_message_detailed(
                 rate_limiter=rate_limiter,
                 history=history,
                 reply_context=reply_context,
+                persona_key=persona_key,
             )
             usage = ai_res.get("usage") or {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             is_ref = bool(ai_res.get("is_refusal"))
             route = "guardrail_block" if (is_ref and usage.get("total_tokens", 0) == 0) else "gemini"
             if memory is not None and not is_ref:
-                inferred = extract_slots_from_text(str(ai_res["text"]))
-                memory.append_turn(mem_key, arg, str(ai_res["text"]), slots=inferred or None)
+                inferred = {**extract_slots_from_text(str(ai_res["text"])), "persona": persona_key}
+                memory.append_turn(mem_key, arg, str(ai_res["text"]), slots=inferred)
             return {
                 "text": _wrap_reply_text(str(ai_res["text"]), header_tag, route, usage.get("total_tokens", 0)),
                 "route": route,
@@ -400,7 +417,10 @@ def dispatch_message_detailed(
     if not clean_q.strip() or (trigger_mode in ("mention", "wake_word") and len(stripped_check.strip("?!., ")) < 2):
         emit("received")
         emit("local")
-        body = "👋 Dạ mình nghe đây! Bạn cần tra doanh thu, két tiền, món bán chạy hay cách dùng POS? (Gõ <code>/help</code> để xem nhanh)"
+        if p_spec["bot"] == "em":
+            body = f"👋 Dạ em nghe đây {p_spec['user']}! {p_spec['user'].capitalize()} cần em tra doanh thu, két tiền, món bán chạy hay cách dùng POS ạ? (Gõ <code>/help</code> để xem 20 lệnh nhanh)"
+        else:
+            body = "👋 Mình nghe đây! Bạn cần tra doanh thu, két tiền, món bán chạy hay cách dùng POS? (Gõ <code>/help</code> để xem nhanh)"
         return {
             "text": _wrap_reply_text(body, header_tag, "local"),
             "route": "local",
@@ -416,8 +436,9 @@ def dispatch_message_detailed(
     # Layer 1 zero-token guardrail runs FIRST so injections & pure off-topic cannot slip through
     allowed, pre_refusal = check_pre_guardrail(clean_q)
     if not allowed:
+        refusal_out = pre_refusal if (pre_refusal and pre_refusal != SCOPE_REFUSAL_MSG) else format_scope_refusal(persona_key)
         return {
-            "text": _wrap_reply_text(str(pre_refusal), header_tag, "guardrail_block"),
+            "text": _wrap_reply_text(str(refusal_out), header_tag, "guardrail_block"),
             "route": "guardrail_block",
             "is_refusal": True,
             "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -426,20 +447,25 @@ def dispatch_message_detailed(
             "clean_question": clean_q,
         }
 
-    off_topic_tail = (
-        "\n\n🤖 <i>Lưu ý: Phần hỏi ngoài phạm vi hệ thống POS &amp; Database tôi xin phép không hỗ trợ.</i>"
-        if contains_off_topic_content(clean_q)
-        else ""
-    )
+    off_topic_tail = format_hybrid_offtopic_tail(persona_key) if contains_off_topic_content(clean_q) else ""
 
     # Layer 2A: Local-First 0-token focused engine (superlatives, slices, entity lookup, follow-ups, meta)
-    local_res = try_answer_locally(clean_q, cfg=cfg, slots=slots, cache=entity_cache, telemetry=telemetry, cc_tags=cc_tags)
+    local_res = try_answer_locally(
+        clean_q,
+        cfg=cfg,
+        slots=slots,
+        cache=entity_cache,
+        telemetry=telemetry,
+        cc_tags=cc_tags,
+        cc_honorific=cc_honorific,
+        persona_key=persona_key,
+    )
     if local_res is not None:
         emit("local")
         body = str(local_res["text"]) + off_topic_tail
         if memory is not None:
-            merged_slots = {**extract_slots_from_text(body), **(local_res.get("slots") or {})}
-            memory.append_turn(mem_key, clean_q, body, slots=merged_slots or None)
+            merged_slots = {**extract_slots_from_text(body), **(local_res.get("slots") or {}), "persona": persona_key}
+            memory.append_turn(mem_key, clean_q, body, slots=merged_slots)
         return {
             "text": _wrap_reply_text(body, header_tag, "local"),
             "route": str(local_res.get("route") or "local"),
@@ -461,11 +487,12 @@ def dispatch_message_detailed(
                 body = handler(arg, cfg) + off_topic_tail
                 if memory is not None:
                     fp_slots: dict[str, Any] = dict(extract_slots_from_text(body))
+                    fp_slots["persona"] = persona_key
                     if key in _SLOT_BY_CMD:
                         fp_slots["intent"] = _SLOT_BY_CMD[key]
                         if arg:
                             fp_slots["period_raw"] = arg
-                    memory.append_turn(mem_key, clean_q, body, slots=fp_slots or None)
+                    memory.append_turn(mem_key, clean_q, body, slots=fp_slots)
                 return {
                     "text": _wrap_reply_text(body, header_tag, "fast_path"),
                     "route": "fast_path",
@@ -484,13 +511,14 @@ def dispatch_message_detailed(
         rate_limiter=rate_limiter,
         history=history,
         reply_context=reply_context,
+        persona_key=persona_key,
     )
     usage = ai_res.get("usage") or {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     is_ref = bool(ai_res.get("is_refusal"))
     route = "guardrail_block" if (is_ref and usage.get("total_tokens", 0) == 0) else "gemini"
     if memory is not None and not is_ref:
-        inferred = extract_slots_from_text(str(ai_res["text"]))
-        memory.append_turn(mem_key, clean_q, str(ai_res["text"]), slots=inferred or None)
+        inferred = {**extract_slots_from_text(str(ai_res["text"])), "persona": persona_key}
+        memory.append_turn(mem_key, clean_q, str(ai_res["text"]), slots=inferred)
     return {
         "text": _wrap_reply_text(str(ai_res["text"]), header_tag, route, usage.get("total_tokens", 0)),
         "route": route,
