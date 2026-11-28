@@ -85,6 +85,8 @@ def get_biz_config(env_file: str | None = None) -> dict[str, str]:
         "qa_log_file": env.get("FNB_BIZ_QA_LOG_FILE", "/var/lib/fnb-biz-alerts/biz-qa-log.jsonl").strip() or "/var/lib/fnb-biz-alerts/biz-qa-log.jsonl",
         "token_stats_file": env.get("FNB_BIZ_TOKEN_STATS_FILE", "/var/lib/fnb-biz-alerts/biz-token-stats.json").strip() or "/var/lib/fnb-biz-alerts/biz-token-stats.json",
         "staff_tg_map_raw": env.get("FNB_BIZ_STAFF_TELEGRAM_MAP", "").strip(),
+        "gemini_rpd_limit": env.get("FNB_GEMINI_RPD_LIMIT", "").strip(),
+        "gemini_daily_token_budget": env.get("FNB_GEMINI_DAILY_TOKEN_BUDGET", "").strip(),
     }
 
 
@@ -501,6 +503,44 @@ def format_sender_mention(msg: dict[str, Any] | None) -> tuple[str, str]:
     if isinstance(from_id, int) and from_id > 0:
         return (f'<a href="tg://user?id={from_id}">{html.escape(full_name)}</a>', full_name)
     return ("", full_name)
+
+
+def extract_third_party_mentions(
+    raw_text: str,
+    cfg: dict[str, str] | None = None,
+    bot_username: str = "POS_Lona_bot",
+    exclude_handles: set[str] | None = None,
+) -> list[str]:
+    """
+    Extract @username tags requested/mentioned in a message (excluding the bot itself and sender),
+    plus optional mapped staff usernames when caller explicitly asks to tag/nhắc someone by name.
+    """
+    txt = raw_text or ""
+    excluded = {f"@{(bot_username or 'POS_Lona_bot').lower()}", "@pos_lona_bot"}
+    for h in exclude_handles or set():
+        if h:
+            excluded.add(h.strip().lower())
+
+    found: list[str] = []
+    seen_lower: set[str] = set()
+    for m in re.finditer(r"(?<![A-Za-z0-9_])@([A-Za-z0-9_]{3,64})\b", txt):
+        tag = f"@{m.group(1)}"
+        low = tag.lower()
+        if low in excluded or low in seen_lower:
+            continue
+        seen_lower.add(low)
+        found.append(tag)
+
+    norm = strip_vi(txt)
+    if any(k in norm for k in ("tag ", "nhac ", "goi ", "bao voi ")):
+        smap = get_staff_telegram_map(cfg)
+        for staff_norm, handle in smap.items():
+            if len(staff_norm) >= 2 and re.search(rf"(?<![a-z0-9]){re.escape(staff_norm)}(?![a-z0-9])", norm):
+                low = handle.lower()
+                if low not in excluded and low not in seen_lower:
+                    seen_lower.add(low)
+                    found.append(handle)
+    return found
 
 
 def sanitize_telegram_html(text: str) -> str:
