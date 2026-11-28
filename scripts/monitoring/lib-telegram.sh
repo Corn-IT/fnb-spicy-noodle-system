@@ -19,11 +19,15 @@ FNB_MONITOR_STATE_DIR="${FNB_MONITOR_STATE_DIR:-/run/fnb-monitor}"
 mkdir -p "${FNB_MONITOR_STATE_DIR}"
 
 vn_timestamp() {
-  TZ="Asia/Ho_Chi_Minh" date "+%H:%M:%S %d/%m/%Y"
+  TZ="Asia/Ho_Chi_Minh" date "+%H:%M:%S · %d/%m/%Y"
 }
 
 vn_hour() {
   TZ="Asia/Ho_Chi_Minh" date "+%H"
+}
+
+escape_tg_html() {
+  printf '%s' "${1:-}" | python3 -c 'import html, sys; sys.stdout.write(html.escape(sys.stdin.read(), quote=False))'
 }
 
 send_telegram_message() {
@@ -33,23 +37,39 @@ send_telegram_message() {
   fi
 
   python3 - "${FNB_TELEGRAM_BOT_TOKEN}" "${FNB_TELEGRAM_CHAT_ID}" "${text}" <<'PY' || true
-import json, sys, urllib.request
+import json, re, sys, urllib.error, urllib.request
 
 token, chat_id, text = sys.argv[1], sys.argv[2], sys.argv[3]
-payload = json.dumps({
-    "chat_id": chat_id,
-    "text": text,
-    "disable_web_page_preview": True,
-}).encode("utf-8")
-req = urllib.request.Request(
-    f"https://api.telegram.org/bot{token}/sendMessage",
-    data=payload,
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-try:
+
+def post(payload_dict):
+    data = json.dumps(payload_dict).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     with urllib.request.urlopen(req, timeout=8) as resp:
         resp.read()
+
+try:
+    post({
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    })
+except urllib.error.HTTPError as err:
+    # Fallback to plain text if Telegram rejects HTML entities for an unexpected character
+    if err.code == 400:
+        plain = re.sub(r"</?(?:b|code|pre|i)>", "", text)
+        try:
+            post({"chat_id": chat_id, "text": plain, "disable_web_page_preview": True})
+            sys.exit(0)
+        except Exception as err2:
+            print(f"[telegram] plain fallback failed: {err2}", file=sys.stderr)
+    else:
+        print(f"[telegram] HTTP {err.code}: {err}", file=sys.stderr)
 except Exception as err:
     print(f"[telegram] send failed: {err}", file=sys.stderr)
 PY

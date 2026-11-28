@@ -17,28 +17,29 @@ handle_event() {
   [[ -z "${name}" || -z "${action}" ]] && return 0
 
   local issue_label=""
-  local header="🚨 [${FNB_ALERT_PROJECT_NAME}] CONTAINER ALERT"
+  local proj_html
+  proj_html="$(escape_tg_html "${FNB_ALERT_PROJECT_NAME}")"
+  local header="🚨 <b>[${proj_html}] CẢNH BÁO CONTAINER</b>"
 
   case "${action}" in
     oom)
-      issue_label="💥 Out Of Memory (OOM Killed)"
+      issue_label="💥 Tràn RAM (OOM Killed)"
       ;;
     die)
-      # Exit code 0 / 137 / 143 can happen briefly during intentional rollout; skip clean 0 exit.
       if [[ "${exit_code}" == "0" ]]; then
         return 0
       fi
-      issue_label="💀 Container Crashed (exitCode=${exit_code:-unknown})"
+      issue_label="💀 Container dừng đột ngột (exitCode=${exit_code:-unknown})"
       ;;
     health_status:*)
       if [[ "${action}" == "health_status: unhealthy" || "${health_status}" == "unhealthy" ]]; then
-        issue_label="⚠️ Healthcheck Failed (UNHEALTHY)"
+        issue_label="⚠️ Mất Healthcheck (UNHEALTHY)"
       elif [[ "${action}" == "health_status: healthy" || "${health_status}" == "healthy" ]]; then
         local unhealthy_flag="${FNB_MONITOR_STATE_DIR}/unhealthy_${name}"
         if [[ -f "${unhealthy_flag}" ]]; then
           rm -f "${unhealthy_flag}"
-          header="🟢 [${FNB_ALERT_PROJECT_NAME}] CONTAINER RECOVERED"
-          issue_label="✅ Healthcheck Restored (HEALTHY)"
+          header="🟢 <b>[${proj_html}] CONTAINER ĐÃ HỒI PHỤC</b>"
+          issue_label="✅ Healthcheck hoạt động bình thường (HEALTHY)"
         else
           return 0
         fi
@@ -60,35 +61,40 @@ handle_event() {
   fi
 
   local recent_logs=""
-  if [[ "${header}" != *"RECOVERED"* ]]; then
-    recent_logs="$(docker logs --tail 6 "${name}" 2>&1 | sed -E 's/(token|password|secret)=[^&[:space:]]+/\1=[REDACTED]/gi' | head -c 700 || true)"
+  if [[ "${header}" != *"HỒI PHỤC"* ]]; then
+    recent_logs="$(docker logs --tail 6 "${name}" 2>&1 | sed -E 's/(token|password|secret)=[^&[:space:]]+/\1=[REDACTED]/gi' | head -c 600 || true)"
   fi
 
   local mem_line
-  mem_line="$(free -m | awk '/Mem:/ {printf "%d/%d MB (%.0f%%)", $3, $2, ($3*100/$2)}' || true)"
+  mem_line="$(free -m | awk '/Mem:/ {printf "%d/%d MiB (%.0f%%)", $3, $2, ($3*100/$2)}' || true)"
   local load_1m
   load_1m="$(cut -d ' ' -f1 /proc/loadavg 2>/dev/null || echo '0.00')"
 
+  local name_html
+  name_html="$(escape_tg_html "${name}")"
+  local issue_html
+  issue_html="$(escape_tg_html "${issue_label}")"
+
   local msg
   msg="${header}
-────────────────────
-📍 Project: ${FNB_ALERT_PROJECT_NAME} | Env: PRODUCTION
-🏗 Source: DOCKER_DAEMON
-🆔 Container: ${name}
-────────────────────
-🔴 Issue: ${issue_label}
-📦 VPS Status: RAM ${mem_line} | Load ${load_1m}"
+────────────────
+<b>1. Sự kiện Container</b>
+• Container: <code>${name_html}</code>
+• Trạng thái: <b>${issue_html}</b>
+
+<b>2. Tài nguyên VPS</b>
+• RAM VPS: ${mem_line}
+• Load (1m): ${load_1m}
+• Lúc: $(vn_timestamp)"
 
   if [[ -n "${recent_logs}" ]]; then
+    local logs_html
+    logs_html="$(escape_tg_html "${recent_logs}")"
     msg="${msg}
-────────────────────
-🧾 Tail Logs:
-${recent_logs}"
-  fi
 
-  msg="${msg}
-────────────────────
-⏰ At: $(vn_timestamp)"
+<b>3. Log gần nhất</b>
+<pre>${logs_html}</pre>"
+  fi
 
   send_telegram_message "${msg}"
 }

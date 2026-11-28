@@ -84,6 +84,13 @@ export function readMonitoringConfig(env: NodeJS.ProcessEnv = process.env): Moni
   };
 }
 
+export function escapeTelegramHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export function sanitizeSingleLine(raw: string, maxLen = MAX_SINGLE_LINE_LEN): string {
   const cleaned = raw.replace(/[\r\n\t\u0000-\u001f]+/g, ' ').trim();
   return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
@@ -146,9 +153,9 @@ export class TelegramAlertService {
 
     const config = readMonitoringConfig();
     const issues: string[] = [];
-    if (metric.durationMs >= config.slowMs) issues.push('🐢 Slow');
-    if (metric.ramDiffMb >= config.ramDiffMb) issues.push('💾 High RAM');
-    if (metric.cpuDiffMs >= config.cpuDiffMs) issues.push('⚙️ High CPU');
+    if (metric.durationMs >= config.slowMs) issues.push('🐢 Chậm');
+    if (metric.ramDiffMb >= config.ramDiffMb) issues.push('💾 RAM tăng');
+    if (metric.cpuDiffMs >= config.cpuDiffMs) issues.push('⚙️ CPU cao');
 
     if (issues.length === 0) {
       return;
@@ -165,8 +172,8 @@ export class TelegramAlertService {
     }
 
     const message = this.formatAlertMessage({
-      header: `🚀 [${config.projectName}] PERFORMANCE ALERT`,
-      issueLine: issues.join(' | '),
+      header: `🚀 <b>[${escapeTelegramHtml(config.projectName)}] CẢNH BÁO HIỆU NĂNG</b>`,
+      issueLine: escapeTelegramHtml(issues.join(' · ')),
       method: metric.method,
       url: metric.url,
       handler: metric.handler,
@@ -174,9 +181,9 @@ export class TelegramAlertService {
       requestId: metric.requestId,
       suppressedCount: cooldownResult.suppressedCount,
       metricsLines: [
-        `• ⏱️ Time: ${metric.durationMs.toFixed(2)}ms / ${config.slowMs}ms`,
-        `• 💾 RAM: ${metric.ramDiffMb.toFixed(2)}MB / ${config.ramDiffMb}MB`,
-        `• ⚙️ CPU: ${metric.cpuDiffMs.toFixed(2)}ms / ${config.cpuDiffMs}ms`,
+        `• Thời gian: <b>${metric.durationMs.toFixed(2)}ms</b> / ${config.slowMs}ms`,
+        `• RAM tăng: <b>${metric.ramDiffMb.toFixed(2)}MB</b> / ${config.ramDiffMb}MB`,
+        `• CPU dùng: <b>${metric.cpuDiffMs.toFixed(2)}ms</b> / ${config.cpuDiffMs}ms`,
       ],
       config,
     });
@@ -204,9 +211,11 @@ export class TelegramAlertService {
       return;
     }
 
-    const safeError = sanitizeSingleLine(input.errorSummary || 'Internal server error', 180);
+    const safeError = escapeTelegramHtml(
+      sanitizeSingleLine(input.errorSummary || 'Lỗi máy chủ nội bộ', 180),
+    );
     const message = this.formatAlertMessage({
-      header: `🔥 [${config.projectName}] SERVER ERROR ${input.statusCode}`,
+      header: `🔥 <b>[${escapeTelegramHtml(config.projectName)}] LỖI SERVER HTTP ${input.statusCode}</b>`,
       issueLine: `🔥 HTTP ${input.statusCode} — ${safeError}`,
       method: input.method,
       url: input.url,
@@ -292,38 +301,45 @@ export class TelegramAlertService {
   }): string {
     const mem = process.memoryUsage();
     const [loadAvg1m = 0] = os.loadavg();
-    const safeRoute = sanitizeSingleLine(`${params.method.toUpperCase()} ${redactSensitiveUrl(params.url)}`);
-    const safeHandler = sanitizeSingleLine(params.handler || 'UnknownHandler', 100);
-    const safeIp = sanitizeSingleLine(params.clientIp || 'unknown', 64);
-    const reqSuffix = params.requestId ? ` | 🆔 Req: ${sanitizeSingleLine(params.requestId, 36)}` : '';
+    const safeRoute = escapeTelegramHtml(
+      sanitizeSingleLine(`${params.method.toUpperCase()} ${redactSensitiveUrl(params.url)}`),
+    );
+    const safeHandler = escapeTelegramHtml(sanitizeSingleLine(params.handler || 'UnknownHandler', 100));
+    const safeIp = escapeTelegramHtml(sanitizeSingleLine(params.clientIp || 'unknown', 64));
+    const safeReq = params.requestId
+      ? escapeTelegramHtml(sanitizeSingleLine(params.requestId, 36))
+      : null;
     const repeatSuffix =
-      params.suppressedCount > 0 ? `\n🔁 (+${params.suppressedCount} lần tương tự trong 5 phút qua)` : '';
+      params.suppressedCount > 0 ? `\n• Lặp lại: +${params.suppressedCount} lần trong 5 phút qua` : '';
 
     const sections = [
       params.header,
-      '────────────────────',
-      `📍 Project: ${params.config.projectName} | Env: ${params.config.envLabel}`,
-      `🏗 Source: ${params.config.sourceName}`,
-      `🆔 Container: ${this.hostId}`,
-      '────────────────────',
-      `🔴 Issue: ${params.issueLine}`,
-      `🛣 Route: ${safeRoute}`,
-      `🧩 Handler: ${safeHandler}${repeatSuffix}`,
+      '────────────────',
+      '<b>1. Ngữ cảnh sự cố</b>',
+      `• Môi trường: ${escapeTelegramHtml(params.config.envLabel)} (<code>${escapeTelegramHtml(params.config.sourceName)}</code>)`,
+      `• Container: <code>${escapeTelegramHtml(this.hostId)}</code>`,
+      `• Vấn đề: <b>${params.issueLine}</b>`,
+      `• Route: <code>${safeRoute}</code>`,
+      `• Handler: <code>${safeHandler}</code>${repeatSuffix}`,
     ];
 
+    let sectionNo = 2;
     if (params.metricsLines.length > 0) {
-      sections.push('────────────────────', '📊 Execution Metrics (Diff):', ...params.metricsLines);
+      sections.push('', `<b>${sectionNo}. Chỉ số thực thi (Chênh lệch)</b>`, ...params.metricsLines);
+      sectionNo += 1;
     }
 
     sections.push(
-      '────────────────────',
-      '📦 Process Real-time Status (Total):',
-      `• 🏠 Actual RAM (RSS): ${toMb(mem.rss).toFixed(2)} MB`,
-      `• 💎 V8 Heap Used: ${toMb(mem.heapUsed).toFixed(2)} MB`,
-      `• 📈 System Load: ${loadAvg1m.toFixed(2)} (avg 1m)`,
-      '────────────────────',
-      `👥 Client IP: ${safeIp}${reqSuffix}`,
-      `⏰ At: ${formatVnTimestamp()}`,
+      '',
+      `<b>${sectionNo}. Trạng thái tiến trình API</b>`,
+      `• RSS thực tế: ${toMb(mem.rss).toFixed(2)} MB`,
+      `• V8 Heap đang dùng: ${toMb(mem.heapUsed).toFixed(2)} MB`,
+      `• Load (avg 1m): ${loadAvg1m.toFixed(2)}`,
+      '',
+      `<b>${sectionNo + 1}. Truy vết</b>`,
+      `• Client IP: <code>${safeIp}</code>`,
+      ...(safeReq ? [`• Request ID: <code>${safeReq}</code>`] : []),
+      `• Lúc: ${formatVnTimestamp()}`,
     );
 
     return sections.join('\n');
@@ -337,6 +353,7 @@ export class TelegramAlertService {
         body: JSON.stringify({
           chat_id: config.chatId,
           text,
+          parse_mode: 'HTML',
           disable_web_page_preview: true,
         }),
         signal: AbortSignal.timeout(TELEGRAM_SEND_TIMEOUT_MS),
