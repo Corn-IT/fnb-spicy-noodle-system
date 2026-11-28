@@ -1,6 +1,6 @@
 import { StoreAssetKind } from '@fnb/shared';
 import { type QueryClient } from '@tanstack/react-query';
-import { ChevronDown, LogOut, Menu, Search, User } from 'lucide-react';
+import { ChevronDown, LogOut, Menu, Search, Sparkles, User } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { APP_NAVIGATION_ROUTES } from '@/lib/app-navigation';
@@ -18,6 +18,7 @@ import {
 import { buildStoreAssetUrl, resolveNavLabel, useStoreSettings } from '@/hooks/use-store-settings';
 import { apiClient } from '@/lib/api-client';
 import { stopMobileAudioKeepAlive } from '@/lib/mobile-audio-keepalive';
+import { useAiAssistantStore } from '@/stores/ai-assistant.store';
 import { AUTH_STORAGE_KEY, useAuthStore } from '@/stores/auth.store';
 import { resolvePublicAssetUrl } from '@/utils/asset-url';
 
@@ -40,6 +41,8 @@ export async function executeCleanLogout(queryClient: QueryClient): Promise<void
     stopMobileAudioKeepAlive();
     // 2. Xoá toàn bộ cache dữ liệu nghiệp vụ API trong bộ nhớ (chống rò rỉ dữ liệu ca trước)
     queryClient.clear();
+    // 2b. Xoá ngữ cảnh hội thoại AI tạm thời trong RAM (bảo mật thông tin ca trước)
+    useAiAssistantStore.getState().reset();
     // 3. Xoá token và thông tin định danh khỏi authStore
     useAuthStore.getState().clearAuth();
     try {
@@ -136,6 +139,24 @@ export function TopNavbar({
           [Search Button (Ctrl+K)] -> [User Avatar + Name Dropdown] */}
       <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
         <MobileAlertControlButton />
+        {settings.aiAssistant.enabled ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="navbar-ai-assistant-btn"
+            aria-label="Hỏi Lona AI"
+            title="Hỏi Lona AI (Ctrl+J)"
+            onClick={() => useAiAssistantStore.getState().toggleDrawer()}
+            className="inline-flex items-center gap-1.5 min-h-10 min-w-10 lg:min-h-0 lg:min-w-0 px-2 sm:px-2.5 border-primary/35 bg-primary/5 text-accent-text hover:bg-primary/10 hover:text-accent-text whitespace-nowrap"
+          >
+            <Sparkles className="h-4 w-4 shrink-0" />
+            <span className="hidden md:inline">Hỏi Lona AI</span>
+            <kbd className="pointer-events-none ml-0.5 hidden xl:inline-flex h-5 select-none items-center gap-1 rounded border bg-background px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+              Ctrl+J
+            </kbd>
+          </Button>
+        ) : null}
         <div
           data-testid="navbar-right-controls"
           className="flex shrink-0 items-center gap-1.5 sm:gap-2.5"

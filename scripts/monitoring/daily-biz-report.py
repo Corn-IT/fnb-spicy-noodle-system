@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-Scheduled Business Summary Reporter for @POS_Lona_bot:
-- --mode daily  (23:00 Asia/Ho_Chi_Minh): Chốt sổ Tổng kết cuối ngày
-- --mode weekly (22:30 Sunday Asia/Ho_Chi_Minh): Tổng kết tuần
-Supports --stdout and --date YYYY-MM-DD for safe testing.
-"""
+"""Thin cron entrypoint wrapper for daily/weekly reports."""
 
 from __future__ import annotations
 
@@ -12,8 +7,10 @@ import argparse
 import datetime as dt
 import sys
 
-from biz_bot_common import get_biz_config, send_tg_message, vn_today_date
-from biz_bot_queries import build_daily_close_report, build_weekly_summary_report
+from lona_bot.core.config import get_biz_config
+from lona_bot.core.telegram_io import send_tg_message
+from lona_bot.core.vi_text import vn_today_date
+from lona_bot.handlers.report_digest import build_daily_close_report, build_weekly_summary_report
 
 
 def main() -> int:

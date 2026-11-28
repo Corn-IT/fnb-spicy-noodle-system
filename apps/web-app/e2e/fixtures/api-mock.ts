@@ -330,6 +330,88 @@ export async function setupMockApi(page: Page, options: MockApiOptions = {}): Pr
       }));
     }
 
+    if (pathname.endsWith('/ai-assistant/status')) {
+      const overrideAi = (options.storeSettingsOverride?.aiAssistant as Record<string, unknown> | undefined) ?? {};
+      const activeEngines = {
+        ...DEFAULT_STORE_SETTINGS.aiAssistant,
+        ...overrideAi,
+      };
+      return json({
+        activeEngines,
+        modeSummary: activeEngines.enabled ? '⚡ Local 0-token + 🤖 Gemini AI' : 'Đang tạm tắt bởi Quản trị viên',
+        canChat: Boolean(activeEngines.enabled && (activeEngines.localEnabled || activeEngines.geminiEnabled)),
+        quotaStatus: {
+          dateKey: '2026-11-28',
+          webDailyLimit: null,
+          webUsedToday: 0,
+          webRemainingToday: null,
+          poolRemainingEstimate: 1000,
+          geminiAvailableForUser: Boolean(activeEngines.geminiEnabled),
+          reserveProtected: false,
+        },
+        suggestions: activeEngines.enabled
+          ? [
+              {
+                id: 'top-product',
+                label: 'Món gọi nhiều nhất',
+                prompt: 'Món ăn được gọi nhiều nhất hôm nay là món nào?',
+                category: 'ops',
+                engineHint: 'local',
+              },
+              {
+                id: 'live-tables',
+                label: 'Bàn đang phục vụ',
+                prompt: 'Hiện tại có bao nhiêu bàn đang phục vụ?',
+                category: 'ops',
+                engineHint: 'local',
+              },
+            ]
+          : [],
+        greeting: 'Dạ em là Lona AI — hỗ trợ anh/chị tra cứu số liệu POS ạ!',
+        sessionTurnCount: 0,
+        isSuperAdmin: true,
+      });
+    }
+
+    if (pathname.endsWith('/ai-assistant/chat')) {
+      const bodyRaw = route.request().postData() ?? '{}';
+      let msg = '';
+      try {
+        msg = String((JSON.parse(bodyRaw) as { message?: string }).message ?? '');
+      } catch {
+        msg = '';
+      }
+      const isPopular = msg.toLowerCase().includes('nhiều nhất') || msg.toLowerCase().includes('bán chạy');
+      return json({
+        reply: isPopular
+          ? 'Dạ món được gọi nhiều / bán chạy nhất hôm nay là **Mì Cay Hải Sản Thập Cẩm**: 28 phần · 1.540.000đ ạ.'
+          : 'Dạ em đã ghi nhận yêu cầu vận hành của anh/chị ạ.',
+        route: 'local_semantic',
+        intentId: isPopular ? 'product_top_popularity' : 'fast_path_overview',
+        period: 'homnay',
+        persona: { mode: 'em_anh_chi', botSelf: 'em', userCall: 'anh/chị' },
+        tokensUsed: 0,
+        latencyMs: 14,
+        nluMissCandidate: false,
+        activeEngines: DEFAULT_STORE_SETTINGS.aiAssistant,
+        quotaStatus: {
+          dateKey: '2026-11-28',
+          webDailyLimit: null,
+          webUsedToday: 0,
+          webRemainingToday: null,
+          poolRemainingEstimate: 1000,
+          geminiAvailableForUser: true,
+          reserveProtected: false,
+        },
+        suggestions: [],
+        modelUsed: null,
+      });
+    }
+
+    if (pathname.endsWith('/ai-assistant/reset')) {
+      return json({ cleared: true });
+    }
+
     if (method === 'GET') {
       return json({ items: [], data: [], total: 0, page: 1, pageSize: 20 });
     }

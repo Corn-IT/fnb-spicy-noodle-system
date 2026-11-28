@@ -25,6 +25,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { extractClientMeta } from '../../common/security/client-info.util';
 import { extractTokenSessionId } from '../../common/security/session-validation.util';
 import type { EnvConfig } from '../../config/env.config';
+import { clearAiSessionsForUser } from '../ai-assistant/ai-session-memory.service';
 import { IamService } from './iam.service';
 import {
   clearRefreshCookie,
@@ -83,9 +84,12 @@ export class IamController {
   ): Promise<void> {
     clearRefreshCookie(response, this.config);
     const sessionInfo = await this.extractLogoutSessionInfo(request);
-    if (sessionInfo && typeof this.iamService.logout === 'function') {
-      const clientMeta = request ? extractClientMeta(request) : undefined;
-      await this.iamService.logout(sessionInfo, clientMeta);
+    if (sessionInfo) {
+      clearAiSessionsForUser(sessionInfo.userId);
+      if (typeof this.iamService.logout === 'function') {
+        const clientMeta = request ? extractClientMeta(request) : undefined;
+        await this.iamService.logout(sessionInfo, clientMeta);
+      }
     }
   }
 

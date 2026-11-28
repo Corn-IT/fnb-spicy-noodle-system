@@ -30,3 +30,6 @@ export * from './utils/takeaway-label.util';
 export * from './schemas/store-settings.schema';
 export * from './schemas/dashboard.schema';
 export * from './schemas/web-push.schema';
+export * from './schemas/ai-assistant.schema';
+export * from './ai/semantic-intents';
+export * from './ai/semantic-intent-matcher';
