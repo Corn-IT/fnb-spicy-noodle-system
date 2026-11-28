@@ -157,7 +157,9 @@ async function attemptTokenRefresh(): Promise<string | null> {
         // Chỉ xoá phiên đăng nhập khi Refresh Token thực sự không hợp lệ / bị thu hồi (401).
         // Nếu lỗi mạng hoặc Server bảo trì / sập tạm thời (500/502/503/504), giữ nguyên phiên làm việc!
         if (response.status === 401) {
-          const errPayload = (refreshData ?? {}) as { code?: string; details?: unknown };
+          const errPayload = (
+            refreshData && typeof refreshData === 'object' ? refreshData : {}
+          ) as { code?: string; details?: unknown };
           const revoked = extractSessionRevokeFromError(errPayload);
           if (revoked) {
             useAuthStore.getState().clearAuth(revoked.noticeReason, revoked.meta);
@@ -168,21 +170,29 @@ async function attemptTokenRefresh(): Promise<string | null> {
         return null;
       }
 
-      const data = refreshData as {
-        accessToken?: string;
+      const data = (refreshData && typeof refreshData === 'object' ? refreshData : null) as {
+        accessToken?: unknown;
         user?: {
-          id: number;
-          employeeId: number;
-          username: string;
-          isSuperAdmin: boolean;
-          permissions: UserPermissions;
+          id?: unknown;
+          employeeId?: unknown;
+          username?: unknown;
+          isSuperAdmin?: unknown;
+          permissions?: UserPermissions;
           employee?: { fullName?: string; avatarUrl?: string | null };
           uiPreferences?: ServerUiPreferences;
         };
-      };
-      if (data?.accessToken) {
+      } | null;
+      if (typeof data?.accessToken === 'string' && data.accessToken.length > 0) {
         useAuthStore.getState().setAccessToken(data.accessToken);
-        if (data.user) {
+        if (
+          data.user &&
+          typeof data.user === 'object' &&
+          typeof data.user.id === 'number' &&
+          typeof data.user.employeeId === 'number' &&
+          typeof data.user.username === 'string' &&
+          typeof data.user.isSuperAdmin === 'boolean' &&
+          data.user.permissions
+        ) {
           useAuthStore.getState().updateUser({
             id: data.user.id,
             employeeId: data.user.employeeId,
@@ -340,6 +350,45 @@ async function parseErrorResponse(response: Response, bodyText: string): Promise
   };
 }
 
+function parseSuccessResponseBody<T>(response: Response, bodyText: string): T {
+  if (response.status === 204 || response.status === 205) {
+    return undefined as T;
+  }
+
+  const trimmedBody = bodyText.trim();
+  if (!trimmedBody) {
+    return undefined as T;
+  }
+
+  try {
+    return JSON.parse(trimmedBody) as T;
+  } catch {
+    const headerRequestId = response.headers.get('x-request-id') ?? undefined;
+    const contentType = response.headers.get('content-type') ?? '';
+    const isHtmlResponse =
+      /text\/html/i.test(contentType) || /^<(?:!doctype|html)\b/i.test(trimmedBody);
+    const httpDef = resolveHttpErrorDefinition({ code: 'DATA_VALIDATION_ERROR' });
+    const cachedHttpMsg = resolveCachedAppMessage(httpDef.messageKey);
+    const defaultMessage = isHtmlResponse
+      ? 'Máy chủ hoặc cổng kết nối trả về trang HTML thay vì dữ liệu JSON.'
+      : 'Dữ liệu phản hồi từ máy chủ không đúng định dạng JSON hợp lệ.';
+    const domainMsg = resolveErrorFromStoreCache('DATA_VALIDATION_ERROR', defaultMessage);
+    const message = domainMsg.isOverridden
+      ? (domainMsg.description ?? domainMsg.title)
+      : cachedHttpMsg.isOverridden
+        ? (cachedHttpMsg.description ?? cachedHttpMsg.title)
+        : defaultMessage;
+
+    throw new ApiClientError({
+      statusCode: response.status,
+      error: isHtmlResponse ? 'Unexpected HTML Response' : 'Invalid JSON Response',
+      code: 'DATA_VALIDATION_ERROR',
+      message,
+      ...(headerRequestId ? { requestId: headerRequestId } : {}),
+    });
+  }
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { body, params, headers: customHeaders, skipAuthRefresh, timeoutMs, ...rest } = options;
   const url = buildUrl(path, params);
@@ -360,7 +409,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
           ...rest, signal, headers, credentials: 'include',
           body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
         });
-        const bodyText = response.status === 204 ? '' : await response.text();
+        const bodyText = response.status === 204 || response.status === 205 ? '' : await response.text();
         return { response, bodyText };
       }, rest.signal, timeoutMs);
     } catch (error) {
@@ -411,8 +460,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   ) {
     let directRevoke: ReturnType<typeof extractSessionRevokeFromError> = null;
     try {
-      const rawJson = JSON.parse(bodyText) as { code?: string; details?: unknown };
-      directRevoke = extractSessionRevokeFromError(rawJson);
+      const rawJson = JSON.parse(bodyText) as { code?: string; details?: unknown } | null;
+      if (rawJson && typeof rawJson === 'object') {
+        directRevoke = extractSessionRevokeFromError(rawJson);
+      }
     } catch {
       // Ignore parse failure; proceed with normal token refresh
     }
@@ -467,11 +518,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     throw new ApiClientError(errorPayload);
   }
 
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (bodyText ? JSON.parse(bodyText) : undefined) as T;
+  return parseSuccessResponseBody<T>(response, bodyText);
 }
 
 export const apiClient = {

@@ -140,4 +140,43 @@ describe('idle HTTP recovery', () => {
     expect(useAuthStore.getState().accessToken).toBe('new-account');
     expect(useAuthStore.getState().user?.id).toBe(20);
   });
+
+  it.each([
+    {
+      label: 'truncated JSON',
+      body: '{"tables":[{"id":1',
+      headers: { 'Content-Type': 'application/json', 'X-Request-Id': '44444444-4444-4444-8444-444444444444' },
+      expectedMessagePart: 'JSON hợp lệ',
+    },
+    {
+      label: 'unexpected HTML proxy page',
+      body: '<!DOCTYPE html><html><body>Proxy Login</body></html>',
+      headers: { 'Content-Type': 'text/html', 'X-Request-Id': '55555555-5555-4555-8555-555555555555' },
+      expectedMessagePart: 'trang HTML',
+    },
+  ])('classifies HTTP 200 $label as ApiClientError(DATA_VALIDATION_ERROR) instead of raw SyntaxError', async ({ body, headers, expectedMessagePart }) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 200, headers })));
+    const err = await apiClient.get('/api/v1/settings').catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      name: 'ApiClientError',
+      statusCode: 200,
+      code: 'DATA_VALIDATION_ERROR',
+      requestId: headers['X-Request-Id'],
+      message: expect.stringContaining(expectedMessagePart),
+    });
+  });
+
+  it('returns undefined for empty/whitespace 200 or 205 responses and rejects invalid refresh token shapes safely', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn()
+        .mockResolvedValueOnce(new Response('   \n', { status: 200 }))
+        .mockResolvedValueOnce(new Response(null, { status: 205 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ accessToken: 123, user: 'corrupt' }), { status: 200 })),
+    );
+    expect(await apiClient.get('/api/v1/pos/ping')).toBeUndefined();
+    expect(await apiClient.post('/api/v1/pos/ack')).toBeUndefined();
+    expect(await refreshAccessToken()).toBeNull();
+    expect(useAuthStore.getState().accessToken).toBe('old');
+  });
 });
