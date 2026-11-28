@@ -10,6 +10,7 @@ import {
   MonitorSmartphone,
   RefreshCw,
   Shrink,
+  Sparkles,
 } from 'lucide-react';
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -28,6 +29,7 @@ import {
 import { apiClient } from '@/lib/api-client';
 import { POS_DEFAULT_PATH, usePosDeviceMode } from '@/lib/pos-device-mode';
 import { prefetchRouteChunk, prefetchRouteData } from '@/lib/route-prefetch';
+import { useAiAssistantStore } from '@/stores/ai-assistant.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { resolvePublicAssetUrl } from '@/utils/asset-url';
 import { cn } from '@/utils/cn';
@@ -299,6 +301,19 @@ export function TouchHubPage() {
               Luôn mở cảm ứng trên máy này: {deviceMode === 'touch' ? 'ĐANG BẬT' : 'TẮT'}
             </span>
           </Button>
+
+          {settings.aiAssistant.enabled ? (
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="touch-hub-ai-btn"
+              onClick={() => useAiAssistantStore.getState().openDrawer()}
+              className="h-12 gap-2 rounded-xl border-primary/40 bg-primary/5 px-4 text-sm font-bold text-accent-text hover:bg-primary/10 min-[1100px]:text-base"
+            >
+              <Sparkles className="h-5 w-5" />
+              <span>Hỏi Lona AI</span>
+            </Button>
+          ) : null}
         </section>
 
         {/* Hàng 4 thẻ nổi bật (kiểu 4 ô xanh nổi bật của iPOS) */}

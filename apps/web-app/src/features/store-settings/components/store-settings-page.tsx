@@ -1,5 +1,6 @@
 import {
   ALLOWED_STORE_NAV_PATHS,
+  DEFAULT_AI_ASSISTANT_SETTINGS,
   DEFAULT_STORE_SETTINGS,
   ErrorCodes,
   TakeawayLabelFormat,
@@ -40,6 +41,7 @@ import * as React from 'react';
 
 import { AuditHistoryButton } from '@/components/audit-history-drawer/audit-history-drawer';
 import { SystemErrorView } from '@/components/error-display';
+import { AiAssistantSettingsPanel } from './ai-assistant-settings-panel';
 import { APP_NAVIGATION_ROUTES } from '@/lib/app-navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { QrCardCustomizer } from '@/components/qr-card';
@@ -207,6 +209,10 @@ function extractFormSettings(source: StoreSettings): StoreSettings {
       globalPercent: source.displayScale?.globalPercent ?? 100,
       perPath: { ...(source.displayScale?.perPath ?? {}) },
       qrOrderPercent: source.displayScale?.qrOrderPercent ?? 100,
+    },
+    aiAssistant: {
+      ...DEFAULT_AI_ASSISTANT_SETTINGS,
+      ...(source.aiAssistant ?? {}),
     },
   };
 }
@@ -684,6 +690,20 @@ export function StoreSettingsPage() {
                 </button>
               </div>
             </div>
+
+            <AiAssistantSettingsPanel
+              value={draft.aiAssistant}
+              disabled={!canUpdate}
+              onChange={(updaterOrNext) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  aiAssistant:
+                    typeof updaterOrNext === 'function'
+                      ? updaterOrNext(prev.aiAssistant)
+                      : updaterOrNext,
+                }))
+              }
+            />
           </div>
         </TabsContent>
 
