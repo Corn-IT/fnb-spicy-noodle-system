@@ -59,7 +59,13 @@ from biz_bot_queries import (
     handle_tongquan,
     handle_topmon,
 )
-from biz_bot_state import ConversationMemory, TelemetryStore, extract_slots_from_text, plain_snippet
+from biz_bot_state import (
+    ConversationMemory,
+    TelegramMemberDirectory,
+    TelemetryStore,
+    extract_slots_from_text,
+    plain_snippet,
+)
 
 MIN_MESSAGE_INTERVAL_SEC = 1.0
 GROUP_ANONYMOUS_BOT_ID = 1087968824
@@ -121,7 +127,7 @@ def register_biz_commands(bot_token: str) -> None:
         {"command": "gemini", "description": "Check trực tiếp API Key, model & hạn mức Gemini (0 token)"},
         {"command": "hoi", "description": "Hỏi tự do AI Gemini về hệ thống POS & Database"},
         {"command": "quen", "description": "Xóa ngữ cảnh hội thoại gần đây để hỏi chủ đề mới"},
-        {"command": "help", "description": "Hướng dẫn 19 lệnh, cách gọi Bot & emoji trạng thái"},
+        {"command": "help", "description": "Hướng dẫn 20 lệnh, cách gọi Bot & emoji trạng thái"},
     ]
     for scope in ({"type": "default"}, {"type": "all_group_chats"}):
         try:
@@ -218,6 +224,7 @@ def dispatch_message_detailed(
     entity_cache: EntityCache | None = None,
     telemetry: TelemetryStore | None = None,
     sender_mention: str | None = None,
+    member_directory: TelegramMemberDirectory | None = None,
 ) -> dict[str, Any] | None:
     mem_key = chat_id or str(cfg.get("chat_id", ""))
     history = memory.get_history(mem_key) if memory is not None else []
@@ -229,14 +236,26 @@ def dispatch_message_detailed(
         mention_html = sender_mention or ""
         sender_label = mention_html or "Quản trị viên"
 
+    if member_directory is not None and msg is not None:
+        member_directory.observe_message(msg)
+    exact_aliases, short_aliases = member_directory.build_alias_maps() if member_directory is not None else ({}, {})
+    sender_uid = (msg.get("from") or {}).get("id") if isinstance(msg, dict) else None
+    exclude_ids = {sender_uid} if isinstance(sender_uid, int) else set()
+    if bot_id is not None:
+        exclude_ids.add(bot_id)
+
     cc_tags = extract_third_party_mentions(
         raw_text,
         cfg=cfg,
         bot_username=bot_username,
         exclude_handles={mention_html} if mention_html.startswith("@") else None,
+        msg=msg,
+        member_aliases=exact_aliases,
+        short_member_aliases=short_aliases,
+        exclude_user_ids=exclude_ids,
     )
     if cc_tags:
-        cc_str = " ".join(html.escape(t) for t in cc_tags)
+        cc_str = " ".join(t if t.startswith("<a ") else html.escape(t) for t in cc_tags)
         header_tag = f"{mention_html} → {cc_str}" if mention_html else cc_str
     else:
         header_tag = mention_html
@@ -414,7 +433,7 @@ def dispatch_message_detailed(
     )
 
     # Layer 2A: Local-First 0-token focused engine (superlatives, slices, entity lookup, follow-ups, meta)
-    local_res = try_answer_locally(clean_q, cfg=cfg, slots=slots, cache=entity_cache, telemetry=telemetry)
+    local_res = try_answer_locally(clean_q, cfg=cfg, slots=slots, cache=entity_cache, telemetry=telemetry, cc_tags=cc_tags)
     if local_res is not None:
         emit("local")
         body = str(local_res["text"]) + off_topic_tail
@@ -500,6 +519,7 @@ def dispatch_message(
     entity_cache: EntityCache | None = None,
     telemetry: TelemetryStore | None = None,
     sender_mention: str | None = None,
+    member_directory: TelegramMemberDirectory | None = None,
 ) -> str | None:
     res = dispatch_message_detailed(
         raw_text,
@@ -517,6 +537,7 @@ def dispatch_message(
         entity_cache=entity_cache,
         telemetry=telemetry,
         sender_mention=sender_mention,
+        member_directory=member_directory,
     )
     return str(res["text"]) if res else None
 
@@ -550,6 +571,8 @@ def main() -> int:
         stats_path=cfg.get("token_stats_file"),
         qa_log_path=cfg.get("qa_log_file"),
     )
+    member_dir = TelegramMemberDirectory(persist_path=cfg.get("member_cache_file"))
+    member_dir.refresh_admins(bot_token, allowed_chat_id, force=True)
     entity_cache = EntityCache()
     last_msg_at = 0.0
     print(f"[biz-bot] @{bot_username} listening on chat {allowed_chat_id} (offset={offset})...", flush=True)
@@ -581,6 +604,9 @@ def main() -> int:
                 if not is_human_or_anonymous_admin_message(msg, bot_id):
                     print(f"[biz-bot] skipped bot sender from_id={msg.get('from', {}).get('id')}", flush=True)
                     continue
+
+                member_dir.refresh_admins(bot_token, allowed_chat_id)
+                member_dir.observe_message(msg)
 
                 if not raw_text.strip():
                     continue
@@ -622,6 +648,7 @@ def main() -> int:
                         bot_username=bot_username,
                         entity_cache=entity_cache,
                         telemetry=telemetry,
+                        member_directory=member_dir,
                     )
                     if res and res.get("text"):
                         last_msg_at = time.monotonic()

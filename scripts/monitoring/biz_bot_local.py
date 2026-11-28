@@ -155,6 +155,7 @@ def _resolve_meta_faq(
     norm_q: str,
     cfg: dict[str, str] | None = None,
     telemetry: TelemetryStore | None = None,
+    cc_tags: list[str] | None = None,
 ) -> dict[str, Any] | None:
     cfg_eff = cfg or get_biz_config()
     proj = html.escape(cfg_eff["project_name"])
@@ -165,7 +166,7 @@ def _resolve_meta_faq(
                 f"💡 <b>[{proj}] CÁC CÂU HỎI 0 TOKEN vs GEMINI AI</b>",
                 "────────────────",
                 "• <b>Xử lý cục bộ ⚡ 0 token (&lt;0,3s):</b>",
-                "  1) Toàn bộ 19 lệnh <code>/...</code> (<code>/tongquan</code>, <code>/ban</code>, <code>/don</code>, <code>/doanhthu</code>, <code>/ket</code>, <code>/topmon</code>, <code>/token</code>, <code>/gemini</code>...)",
+                "  1) Toàn bộ 20 lệnh <code>/...</code> (<code>/tongquan</code>, <code>/ban</code>, <code>/don</code>, <code>/doanhthu</code>, <code>/ket</code>, <code>/topmon</code>, <code>/token</code>, <code>/gemini</code>...)",
                 "  2) Hỏi trực diện cực trị: món chạy nhất/chậm nhất, giờ cao điểm, thu ngân hủy/bán nhiều nhất",
                 "  3) Đơn N phút vừa qua, đơn vừa gọi thêm món, chi tiết Bàn 01..30, tiền mặt/CK/mang về/QR, so sánh 2 kỳ",
                 "  4) Tra tên món/giá/doanh số, SĐT/STK/lịch/lương nhân viên, IP đăng nhập &amp; hỏi nối tiếp về đơn/món vừa nhắc",
@@ -218,13 +219,21 @@ def _resolve_meta_faq(
         }
 
     if any(k in norm_q for k in ("biet lam gi", "lam duoc gi", "giup duoc gi", "chuc nang gi", "gioi thieu ve", "gioi thieu em", "gioi thieu ban")):
+        if cc_tags:
+            greet_tags = " ".join(
+                t if t.startswith("<a ") else html.escape(t)
+                for t in cc_tags
+            )
+            header_line = f"👋 <b>Chào {greet_tags}!</b> Mình là <b>Lona</b> (<code>@POS_Lona_bot</code>) — trợ lý thống kê &amp; hỗ trợ vận hành POS của <b>{proj}</b>:"
+        else:
+            header_line = f"🤖 <b>[{proj}] TRỢ LÝ @POS_Lona_bot</b>"
         return {
             "text": "\n".join([
-                f"🤖 <b>[{proj}] TRỢ LÝ @POS_Lona_bot</b>",
+                header_line,
                 "────────────────",
-                "• <b>Tra số liệu &amp; DB 20 bảng:</b> Doanh thu, két tiền, đơn hàng/Bàn, món bán chạy/chậm, bếp, nhập kho, QR, khuyến mãi, nhân sự, lịch trực, lương, phiên IP &amp; audit.",
+                "• <b>Tra số liệu &amp; DB 20 bảng (0 token · &lt;0,3s):</b> Doanh thu, két tiền, đơn hàng/Bàn, món bán chạy/chậm, bếp, nhập kho, QR, khuyến mãi, nhân sự, lịch trực, lương, phiên IP &amp; audit.",
                 "• <b>Giải đáp phần mềm POS:</b> Hướng dẫn 16 phân hệ, máy in 80mm/RawBT/iMin, Single-Session, 10 Hard Invariants.",
-                "• Gõ <code>/help</code> để xem đủ 19 lệnh nhanh &amp; <code>/token</code> kiểm tra trạng thái Gemini/0-token.",
+                "• <b>Cách gọi mình:</b> Gọi <code>Lona</code> / <code>Bot</code> / <code>Trợ lý</code>, tag <code>@POS_Lona_bot</code>, Reply tin nhắn của mình hoặc gõ <code>/help</code> (đủ 20 lệnh nhanh).",
             ]),
             "slots": {"intent": "meta_help"},
         }
@@ -881,6 +890,7 @@ def try_answer_locally(
     slots: dict[str, Any] | None = None,
     cache: EntityCache | None = None,
     telemetry: TelemetryStore | None = None,
+    cc_tags: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """
     Attempt 0-token focused resolution before calling Gemini AI.
@@ -892,7 +902,7 @@ def try_answer_locally(
     cache = cache or EntityCache()
 
     # 1. Meta FAQs, command list & live token/quota status about the bot itself (0 tokens)
-    meta = _resolve_meta_faq(norm_q, cfg=cfg, telemetry=telemetry)
+    meta = _resolve_meta_faq(norm_q, cfg=cfg, telemetry=telemetry, cc_tags=cc_tags)
     if meta:
         return {**meta, "route": "local"}
 
