@@ -425,9 +425,16 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
             self.assertEqual(filtered, biz_bot_guardrail.SCOPE_REFUSAL_MSG)
             self.assertTrue(is_ref)
 
-        ok_out, is_ref_ok = biz_bot_guardrail.sanitize_ai_output("<b>Doanh thu hôm nay:</b> 3.500.000đ")
-        self.assertIn("3.500.000đ", ok_out)
+        ok_out, is_ref_ok = biz_bot_guardrail.sanitize_ai_output("<b>Doanh thu hôm nay:</b> **3.500.000đ** · `SERVING`")
+        self.assertIn("<b>3.500.000đ</b>", ok_out)
+        self.assertIn("<code>SERVING</code>", ok_out)
         self.assertFalse(is_ref_ok)
+
+        sec_explain, is_ref_sec = biz_bot_guardrail.sanitize_ai_output(
+            "Hệ thống có <b>16 phân hệ</b> và khóa 3 bí mật kỹ thuật: users.password_hash, web_push_vapid_keys, push_subscriptions.p256dh/auth."
+        )
+        self.assertIn("16 phân hệ", sec_explain)
+        self.assertFalse(is_ref_sec)
 
     def test_system_questions_and_followup_nlp_routing(self) -> None:
         system_questions = [
