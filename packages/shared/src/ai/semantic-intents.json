@@ -14,7 +14,15 @@
   "negativeGuards": [
     { "id": "why_reason", "phrases": ["tai sao", "vi sao", "nguyen nhan", "ly do gi", "do dau"] },
     { "id": "deep_analysis", "phrases": ["phan tich chi tiet", "phan tich sau", "xu huong", "du bao", "du doan", "nhan dinh"] },
-    { "id": "advisory", "phrases": ["de xuat", "goi y cai thien", "nen lam gi", "chien luoc", "tu van giup", "giai phap"] }
+    {
+      "id": "advisory",
+      "phrases": [
+        "de xuat", "goi y cai thien", "nen lam gi", "chien luoc", "tu van giup", "giai phap",
+        "lam sao de ban", "lam sao de tang", "lam sao de dong", "lam sao de giam",
+        "cach tang", "cach cai thien", "tang doanh thu", "tang khach", "thu hut khach",
+        "ban chay hon", "giam that thoat", "han che huy"
+      ]
+    }
   ],
   "personaRules": [
     {
@@ -62,7 +70,7 @@
     { "period": "tuan", "label": "Tuần này", "phrases": ["tuan nay", "trong tuan", "ca tuan"] },
     { "period": "thang", "label": "Tháng này", "phrases": ["thang nay", "trong thang", "ca thang"] },
     { "period": "nam", "label": "Năm nay", "phrases": ["nam nay", "trong nam", "ca nam"] },
-    { "period": "homnay", "label": "Hôm nay", "phrases": ["hom nay", "hnay", "ngay nay", "sang nay", "trua nay", "chieu nay", "toi nay", "ca nay"] }
+    { "period": "homnay", "label": "Hôm nay", "phrases": ["hom nay", "hnay", "bua nay", "ngay nay", "sang nay", "trua nay", "chieu nay", "toi nay", "ca nay"] }
   ],
   "entities": {
     "product": {
@@ -78,8 +86,12 @@
     "hour": {
       "keywords": [
         "khung gio", "gio nao", "may gio", "thoi diem nao", "thoi diem",
-        "buoi nao", "gio cao diem", "gio vang", "gio dong", "luc nao", "gio"
-      ]
+        "buoi nao", "gio cao diem", "gio thap diem", "gio vang", "gio dong",
+        "gio vang khach", "luc nao"
+      ],
+      "accentDisambiguation": {
+        "requireNoneRaw": ["mở cửa", "đóng cửa", "nghỉ", "giỏ"]
+      }
     },
     "staff": {
       "keywords": [
@@ -104,7 +116,7 @@
         "hoa don", "don hang", "don mang ve", "don tai ban", "don tai quan",
         "bao nhieu don", "may don", "so don", "tong don", "tong so don",
         "cac don", "nhung don", "mot don", "1 don", "2 don", "3 don", "5 don", "10 don",
-        "ma don", "don nao", "don gan nhat", "don moi nhat",
+        "ma don", "don nao", "don gan nhat", "don moi nhat", "don vua roi", "don cuoi cung", "don ca dem",
         "don qr", "don khach quet qr", "khach quet qr", "khach tu dat",
         "chua thanh toan", "don chua thanh toan", "don dang phuc vu",
         "don cho xac nhan", "don cho duyet", "chi tiet don", "chi tiet hoa don",
@@ -144,18 +156,25 @@
     "schedule": {
       "keywords": [
         "lich truc", "lich lam viec", "phan ca", "di lam", "truc hom nay", "ca truc", "lich ca",
-        "ai di lam", "ai truc", "co ai truc", "lich lam", "ca hom nay", "ca lam viec", "lich tuan"
+        "ai di lam", "ai truc", "co ai truc", "ai lam", "co ai lam", "lich lam", "ca hom nay",
+        "ca sang", "ca chieu", "ca toi", "ca dem", "lam ca", "truc ca", "bang cong",
+        "lich hom nay", "lich hom qua", "ngay mai ai", "xep lich", "ca lam viec", "lich tuan"
       ]
     },
     "payroll": {
       "keywords": [
         "bang luong", "quy luong", "tien luong", "chi phi luong", "luong nhan vien", "luong thang"
-      ]
+      ],
+      "accentDisambiguation": {
+        "requireNoneRaw": ["số lượng nhân viên", "số lượng nhân sự", "số lượng"]
+      }
     },
     "revenue": {
       "keywords": [
-        "doanh thu", "tong thu", "tien ban hang", "thu duoc bao nhieu", "ban duoc bao nhieu",
-        "ban duoc bao nhieu tien", "hom nay ban sao", "hom nay thu ve"
+        "doanh thu", "doanh so", "tong thu", "tien ban hang", "thu duoc bao nhieu", "ban duoc bao nhieu",
+        "ban duoc bao nhieu tien", "hom nay ban sao", "hom nay ban the nao", "hom nay ban ra sao",
+        "hom nay ban on khong", "bua nay ban sao", "bua nay ban the nao", "bua nay thu ve",
+        "hom nay thu ve", "hom nay doanh so", "thu duoc may"
       ]
     },
     "profit": {
@@ -170,7 +189,9 @@
     },
     "audit": {
       "keywords": [
-        "nhat ky", "lich su thao tac", "ai sua", "ai xoa", "audit log"
+        "nhat ky", "lich su thao tac", "lich su he thong", "thao tac gan nhat",
+        "ai sua gia", "ai xoa mon", "ai chinh sua", "ai cap nhat",
+        "ai sua", "ai xoa", "audit log"
       ]
     }
   },
@@ -216,11 +237,13 @@
       "hien tai", "luc nay", "tinh hinh", "trang thai"
     ],
     "recent_list": [
-      "gan nhat", "moi nhat", "vua tao", "vua len", "vua thanh toan", "vua roi"
+      "gan nhat", "moi nhat", "vua tao", "vua len", "vua thanh toan", "vua roi",
+      "cuoi cung", "sau cung", "moi tao"
     ],
     "count_query": [
       "bao nhieu", "co may", "may don", "may mon", "may ban",
-      "so luong", "tong so", "tong cong", "tong don", "dem"
+      "so luong", "tong so", "tong cong", "tong don",
+      "dem xem", "dem giup", "dem so", "dem lai"
     ]
   },
   "cardinality": {
@@ -251,7 +274,9 @@
     "auto check", "auto bat", "doi mon chinh", "bao het mon", "web push",
     "touch pos", "pos cam ung", "hub quan ly", "ty le hien thi", "display scale",
     "ai lona", "lona ai", "dong bo telegram", "dong bo trang thai",
-    "quy tac", "tach bep", "hoat dong the nao", "hoat dong nhu the nao", "hoat dong ra sao", "phan ra"
+    "quy tac", "tach bep", "hoat dong the nao", "hoat dong nhu the nao", "hoat dong ra sao", "phan ra",
+    "khong quet duoc qr", "quet qr khong duoc", "qr khong duoc", "khac phuc qr", "loi qr",
+    "in lai phieu bep", "loi may in", "may in bep"
   ],
   "intentDefinitions": [
     {

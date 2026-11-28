@@ -355,11 +355,51 @@ def _answer_menu_catalog(
         asks_sales = any(k in norm_q for k in ("ban duoc", "bao nhieu phan", "may phan", "may ly", "may to", "doanh thu"))
         return _query_single_product(str(matched[0]["name"]), period_arg, ask_price_only=(not asks_sales), cfg=cfg)
 
+    if any(k in norm_q for k in ("danh muc", "nhom mon", "loai mon", "nhung nhom")):
+        cat_rows = run_readonly_sql_json(
+            """
+            SELECT COALESCE(md.name, 'Khác') AS cat_name, COUNT(p.id) AS prod_cnt
+            FROM products p
+            LEFT JOIN master_data md ON md.id = p.category_id
+            GROUP BY COALESCE(md.name, 'Khác')
+            ORDER BY prod_cnt DESC, cat_name ASC
+            """,
+            max_rows=30,
+            cfg=cfg,
+        )
+        cat_txt = ", ".join(f"{html.escape(str(c['cat_name']))} ({c['prod_cnt']} món)" for c in cat_rows)
+        return {"text": f"📂 Thực đơn hiện có <b>{len(cat_rows)} danh mục</b> ({len(prods)} món): {cat_txt}.", "slots": {"intent": "menu_catalog"}}
+
     if any(k in norm_q for k in ("dat nhat", "re nhat")):
         asc = "re nhat" in norm_q
         sorted_p = sorted(prods, key=lambda p: float(p.get("price") or 0), reverse=(not asc))
         top1 = sorted_p[0]
         return {"text": f"🍜 Món giá {'thấp' if asc else 'cao'} nhất thực đơn: <b>{html.escape(str(top1['name']))}</b> (<b>{fmt_vnd(top1['price'])}</b>).", "slots": {"intent": "menu_catalog"}}
+
+    fillers = {
+        "quan", "minh", "co", "ban", "khong", "het", "roi", "chua", "con", "gia", "bao",
+        "nhieu", "phan", "to", "ly", "mon", "nhung", "nao", "may", "loai", "them", "oi",
+        "a", "em", "anh", "chi", "giup", "xem", "tim", "kiem", "tra", "hom", "nay", "qua",
+        "tuan", "thang", "duoc", "dang", "tien", "hay", "la", "gi",
+    }
+    q_tokens = [t for t in norm_q.split() if len(t) >= 2 and t not in fillers]
+    frag = " ".join(q_tokens)
+    if frag and len(frag) >= 3 and not any(k in norm_q for k in ("thuc don", "menu", "bang gia", "dat nhat", "re nhat", "tam het", "het mon", "tam ngung")):
+        frag_matches = [
+            p for p in prods
+            if frag in strip_vi(str(p.get("name") or ""))
+            or (len(q_tokens) >= 2 and all(t in strip_vi(str(p.get("name") or "")) for t in q_tokens))
+        ]
+        if frag_matches:
+            avail_m = sum(1 for m in frag_matches if m.get("is_available", True))
+            sample_m = ", ".join(
+                f"{html.escape(str(m['name']))} ({fmt_vnd(m['price'])}{' · Tạm hết' if not m.get('is_available', True) else ''})"
+                for m in frag_matches[:6]
+            )
+            return {
+                "text": f"✅ Quán có <b>{avail_m}/{len(frag_matches)} món</b> \"{html.escape(frag)}\": {sample_m}.",
+                "slots": {"intent": "menu_catalog"},
+            }
 
     avail_cnt = sum(1 for p in prods if p.get("is_available", True))
     sample = ", ".join(f"{html.escape(str(p['name']))} ({fmt_vnd(p['price'])})" for p in prods[:8])
@@ -439,6 +479,10 @@ def _dispatch_semantic_match(
         if sl:
             return {**sl, "route": "fast_path", "intent_id": iid}
     if iid == "table_live_status":
+        if sem.get("table_number") is not None:
+            sl_tbl = _handle_targeted_slice(f"ban {int(sem['table_number'])}", period_arg, cfg=cfg)
+            if sl_tbl:
+                return {**sl_tbl, "route": "fast_path", "intent_id": iid}
         return {"text": handle_ban(cfg=cfg), "slots": {"intent": "ban"}, "route": "fast_path", "intent_id": iid}
     if iid == "recent_orders":
         lim = int(sem.get("top_limit") or 5) if sem.get("explicit_limit") else 5

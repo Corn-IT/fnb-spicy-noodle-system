@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
 import {
   ErrorCodes,
   checkGuardrailBlock,
@@ -20,6 +20,8 @@ import { RbacToolPolicyService } from './rbac-tool-policy.service';
 
 @Injectable()
 export class AiAssistantService {
+  private readonly logger = new Logger(AiAssistantService.name);
+
   constructor(
     @Inject(StoreSettingsService) private readonly storeSettingsService: StoreSettingsService,
     @Inject(AiSessionMemoryService) private readonly sessionMemory: AiSessionMemoryService,
@@ -137,6 +139,9 @@ export class AiAssistantService {
 
       if (localRes.handled && localRes.reply && localRes.route) {
         const latencyMs = Math.max(1, Date.now() - t0);
+        this.logger.log(
+          `AI chat route=${localRes.route} intent=${localRes.intentId ?? 'meta'} entities=[${localRes.match?.entities.join(',') ?? ''}] tokens=0 miss=false ms=${latencyMs}`,
+        );
         this.sessionMemory.appendInteraction(
           principal.id,
           input.clientSessionId,
@@ -177,14 +182,24 @@ export class AiAssistantService {
       if (isMissCandidate) {
         this.sessionMemory.recordMissedIntent(semCheck.normText, input.message, now.getTime());
       }
+      const latencyMs = Math.max(1, Date.now() - t0);
+      this.logger.log(
+        `AI chat route=engine_disabled intent=none guard=${semCheck.guardId ?? 'none'} entities=[${semCheck.entities.join(',')}] metrics=[${semCheck.metrics.join(',')}] miss=${isMissCandidate} len=${semCheck.normText.length} ms=${latencyMs}`,
+      );
+      const topExamples = suggestions
+        .slice(0, 3)
+        .map((s) => `• "${s.prompt}"`)
+        .join('\n');
       return {
-        reply: `Dạ nhánh AI Gemini hiện đang tạm tắt nên ${persona.botSelf} chỉ trả lời được các tra cứu nhanh 0-token (món bán chạy/chậm, giờ cao điểm, doanh thu, két tiền, bàn, hướng dẫn POS). ${persona.userCall} thử chọn một gợi ý bên dưới giúp ${persona.botSelf} ạ.`,
+        reply:
+          `Dạ nhánh AI Gemini hiện đang tạm tắt nên ${persona.botSelf} chỉ xử lý các tra cứu cục bộ 0-token (món bán chạy/chậm, giờ cao điểm, doanh thu, bàn trống, két tiền, hóa đơn, nhân sự, hướng dẫn POS).` +
+          (topExamples ? `\n${persona.userCall} thử hỏi trực tiếp theo gợi ý:\n${topExamples}` : ''),
         route: 'engine_disabled',
         intentId: null,
         period: semCheck.period,
         persona,
         tokensUsed: 0,
-        latencyMs: Math.max(1, Date.now() - t0),
+        latencyMs,
         nluMissCandidate: isMissCandidate,
         activeEngines,
         quotaStatus: quotaBefore,
@@ -203,6 +218,9 @@ export class AiAssistantService {
     });
     const latencyMs = Math.max(1, Date.now() - t0);
     const route = aiRes.guardrailBlocked ? 'guardrail_block' : 'gemini';
+    this.logger.log(
+      `AI chat route=${route} model=${aiRes.modelUsed ?? 'none'} tokens=${aiRes.tokensUsed} miss=${isMissCandidate && !aiRes.guardrailBlocked} guard=${semCheck.guardId ?? 'none'} ms=${latencyMs}`,
+    );
 
     if (isMissCandidate && !aiRes.guardrailBlocked) {
       this.sessionMemory.recordMissedIntent(semCheck.normText, input.message, now.getTime());

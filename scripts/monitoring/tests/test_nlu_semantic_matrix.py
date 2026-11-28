@@ -62,6 +62,19 @@ class TestNluAndSemanticMatrix(unittest.TestCase):
             ("So sánh doanh thu hôm nay với hôm qua", "period_comparison", "homnay"),
             ("Hiện tại có bao nhiêu bàn đang phục vụ?", "table_live_status", "homnay"),
             ("Quỹ lương tháng này hết bao nhiêu?", "fast_path_payroll", "thang"),
+            ("Bây giờ món nào bán chạy nhất?", "product_top_popularity", "homnay"),
+            ("Số lượng nhân viên hiện tại?", "staff_list", "homnay"),
+            ("Bàn 10 đã thanh toán chưa?", "table_live_status", "homnay"),
+            ("Khách quét QR không được thì sao?", "system_docs", "homnay"),
+            ("Ai sửa giá món?", "fast_path_audit", "homnay"),
+            ("Nhân viên bếp hôm nay ai làm?", "fast_path_schedule", "homnay"),
+            ("Đơn ca đêm hôm qua?", "recent_orders", "homqua"),
+            ("Đơn vừa rồi bàn mấy?", "recent_orders", "homnay"),
+            ("Hôm nay bán thế nào?", "fast_path_revenue", "homnay"),
+            ("Bữa nay quán bán sao rồi?", "fast_path_overview", "homnay"),
+            ("Quán có bán nước ngọt không?", "menu_catalog", "homnay"),
+            ("Có bao nhiêu danh mục món?", "menu_catalog", "homnay"),
+            ("Hôm nay có bao nhiêu khách?", "order_count", "homnay"),
         ]
         for q, expected_intent, expected_period in cases:
             res = semantic_engine.match_semantic_intent(q)
