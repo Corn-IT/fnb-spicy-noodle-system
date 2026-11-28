@@ -25,6 +25,7 @@ import {
   encodeBase64Url,
   encryptWebPushPayload,
   generateVapidKeyPair,
+  leftPadFixedBytes,
   verifyVapidJwt,
 } from '../web-push-crypto.util';
 import { WebPushService } from '../web-push.service';
@@ -121,6 +122,21 @@ describe('web-push-crypto.util (RFC 8291 aes128gcm & RFC 8292 VAPID ES256)', () 
       exp: 1_700_003_600,
       sub: 'mailto:pos@example.com',
     });
+  });
+
+  it('should always left-pad P-256 VAPID scalars with leading zero bytes to 32 bytes', () => {
+    const unpadded = Buffer.alloc(31, 0xab);
+    const padded = leftPadFixedBytes(unpadded, 32);
+    expect(padded.length).toBe(32);
+    expect(padded[0]).toBe(0x00);
+    expect(padded.subarray(1).equals(unpadded)).toBe(true);
+    expect(() => leftPadFixedBytes(Buffer.alloc(33, 1), 32)).toThrow();
+
+    for (let i = 0; i < 64; i += 1) {
+      const pair = generateVapidKeyPair();
+      expect(decodeBase64Url(pair.publicKey).length).toBe(65);
+      expect(decodeBase64Url(pair.privateKey).length).toBe(32);
+    }
   });
 });
 

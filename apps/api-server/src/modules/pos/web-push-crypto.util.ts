@@ -58,16 +58,26 @@ export function decodeBase64Url(input: string): Buffer {
   return Buffer.from(normalized + '='.repeat(padLen), 'base64');
 }
 
+export function leftPadFixedBytes(buf: Buffer, targetLength: number): Buffer {
+  if (buf.length === targetLength) return buf;
+  if (buf.length > targetLength) {
+    throw new Error(`Expected at most ${targetLength} bytes, got ${buf.length}`);
+  }
+  const padded = Buffer.alloc(targetLength);
+  buf.copy(padded, targetLength - buf.length);
+  return padded;
+}
+
 /**
  * Generates an EC P-256 (prime256v1) VAPID key pair encoded in base64url:
  * - publicKey: 65-byte uncompressed point (0x04 || x || y)
- * - privateKey: 32-byte scalar d
+ * - privateKey: 32-byte scalar d (left-padded when OpenSSL strips leading zeros)
  */
 export function generateVapidKeyPair(): VapidKeyPair {
   const ecdh = createECDH('prime256v1');
   ecdh.generateKeys();
   const publicKeyBuf = ecdh.getPublicKey();
-  const privateKeyBuf = ecdh.getPrivateKey();
+  const privateKeyBuf = leftPadFixedBytes(ecdh.getPrivateKey(), P256_PRIVATE_KEY_BYTES);
   return {
     publicKey: encodeBase64Url(publicKeyBuf),
     privateKey: encodeBase64Url(privateKeyBuf),
