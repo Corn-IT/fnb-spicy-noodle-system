@@ -155,12 +155,12 @@ Mọi cột liên quan đến tiền (`price`, `subtotal_amount`, `discount_amou
 
 ## 10. GRAPHIFY KNOWLEDGE GRAPH & AGENT ONBOARDING
 
-- Kho lưu trữ đã được lập chỉ mục tri thức toàn hệ thống trong thư mục `graphify-out/` (bởi `graphify` `--mode deep --directed --wiki --svg`, sử dụng `.graphifyignore` để loại trừ BMAD tooling templates, media nhị phân và ảnh chụp báo cáo cũ):
+- Kho lưu trữ hỗ trợ lập chỉ mục tri thức toàn hệ thống vào thư mục cục bộ `graphify-out/` (bởi `graphify` `--mode deep --directed --wiki --svg`, sử dụng [.graphifyignore](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/.graphifyignore) được version hoá trong Git để loại trừ BMAD tooling templates, media nhị phân và ảnh chụp báo cáo cũ):
   - `graphify-out/GRAPH_REPORT.md`: Bản đồ tổng quan kiến trúc, Community Hubs, God Nodes (`cn`, `Button`, `useAuthStore`, `AuthPrincipal`, `RequirePermission()`, `CurrentUser`, `useAppMessages()`), Hyperedges xuyên luồng và Knowledge Gaps.
   - `graphify-out/wiki/index.md`: Mục lục wiki (`graphify-out/wiki/*.md`) chia theo từng domain/community để agent đọc nhanh theo tính năng trước khi chạm code.
   - `graphify-out/graph.json`: Đồ thị có hướng NetworkX phục vụ truy vấn qua MCP Graphify (`query_graph`, `get_node`, `get_neighbors`, `get_community`, `god_nodes`, `shortest_path`, `graph_stats`) hoặc CLI (`graphify path`, `graphify explain`).
-  - `graphify-out/graph.html` & `graphify-out/graph.svg`: Sơ đồ đồ thị tương tác và SVG tĩnh nhúng tài liệu.
+  - `graphify-out/graph.html`, `graphify-out/graph.svg` & `graphify-out/fnb-spicy-noodle-system-callflow.html`: Sơ đồ đồ thị tương tác, SVG tĩnh và call-flow HTML.
 - **Quy tắc tra cứu & bảo trì:**
-  1. Bất kỳ agent mới nào (hoặc khi chuyển giao phiên làm việc) **SHOULD** đọc `graphify-out/GRAPH_REPORT.md` hoặc truy vấn Graphify MCP/`wiki/index.md` trước khi scan diện rộng.
-  2. Khi có thay đổi kiến trúc hoặc thêm module mới, cập nhật lại `graphify-out/` với `--directed --wiki --svg`.
-  3. Giữ nguyên cấu hình `.gitignore` để không commit `graphify-out/.graphify_*`, `graphify-out/.needs_update`, hay `graphify-out/cache/` chứa đường dẫn máy cục bộ.
+  1. Bất kỳ agent mới nào (hoặc khi chuyển giao phiên làm việc) **SHOULD** đọc `graphify-out/GRAPH_REPORT.md` hoặc truy vấn Graphify MCP/`wiki/index.md` nếu đã có ở local (hoặc chạy tái tạo bằng `graphify --mode deep --directed --wiki --svg` theo `.graphifyignore`) trước khi scan diện rộng.
+  2. Khi có thay đổi kiến trúc hoặc thêm module mới, cập nhật lại `graphify-out/` cục bộ (`--update` hoặc `--mode deep --directed --wiki --svg`) sau khi chốt commit `HEAD`.
+  3. Thư mục `graphify-out/` (~34 MB) được loại trừ khỏi Git qua `.gitignore` (cùng quy ước với `_bmad/`, `coverage/`, `.codegraph/`); chỉ commit `.graphifyignore` và hướng dẫn trong `AGENTS.md` để mọi máy tái lập cùng cấu hình sạch sẽ.

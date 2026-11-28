@@ -14,7 +14,7 @@
 | **Static TypeScript** | `@fnb/shared`, `@fnb/api-server`, `@fnb/web-app` | `PASS` | Chạy `pnpm -r typecheck` không lỗi |
 | **ESLint Rules** | Toàn bộ monorepo (bao gồm kiểm tra ranh giới module) | `PASS` | Chạy `pnpm -r lint` 0 lỗi |
 | **Production Build** | `tsc -p tsconfig.build.json`, `prisma generate && tsc`, `vite build` | `PASS` | Chạy `pnpm -r build` sạch |
-| **Unit & Integration Tests + Coverage Lock** | `@fnb/shared` (10 files), `@fnb/api-server` (53 files), `@fnb/web-app` (96 files) — tổng `159` files / `1,064` tests | `PASS` | Ratchet thresholds khóa trong `vitest.config.ts` / `vite.config.ts`: Shared `90/90/90/90`, API `88/75/90/90`, Web `80/72/75/81` |
+| **Unit & Integration Tests + Coverage Lock** | `@fnb/shared` (10 files), `@fnb/api-server` (53 files), `@fnb/web-app` (97 files) — tổng `160` files / `1,068` tests | `PASS` | Ratchet thresholds khóa trong `vitest.config.ts` / `vite.config.ts`: Shared `90/90/90/90`, API `88/75/90/90`, Web `80/72/75/81` |
 | **Graphify Knowledge Graph** | Toàn repo (`611` code + `49` project docs qua `.graphifyignore`, `--mode deep --directed --wiki --svg`) | `PASS` | `4,911` nodes, `17,534` edges, `190` communities, `200` wiki articles, `graph.html`/`graph.svg`/`callflow.html`, giảm `202.1x` tokens/query |
 | **E2E WebKit Matrix (`M / T / D`)** | `webkit-mobile`, `webkit-tablet`, `webkit-desktop` | `PASS` | `responsive-matrix.spec.ts` `24/24` PASS + `103/103` PASS (`7` skip hợp lệ theo thiết bị/màn hình) |
 | **E2E Chromium Full Regression** | 15 spec files (`all-routes-responsive-visual` 17 viewports, `responsive-matrix` 4 scales × 2 themes, `pos-touch`, `pos-drafts`, `takeaway-*`, `thermal-raster-qr`, ...) | `PASS` | `105/105` PASS (`2` skip hợp lệ: phone-only test trên desktop & `@real` tách riêng) |
@@ -30,9 +30,9 @@
 |---|---:|---|---|
 | `@fnb/shared` | `90 / 90 / 90 / 90` | `96.80% / 90.20% / 94.79% / 97.27%` (`10` files, `91` tests) | [vitest.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/packages/shared/vitest.config.ts) |
 | `@fnb/api-server` | `88 / 75 / 90 / 90` | `90.07% / 75.00% / 91.87% / 92.63%` (`53` files, `489` tests) | [vitest.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/api-server/vitest.config.ts) |
-| `@fnb/web-app` | `80 / 72 / 75 / 81` | `80.24% / 72.08% / 75.49% / 82.01%` (`96` files, `484` tests) | [vite.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/vite.config.ts) |
+| `@fnb/web-app` | `80 / 72 / 75 / 81` | `80.25% / 72.09% / 75.49% / 82.01%` (`97` files, `488` tests) | [vite.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/vite.config.ts) |
 
-*(Tổng cộng `159` test files, `1,064/1,064` tests PASS, `0` failures, `0` skips sau toàn bộ chỉnh sửa code & docs.)*
+*(Tổng cộng `160` test files, `1,068/1,068` tests PASS, `0` failures, `0` skips sau toàn bộ chỉnh sửa code & docs Chặng 1.)*
 
 ---
 
@@ -95,5 +95,5 @@ Toàn bộ 10 Hard Invariants trong `AGENTS.md` §5 đều được kiểm tra t
   - **Quy mô đồ thị:** `4,911` nodes, `17,534` directed edges, `190` communities có nhãn tiếng Anh chuẩn domain (`97%` `EXTRACTED`, `3%` `INFERRED`, `0%` `AMBIGUOUS`), `18` hyperedges.
   - **Đầu ra chính:** [GRAPH_REPORT.md](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/graphify-out/GRAPH_REPORT.md), [wiki/index.md](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/graphify-out/wiki/index.md) (`200` bài wiki domain), [graph.json](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/graphify-out/graph.json), `graphify-out/graph.html`, `graphify-out/graph.svg`, và `graphify-out/fnb-spicy-noodle-system-callflow.html` (`18` sections, `16` Mermaid diagrams).
   - **Hiệu quả truy vấn (`graphify benchmark`):** giảm **`202.1x`** lượng token mỗi câu hỏi (`327,400` tokens naive xuống `~1,620` tokens).
-  - **Chẩn đoán sức khỏe đồ thị (`diagnose_extraction`):** `0` missing-endpoint edges, `0` unverified code nodes, `4` dangling-endpoint edges (AST literal/dynamic font refs), `2` self-loop edges, `481` collapsed same-endpoint directed edges (NestJS `@Inject`/`@Query` decorator repetition), `4` multi-file cycle (`error-resolver.ts -> command-palette.tsx -> route-prefetch.ts -> query-provider.tsx`).
-  - **Hướng dẫn onboarding:** Đã bổ sung `§10. GRAPHIFY KNOWLEDGE GRAPH & AGENT ONBOARDING` vào [AGENTS.md](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/AGENTS.md) và cấu hình [.gitignore](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/.gitignore) loại trừ cache/sidecars cục bộ (`graphify-out/.graphify_*`, `graphify-out/cache/`).
+  - **Chẩn đoán sức khỏe đồ thị (`diagnose_extraction`):** `0` missing-endpoint edges, `0` unverified code nodes, `4` dangling-endpoint edges (AST literal/dynamic font refs), `2` self-loop edges, `481` collapsed same-endpoint directed edges (NestJS `@Inject`/`@Query` decorator repetition), và **`0` multi-file import cycles** sau khi tách [app-navigation.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/lib/app-navigation.ts) khỏi [command-palette.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/components/layout/command-palette.tsx).
+  - **Hướng dẫn onboarding:** Đã bổ sung `§10. GRAPHIFY KNOWLEDGE GRAPH & AGENT ONBOARDING` vào [AGENTS.md](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/AGENTS.md) và cấu hình [.gitignore](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/.gitignore) giữ `graphify-out/` cục bộ (version hoá [.graphifyignore](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/.graphifyignore) để tái lập đồng nhất).
