@@ -1,10 +1,15 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
-RUN corepack enable
+ENV COREPACK_HOME=/usr/local/share/corepack
+RUN apk add --no-cache openssl \
+  && npm install -g corepack@latest \
+  && corepack enable \
+  && corepack prepare pnpm@12.18.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json turbo.json ./
 COPY packages/shared/package.json ./packages/shared/package.json
 COPY apps/api-server/package.json ./apps/api-server/package.json
+COPY apps/web-app/package.json ./apps/web-app/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY packages/shared ./packages/shared
@@ -17,7 +22,11 @@ RUN pnpm --filter @fnb/shared build \
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-RUN corepack enable
+ENV COREPACK_HOME=/usr/local/share/corepack
+RUN apk add --no-cache openssl \
+  && npm install -g corepack@latest \
+  && corepack enable \
+  && corepack prepare pnpm@12.18.0 --activate
 
 COPY --from=builder /app/package.json /app/pnpm-workspace.yaml /app/tsconfig.base.json ./
 COPY --from=builder /app/node_modules ./node_modules
