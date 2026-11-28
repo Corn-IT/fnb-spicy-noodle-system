@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { parseEnvConfig } from './config/env.config';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { MonitoringModule } from './common/monitoring/monitoring.module';
 import { RateLimitGuard } from './common/security/rate-limit.guard';
 import { SecurityHeadersMiddleware } from './common/security/security-headers.middleware';
 import { PrismaModule } from './common/prisma/prisma.module';
@@ -28,6 +29,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
       envFilePath: ['.env', '../../.env'],
       validate: (environment) => parseEnvConfig(environment),
     }),
+    MonitoringModule,
     PrismaModule,
     AuditLogModule,
     RealtimeModule,

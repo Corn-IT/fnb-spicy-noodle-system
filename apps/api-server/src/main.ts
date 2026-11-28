@@ -12,6 +12,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { TelegramAlertService } from './common/monitoring/telegram-alert.service';
 import { createScopedJsonBodyParserOptions } from './common/security/body-parser.middleware';
 import { isAllowedCorsOrigin, parseAllowedCorsOrigins } from './common/security/cors-origin.util';
 import type { EnvConfig } from './config/env.config';
@@ -41,8 +42,9 @@ export async function bootstrap(): Promise<void> {
     exposedHeaders: ['X-Request-Id', 'Retry-After', 'X-RateLimit-Remaining'],
     maxAge: 86_400,
   });
-  app.useGlobalFilters(new GlobalExceptionFilter());
-  app.useGlobalInterceptors(new LoggingInterceptor());
+  const telegramAlert = app.get(TelegramAlertService, { strict: false });
+  app.useGlobalFilters(new GlobalExceptionFilter(telegramAlert));
+  app.useGlobalInterceptors(new LoggingInterceptor(telegramAlert));
   app.enableShutdownHooks();
 
   await app.listen(config.get('port'), '0.0.0.0');
