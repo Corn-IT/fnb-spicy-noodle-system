@@ -6,6 +6,7 @@ import { GlobalExceptionFilter } from '../../filters/global-exception.filter';
 import { LoggingInterceptor } from '../../interceptors/logging.interceptor';
 import { InternalMetricsController } from '../internal-metrics.controller';
 import {
+  escapeTelegramHtml,
   formatVnTimestamp,
   isLoopbackSocketAddress,
   readMonitoringConfig,
@@ -56,6 +57,7 @@ describe('MonitoringModule & TelegramAlertService', () => {
 
     expect(sanitizeSingleLine('a\r\nb\tc\u0007', 10)).toBe('a b c');
     expect(sanitizeSingleLine('x'.repeat(20), 5)).toBe('xxxx…');
+    expect(escapeTelegramHtml('<script>&a>')).toBe('&lt;script&gt;&amp;a&gt;');
 
     expect(isLoopbackSocketAddress('127.0.0.1')).toBe(true);
     expect(isLoopbackSocketAddress('::1')).toBe(true);
@@ -160,14 +162,14 @@ describe('MonitoringModule & TelegramAlertService', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sentPayloads[0]?.chat_id).toBe('-100999888777');
-    expect(sentPayloads[0]?.text).toContain('🚀 [LonaPOS] PERFORMANCE ALERT');
-    expect(sentPayloads[0]?.text).toContain('🐢 Slow | 💾 High RAM | ⚙️ High CPU');
+    expect(sentPayloads[0]?.text).toContain('🚀 <b>[LonaPOS] CẢNH BÁO HIỆU NĂNG</b>');
+    expect(sentPayloads[0]?.text).toContain('🐢 Chậm · 💾 RAM tăng · ⚙️ CPU cao');
     expect(sentPayloads[0]?.text).toContain('/api/v1/public/menu?token=[REDACTED]');
     expect(sentPayloads[0]?.text).not.toContain('super-secret-token');
-    expect(sentPayloads[0]?.text).toContain('⏱️ Time: 3456.78ms / 3000ms');
-    expect(sentPayloads[0]?.text).toContain('💾 RAM: 72.50MB / 64MB');
-    expect(sentPayloads[0]?.text).toContain('⚙️ CPU: 2150.25ms / 2000ms');
-    expect(sentPayloads[0]?.text).toContain('🆔 Req: req-1234');
+    expect(sentPayloads[0]?.text).toContain('• Thời gian: <b>3456.78ms</b> / 3000ms');
+    expect(sentPayloads[0]?.text).toContain('• RAM tăng: <b>72.50MB</b> / 64MB');
+    expect(sentPayloads[0]?.text).toContain('• CPU dùng: <b>2150.25ms</b> / 2000ms');
+    expect(sentPayloads[0]?.text).toContain('• Request ID: <code>req-1234</code>');
 
     // Within 5m cooldown -> suppressed instead of spamming Telegram
     service.recordRequestMetric({
@@ -194,7 +196,7 @@ describe('MonitoringModule & TelegramAlertService', () => {
     });
     await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(sentPayloads[1]?.text).toContain('(+1 lần tương tự trong 5 phút qua)');
+    expect(sentPayloads[1]?.text).toContain('+1 lần trong 5 phút qua');
 
     // Evicts oldest cooldown key cleanly above 500 distinct routes
     for (let i = 0; i < 505; i += 1) {
@@ -255,10 +257,11 @@ describe('MonitoringModule & TelegramAlertService', () => {
       expect(warnSpy).toHaveBeenCalledTimes(2);
     });
 
-    const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { text: string };
-    expect(firstBody.text).toContain('🔥 [LonaPOS] SERVER ERROR 500');
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { text: string; parse_mode?: string };
+    expect(firstBody.parse_mode).toBe('HTML');
+    expect(firstBody.text).toContain('🔥 <b>[LonaPOS] LỖI SERVER HTTP 500</b>');
     expect(firstBody.text).toContain('PrismaClientKnownRequestError: deadlock detected');
-    expect(firstBody.text).toContain('🧩 Handler: PosController.checkoutOrder');
+    expect(firstBody.text).toContain('• Handler: <code>PosController.checkoutOrder</code>');
 
     const snapshot = service.getMetricsSnapshot(true);
     expect(snapshot.window5xxCount).toBe(2);
