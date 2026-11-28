@@ -311,6 +311,15 @@ export function isLoopbackSocketAddress(rawAddress?: string | null): boolean {
   return trimmed === '127.0.0.1' || trimmed === '::1' || trimmed === '::ffff:127.0.0.1';
 }
 
+/** Excludes AI Assistant routes from Telegram slow-request & 5xx alerts because external LLM latency/availability is third-party dependent. */
+export function isAiAssistantMonitoringExcludedPath(urlOrPath: string, handler?: string): boolean {
+  const cleanPath = (urlOrPath.split('?')[0] ?? '').trim().toLowerCase();
+  if (cleanPath === '/api/v1/ai-assistant' || cleanPath.startsWith('/api/v1/ai-assistant/')) {
+    return true;
+  }
+  return Boolean(handler && /^AiAssistant(?:Controller)?(?:\.|$)/.test(handler.trim()));
+}
+
 @Injectable()
 export class TelegramAlertService {
   private readonly logger = new Logger(TelegramAlertService.name);
@@ -344,6 +353,10 @@ export class TelegramAlertService {
   recordRequestMetric(metric: RequestMetricInput): void {
     const cleanPath = (metric.url.split('?')[0] ?? '').trim();
     if (cleanPath === '/internal/metrics') {
+      return;
+    }
+
+    if (isAiAssistantMonitoringExcludedPath(metric.url, metric.handler)) {
       return;
     }
 
@@ -393,6 +406,9 @@ export class TelegramAlertService {
 
   reportServerError(input: ServerErrorAlertInput): void {
     if (input.statusCode < 500) {
+      return;
+    }
+    if (isAiAssistantMonitoringExcludedPath(input.url, input.handler)) {
       return;
     }
 

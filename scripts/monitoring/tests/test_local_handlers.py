@@ -226,3 +226,19 @@ class TestLocalHandlers(unittest.TestCase):
             self.assertEqual(local_router.try_answer_locally("Bảng lương tháng này", cfg=self.cfg)["text"], "LUONG_OK")
             self.assertEqual(local_router.try_answer_locally("Hiện tại có bao nhiêu bàn đang phục vụ?", cfg=self.cfg)["text"], "BAN_OK")
             self.assertEqual(local_router.try_answer_locally("Liệt kê top 5 món được gọi nhiều nhất", cfg=self.cfg)["text"], "TOPMON_OK")
+
+        # Expanded menu catalog, staff list, and unpaid count at 0 tokens
+        fresh_cache = EntityCache(ttl_sec=300)
+        with mock.patch("lona_bot.state.entity_cache.run_readonly_sql_json", return_value=[{"id": 1, "name": "Mì Cay Bò", "price": 55000, "station": "BEP_NAU", "is_available": True}, {"id": 2, "name": "Khoai Tây", "price": 25000, "station": "BEP_CHIEN", "is_available": False}]):
+            menu_r = local_router.try_answer_locally("Thực đơn quán có bao nhiêu món?", cfg=self.cfg, cache=fresh_cache)
+            self.assertIn("2 món", menu_r["text"])
+            paused_r = local_router.try_answer_locally("Quán có món nào đang tạm hết?", cfg=self.cfg, cache=fresh_cache)
+            self.assertIn("Khoai Tây", paused_r["text"])
+            cheap_r = local_router.try_answer_locally("Món nào rẻ nhất thực đơn?", cfg=self.cfg, cache=fresh_cache)
+            self.assertIn("Khoai Tây", cheap_r["text"])
+        with mock.patch.object(local_router, "run_readonly_sql_json", return_value=[{"name": "Ngân", "pos_name": "Thu ngân"}]):
+            staff_r = local_router.try_answer_locally("Quán có bao nhiêu nhân viên?", cfg=self.cfg)
+            self.assertIn("1 nhân sự", staff_r["text"])
+        with mock.patch.object(local_router, "run_readonly_sql_json", return_value=[{"active_total": 3, "paid_count": 1, "serving_count": 2, "pending_count": 0, "void_count": 0, "takeaway_count": 1, "dine_in_count": 2, "total_amount": 350000}]):
+            unpaid_r = local_router.try_answer_locally("Hôm nay có bao nhiêu đơn chưa thanh toán?", cfg=self.cfg)
+            self.assertIn("2 đơn chưa thanh toán", unpaid_r["text"])

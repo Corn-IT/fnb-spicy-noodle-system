@@ -31,6 +31,7 @@ export class RbacToolPolicyService {
     hour_quiet_density: { label: 'Dashboard khung giờ (dashboard.view)', check: (p) => p.permissions.dashboard.view },
     staff_top_orders: { label: 'Dashboard tổng quan (dashboard.view)', check: (p) => p.permissions.dashboard.view },
     period_comparison: { label: 'Dashboard tổng quan (dashboard.view)', check: (p) => p.permissions.dashboard.view },
+    payment_breakdown: { label: 'Dashboard doanh thu (dashboard.view)', check: (p) => p.permissions.dashboard.view },
     fast_path_overview: { label: 'Dashboard tổng quan (dashboard.view)', check: (p) => p.permissions.dashboard.view },
     fast_path_revenue: { label: 'Dashboard doanh thu (dashboard.view)', check: (p) => p.permissions.dashboard.view },
     fast_path_profit: {
@@ -41,6 +42,10 @@ export class RbacToolPolicyService {
       label: 'Quầy POS / Trạng thái bàn (pos.view)',
       check: (p) => p.permissions.pos.view || p.permissions.invoices.view,
     },
+    menu_catalog: {
+      label: 'Thực đơn & Bảng giá (pos.view / menu.view)',
+      check: (p) => p.permissions.pos.view || p.permissions.menu.view || p.permissions.dashboard.view,
+    },
     fast_path_kitchen: {
       label: 'Trạm bếp POS (pos.view)',
       check: (p) => p.permissions.pos.view || p.permissions.dashboard.view,
@@ -48,12 +53,18 @@ export class RbacToolPolicyService {
     order_top_value: { label: 'Hóa đơn bán hàng (invoices.view)', check: (p) => p.permissions.invoices.view },
     recent_orders: { label: 'Hóa đơn bán hàng (invoices.view)', check: (p) => p.permissions.invoices.view },
     order_count: { label: 'Hóa đơn bán hàng (invoices.view)', check: (p) => p.permissions.invoices.view },
+    order_detail: {
+      label: 'Hóa đơn bán hàng (invoices.view)',
+      check: (p) => p.permissions.invoices.view || p.permissions.pos.view,
+    },
     staff_top_void: { label: 'Kiểm soát đơn hủy (invoices.view)', check: (p) => p.permissions.invoices.view },
     fast_path_voids: { label: 'Hóa đơn hủy (invoices.view)', check: (p) => p.permissions.invoices.view },
     fast_path_cashflow: { label: 'Sổ quỹ & Kết ca (cashflow.view)', check: (p) => p.permissions.cashflow.view },
     fast_path_qr: { label: 'Tài khoản nhận VietQR (paymentQr.view)', check: (p) => p.permissions.paymentQr.view },
     fast_path_inventory: { label: 'Nhập kho nguyên liệu (inventory.view)', check: (p) => p.permissions.inventory.view },
     fast_path_discounts: { label: 'Mã giảm giá (discounts.view)', check: (p) => p.permissions.discounts.view },
+    staff_list: { label: 'Hồ sơ Nhân sự (employees.view)', check: (p) => p.permissions.employees.view },
+    active_sessions: { label: 'Phiên đăng nhập & Phân quyền (rbac.view)', check: (p) => p.permissions.rbac.view },
     fast_path_schedule: {
       label: 'Lịch trực nhân sự (schedules.view hoặc nhân sự hợp lệ)',
       check: (p) => p.permissions.schedules.view || p.employeeId > 0,

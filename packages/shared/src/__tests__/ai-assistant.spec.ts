@@ -315,11 +315,37 @@ describe('Shared AI Semantic NLU, Guardrails & Settings Contracts', () => {
     expect(tableWithSell.entities).toContain('table');
     expect(tableWithSell.tableNumber).toBe(3);
 
-    // Order code lookup routes to fast_path_overview when asked cleanly
+    // Order code lookup routes cleanly to order_detail for both HD-... and ORD-...
     const byOrderCode = matchSemanticIntent('kiểm tra giúp em ORD-2026-8888');
     expect(byOrderCode.matched).toBe(true);
     expect(byOrderCode.orderCode).toBe('ORD-2026-8888');
-    expect(byOrderCode.intentId).toBe('fast_path_overview');
+    expect(byOrderCode.intentId).toBe('order_detail');
+
+    const byHdCode = matchSemanticIntent('Chi tiết đơn HD-20261128-0122 gồm món gì?');
+    expect(byHdCode.matched).toBe(true);
+    expect(byHdCode.orderCode).toBe('HD-20261128-0122');
+    expect(byHdCode.intentId).toBe('order_detail');
+
+    // Menu, payment breakdown, unpaid orders, staff list, sessions, and system how-to rules
+    const extraLocalCases: Array<{ q: string; intent: string }> = [
+      { q: 'Thực đơn quán có bao nhiêu món?', intent: 'menu_catalog' },
+      { q: 'Quán có món nào đang tạm hết?', intent: 'menu_catalog' },
+      { q: 'Mì cay bò giá bao nhiêu?', intent: 'menu_catalog' },
+      { q: 'Doanh thu tiền mặt hôm nay bao nhiêu?', intent: 'payment_breakdown' },
+      { q: 'Hôm nay có mấy đơn khách quét QR?', intent: 'payment_breakdown' },
+      { q: 'Đơn nào chưa thanh toán?', intent: 'recent_orders' },
+      { q: 'Có bao nhiêu đơn chưa thanh toán?', intent: 'order_count' },
+      { q: 'Quán có bao nhiêu nhân viên?', intent: 'staff_list' },
+      { q: 'Hiện tại có ai đang đăng nhập POS?', intent: 'active_sessions' },
+      { q: 'Tại sao chuyển khoản không cộng vào két tiền?', intent: 'system_docs' },
+      { q: 'Cách hủy món đã gửi bếp như thế nào?', intent: 'system_docs' },
+      { q: 'Hệ thống có những tính năng nào?', intent: 'system_docs' },
+    ];
+    for (const c of extraLocalCases) {
+      const res = matchSemanticIntent(c.q);
+      expect(res.matched, c.q).toBe(true);
+      expect(res.intentId, c.q).toBe(c.intent);
+    }
 
     // Open-ended advisory/free-text falls back to Gemini without guard block
     const freeQuestion = matchSemanticIntent('Quán mình có nên mở thêm chi nhánh mới không?', {

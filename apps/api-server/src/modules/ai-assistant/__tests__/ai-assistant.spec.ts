@@ -69,8 +69,29 @@ describe('AiAssistantModule', () => {
   };
 
   const prismaMock = {
-    product: { findMany: vi.fn(async () => [{ id: 2, name: 'Bánh Tráng Trộn', price: 25000 }]) },
-    orderItem: { findMany: vi.fn(async () => [{ productId: 2, quantity: 1 }]) },
+    product: {
+      findMany: vi.fn(async () => [
+        { id: 1, name: 'Mì Cay Bò', price: 55000, station: 'BEP_NAU', isAvailable: true, category: { name: 'Mì Cay' } },
+        { id: 2, name: 'Bánh Tráng Trộn', price: 25000, station: 'BEP_CHIEN', isAvailable: false, category: { name: 'Ăn Vặt' } },
+      ]),
+    },
+    orderItem: { findMany: vi.fn(async () => [{ productId: 2, quantity: 1, product: { name: 'Mì Cay Bò' } }]) },
+    employee: {
+      findMany: vi.fn(async () => [
+        { fullName: 'Nguyễn Thanh Ngân', shortName: 'Ngân', position: { name: 'Thu ngân' } },
+        { fullName: 'Trần Minh Tuấn', shortName: 'Tuấn', position: { name: 'Chủ quán' } },
+      ]),
+    },
+    user: {
+      findMany: vi.fn(async () => [
+        {
+          username: 'thungan',
+          activeSessionIp: '14.224.144.211',
+          activeSessionDevice: 'iPad POS',
+          employee: { shortName: 'Ngân' },
+        },
+      ]),
+    },
     order: {
       findMany: vi.fn(async () => [
         {
@@ -86,7 +107,15 @@ describe('AiAssistantModule', () => {
         totalAmount: 480000,
         orderType: 'DINE_IN',
         takeawayNumber: null,
+        takeawayLabelFormat: 'NUMBER',
+        status: 'PAID',
+        paymentMethod: 'CASH',
+        subtotalAmount: 480000,
+        discountAmount: 0,
         table: { name: 'Bàn 05' },
+        cashier: { username: 'thungan', employee: { shortName: 'Ngân' } },
+        discount: null,
+        items: [{ quantity: 2, unitPrice: 55000, product: { name: 'Mì Cay Bò' } }],
       })),
     },
     auditLog: {
@@ -115,7 +144,22 @@ describe('AiAssistantModule', () => {
     })),
     getOverview: vi.fn(async () => ({
       kpis: {
-        revenue: { netPaidAmount: 2500000, previousNetPaidAmount: 2000000, growthPercent: 25, paidOrderCount: 28, averageOrderValue: 89285 },
+        revenue: {
+          netPaidAmount: 2500000,
+          previousNetPaidAmount: 2000000,
+          growthPercent: 25,
+          paidOrderCount: 28,
+          averageOrderValue: 89285,
+          qrSourceCount: 6,
+        },
+        cashDrawer: {
+          totalCashSales: 1400000,
+          cashOnlySales: 1300000,
+          splitCashSales: 100000,
+        },
+        transfer: {
+          totalTransferSales: 1100000,
+        },
         profit: { grossProfitAfterInventory: 1800000, netOperatingProfit: 1300000, marginPercent: 52 },
       },
       kitchenStations: { stations: [{ label: 'Bếp Nấu', printedQty: 30, revenue: 1650000 }] },
@@ -816,5 +860,197 @@ describe('AiAssistantModule', () => {
     ] as never);
     const fuDineIn = await service.chat({ message: 'Chỉ đơn tại bàn', clientSessionId: 'br_tab' }, owner);
     expect(fuDineIn.reply).toContain('Bàn 01');
+  });
+
+  it('answers expanded system KB, order detail, menu catalog, payment breakdown, staff/sessions, unpaid filter, and Gemini timeout budget cleanly', async () => {
+    const owner = makePrincipal();
+
+    // 1. Order detail HD-... & follow-up "đơn đó gồm món gì"
+    const ordRes = await service.chat({ message: 'Chi tiết đơn HD-20261128-0122', clientSessionId: 'det_tab' }, owner);
+    expect(ordRes.route).toBe('local_semantic');
+    expect(ordRes.tokensUsed).toBe(0);
+    expect(ordRes.reply).toContain('Mì Cay Bò');
+
+    // 2. Menu catalog, out-of-stock, price & product sales lookup
+    const menuAll = await service.chat({ message: 'Thực đơn quán có bao nhiêu món?' }, owner);
+    expect(menuAll.route).toBe('local_semantic');
+    expect(menuAll.reply).toContain('2 món');
+
+    const pausedMenu = await service.chat({ message: 'Quán có món nào đang tạm hết?' }, owner);
+    expect(pausedMenu.reply).toContain('Bánh Tráng Trộn');
+
+    const priceRes = await service.chat({ message: 'Mì cay bò giá bao nhiêu?' }, owner);
+    expect(priceRes.reply).toContain('55.000đ');
+
+    const prodSales = await service.chat({ message: 'Hôm nay bán được mấy phần mì cay bò?' }, owner);
+    expect(prodSales.reply).toContain('25 phần');
+
+    // 3. Payment breakdown & QR customer orders
+    const cashVsTransfer = await service.chat({ message: 'Doanh thu tiền mặt hôm nay bao nhiêu?' }, owner);
+    expect(cashVsTransfer.route).toBe('local_semantic');
+    expect(cashVsTransfer.reply).toContain('1.400.000đ');
+    expect(cashVsTransfer.reply).toContain('1.100.000đ');
+
+    const qrOrders = await service.chat({ message: 'Hôm nay có mấy đơn khách quét QR?' }, owner);
+    expect(qrOrders.route).toBe('local_semantic');
+    expect(qrOrders.reply).toContain('6 đơn khách quét QR');
+
+    // 4. Empty tables, staff list, active sessions
+    const emptyTbls = await service.chat({ message: 'Quán còn bàn nào trống không?' }, owner);
+    expect(emptyTbls.route).toBe('fast_path');
+    expect(emptyTbls.reply).toContain('Bàn 02');
+
+    const staffRes = await service.chat({ message: 'Quán có bao nhiêu nhân viên?' }, owner);
+    expect(staffRes.route).toBe('fast_path');
+    expect(staffRes.reply).toContain('2 nhân sự');
+
+    const sessRes = await service.chat({ message: 'Hiện tại có ai đang đăng nhập POS?' }, owner);
+    expect(sessRes.route).toBe('fast_path');
+    expect(sessRes.reply).toContain('14.224.144.211');
+
+    // 5. Unpaid orders status filter
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      { id: 50, orderCode: 'HD-50', orderType: 'DINE_IN', status: 'SERVING', totalAmount: 95000 },
+    ] as never);
+    const unpaidCnt = await service.chat({ message: 'Hôm nay có bao nhiêu đơn chưa thanh toán?' }, owner);
+    expect(unpaidCnt.route).toBe('local_semantic');
+    expect(unpaidCnt.reply).toContain('1 đơn chưa thanh toán');
+
+    // 6. System documentation & rules at 0 tokens (previously sent to Gemini!)
+    for (const docQ of [
+      'Hệ thống có những tính năng nào?',
+      'Cách hủy món đã gửi bếp như thế nào?',
+      'Tại sao chuyển khoản không cộng vào két tiền?',
+      'Đồng bộ trạng thái Bot Telegram là gì?',
+    ]) {
+      const kbReply = await service.chat({ message: docQ }, owner);
+      expect(kbReply.route, docQ).toBe('system_kb');
+      expect(kbReply.tokensUsed, docQ).toBe(0);
+    }
+
+    // 7. Gemini fetch attaches AbortSignal timeout and handles timeout cleanly without throwing HTTP 500
+    process.env.FNB_WEB_GEMINI_API_KEY = 'AIzaSyWebSecretKey987654321';
+    process.env.FNB_GEMINI_ATTEMPT_TIMEOUT_MS = '2500';
+    process.env.FNB_GEMINI_TOTAL_TIMEOUT_MS = '5000';
+    geminiPool.resetRuntimeStateForTests();
+    const fetchInitCalls: Array<RequestInit | undefined> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        fetchInitCalls.push(init);
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      }),
+    );
+    const timeoutRes = await geminiPool.generateReply({
+      question: 'Phân tích xu hướng giúp anh',
+      principal: owner,
+      persona: { mode: 'em_anh', botSelf: 'em', userCall: 'anh' },
+    });
+    expect(fetchInitCalls[0]?.signal).toBeDefined();
+    expect(timeoutRes.reply).toContain('tạm quá tải');
+
+    // 8. Branch coverage across order_detail variants, menu edges, table details, payment blind mode, RBAC intents
+    const fuOrd = await service.chat({ message: 'Đơn đó gồm món gì?', clientSessionId: 'det_tab' }, owner);
+    expect(fuOrd.route).toBe('local_semantic');
+
+    prismaMock.order.findFirst.mockResolvedValueOnce(null as never);
+    const notFoundOrd = await service.chat({ message: 'Chi tiết đơn HD-999999' }, owner);
+    expect(notFoundOrd.reply).toContain('không tìm thấy');
+
+    prismaMock.order.findFirst.mockResolvedValueOnce({
+      orderCode: 'HD-TW-8',
+      totalAmount: 110000,
+      orderType: 'TAKEAWAY',
+      takeawayNumber: 8,
+      takeawayLabelFormat: 'LETTER',
+      status: 'SERVING',
+      paymentMethod: 'TRANSFER',
+      subtotalAmount: 120000,
+      discountAmount: 10000,
+      table: null,
+      cashier: null,
+      discount: { code: 'G10' },
+      items: [],
+    } as never);
+    const twDetail = await service.chat({ message: 'Kiểm tra HD-TW-8' }, owner);
+    expect(twDetail.reply).toContain('Mang về #AD');
+    expect(twDetail.reply).toContain('Chuyển khoản');
+
+    const cheapProd = await service.chat({ message: 'Món nào rẻ nhất thực đơn?' }, owner);
+    expect(cheapProd.reply).toContain('Bánh Tráng Trộn');
+    const expProd = await service.chat({ message: 'Món nào đắt nhất thực đơn?' }, owner);
+    expect(expProd.reply).toContain('Mì Cay Bò');
+
+    prismaMock.product.findMany.mockResolvedValueOnce([
+      { id: 1, name: 'Mì Cay Bò', price: 55000, station: 'BEP_NAU', isAvailable: true, category: null },
+    ] as never);
+    const nonePaused = await service.chat({ message: 'Quán có món nào tạm hết?' }, owner);
+    expect(nonePaused.reply).toContain('chưa có món nào tạm hết');
+
+    prismaMock.product.findMany.mockResolvedValueOnce([] as never);
+    const emptyMenu = await service.chat({ message: 'Thực đơn quán có bao nhiêu món?' }, owner);
+    expect(emptyMenu.reply).toContain('chưa có món nào');
+
+    prismaMock.employee.findMany.mockResolvedValueOnce([] as never);
+    const noStaff = await service.chat({ message: 'Danh sách nhân viên?' }, owner);
+    expect(noStaff.reply).toContain('chưa ghi nhận');
+
+    prismaMock.user.findMany.mockResolvedValueOnce([] as never);
+    const noSessions = await service.chat({ message: 'Ai đang đăng nhập POS?' }, owner);
+    expect(noSessions.reply).toContain('không ghi nhận');
+
+    posMock.getTableGrid.mockResolvedValueOnce({
+      tables: [{ id: 1, name: 'Bàn 01', status: 'OCCUPIED', activeOrder: { id: 11, orderCode: 'HD-11', totalAmount: 90000 } }],
+      takeaways: [],
+    });
+    const tblDetail = await service.chat({ message: 'Bàn 01 đang gọi gì?' }, owner);
+    expect(tblDetail.reply).toContain('HD-11');
+    expect(tblDetail.reply).toContain('Mì Cay Bò');
+
+    posMock.getTableGrid.mockResolvedValueOnce({
+      tables: [{ id: 1, name: 'Bàn 01', status: 'OCCUPIED', activeOrder: { orderCode: 'HD-11', totalAmount: 90000 } }],
+      takeaways: [],
+    });
+    const noEmptyTbl = await service.chat({ message: 'Quán còn bàn nào trống?' }, owner);
+    expect(noEmptyTbl.reply).toContain('toàn bộ');
+
+    dashboardMock.getOverview.mockResolvedValueOnce({
+      kpis: {
+        revenue: { netPaidAmount: 900000, paidOrderCount: 5, qrSourceCount: 2 },
+        cashDrawer: { totalCashSales: null },
+        transfer: { totalTransferSales: 900000 },
+      },
+    } as never);
+    const blindPay = await service.chat({ message: 'Doanh thu chuyển khoản hôm nay?' }, owner);
+    expect(blindPay.reply).toContain('Blind Mode');
+
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      { id: 60, orderCode: 'HD-60', orderType: 'DINE_IN', takeawayNumber: null, takeawayLabelFormat: 'NUMBER', status: 'PENDING', totalAmount: 70000, createdAt: new Date('2026-11-28T10:00:00.000Z'), table: { name: 'Bàn 03' } },
+    ] as never);
+    const unpaidList = await service.chat({ message: 'Đơn nào chưa thanh toán?' }, owner);
+    expect(unpaidList.reply).toContain('HD-60');
+
+    prismaMock.order.findMany.mockResolvedValueOnce([] as never);
+    expect((await service.chat({ message: 'Có bao nhiêu đơn chờ xác nhận?' }, owner)).reply).toContain('0 đơn chờ xác nhận');
+
+    const viewer = makePrincipal({
+      id: 98,
+      employeeId: 0,
+      username: 'viewer',
+      isSuperAdmin: false,
+      permissions: UserPermissionsSchema.parse({}),
+    });
+    for (const iid of [
+      'product_top_revenue', 'product_list_revenue', 'product_slow_popularity', 'product_top_popularity',
+      'product_list_popularity', 'hour_peak_density', 'hour_quiet_density', 'staff_top_void', 'staff_top_orders',
+      'order_top_value', 'recent_orders', 'order_count', 'order_detail', 'menu_catalog', 'payment_breakdown',
+      'staff_list', 'active_sessions', 'table_live_status', 'period_comparison', 'fast_path_overview',
+      'fast_path_revenue', 'fast_path_profit', 'fast_path_cashflow', 'fast_path_qr', 'fast_path_kitchen',
+      'fast_path_inventory', 'fast_path_discounts', 'fast_path_voids', 'fast_path_audit', 'fast_path_schedule',
+      'fast_path_payroll',
+    ] as const) {
+      expect(rbacPolicy.canAccessIntent(iid, viewer).allowed, iid).toBe(false);
+    }
+    expect(rbacPolicy.canExecuteTool('get_recent_orders_and_counts', viewer).allowed).toBe(false);
   });
 });
