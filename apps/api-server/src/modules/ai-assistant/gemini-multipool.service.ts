@@ -523,6 +523,7 @@ export class GeminiMultiPoolService {
     const now = params.now ?? new Date();
     const { apiKey } = this.resolveApiKey();
     if (!apiKey) {
+      this.logger.warn('Gemini generateReply skipped: no FNB_WEB_GEMINI_API_KEY / FNB_GEMINI_API_KEY configured');
       return {
         reply: `Dạ hiện máy chủ Web POS chưa cấu hình khóa API Gemini nên ${params.persona.botSelf} chỉ tra cứu cục bộ 0 token giúp ${params.persona.userCall} ạ.`,
         tokensUsed: 0,
@@ -584,6 +585,7 @@ export class GeminiMultiPoolService {
     const tools = this.buildToolDeclarations(params.principal);
     let totalTokens = 0;
     let modelUsed: string | null = null;
+    const executedToolSummaries: string[] = [];
     const userBucketKey = `${todayIso}:${params.principal.id}`;
     const totalBudgetMs = this.resolveTotalTimeoutMs();
     const baseAttemptTimeoutMs = this.resolveAttemptTimeoutMs();
@@ -672,6 +674,9 @@ export class GeminiMultiPoolService {
           .map((p) => String(p.text))
           .join('\n')
           .trim();
+        if (!rawReply && isFinalSynthesisRound && executedToolSummaries.length > 0) {
+          break;
+        }
         const sanitized = this.sanitizeOutput(rawReply, params.persona);
         return {
           reply: sanitized.text,
@@ -685,13 +690,17 @@ export class GeminiMultiPoolService {
       const responses = [];
       for (const fc of funcCalls) {
         const out = await this.executeTool(fc.name, fc.args ?? {}, params.principal);
+        executedToolSummaries.push(`${fc.name}`);
         responses.push({ functionResponse: { name: fc.name, response: out } });
       }
       contents.push({ role: 'user', parts: responses });
     }
 
     return {
-      reply: `Dạ ${params.persona.botSelf} cần thêm thông tin rõ hơn để tổng hợp chính xác cho ${params.persona.userCall} ạ.`,
+      reply:
+        executedToolSummaries.length > 0
+          ? `Dạ ${params.persona.botSelf} đã kiểm tra dữ liệu nhưng nội dung hơi rộng để tổng hợp một lần — ${params.persona.userCall} hỏi cụ thể hơn một ý (VD: số lượng đơn, tên món, doanh thu hoặc khoảng ngày) giúp ${params.persona.botSelf} ạ.`
+          : `Dạ ${params.persona.botSelf} chưa nhận đủ ngữ cảnh cho câu hỏi vừa rồi, ${params.persona.userCall} nói rõ hơn điều cần tra giúp ${params.persona.botSelf} nhé ạ.`,
       tokensUsed: totalTokens,
       modelUsed,
       guardrailBlocked: false,

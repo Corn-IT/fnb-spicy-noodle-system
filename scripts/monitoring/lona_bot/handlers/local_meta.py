@@ -140,4 +140,21 @@ def _resolve_meta_faq(
             ]),
             "slots": {"intent": "meta_db"},
         }
+    if len(norm_q.split()) <= 6 and re.match(
+        r"^(?:chao(?:\s+(?:em|lona|bot|ban|anh|chi|oi))*|hi|hello|halo|alo|lona(?:\s+(?:oi|a|ne))*|cam on(?:\s+(?:em|lona|bot|ban|nhieu|lam|qua|nhe|nha|a))*|ok(?:\s+cam\s+on)?|tuyet|tam biet|bye|thank(?:\s+you)?)(?:\s+(?:em|anh|chi|nha|nhe|a|nhieu))*$",
+        norm_q,
+    ):
+        p = persona_spec(persona_key)
+        is_thanks = any(k in norm_q for k in ("cam on", "thank", "ok", "tuyet"))
+        is_bye = any(k in norm_q for k in ("tam biet", "bye"))
+        prefix = "Dạ " if p["bot"] == "em" else ""
+        suffix = " ạ" if p["bot"] == "em" else ""
+        if is_bye:
+            msg_txt = f"👋 {prefix}chào {html.escape(p['user'])}, cần xem số liệu hay hỗ trợ POS cứ gọi {p['bot']} nhé{suffix}!"
+        elif is_thanks:
+            msg_txt = f"😊 {prefix}không có chi! {html.escape(p['user'])} cần kiểm tra thêm số liệu POS cứ nhắn {p['bot']} nhé{suffix}."
+        else:
+            msg_txt = f"👋 {prefix}chào {html.escape(p['user'])}! {p['bot'].capitalize()} là Lona — {html.escape(p['user'])} cần tra doanh thu, đơn hàng, món bán chạy hay hướng dẫn POS ạ?"
+        return {"text": msg_txt, "slots": {"intent": "meta_greeting"}}
+
     return None

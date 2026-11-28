@@ -1052,5 +1052,52 @@ describe('AiAssistantModule', () => {
       expect(rbacPolicy.canAccessIntent(iid, viewer).allowed, iid).toBe(false);
     }
     expect(rbacPolicy.canExecuteTool('get_recent_orders_and_counts', viewer).allowed).toBe(false);
+
+    // 9. Collision fixes, partial menu lookup, schedule date scope, greetings, voids detail, and KB relevance guard
+    const greetRes = await service.chat({ message: 'Chào Lona' }, owner);
+    expect(greetRes.route).toBe('local_semantic');
+    expect(greetRes.tokensUsed).toBe(0);
+
+    const thanksRes = await service.chat({ message: 'Cảm ơn em nhiều nha' }, owner);
+    expect(thanksRes.route).toBe('local_semantic');
+    expect(thanksRes.tokensUsed).toBe(0);
+
+    const nowTop = await service.chat({ message: 'Bây giờ món nào bán chạy nhất?' }, owner);
+    expect(nowTop.intentId).toBe('product_top_popularity');
+    expect(nowTop.reply).toContain('Mì Cay Bò');
+
+    const staffCount = await service.chat({ message: 'Số lượng nhân viên hiện tại?' }, owner);
+    expect(staffCount.intentId).toBe('staff_list');
+    expect(staffCount.reply).toContain('2 nhân sự');
+
+    const catList = await service.chat({ message: 'Có bao nhiêu danh mục món?' }, owner);
+    expect(catList.intentId).toBe('menu_catalog');
+    expect(catList.reply).toContain('2 danh mục');
+
+    const partialDish = await service.chat({ message: 'Quán có bán mì cay không?' }, owner);
+    expect(partialDish.intentId).toBe('menu_catalog');
+    expect(partialDish.reply).toContain('Mì Cay Bò');
+
+    const auditMod = await service.chat({ message: 'Ai sửa giá món?' }, owner);
+    expect(auditMod.intentId).toBe('fast_path_audit');
+    expect(auditMod.reply).toContain('INVOICES');
+
+    const paidCheckOcc = await service.chat({ message: 'Bàn 1 đã thanh toán chưa?' }, owner);
+    expect(paidCheckOcc.intentId).toBe('table_live_status');
+    expect(paidCheckOcc.reply).toContain('CHƯA thanh toán');
+
+    const paidCheckFree = await service.chat({ message: 'Bàn 2 đã thanh toán chưa?' }, owner);
+    expect(paidCheckFree.intentId).toBe('table_live_status');
+    expect(paidCheckFree.reply).toContain('TRỐNG');
+
+    // SystemKbService returns [] when noise words only, never dumping unrelated fallback docs
+    expect(systemKb.searchDocs('the nao la gi khong duoc')).toEqual([]);
+
+    // Voids listing includes orderCode and reason
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      { orderCode: 'HD-VOID-1', totalAmount: 55000, voidReason: 'Khách đổi món', table: { name: 'Bàn 04' } },
+    ] as never);
+    const voidListRes = await service.chat({ message: 'Hôm nay đơn hủy gồm những đơn nào?' }, owner);
+    expect(voidListRes.reply).toContain('HD-VOID-1');
   });
 });

@@ -132,6 +132,11 @@ def is_system_doc_question(raw_text: str) -> bool:
     norm = strip_vi(raw_text)
     if not norm or any(m in norm for m in SYSTEM_META_SELF_SIGNALS):
         return False
+    if any(
+        adv in norm
+        for adv in ("tang doanh thu", "tang khach", "thu hut khach", "ban chay hon", "lam sao de ban", "lam sao de tang", "cach tang", "cach cai thien")
+    ):
+        return False
     # Treat "cách đây 10 phút" (ago) as time filter, NOT a how-to doc question ("cách kết nối...")
     if re.search(r"\bcach\s+(?!day\b)", norm):
         return True
@@ -173,6 +178,7 @@ def extract_period_phrase(norm_text: str) -> str:
         ("hom kia", "homkia"),
         ("hom qua", "homqua"),
         ("hom nay", "homnay"),
+        ("bua nay", "homnay"),
         ("tuan truoc", "tuantruoc"),
         ("7 ngay", "7ngay"),
         ("tuan nay", "tuan"),
