@@ -209,6 +209,7 @@ def _empty_bucket() -> dict[str, Any]:
         "local_zero_token": 0,
         "blocked_zero_token": 0,
         "gemini_calls": 0,
+        "gemini_api_requests": 0,
         "gemini_prompt_tokens": 0,
         "gemini_output_tokens": 0,
         "gemini_total_tokens": 0,
@@ -255,7 +256,7 @@ class TelemetryStore:
             return default_stats
         if not isinstance(loaded, dict):
             return default_stats
-        return {
+        res = {
             "days": loaded.get("days") if isinstance(loaded.get("days"), dict) else {},
             "pacific_days": loaded.get("pacific_days") if isinstance(loaded.get("pacific_days"), dict) else {},
             "months": loaded.get("months") if isinstance(loaded.get("months"), dict) else {},
@@ -263,6 +264,19 @@ class TelemetryStore:
             "last_gemini_error": loaded.get("last_gemini_error") if isinstance(loaded.get("last_gemini_error"), dict) else None,
             "last_gemini_success": loaded.get("last_gemini_success") if isinstance(loaded.get("last_gemini_success"), dict) else None,
         }
+        # Backfill legacy VN-day calls into pacific_days when upgraded mid-day
+        pac_key = google_quota_reset_info()["pacific_date"]
+        vn_today = vn_now().date().isoformat()
+        if pac_key == vn_today and vn_today in res["days"]:
+            d_b = res["days"][vn_today]
+            p_b = res["pacific_days"].setdefault(pac_key, _empty_bucket())
+            if int(p_b.get("gemini_calls", 0) or 0) == 0 and int(d_b.get("gemini_calls", 0) or 0) > 0:
+                p_b["gemini_calls"] = int(d_b.get("gemini_calls", 0) or 0)
+                p_b["gemini_api_requests"] = int(d_b.get("gemini_api_requests") or p_b["gemini_calls"])
+                p_b["gemini_prompt_tokens"] = int(d_b.get("gemini_prompt_tokens", 0) or 0)
+                p_b["gemini_output_tokens"] = int(d_b.get("gemini_output_tokens", 0) or 0)
+                p_b["gemini_total_tokens"] = int(d_b.get("gemini_total_tokens", 0) or 0)
+        return res
 
     def _save_stats(self) -> None:
         if not self._stats_path:
@@ -306,11 +320,13 @@ class TelemetryStore:
         raw_q: str = "",
         trigger: str = "",
         model_used: str = "",
+        api_requests: int = 0,
     ) -> None:
         now = (now_dt or vn_now()).astimezone(VN_TZ)
         day_key = now.date().isoformat()
         pac_key = google_quota_reset_info(now)["pacific_date"]
         month_key = now.strftime("%Y-%m")
+        req_inc = max(1, int(api_requests)) if route == "gemini" else 0
 
         for bucket_map, key in (
             (self._stats["days"], day_key),
@@ -320,6 +336,7 @@ class TelemetryStore:
             b = bucket_map.setdefault(key, _empty_bucket())
             if route == "gemini":
                 b["gemini_calls"] = int(b.get("gemini_calls", 0)) + 1
+                b["gemini_api_requests"] = int(b.get("gemini_api_requests") or b.get("gemini_calls", 0) - 1) + req_inc
                 b["gemini_prompt_tokens"] = int(b.get("gemini_prompt_tokens", 0)) + max(0, int(prompt_tokens))
                 b["gemini_output_tokens"] = int(b.get("gemini_output_tokens", 0)) + max(0, int(output_tokens))
                 b["gemini_total_tokens"] = int(b.get("gemini_total_tokens", 0)) + max(0, int(total_tokens))
@@ -397,115 +414,106 @@ class TelemetryStore:
         now = (now_dt or vn_now()).astimezone(VN_TZ)
         reset_info = google_quota_reset_info(now)
         day_b = self._stats["days"].get(now.date().isoformat()) or _empty_bucket()
-        pac_b = self._stats["pacific_days"].get(reset_info["pacific_date"]) or day_b
+        pac_b = self._stats["pacific_days"].get(reset_info["pacific_date"]) or _empty_bucket()
+        if int(pac_b.get("gemini_calls", 0) or 0) == 0 and int(day_b.get("gemini_calls", 0) or 0) > 0 and reset_info["pacific_date"] == now.date().isoformat():
+            pac_b = day_b
         mon_b = self._stats["months"].get(now.strftime("%Y-%m")) or _empty_bucket()
 
-        def summarize(b: dict[str, Any]) -> tuple[int, int, int, str]:
-            zero_ok = int(b.get("local_zero_token", 0))
-            zero_blk = int(b.get("blocked_zero_token", 0))
-            gem = int(b.get("gemini_calls", 0))
-            total_reqs = zero_ok + zero_blk + gem
-            pct_zero = (round((zero_ok + zero_blk) * 100 / total_reqs) if total_reqs > 0 else 100)
-            return zero_ok, zero_blk, gem, f"{pct_zero}% ({_fmt_num(b.get('gemini_total_tokens', 0))} token)"
+        def summarize(b: dict[str, Any]) -> tuple[int, int, int]:
+            zero_total = int(b.get("local_zero_token", 0) or 0) + int(b.get("blocked_zero_token", 0) or 0)
+            gem = int(b.get("gemini_calls", 0) or 0)
+            total_reqs = zero_total + gem
+            pct_zero = round(zero_total * 100 / total_reqs) if total_reqs > 0 else 100
+            return zero_total, gem, pct_zero
 
-        d_ok, d_blk, d_gem, d_meta = summarize(day_b)
-        m_ok, m_blk, m_gem, m_meta = summarize(mon_b)
+        d_zero, d_gem, d_pct = summarize(day_b)
+        m_zero, m_gem, m_pct = summarize(mon_b)
+
+        cfg_eff = cfg or {}
+        tier_name = (cfg_eff.get("gemini_tier_name") or "Free Tier").strip()
+        rpd_raw = str(cfg_eff.get("gemini_rpd_limit") or "500")
+        rpm_raw = str(cfg_eff.get("gemini_rpm_limit") or "15")
+        tpm_raw = str(cfg_eff.get("gemini_tpm_limit") or "250000")
+        rpd_limit = int(rpd_raw) if rpd_raw.isdigit() and int(rpd_raw) > 0 else 500
+        rpm_limit = int(rpm_raw) if rpm_raw.isdigit() and int(rpm_raw) > 0 else 15
+        tpm_limit = int(tpm_raw) if tpm_raw.isdigit() and int(tpm_raw) > 0 else 250000
+        tpm_label = f"{tpm_limit // 1000}K" if tpm_limit >= 1000 else str(tpm_limit)
+
+        primary_model = cfg_eff.get("gemini_model") or "gemini-3.5-flash-lite"
+        status_line = "• 🟢 <b>Hoạt động bình thường</b> — AI sẵn sàng trả lời"
+        if live_probe is not None:
+            if not live_probe.get("configured"):
+                status_line = "• 🔴 <b>Chưa gắn API Key Gemini</b>"
+            elif not live_probe.get("key_valid"):
+                status_line = "• 🔴 <b>Key lỗi hoặc bị từ chối</b> — Cần kiểm tra lại trên AI Studio"
+            else:
+                models = live_probe.get("models") or []
+                p_m = next((m for m in models if m.get("role") == "Chính"), None)
+                f_m = next((m for m in models if m.get("role") == "Dự phòng"), None)
+                if p_m and not p_m.get("ok"):
+                    code = p_m.get("status_code") or "ERR"
+                    if f_m and f_m.get("ok"):
+                        status_line = f"• 🟠 <b>Model chính tạm nghẽn (HTTP {code})</b> — Đang tự chạy sang bản dự phòng"
+                    else:
+                        status_line = f"• 🔴 <b>Cảnh báo (HTTP {code}):</b> {html.escape(str(p_m.get('error', ''))[:100])}"
+                else:
+                    status_line = f"• 🟢 <b>Hoạt động bình thường</b> — Sẵn sàng trả lời (<code>{html.escape(primary_model)}</code> + dự phòng)"
+
+        pac_calls = int(pac_b.get("gemini_calls", 0) or 0)
+        used_reqs = max(pac_calls, int(pac_b.get("gemini_api_requests") or 0))
+        rem_reqs = max(0, rpd_limit - used_reqs)
+        pac_tok = int(pac_b.get("gemini_total_tokens", 0) or 0)
+        est_low = max(0, rem_reqs // 3)
+        est_high = max(0, rem_reqs // 2)
 
         lines = [
-            f"🧮 <b>[{html.escape(project_name)}] TRẠNG THÁI GEMINI API &amp; TOKEN</b>",
-            f"🗓 Giờ VN: <b>{now.strftime('%H:%M · %d/%m/%Y')}</b>",
+            f"🤖 <b>[{html.escape(project_name)}] TÌNH TRẠNG AI &amp; HẠN MỨC HÔM NAY</b>",
+            f"🗓 {now.strftime('%H:%M · %d/%m/%Y')} · Gói: <b>{html.escape(tier_name)} ({_fmt_num(rpd_limit)} lượt API/ngày)</b>",
             "────────────────",
+            "<b>1. Trạng thái hiện tại</b>",
+            status_line,
         ]
-
-        # 1. Live Key & Model Health (0-token probe)
-        if live_probe is not None:
-            lines.append("<b>1. Trạng thái Key &amp; Model (Check trực tiếp · 0 token)</b>")
-            if not live_probe.get("configured"):
-                lines.append("• 🔴 Chưa cấu hình <code>FNB_GEMINI_API_KEY</code>.")
-            else:
-                key_status = "🟢 Key đang hoạt động" if live_probe.get("key_valid") else "🔴 Key lỗi / bị từ chối"
-                lines.append(f"• Trạng thái API Key: <b>{key_status}</b>")
-                for m in live_probe.get("models") or []:
-                    if m.get("ok"):
-                        lim_txt = (
-                            f" · Context {_fmt_num(m.get('input_limit'))} in / {_fmt_num(m.get('output_limit'))} out"
-                            if m.get("input_limit")
-                            else ""
-                        )
-                        lines.append(
-                            f"• {html.escape(str(m['role']))}: <code>{html.escape(str(m['model']))}</code> "
-                            f"(🟢 {m.get('latency_ms', 0)}ms{lim_txt})"
-                        )
-                    else:
-                        code = m.get("status_code") or "ERR"
-                        icon = "🟠" if code == 429 else "🔴"
-                        lines.append(
-                            f"• {html.escape(str(m['role']))}: <code>{html.escape(str(m['model']))}</code> "
-                            f"({icon} HTTP {code}: {html.escape(str(m.get('error', ''))[:90])})"
-                        )
-            lines.append("")
 
         last_err = self._stats.get("last_gemini_error")
         if last_err:
-            lines.extend([
-                f"⚠️ <b>Lỗi Gemini gần nhất ({html.escape(str(last_err.get('at', '')))}):</b> "
-                f"HTTP {last_err.get('code', 0)} — <i>{html.escape(str(last_err.get('message', ''))[:110])}</i>",
-                "",
-            ])
+            lines.append(
+                f"• ⚠️ Sự cố gần nhất ({html.escape(str(last_err.get('at', '')))}): "
+                f"HTTP {last_err.get('code', 0)} — <i>{html.escape(str(last_err.get('message', ''))[:95])}</i>"
+            )
 
-        # 2. Reset Countdown & Quota Estimates
-        sec_idx = 2 if live_probe is not None else 1
         lines.extend([
-            f"<b>{sec_idx}. Thời gian Reset &amp; Hạn mức Quota</b>",
-            f"• Reset ngày Google (<code>00:00 Pacific</code>): Còn <b>{reset_info['countdown_str']}</b> "
-            f"(lúc <b>{reset_info['reset_vn_str']}</b>)",
-            "• Bảo vệ tốc độ Bot: tối đa <b>15 lượt Gemini/phút</b> (reset mỗi 60 giây)",
+            "",
+            "<b>2. Còn hỏi Gemini được bao nhiêu hôm nay?</b>",
+            f"• Đã dùng hôm nay: <b>{_fmt_num(used_reqs)} / {_fmt_num(rpd_limit)} lượt gọi API</b> ({_fmt_num(pac_tok)} token)",
+            f"• <b>Còn lại: ~{_fmt_num(rem_reqs)} / {_fmt_num(rpd_limit)} lượt API</b> (hỏi thêm được khoảng <b>~{est_low}–{est_high} câu AI</b>)",
         ])
 
-        rpd_limit_raw = (cfg or {}).get("gemini_rpd_limit", "")
-        tok_budget_raw = (cfg or {}).get("gemini_daily_token_budget", "")
-        pac_calls = int(pac_b.get("gemini_calls", 0))
-        pac_tok = int(pac_b.get("gemini_total_tokens", 0))
-
-        if rpd_limit_raw.isdigit() and int(rpd_limit_raw) > 0:
-            rpd_lim = int(rpd_limit_raw)
-            rem_calls = max(0, rpd_lim - pac_calls)
-            lines.append(
-                f"• Lượt gọi chu kỳ Google: <b>{pac_calls}/{_fmt_num(rpd_lim)} lượt</b> (còn lại ~<b>{_fmt_num(rem_calls)} lượt</b>)"
-            )
+        tok_budget_raw = str(cfg_eff.get("gemini_daily_token_budget") or "")
         if tok_budget_raw.isdigit() and int(tok_budget_raw) > 0:
             bud = int(tok_budget_raw)
             rem_tok = max(0, bud - pac_tok)
-            avg_per_call = round(pac_tok / pac_calls) if pac_calls > 0 else 8000
-            est_qs = rem_tok // max(1, avg_per_call)
-            lines.append(
-                f"• Ngân sách Token chu kỳ Google: đã dùng <b>{_fmt_num(pac_tok)}/{_fmt_num(bud)}</b> · "
-                f"còn <b>{_fmt_num(rem_tok)} token</b> (~{est_qs} câu hỏi AI)"
-            )
+            lines.append(f"• Ngân sách Token ngày đặt riêng: còn <b>{_fmt_num(rem_tok)} / {_fmt_num(bud)} token</b>")
 
         lines.extend([
-            "• <i>Minh bạch kỹ thuật: Google Gemini Developer API không trả header số quota còn lại &amp; API Key không có ngày hết hạn cố định; xem Billing/Tier trực tiếp tại</i> <code>ai.dev/usage</code>.",
+            "• 💡 <i>Mọi câu xử lý ⚡ 0-token (lệnh, số liệu, món bán chạy...) thì hỏi thoải mái, <b>không giới hạn số lần</b>.</i>",
+            f"• ⏳ Tự reset về 0 sau: <b>{reset_info['countdown_str']}</b> (vào <b>{reset_info['reset_vn_str']}</b>)",
+            f"• ⚡ Giới hạn nhanh theo phút: tối đa <b>{rpm_limit} lượt/phút</b> · <b>{tpm_label} token/phút</b> (nếu vượt chỉ cần đợi 60 giây)",
             "",
-        ])
-
-        # 3. Actual Usage Summary
-        sec_idx += 1
-        lines.extend([
-            f"<b>{sec_idx}. Tiêu thụ thực tế</b>",
-            f"• <b>Hôm nay (VN):</b> ⚡ Cục bộ 0-token <b>{d_ok}</b> (chặn <b>{d_blk}</b>) · 🤖 Gemini <b>{d_gem}</b> · Miễn phí <b>{d_meta}</b>",
-            f"• <b>Chu kỳ Google ({reset_info['pacific_date']}):</b> <b>{pac_calls} lượt</b> · "
-            f"<b>{_fmt_num(pac_tok)} token</b> (Prompt {_fmt_num(pac_b.get('gemini_prompt_tokens', 0))} + Out {_fmt_num(pac_b.get('gemini_output_tokens', 0))})",
-            f"• <b>Tháng {now.strftime('%m/%Y')}:</b> ⚡ <b>{m_ok}</b> (chặn <b>{m_blk}</b>) · 🤖 <b>{m_gem}</b> · Miễn phí <b>{m_meta}</b>",
+            "<b>3. Hiệu quả tiết kiệm token của Bot</b>",
+            f"• Hôm nay: <b>{d_zero} câu miễn phí 0-token</b> · <b>{d_gem} câu Gemini</b> → <b>Tiết kiệm {d_pct}%</b>",
+            f"• Tháng {now.strftime('%m/%Y')}: <b>{m_zero} câu miễn phí</b> · <b>{m_gem} câu Gemini</b> ({_fmt_num(mon_b.get('gemini_total_tokens', 0))} token) → <b>Tiết kiệm {m_pct}%</b>",
         ])
 
         recent = self._stats.get("recent_gemini") or []
         if recent:
             lines.extend(["", "<b>Các câu gần đây có gọi Gemini:</b>"])
             for item in reversed(recent[-3:]):
-                m_tag = f" [{item['model']}]" if item.get("model") else ""
                 lines.append(
-                    f"• [{html.escape(str(item.get('at', '')))}] <i>{html.escape(str(item.get('q', '')))}</i> "
-                    f"({_fmt_num(item.get('tokens', 0))} tok{html.escape(m_tag)})"
+                    f"• [{html.escape(str(item.get('at', '')))}] <i>{html.escape(str(item.get('q', '')))}</i> ({_fmt_num(item.get('tokens', 0))} tok)"
                 )
 
+        lines.append(
+            f"\n<i>* Số còn lại ước tính theo gói {html.escape(tier_name)} ({_fmt_num(rpd_limit)} lượt/ngày) từ lượt Bot gọi API; "
+            "nếu dùng chung Key ở nơi khác xem chính xác tại</i> <code>aistudio.google.com/rate-limit</code>."
+        )
         return "\n".join(lines)

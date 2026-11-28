@@ -490,10 +490,12 @@ def answer_with_gemini_detailed(
     total_prompt = 0
     total_out = 0
     total_tok = 0
+    api_requests = 0
     model_used = cfg.get("gemini_model", "gemini-3.5-flash-lite")
 
     for _ in range(MAX_TOOL_ROUNDS):
         resp = _call_gemini(contents, sys_inst, cfg)
+        api_requests += 1
         if resp.get("_model_used"):
             model_used = str(resp["_model_used"])
         um = resp.get("usageMetadata") if isinstance(resp.get("usageMetadata"), dict) else {}
@@ -517,6 +519,7 @@ def answer_with_gemini_detailed(
                         "prompt_tokens": total_prompt,
                         "output_tokens": total_out,
                         "total_tokens": total_tok or (total_prompt + total_out),
+                        "api_requests": api_requests,
                     },
                 }
             break

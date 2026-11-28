@@ -85,7 +85,10 @@ def get_biz_config(env_file: str | None = None) -> dict[str, str]:
         "qa_log_file": env.get("FNB_BIZ_QA_LOG_FILE", "/var/lib/fnb-biz-alerts/biz-qa-log.jsonl").strip() or "/var/lib/fnb-biz-alerts/biz-qa-log.jsonl",
         "token_stats_file": env.get("FNB_BIZ_TOKEN_STATS_FILE", "/var/lib/fnb-biz-alerts/biz-token-stats.json").strip() or "/var/lib/fnb-biz-alerts/biz-token-stats.json",
         "staff_tg_map_raw": env.get("FNB_BIZ_STAFF_TELEGRAM_MAP", "").strip(),
-        "gemini_rpd_limit": env.get("FNB_GEMINI_RPD_LIMIT", "").strip(),
+        "gemini_tier_name": env.get("FNB_GEMINI_TIER_NAME", "Free Tier").strip() or "Free Tier",
+        "gemini_rpd_limit": env.get("FNB_GEMINI_RPD_LIMIT", "500").strip() or "500",
+        "gemini_rpm_limit": env.get("FNB_GEMINI_RPM_LIMIT", "15").strip() or "15",
+        "gemini_tpm_limit": env.get("FNB_GEMINI_TPM_LIMIT", "250000").strip() or "250000",
         "gemini_daily_token_budget": env.get("FNB_GEMINI_DAILY_TOKEN_BUDGET", "").strip(),
     }
 

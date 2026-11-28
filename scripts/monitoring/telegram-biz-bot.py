@@ -635,6 +635,7 @@ def main() -> int:
                             raw_q=raw_text,
                             trigger=str(res.get("trigger_mode") or ""),
                             model_used=str(res.get("model_used") or ""),
+                            api_requests=int(usage.get("api_requests") or 0),
                         )
                         print(
                             f"[biz-bot] replied msg_id={msg_id} route={res.get('route')} trigger={res.get('trigger_mode')} tokens={usage.get('total_tokens', 0)} chars={len(reply_html)}",

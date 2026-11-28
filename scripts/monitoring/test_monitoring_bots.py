@@ -705,10 +705,10 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
             with mock.patch.object(bot2_mod, "probe_gemini_status", return_value=fake_probe):
                 tok_res = bot2_mod.dispatch_message_detailed("/token", cfg=cfg, rate_limiter=limiter, telemetry=telemetry, msg=user_msg)
             assert tok_res is not None
-            self.assertIn("⚡ Cục bộ 0-token <b>2</b>", tok_res["text"])
-            self.assertIn("Reset ngày Google", tok_res["text"])
-            self.assertIn("Key đang hoạt động", tok_res["text"])
-            self.assertIn("100%", tok_res["text"])
+            self.assertIn("Hoạt động bình thường", tok_res["text"])
+            self.assertIn("Tự reset về 0 sau:", tok_res["text"])
+            self.assertIn("<b>2 câu miễn phí 0-token</b>", tok_res["text"])
+            self.assertIn("Tiết kiệm 100%", tok_res["text"])
             log_lines = Path(log_file).read_text(encoding="utf-8").strip().splitlines()
             self.assertEqual(len(log_lines), 2)
 
@@ -880,7 +880,7 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
             ],
         }
         tel = biz_bot_state.TelemetryStore()
-        tel.record_interaction("q", "a", "gemini", prompt_tokens=9000, output_tokens=1000, total_tokens=10000, now_dt=vn_dt, model_used="gemini-3.5-flash-lite")
+        tel.record_interaction("q", "a", "gemini", prompt_tokens=9000, output_tokens=1000, total_tokens=10000, now_dt=vn_dt, model_used="gemini-3.5-flash-lite", api_requests=2)
         tel.record_gemini_error(429, "RESOURCE_EXHAUSTED retry in 30s", now_dt=vn_dt)
         with (
             mock.patch.object(biz_bot_local, "probe_gemini_status", return_value=fake_probe_ok),
@@ -897,9 +897,10 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
             m_ai_q.assert_not_called()
         for res_q in (nat_tok, gem_cmd):
             assert res_q is not None
-            self.assertIn("Key đang hoạt động", res_q["text"])
-            self.assertIn("1/1.500 lượt", res_q["text"])
-            self.assertIn("990.000 token", res_q["text"])
+            self.assertIn("Hoạt động bình thường", res_q["text"])
+            self.assertIn("2 / 1.500 lượt gọi API", res_q["text"])
+            self.assertIn("~1.498 / 1.500 lượt API", res_q["text"])
+            self.assertIn("990.000 / 1.000.000 token", res_q["text"])
             self.assertIn("HTTP 429", res_q["text"])
 
 
