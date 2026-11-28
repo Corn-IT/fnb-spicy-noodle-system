@@ -23,7 +23,7 @@ import json, sys, time, urllib.request
 url = sys.argv[1]
 t0 = time.monotonic()
 try:
-    req = urllib.request.Request(url, headers={"User-Agent": "LonaPOS-HealthProbe/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "AnVatTran-HealthProbe/1.0"})
     with urllib.request.urlopen(req, timeout=8) as resp:
         ms = int((time.monotonic() - t0) * 1000)
         body = json.loads(resp.read().decode("utf-8"))

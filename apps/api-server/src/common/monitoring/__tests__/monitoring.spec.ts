@@ -28,7 +28,7 @@ describe('MonitoringModule & TelegramAlertService', () => {
       NODE_ENV: 'production',
       FNB_TELEGRAM_BOT_TOKEN: '123456:TEST-TOKEN',
       FNB_TELEGRAM_CHAT_ID: '-100999888777',
-      FNB_ALERT_PROJECT_NAME: 'LonaPOS',
+      FNB_ALERT_PROJECT_NAME: 'Ăn Vặt Tran',
       FNB_ALERT_SOURCE_NAME: 'FNB_POS_API',
       FNB_ALERT_SLOW_MS: '3000',
       FNB_ALERT_RAM_DIFF_MB: '64',
@@ -48,7 +48,7 @@ describe('MonitoringModule & TelegramAlertService', () => {
     expect(defaults).toMatchObject({
       botToken: '',
       chatId: '',
-      projectName: 'LonaPOS',
+      projectName: 'Ăn Vặt Tran',
       sourceName: 'FNB_POS_API',
       envLabel: 'DEVELOPMENT',
       slowMs: 3000,
@@ -210,7 +210,7 @@ describe('MonitoringModule & TelegramAlertService', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sentPayloads[0]?.chat_id).toBe('-100999888777');
-    expect(sentPayloads[0]?.text).toContain('🚀 <b>[LonaPOS] CẢNH BÁO HIỆU NĂNG</b>');
+    expect(sentPayloads[0]?.text).toContain('🚀 <b>[Ăn Vặt Tran] CẢNH BÁO HIỆU NĂNG</b>');
     expect(sentPayloads[0]?.text).toContain('🐢 Chậm · 💾 RAM tăng · ⚙️ CPU cao');
     expect(sentPayloads[0]?.text).toContain('/api/v1/public/menu?token=[REDACTED]');
     expect(sentPayloads[0]?.text).not.toContain('super-secret-token');
@@ -309,7 +309,7 @@ describe('MonitoringModule & TelegramAlertService', () => {
 
     const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { text: string; parse_mode?: string };
     expect(firstBody.parse_mode).toBe('HTML');
-    expect(firstBody.text).toContain('🔥 <b>[LonaPOS] LỖI SERVER HTTP 500</b>');
+    expect(firstBody.text).toContain('🔥 <b>[Ăn Vặt Tran] LỖI SERVER HTTP 500</b>');
     expect(firstBody.text).toContain('PrismaClientKnownRequestError: deadlock detected');
     expect(firstBody.text).toContain('• Handler: <code>PosController.checkoutOrder</code>');
 
