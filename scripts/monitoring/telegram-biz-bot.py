@@ -16,7 +16,13 @@ import sys
 import time
 from typing import Any, Callable
 
-from biz_bot_ai import AiRateLimiter, GeminiApiError, answer_with_gemini_detailed, probe_gemini_status
+from biz_bot_ai import (
+    AiRateLimiter,
+    GeminiApiError,
+    answer_with_gemini_detailed,
+    get_model_runtime_states,
+    probe_gemini_status,
+)
 from biz_bot_common import (
     extract_third_party_mentions,
     format_sender_mention,
@@ -272,6 +278,7 @@ def dispatch_message_detailed(
                 project_name=cfg.get("project_name", "Ăn Vặt Tran"),
                 cfg=cfg,
                 live_probe=live,
+                runtime_states=get_model_runtime_states(),
             )
             return {
                 "text": _wrap_reply_text(body, header_tag, "command"),
@@ -636,6 +643,8 @@ def main() -> int:
                             trigger=str(res.get("trigger_mode") or ""),
                             model_used=str(res.get("model_used") or ""),
                             api_requests=int(usage.get("api_requests") or 0),
+                            model_requests=usage.get("model_requests") if isinstance(usage.get("model_requests"), dict) else None,
+                            model_tokens=usage.get("model_tokens") if isinstance(usage.get("model_tokens"), dict) else None,
                         )
                         print(
                             f"[biz-bot] replied msg_id={msg_id} route={res.get('route')} trigger={res.get('trigger_mode')} tokens={usage.get('total_tokens', 0)} chars={len(reply_html)}",

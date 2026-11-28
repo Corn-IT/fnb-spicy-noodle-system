@@ -903,6 +903,105 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
             self.assertIn("990.000 / 1.000.000 token", res_q["text"])
             self.assertIn("HTTP 429", res_q["text"])
 
+    def test_multi_pool_failover_rpm_overflow_and_dashboard(self) -> None:
+        biz_bot_ai.reset_ai_runtime_state()
+        try:
+            cfg = self._base_cfg()
+            cfg["gemini_fallback_model"] = "gemini-3.1-flash-lite"
+            cfg["gemini_model_pool"] = ",".join(biz_bot_common.DEFAULT_GEMINI_MODEL_POOL)
+
+            # 1. Pool resolution deduplicates alias & provides 1,080 RPD (500 + 500 + 4*20)
+            specs = biz_bot_common.get_gemini_pool_specs(cfg)
+            self.assertEqual([s["model"] for s in specs], list(biz_bot_common.DEFAULT_GEMINI_MODEL_POOL))
+            self.assertEqual(sum(s["rpd"] for s in specs), 1080)
+            alias_cfg = dict(cfg)
+            alias_cfg["gemini_fallback_model"] = "gemini-flash-lite-latest"
+            self.assertEqual(biz_bot_common.resolve_gemini_model_pool(alias_cfg)[1], "gemini-3.1-flash-lite")
+
+            # 2. Proactive RPM overflow: after 11 calls in <60s on 3.5-flash-lite, prefer 3.1-flash-lite automatically
+            for _ in range(11):
+                biz_bot_ai._record_model_rpm("gemini-3.5-flash-lite")
+            ordered_busy = biz_bot_ai._select_ordered_models(cfg)
+            self.assertEqual(ordered_busy[0], "gemini-3.1-flash-lite")
+            self.assertEqual(ordered_busy[1], "gemini-3-flash-preview")
+            self.assertIn("gemini-3.5-flash-lite", ordered_busy)
+
+            # 3. Real failover: 429 PerDay on 3.5-flash-lite cascades smoothly to 3.1-flash-lite without losing reply
+            biz_bot_ai.reset_ai_runtime_state()
+            tried_urls: list[str] = []
+
+            class FakeHttpResp:
+                def __init__(self, body: dict) -> None:
+                    self._raw = json.dumps(body).encode("utf-8")
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self):
+                    return self._raw
+
+            def fake_urlopen(req, timeout=18):
+                tried_urls.append(req.full_url)
+                if "gemini-3.5-flash-lite:" in req.full_url:
+                    import io
+                    raise biz_bot_ai.urllib.error.HTTPError(
+                        req.full_url,
+                        429,
+                        "Too Many Requests",
+                        {},
+                        io.BytesIO(b'{"error":{"code":429,"message":"GenerateRequestsPerDayPerProjectPerModel exceeded"}}'),
+                    )
+                return FakeHttpResp({
+                    "candidates": [{"content": {"parts": [{"text": "Hôm nay <b>Mì Bò Mỹ</b> bán chạy nhất."}]}}],
+                    "usageMetadata": {"promptTokenCount": 1800, "candidatesTokenCount": 40, "totalTokenCount": 1840},
+                })
+
+            with mock.patch.object(biz_bot_ai.urllib.request, "urlopen", side_effect=fake_urlopen):
+                ai_out = biz_bot_ai.answer_with_gemini_detailed("Món nào bán chạy nhất tuần vừa qua kèm đánh giá?", cfg=cfg)
+            self.assertEqual(ai_out["model_used"], "gemini-3.1-flash-lite")
+            self.assertEqual(ai_out["usage"]["model_requests"], {"gemini-3.1-flash-lite": 1})
+            self.assertIn("Mì Bò Mỹ", ai_out["text"])
+            # Subsequent call skips daily-exhausted 3.5-flash-lite immediately without wasting another 429 attempt!
+            self.assertNotEqual(biz_bot_ai._select_ordered_models(cfg)[0], "gemini-3.5-flash-lite")
+            self.assertEqual(biz_bot_ai._select_ordered_models(cfg)[0], "gemini-3.1-flash-lite")
+
+            # 4. Telemetry & /token multi-pool dashboard + 0-token natural follow-up
+            tel = biz_bot_state.TelemetryStore()
+            tel.record_interaction(
+                "Hỏi phân tích",
+                ai_out["text"],
+                "gemini",
+                prompt_tokens=1800,
+                output_tokens=40,
+                total_tokens=1840,
+                model_used="gemini-3.1-flash-lite",
+                api_requests=1,
+                model_requests={"gemini-3.1-flash-lite": 1},
+                model_tokens={"gemini-3.1-flash-lite": 1840},
+            )
+            with (
+                mock.patch.object(biz_bot_local, "probe_gemini_status", return_value={"configured": True, "key_valid": True, "models": []}),
+                mock.patch.object(bot2_mod, "probe_gemini_status", return_value={"configured": True, "key_valid": True, "models": []}),
+            ):
+                rep = bot2_mod.dispatch_message_detailed(
+                    "Lona ơi còn bao nhiêu lượt hỏi Gemini và model dự phòng sao rồi?",
+                    cfg=cfg,
+                    rate_limiter=biz_bot_ai.AiRateLimiter(),
+                    telemetry=tel,
+                )
+            assert rep is not None
+            self.assertIn("1.080 lượt API/ngày từ 6 model", rep["text"])
+            self.assertIn("~1.079 / 1.080 lượt API", rep["text"])
+            self.assertIn("30 lượt/phút", rep["text"])
+            self.assertIn("500K token/phút", rep["text"])
+            self.assertIn("1/500", rep["text"])
+            self.assertIn("Hết lượt ngày", rep["text"])
+        finally:
+            biz_bot_ai.reset_ai_runtime_state()
+
 
 if __name__ == "__main__":
     unittest.main()
