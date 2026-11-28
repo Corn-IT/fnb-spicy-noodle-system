@@ -3,12 +3,17 @@ import {
   Catch,
   HttpException,
   HttpStatus,
+  Inject,
   Logger,
+  Optional,
   type ArgumentsHost,
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { ApiErrorResponse } from '@fnb/shared';
+import type { Request } from 'express';
 import type { RequestWithId } from '../middleware/request-id.middleware';
+import { TelegramAlertService } from '../monitoring/telegram-alert.service';
+import { extractClientIp } from '../security/client-info.util';
 import { redactSensitiveUrl } from '../security/redact.util';
 
 type ErrorPayload = {
@@ -17,13 +22,21 @@ type ErrorPayload = {
   message?: unknown;
 };
 
+type MonitoredRequestWithId = RequestWithId & {
+  __routeHandler?: string;
+};
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
 
+  constructor(
+    @Optional() @Inject(TelegramAlertService) private readonly telegramAlert?: TelegramAlertService,
+  ) {}
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
-    const request = http.getRequest<RequestWithId>();
+    const request = http.getRequest<MonitoredRequestWithId>();
     const response = http.getResponse<{ status: (statusCode: number) => { json: (body: ApiErrorResponse) => void } }>();
     const httpError = exception as { statusCode?: unknown; status?: unknown; type?: unknown } | undefined;
     const rawHttpStatus =
@@ -69,6 +82,23 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const stack = exception instanceof Error ? exception.stack : undefined;
     const safePath = redactSensitiveUrl(request.url);
     this.logger.error(`Request failed: requestId=${requestId ?? 'unknown'} path=${safePath} method=${request.method}`, stack);
+
+    if (statusCode >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      const errorSummary =
+        exception instanceof Error
+          ? `${exception.name}: ${exception.message}`
+          : String(exception ?? 'Internal server error');
+      this.telegramAlert?.reportServerError({
+        statusCode,
+        method: request.method ?? 'GET',
+        url: (request as { originalUrl?: string }).originalUrl ?? request.url ?? '',
+        handler: request.__routeHandler ?? 'ExceptionFilter',
+        errorSummary,
+        clientIp: extractClientIp(request as Request),
+        requestId,
+      });
+    }
+
     response.status(statusCode).json(errorResponse);
   }
 }
