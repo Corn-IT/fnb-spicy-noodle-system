@@ -144,14 +144,55 @@ IFS='|' read -r vps_badge vps_cpus vps_cpu_pct load_1m_5m vps_ram_str vps_swap_s
 docker_cache_line="$(docker system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' 2>/dev/null | awk -F'|' '$1=="Build Cache" {print $2 " (dọn được " $3 ")"}' || true)"
 [[ -z "${docker_cache_line}" ]] && docker_cache_line="0B"
 
-# 4. Container health & memory usage
-docker_stats_text="$(docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' | grep 'fnb-pos-' | while IFS=$'\t' read -r cname mem; do
+# 4. Container health, individual stats, and combined POS footprint vs total VPS RAM
+docker_stats_raw="$(docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}' | grep 'fnb-pos-' || true)"
+docker_stats_text=""
+pos_sum_info="$(python3 - "${docker_stats_raw}" "${vps_ram_str}" <<'PY'
+import re, sys
+
+raw_lines = [l for l in sys.argv[1].splitlines() if l.strip()]
+vps_ram_str = sys.argv[2]
+# Extract total GiB from e.g. "0.94/3.8 GiB (24%)"
+m_tot = re.search(r'/([0-9.]+)\s*GiB', vps_ram_str)
+vps_total_mib = float(m_tot.group(1)) * 1024 if m_tot else 3916.0
+
+def to_mib(val_str: str) -> float:
+    m = re.match(r'^([0-9.]+)\s*([A-Za-z]+)$', val_str.strip())
+    if not m:
+        return 0.0
+    num, unit = float(m.group(1)), m.group(2).lower()
+    if unit.startswith('g'):
+        return num * 1024.0
+    if unit.startswith('k'):
+        return num / 1024.0
+    return num
+
+total_cpu = 0.0
+total_mib = 0.0
+for line in raw_lines:
+    parts = line.split('|')
+    if len(parts) != 3:
+        continue
+    cpu_val = float(parts[1].replace('%', '').strip() or 0)
+    used_part = parts[2].split('/')[0].strip()
+    total_cpu += cpu_val
+    total_mib += to_mib(used_part)
+
+ram_share_pct = (total_mib * 100.0 / vps_total_mib) if vps_total_mib > 0 else 0.0
+print(f"{total_mib:.1f} MiB ({ram_share_pct:.1f}% RAM VPS)|{total_cpu:.1f}%")
+PY
+)"
+IFS='|' read -r pos_ram_total_str pos_cpu_total_str <<<"${pos_sum_info}"
+
+docker_stats_text="$(while IFS='|' read -r cname ccpu cmem; do
+  [[ -z "${cname}" ]] && continue
   short="${cname#fnb-pos-}"
   short="${short%-1}"
   st="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cname}" 2>/dev/null || echo 'unknown')"
-  mem_used="${mem%%/*}"
-  echo "• <code>${short}</code>: ${st} (${mem_used// /})"
-done || echo '• Không lấy được dữ liệu')"
+  mem_used="${cmem%%/*}"
+  echo "• <code>${short}</code>: ${st} (${mem_used// /} · CPU ${ccpu})"
+done <<<"${docker_stats_raw}")"
+[[ -z "${docker_stats_text}" ]] && docker_stats_text="• Không lấy được dữ liệu"
 
 # 5. Lightweight daily POS activity snapshot (VN timezone day)
 pos_counts="$(docker compose exec -T postgres psql -U postgres -d fnb_pos -Atc "
@@ -172,7 +213,7 @@ ${health_summary}
 🌐 Tên miền: <code>${domain_html}</code>
 🕒 Lúc: $(vn_timestamp)
 
-<b>2. Tình trạng tài nguyên VPS</b>
+<b>2. Tài nguyên toàn VPS</b>
 • Đánh giá: <b>${vps_badge}</b>
 • CPU (${vps_cpus} vCPU): <b>${vps_cpu_pct}</b>
 • Load (1m/5m): ${load_1m_5m}
@@ -182,7 +223,8 @@ ${health_summary}
 • Build Cache: ${docker_cache_line}
 • Uptime VPS: ${vps_uptime_str}
 
-<b>3. Container Docker</b>
+<b>3. Hệ thống POS (Docker)</b>
+• Tổng POS chiếm: <b>${pos_ram_total_str}</b> · CPU <b>${pos_cpu_total_str}</b>
 ${docker_stats_text}
 
 <b>4. Tiến trình API</b>
