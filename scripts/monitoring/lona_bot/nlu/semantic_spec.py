@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -84,15 +85,14 @@ def load_semantic_spec() -> dict[str, Any]:
 
 
 def has_phrase(haystack: str, phrases: list[str] | tuple[str, ...]) -> bool:
-    """Boundary-aware substring/token match over normalized lowercase ASCII text."""
-    padded = f" {haystack} "
+    """Boundary-aware word/phrase match over normalized lowercase ASCII text."""
+    clean_hay = re.sub(r"[?!.,;:()\[\]{}\"'`]+", " ", haystack)
+    clean_hay = re.sub(r"\s+", " ", clean_hay).strip()
+    padded = f" {clean_hay} "
     for raw in phrases:
         phrase = strip_vi(str(raw or ""))
         if not phrase:
             continue
-        if " " in phrase:
-            if phrase in haystack:
-                return True
-        elif f" {phrase} " in padded:
+        if f" {phrase} " in padded:
             return True
     return False

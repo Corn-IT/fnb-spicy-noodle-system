@@ -111,9 +111,9 @@ function buildFallbackSuggestions(
   return chips.slice(0, 6);
 }
 
-/** XSS-safe inline formatter for lightweight **bold** and <b>...</b> segments returned by Lona. */
+/** XSS-safe inline formatter for lightweight **bold**, <b>...</b>, and `code` segments returned by Lona. */
 function renderFormattedInline(text: string): React.ReactNode[] {
-  const parts = text.split(/(\*\*[^*]+\*\*|<b>[^<]+<\/b>)/g);
+  const parts = text.split(/(\*\*[^*]+\*\*|<b>[^<]+<\/b>|`[^`]+`)/g);
   return parts.map((segment, index) => {
     if (segment.startsWith('**') && segment.endsWith('**') && segment.length > 4) {
       return (
@@ -127,6 +127,16 @@ function renderFormattedInline(text: string): React.ReactNode[] {
         <strong key={index} className="font-semibold text-foreground">
           {segment.slice(3, -4)}
         </strong>
+      );
+    }
+    if (segment.startsWith('`') && segment.endsWith('`') && segment.length > 2) {
+      return (
+        <code
+          key={index}
+          className="rounded bg-background/70 px-1 py-0.5 font-mono text-[12px] font-medium text-foreground"
+        >
+          {segment.slice(1, -1)}
+        </code>
       );
     }
     return <React.Fragment key={index}>{segment}</React.Fragment>;

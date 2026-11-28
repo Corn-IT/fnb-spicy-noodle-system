@@ -32,7 +32,7 @@ export const WEB_GEMINI_POOL: readonly GeminiPoolModelSpec[] = [
 ] as const;
 
 const SOFT_RPM_OVERFLOW_THRESHOLD = 11;
-const MAX_TOOL_ROUNDS = 4;
+const MAX_TOOL_ROUNDS = 5;
 
 interface ModelCooldown {
   untilMs: number;
@@ -285,6 +285,22 @@ export class GeminiMultiPoolService {
       });
     }
 
+    if (principal.isSuperAdmin || principal.permissions.invoices.view || principal.permissions.pos.view) {
+      decls.push({
+        name: 'get_recent_orders_and_counts',
+        description: 'Đếm số lượng đơn hàng theo loại (DINE_IN tại bàn, TAKEAWAY mang về) & trạng thái, kèm danh sách N đơn gần nhất theo giờ Việt Nam.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            from_date: { type: 'STRING', description: 'YYYY-MM-DD (giờ VN)' },
+            to_date: { type: 'STRING', description: 'YYYY-MM-DD (giờ VN)' },
+            order_type: { type: 'STRING', description: 'Tùy chọn: TAKEAWAY hoặc DINE_IN (bỏ trống lấy tất cả)' },
+            limit: { type: 'INTEGER', description: 'Số đơn gần nhất cần trả về (1..20, mặc định 5)' },
+          },
+        },
+      });
+    }
+
     if (principal.isSuperAdmin || principal.permissions.payroll.view) {
       decls.push({
         name: 'get_payroll_summary',
@@ -375,6 +391,57 @@ export class GeminiMultiPoolService {
           }),
         ]);
         return { ok: true, preview, settlements };
+      }
+      if (name === 'get_recent_orders_and_counts') {
+        const fromStr = typeof args.from_date === 'string' && args.from_date ? args.from_date : businessDateString(new Date());
+        const toStr = typeof args.to_date === 'string' && args.to_date ? args.to_date : fromStr;
+        const start = new Date(`${fromStr}T00:00:00+07:00`);
+        const endBase = new Date(`${toStr}T00:00:00+07:00`);
+        const end = new Date(endBase.getTime() + 24 * 3600 * 1000);
+        const rawType = typeof args.order_type === 'string' ? args.order_type.toUpperCase() : '';
+        const orderType = rawType === 'TAKEAWAY' || rawType === 'DINE_IN' ? rawType : undefined;
+        const limit = Math.min(20, Math.max(1, Number(args.limit ?? 5) || 5));
+        const allRows = await this.prisma.order.findMany({
+          where: {
+            createdAt: { gte: start, lt: end },
+            ...(orderType ? { orderType } : {}),
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: 5000,
+          select: {
+            orderCode: true,
+            orderType: true,
+            takeawayNumber: true,
+            status: true,
+            totalAmount: true,
+            createdAt: true,
+            table: { select: { name: true } },
+          },
+        });
+        const nonVoid = allRows.filter((r) => r.status !== 'VOIDED');
+        return {
+          ok: true,
+          fromDate: fromStr,
+          toDate: toStr,
+          filterOrderType: orderType ?? 'ALL',
+          counts: {
+            activeTotal: nonVoid.length,
+            takeaway: nonVoid.filter((r) => r.orderType === 'TAKEAWAY').length,
+            dineIn: nonVoid.filter((r) => r.orderType === 'DINE_IN').length,
+            paid: nonVoid.filter((r) => r.status === 'PAID').length,
+            serving: nonVoid.filter((r) => r.status === 'SERVING').length,
+            pending: nonVoid.filter((r) => r.status === 'PENDING').length,
+            voided: allRows.length - nonVoid.length,
+          },
+          recentOrders: nonVoid.slice(0, limit).map((r) => ({
+            orderCode: r.orderCode,
+            orderType: r.orderType,
+            tableOrTakeaway: r.table?.name ?? (r.takeawayNumber ? `Mang về #${r.takeawayNumber}` : 'Mang về'),
+            status: r.status,
+            totalAmount: Number(r.totalAmount ?? 0),
+            createdAt: r.createdAt,
+          })),
+        };
       }
       if (name === 'get_payroll_summary' && this.payrollService) {
         const summary = await this.payrollService.getPayrollSummary({
@@ -471,16 +538,34 @@ export class GeminiMultiPoolService {
     }
 
     const todayIso = businessDateString(now);
+    const schemaCheatSheet = params.principal.isSuperAdmin
+      ? [
+          `SCHEMA POSTGRESQL (mọi ngày lọc theo giờ VN +07:00, VD: (created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = '${todayIso}', KHÔNG dùng DATE(created_at) UTC):`,
+          `- orders(id, order_code, order_type ['DINE_IN'|'TAKEAWAY'], order_source ['POS'|'QR'], table_id, takeaway_number, status ['PENDING'|'SERVING'|'PAID'|'VOIDED'], payment_method ['CASH'|'TRANSFER'|'SPLIT'], total_amount, cash_amount, transfer_amount, discount_amount, cashier_id, created_at, paid_at)`,
+          `- order_items(id, order_id, product_id, quantity, unit_price, subtotal_amount, kitchen_status ['NEW'|'PRINTED'|'CANCELLED'], batch_no, created_at)`,
+          `- products(id, name, price, category_id, station ['BEP_NAU'|'BEP_CHIEN'|'PHA_CHE'|'COMBO'], is_available)`,
+          `- dining_tables(id, name, status ['AVAILABLE'|'OCCUPIED'|'PENDING'], active_order_id)`,
+          `- cash_drawer_settlements, inventory_imports, work_schedules, payroll_adjustments, audit_logs, discounts, payment_accounts, users, employees, v_bot_master_data`,
+        ].join('\n')
+      : '';
+
     const systemInstruction = [
       `Bạn là Lona — Trợ lý AI thông minh trên Web POS của Quán Mì Cay Ăn Vặt Tran.`,
       `Hôm nay là ${todayIso} (giờ VN +07:00).`,
       `XƯNG HÔ BẮT BUỘC: Tự xưng "${params.persona.botSelf}" và gọi người hỏi là "${params.persona.userCall}" tự nhiên, lịch sự (tuyệt đối KHÔNG tự xưng "Tôi").`,
-      `Chỉ trả lời dựa trên kết quả tool theo đúng quyền RBAC hiện tại (${params.principal.isSuperAdmin ? 'Super Admin' : 'Nhân viên/Quản lý phân quyền'}). Không bịa số liệu, không xuất block code lập trình, không tiết lộ secrets.`,
-    ].join('\n');
+      `NGUYÊN TẮC TRẢ LỜI CHÍNH XÁC:`,
+      `1. Trả lời ĐÚNG TRỌNG TÂM vào câu hỏi ngay dòng đầu, ngắn gọn, rõ số liệu thực tế từ tool (không lan man).`,
+      `2. TUYỆT ĐỐI KHÔNG tự đoán số liệu bằng 0 khi chưa gọi tool đúng ngữ nghĩa (với đơn hàng/mang về/tại bàn, gọi get_recent_orders_and_counts hoặc run_readonly_sql nếu là Super Admin).`,
+      `3. KHÔNG lộ tên cột, tên bảng hoặc mã enum nội bộ (như TAKEAWAY, DINE_IN, order_type) bằng dấu backtick trong câu trả lời nghiệp vụ — hãy viết tiếng Việt tự nhiên ("đơn mang về", "đơn tại bàn").`,
+      `4. Chỉ trả lời dựa trên kết quả tool theo đúng quyền RBAC hiện tại (${params.principal.isSuperAdmin ? 'Super Admin' : 'Nhân viên/Quản lý phân quyền'}). Không bịa số liệu, không xuất block code lập trình, không tiết lộ secrets.`,
+      schemaCheatSheet,
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     const contents: Array<Record<string, unknown>> = (params.history ?? []).slice(-6).map((t) => ({
       role: t.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: t.text.slice(0, 350) }],
+      parts: [{ text: t.text.slice(0, 900) }],
     }));
     contents.push({ role: 'user', parts: [{ text: `<user_question>\n${params.question}\n</user_question>` }] });
 
@@ -494,6 +579,7 @@ export class GeminiMultiPoolService {
       const models = this.selectOrderedModels(nowMs);
       let respJson: Record<string, unknown> | null = null;
       let lastError = 'Không kết nối được Gemini API.';
+      const isFinalSynthesisRound = round === MAX_TOOL_ROUNDS - 1;
 
       for (const model of models) {
         this.recordRpm(model, Date.now());
@@ -502,17 +588,20 @@ export class GeminiMultiPoolService {
         modelUsed = model;
 
         try {
+          const payloadBody: Record<string, unknown> = {
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            contents,
+            generationConfig: { temperature: 0.15, maxOutputTokens: 1000 },
+          };
+          if (!isFinalSynthesisRound && tools.length > 0) {
+            payloadBody.tools = [{ functionDeclarations: tools }];
+          }
           const res = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                systemInstruction: { parts: [{ text: systemInstruction }] },
-                contents,
-                tools: [{ functionDeclarations: tools }],
-                generationConfig: { temperature: 0.15, maxOutputTokens: 1000 },
-              }),
+              body: JSON.stringify(payloadBody),
             },
           );
           if (!res.ok) {
