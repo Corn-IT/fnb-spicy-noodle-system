@@ -717,6 +717,19 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
             assert price_res is not None
             self.assertIn("25.000đ", price_res["text"])
 
+        # Specific physical table lookup matches in Python (avoiding PG regex \b bug)
+        tbl_rows = [
+            {"table_name": "Bàn 01", "status": "AVAILABLE", "order_id": None, "order_code": None, "total_amount": 0, "since_hm": None},
+            {"table_name": "Bàn 05", "status": "OCCUPIED", "order_id": 91, "order_code": "HD-91", "total_amount": 135000, "since_hm": "14:20"},
+        ]
+        tbl_items = [{"name": "Mì Bò Mỹ", "quantity": 2, "kitchen_status": "PRINTED"}]
+        with mock.patch.object(biz_bot_local, "run_readonly_sql_json", side_effect=[tbl_rows, tbl_items]):
+            tbl_res = biz_bot_local.try_answer_locally("Bàn 05 đang gọi gì?", cfg=cfg)
+        assert tbl_res is not None
+        self.assertIn("Bàn 05", tbl_res["text"])
+        self.assertIn("HD-91", tbl_res["text"])
+        self.assertIn("2x Mì Bò Mỹ", tbl_res["text"])
+
         # Off-topic coding question via wake-word blocked at 0 tokens cleanly
         limiter = biz_bot_ai.AiRateLimiter()
         with mock.patch.object(bot2_mod, "answer_with_gemini_detailed") as m_ai:
