@@ -22,7 +22,7 @@ try:
 except Exception:
     LA_TZ = dt.timezone(dt.timedelta(hours=-8))
 
-from biz_bot_common import VN_TZ, fmt_vnd, vn_now
+from biz_bot_common import VN_TZ, canonical_gemini_model, fmt_vnd, get_gemini_pool_specs, vn_now
 
 MAX_HISTORY_TURNS = 4
 HISTORY_TTL_SEC = 600
@@ -213,6 +213,7 @@ def _empty_bucket() -> dict[str, Any]:
         "gemini_prompt_tokens": 0,
         "gemini_output_tokens": 0,
         "gemini_total_tokens": 0,
+        "models": {},
     }
 
 
@@ -276,6 +277,16 @@ class TelemetryStore:
                 p_b["gemini_prompt_tokens"] = int(d_b.get("gemini_prompt_tokens", 0) or 0)
                 p_b["gemini_output_tokens"] = int(d_b.get("gemini_output_tokens", 0) or 0)
                 p_b["gemini_total_tokens"] = int(d_b.get("gemini_total_tokens", 0) or 0)
+            if int(p_b.get("gemini_calls", 0) or 0) > 0 and not isinstance(p_b.get("models"), dict):
+                p_b["models"] = {}
+            if int(p_b.get("gemini_calls", 0) or 0) > 0 and not p_b.get("models"):
+                p_b["models"] = {
+                    "gemini-3.5-flash-lite": {
+                        "calls": int(p_b.get("gemini_calls", 0) or 0),
+                        "api_requests": int(p_b.get("gemini_api_requests") or p_b.get("gemini_calls", 0)),
+                        "tokens": int(p_b.get("gemini_total_tokens", 0) or 0),
+                    }
+                }
         return res
 
     def _save_stats(self) -> None:
@@ -321,12 +332,15 @@ class TelemetryStore:
         trigger: str = "",
         model_used: str = "",
         api_requests: int = 0,
+        model_requests: dict[str, int] | None = None,
+        model_tokens: dict[str, int] | None = None,
     ) -> None:
         now = (now_dt or vn_now()).astimezone(VN_TZ)
         day_key = now.date().isoformat()
         pac_key = google_quota_reset_info(now)["pacific_date"]
         month_key = now.strftime("%Y-%m")
         req_inc = max(1, int(api_requests)) if route == "gemini" else 0
+        canon_used = canonical_gemini_model(model_used or "gemini-3.5-flash-lite")
 
         for bucket_map, key in (
             (self._stats["days"], day_key),
@@ -340,6 +354,19 @@ class TelemetryStore:
                 b["gemini_prompt_tokens"] = int(b.get("gemini_prompt_tokens", 0)) + max(0, int(prompt_tokens))
                 b["gemini_output_tokens"] = int(b.get("gemini_output_tokens", 0)) + max(0, int(output_tokens))
                 b["gemini_total_tokens"] = int(b.get("gemini_total_tokens", 0)) + max(0, int(total_tokens))
+                models_map = b.setdefault("models", {})
+                if model_requests:
+                    for raw_m, cnt in model_requests.items():
+                        cm = canonical_gemini_model(raw_m)
+                        mb = models_map.setdefault(cm, {"calls": 0, "api_requests": 0, "tokens": 0})
+                        mb["calls"] = int(mb.get("calls", 0)) + (1 if cm == canon_used else 0)
+                        mb["api_requests"] = int(mb.get("api_requests", 0)) + max(0, int(cnt))
+                        mb["tokens"] = int(mb.get("tokens", 0)) + max(0, int((model_tokens or {}).get(raw_m, 0)))
+                else:
+                    mb = models_map.setdefault(canon_used, {"calls": 0, "api_requests": 0, "tokens": 0})
+                    mb["calls"] = int(mb.get("calls", 0)) + 1
+                    mb["api_requests"] = int(mb.get("api_requests", 0)) + req_inc
+                    mb["tokens"] = int(mb.get("tokens", 0)) + max(0, int(total_tokens))
             elif route == "guardrail_block" or is_refusal:
                 b["blocked_zero_token"] = int(b.get("blocked_zero_token", 0)) + 1
             else:
@@ -410,6 +437,7 @@ class TelemetryStore:
         now_dt: dt.datetime | None = None,
         cfg: dict[str, str] | None = None,
         live_probe: dict[str, Any] | None = None,
+        runtime_states: dict[str, dict[str, Any]] | None = None,
     ) -> str:
         now = (now_dt or vn_now()).astimezone(VN_TZ)
         reset_info = google_quota_reset_info(now)
@@ -431,47 +459,109 @@ class TelemetryStore:
 
         cfg_eff = cfg or {}
         tier_name = (cfg_eff.get("gemini_tier_name") or "Free Tier").strip()
-        rpd_raw = str(cfg_eff.get("gemini_rpd_limit") or "500")
-        rpm_raw = str(cfg_eff.get("gemini_rpm_limit") or "15")
-        tpm_raw = str(cfg_eff.get("gemini_tpm_limit") or "250000")
-        rpd_limit = int(rpd_raw) if rpd_raw.isdigit() and int(rpd_raw) > 0 else 500
-        rpm_limit = int(rpm_raw) if rpm_raw.isdigit() and int(rpm_raw) > 0 else 15
-        tpm_limit = int(tpm_raw) if tpm_raw.isdigit() and int(tpm_raw) > 0 else 250000
-        tpm_label = f"{tpm_limit // 1000}K" if tpm_limit >= 1000 else str(tpm_limit)
+        pool_specs = get_gemini_pool_specs(cfg_eff)
+        primary_spec = pool_specs[0]
+        total_rpd_limit = sum(int(s["rpd"]) for s in pool_specs)
+        is_multi_pool = len(pool_specs) > 1
 
-        primary_model = cfg_eff.get("gemini_model") or "gemini-3.5-flash-lite"
-        status_line = "• 🟢 <b>Hoạt động bình thường</b> — AI sẵn sàng trả lời"
-        if live_probe is not None:
-            if not live_probe.get("configured"):
-                status_line = "• 🔴 <b>Chưa gắn API Key Gemini</b>"
-            elif not live_probe.get("key_valid"):
-                status_line = "• 🔴 <b>Key lỗi hoặc bị từ chối</b> — Cần kiểm tra lại trên AI Studio"
-            else:
-                models = live_probe.get("models") or []
-                p_m = next((m for m in models if m.get("role") == "Chính"), None)
-                f_m = next((m for m in models if m.get("role") == "Dự phòng"), None)
-                if p_m and not p_m.get("ok"):
-                    code = p_m.get("status_code") or "ERR"
-                    if f_m and f_m.get("ok"):
-                        status_line = f"• 🟠 <b>Model chính tạm nghẽn (HTTP {code})</b> — Đang tự chạy sang bản dự phòng"
-                    else:
-                        status_line = f"• 🔴 <b>Cảnh báo (HTTP {code}):</b> {html.escape(str(p_m.get('error', ''))[:100])}"
-                else:
-                    status_line = f"• 🟢 <b>Hoạt động bình thường</b> — Sẵn sàng trả lời (<code>{html.escape(primary_model)}</code> + dự phòng)"
-
+        # Per-model used requests today (backfill unattributed calls onto primary model cleanly)
         pac_calls = int(pac_b.get("gemini_calls", 0) or 0)
         used_reqs = max(pac_calls, int(pac_b.get("gemini_api_requests") or 0))
-        rem_reqs = max(0, rpd_limit - used_reqs)
+        raw_model_map = pac_b.get("models") if isinstance(pac_b.get("models"), dict) else {}
+        used_by_canon: dict[str, int] = {}
+        for m_name, m_stats in raw_model_map.items():
+            if isinstance(m_stats, dict):
+                cm = canonical_gemini_model(str(m_name))
+                used_by_canon[cm] = used_by_canon.get(cm, 0) + int(m_stats.get("api_requests") or m_stats.get("calls") or 0)
+        attributed_sum = sum(used_by_canon.values())
+        if used_reqs > attributed_sum:
+            p_canon = canonical_gemini_model(str(primary_spec["model"]))
+            used_by_canon[p_canon] = used_by_canon.get(p_canon, 0) + (used_reqs - attributed_sum)
+
+        probe_by_model: dict[str, dict[str, Any]] = {}
+        if live_probe and isinstance(live_probe.get("models"), list):
+            for m_item in live_probe["models"]:
+                probe_by_model[canonical_gemini_model(str(m_item.get("model") or ""))] = m_item
+        rt_map = runtime_states or {}
+
+        status_lines: list[str] = []
+        if live_probe is not None and not live_probe.get("configured"):
+            status_lines.append("• 🔴 <b>Chưa gắn API Key Gemini</b>")
+        elif live_probe is not None and not live_probe.get("key_valid"):
+            status_lines.append("• 🔴 <b>Key lỗi hoặc bị từ chối</b> — Cần kiểm tra lại trên AI Studio")
+        elif not is_multi_pool:
+            p_model = str(primary_spec["model"])
+            p_probe = probe_by_model.get(canonical_gemini_model(p_model))
+            if p_probe and not p_probe.get("ok"):
+                code = p_probe.get("status_code") or "ERR"
+                status_lines.append(f"• 🔴 <b>Cảnh báo (HTTP {code}):</b> {html.escape(str(p_probe.get('error', ''))[:100])}")
+            else:
+                status_lines.append(
+                    f"• 🟢 <b>Hoạt động bình thường</b> — Sẵn sàng trả lời (<code>{html.escape(p_model)}</code>)"
+                )
+        else:
+            def _pool_badge(spec: dict[str, Any]) -> str:
+                cm = str(spec["canonical"])
+                rt = rt_map.get(cm) or {}
+                cd = rt.get("cooldown")
+                if cd:
+                    r = cd.get("reason")
+                    if r == "daily_quota":
+                        return "🔴 Hết lượt ngày"
+                    if r == "rpm_limit":
+                        return f"⏳ Nghỉ {cd.get('remaining_sec', 60)}s"
+                    return "🟠 Tạm nghỉ"
+                pr = probe_by_model.get(cm)
+                if pr and not pr.get("ok"):
+                    return f"🟡 HTTP {pr.get('status_code') or 'ERR'}"
+                return "🟢 Sẵn sàng"
+
+            # Headline summary + Tier 1 primary + peer fast models + Tier 2 Flash backup
+            p_badge = _pool_badge(primary_spec)
+            if p_badge.startswith("🟢"):
+                status_lines.append(f"• 🟢 <b>Hoạt động bình thường</b> — Tự cân bằng tải {len(pool_specs)} model miễn phí")
+            else:
+                any_ready = any(_pool_badge(s).startswith("🟢") for s in pool_specs[1:])
+                if any_ready:
+                    status_lines.append("• 🟠 <b>Model chính tạm bận</b> — Đã tự chuyển sang model dự phòng")
+                else:
+                    status_lines.append("• 🔴 <b>Cảnh báo:</b> Toàn bộ model AI đang tạm nghỉ/quá tải")
+            fast_specs = [s for s in pool_specs if s["tier"] in ("primary", "peer")]
+            backup_specs = [s for s in pool_specs if s["tier"] not in ("primary", "peer")]
+            for s in fast_specs:
+                u = used_by_canon.get(str(s["canonical"]), 0)
+                badge = _pool_badge(s)
+                note = "tự chia tải" if s["tier"] == "peer" else "mặc định"
+                status_lines.append(
+                    f"• {badge} · <code>{html.escape(str(s['model']))}</code>: <b>{_fmt_num(u)}/{_fmt_num(s['rpd'])}</b> ({s['rpm']}/phút · {note})"
+                )
+            if backup_specs:
+                bk_used = sum(used_by_canon.get(str(s["canonical"]), 0) for s in backup_specs)
+                bk_total = sum(int(s["rpd"]) for s in backup_specs)
+                bk_ok = sum(1 for s in backup_specs if _pool_badge(s).startswith("🟢"))
+                bk_icon = "🟢" if bk_ok == len(backup_specs) else ("🟡" if bk_ok > 0 else "🔴")
+                bk_names = ", ".join(str(s["short"]).removesuffix(" Flash") for s in backup_specs)
+                status_lines.append(
+                    f"• {bk_icon} Dự phòng tầng 2 ({len(backup_specs)} model {html.escape(bk_names)}): <b>{_fmt_num(bk_used)}/{_fmt_num(bk_total)} lượt</b> ({bk_ok}/{len(backup_specs)} sẵn sàng)"
+                )
+
+        rem_reqs = max(0, total_rpd_limit - used_reqs)
         pac_tok = int(pac_b.get("gemini_total_tokens", 0) or 0)
         est_low = max(0, rem_reqs // 3)
         est_high = max(0, rem_reqs // 2)
 
+        fast_tier_specs = [s for s in pool_specs if s["tier"] in ("primary", "peer")] or [primary_spec]
+        eff_rpm = sum(int(s["rpm"]) for s in fast_tier_specs)
+        eff_tpm = sum(int(s["tpm"]) for s in fast_tier_specs)
+        eff_tpm_lbl = f"{eff_tpm // 1000}K" if eff_tpm >= 1000 else str(eff_tpm)
+
+        pool_hdr = f"{_fmt_num(total_rpd_limit)} lượt API/ngày từ {len(pool_specs)} model" if is_multi_pool else f"{_fmt_num(total_rpd_limit)} lượt API/ngày"
         lines = [
             f"🤖 <b>[{html.escape(project_name)}] TÌNH TRẠNG AI &amp; HẠN MỨC HÔM NAY</b>",
-            f"🗓 {now.strftime('%H:%M · %d/%m/%Y')} · Gói: <b>{html.escape(tier_name)} ({_fmt_num(rpd_limit)} lượt API/ngày)</b>",
+            f"🗓 {now.strftime('%H:%M · %d/%m/%Y')} · Gói: <b>{html.escape(tier_name)} ({pool_hdr})</b>",
             "────────────────",
             "<b>1. Trạng thái hiện tại</b>",
-            status_line,
+            *status_lines,
         ]
 
         last_err = self._stats.get("last_gemini_error")
@@ -484,8 +574,8 @@ class TelemetryStore:
         lines.extend([
             "",
             "<b>2. Còn hỏi Gemini được bao nhiêu hôm nay?</b>",
-            f"• Đã dùng hôm nay: <b>{_fmt_num(used_reqs)} / {_fmt_num(rpd_limit)} lượt gọi API</b> ({_fmt_num(pac_tok)} token)",
-            f"• <b>Còn lại: ~{_fmt_num(rem_reqs)} / {_fmt_num(rpd_limit)} lượt API</b> (hỏi thêm được khoảng <b>~{est_low}–{est_high} câu AI</b>)",
+            f"• Đã dùng hôm nay: <b>{_fmt_num(used_reqs)} / {_fmt_num(total_rpd_limit)} lượt gọi API</b> ({_fmt_num(pac_tok)} token)",
+            f"• <b>Còn lại: ~{_fmt_num(rem_reqs)} / {_fmt_num(total_rpd_limit)} lượt API</b> (hỏi thêm được khoảng <b>~{est_low}–{est_high} câu AI</b>)",
         ])
 
         tok_budget_raw = str(cfg_eff.get("gemini_daily_token_budget") or "")
@@ -494,10 +584,15 @@ class TelemetryStore:
             rem_tok = max(0, bud - pac_tok)
             lines.append(f"• Ngân sách Token ngày đặt riêng: còn <b>{_fmt_num(rem_tok)} / {_fmt_num(bud)} token</b>")
 
+        rpm_note = (
+            f"tự chia tải giữa {len(fast_tier_specs)} model để tránh báo vàng 429"
+            if len(fast_tier_specs) >= 2
+            else "nếu vượt chỉ cần đợi 60 giây"
+        )
         lines.extend([
             "• 💡 <i>Mọi câu xử lý ⚡ 0-token (lệnh, số liệu, món bán chạy...) thì hỏi thoải mái, <b>không giới hạn số lần</b>.</i>",
             f"• ⏳ Tự reset về 0 sau: <b>{reset_info['countdown_str']}</b> (vào <b>{reset_info['reset_vn_str']}</b>)",
-            f"• ⚡ Giới hạn nhanh theo phút: tối đa <b>{rpm_limit} lượt/phút</b> · <b>{tpm_label} token/phút</b> (nếu vượt chỉ cần đợi 60 giây)",
+            f"• ⚡ Tốc độ tối đa theo phút: <b>{_fmt_num(eff_rpm)} lượt/phút</b> · <b>{eff_tpm_lbl} token/phút</b> ({rpm_note})",
             "",
             "<b>3. Hiệu quả tiết kiệm token của Bot</b>",
             f"• Hôm nay: <b>{d_zero} câu miễn phí 0-token</b> · <b>{d_gem} câu Gemini</b> → <b>Tiết kiệm {d_pct}%</b>",
@@ -508,12 +603,14 @@ class TelemetryStore:
         if recent:
             lines.extend(["", "<b>Các câu gần đây có gọi Gemini:</b>"])
             for item in reversed(recent[-3:]):
+                m_tag = str(item.get("model") or "").replace("gemini-", "").replace("-flash-lite", "").replace("-preview", "")
+                m_badge = f" · {html.escape(m_tag)}" if m_tag else ""
                 lines.append(
-                    f"• [{html.escape(str(item.get('at', '')))}] <i>{html.escape(str(item.get('q', '')))}</i> ({_fmt_num(item.get('tokens', 0))} tok)"
+                    f"• [{html.escape(str(item.get('at', '')))}] <i>{html.escape(str(item.get('q', '')))}</i> ({_fmt_num(item.get('tokens', 0))} tok{m_badge})"
                 )
 
         lines.append(
-            f"\n<i>* Số còn lại ước tính theo gói {html.escape(tier_name)} ({_fmt_num(rpd_limit)} lượt/ngày) từ lượt Bot gọi API; "
+            f"\n<i>* Số còn lại ước tính từ lượt Bot gọi trên gói {html.escape(tier_name)} ({_fmt_num(total_rpd_limit)} lượt/ngày); "
             "nếu dùng chung Key ở nơi khác xem chính xác tại</i> <code>aistudio.google.com/rate-limit</code>."
         )
         return "\n".join(lines)
