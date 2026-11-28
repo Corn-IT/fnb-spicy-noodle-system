@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ErrorCodes } from '@fnb/shared';
 import { Prisma } from '@prisma/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -1678,5 +1678,855 @@ describe('PosService', () => {
         }],
       }, 1),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('should record audit logs for tableAction and splitKitchen and delegate reprintKitchen', async () => {
+    const harness = createHarness();
+    const auditLogService = { record: vi.fn().mockResolvedValue(undefined) };
+    const kitchenSplitService = {
+      splitKitchen: vi.fn().mockResolvedValue({
+        orderId: 42,
+        status: 'SERVING',
+        tickets: [{ station: 'BEP_NAU', items: [] }],
+      }),
+      reprintKitchen: vi.fn().mockResolvedValue({ orderId: 42, reprinted: true }),
+    };
+    const tableTransferService = {
+      executeTableAction: vi
+        .fn()
+        .mockResolvedValueOnce({
+          action: 'MOVE',
+          orderId: 42,
+          kitchenTransferSlip: { orderCode: 'HD-42', fromLabel: 'Bàn 01', toLabel: 'Bàn 02' },
+        })
+        .mockResolvedValueOnce({
+          action: 'TO_TAKEAWAY',
+          orderId: 42,
+          takeawayNumber: 3,
+          takeawayLabelFormat: null,
+          kitchenTransferSlip: null,
+        }),
+    };
+    harness.prisma.order.findUnique.mockResolvedValueOnce({
+      orderCode: 'HD-42',
+      orderType: 'TAKEAWAY',
+      takeawayNumber: 3,
+      takeawayLabelFormat: null,
+      table: null,
+    });
+
+    const service = new PosService(
+      harness.prisma as never,
+      harness.gateway as never,
+      harness.configuration as never,
+      kitchenSplitService as never,
+      tableTransferService as never,
+      auditLogService as never,
+    );
+
+    await service.tableAction(42, { action: 'MOVE', targetTableId: 2, reason: 'Khách đổi bàn' }, 7);
+    await service.tableAction(42, { action: 'TO_TAKEAWAY', reason: 'Khách mang về' }, 7);
+    await service.splitKitchen(42, 7);
+    await expect(service.reprintKitchen(42, { mode: 'ALL' }, 7)).resolves.toEqual({
+      orderId: 42,
+      reprinted: true,
+    });
+
+    expect(auditLogService.record).toHaveBeenCalledTimes(3);
+    expect(auditLogService.record).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ module: 'POS', action: 'Chuyển bàn' }),
+    );
+    expect(auditLogService.record).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ module: 'POS', action: 'Chuyển sang Mang về' }),
+    );
+    expect(auditLogService.record).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ module: 'POS', action: 'Tách phiếu bếp' }),
+    );
+  });
+
+  it('guards applyDiscount manual RBAC / subtotal caps, removeDiscount, and checkout concurrency & split errors', async () => {
+    const harness = createHarness();
+    const service = createPosService(harness);
+
+    // 1. Manual discount denied when caller lacks pos.manualDiscount
+    await expect(
+      service.applyDiscount(
+        42,
+        { manual: { valueType: 'FIXED', value: 10000, reason: 'Khách VIP' } },
+        { id: 2, isSuperAdmin: false, permissions: { pos: { manualDiscount: false } } } as never,
+      ),
+    ).rejects.toThrow(ForbiddenException);
+
+    // 2. Manual FIXED discount exceeding subtotal rejected with 422
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 42, tableId: 7 })
+      .mockResolvedValueOnce({
+        id: 42,
+        orderCode: 'HD-42',
+        orderType: 'DINE_IN',
+        tableId: 7,
+        status: 'SERVING',
+        discountSnapshot: null,
+        items: [
+          {
+            id: 1,
+            productId: 11,
+            quantity: 1,
+            unitPrice: new Prisma.Decimal('50000.00'),
+            kitchenStatus: 'PRINTED',
+            modifiersSnapshot: [],
+            product: { id: 11, categoryId: 10, name: 'Mì bò', comboParents: [] },
+          },
+        ],
+      });
+    await expect(
+      service.applyDiscount(
+        42,
+        { manual: { valueType: 'FIXED', value: 80000, reason: 'Vượt tổng món' } },
+        { id: 1, isSuperAdmin: true, permissions: {} } as never,
+      ),
+    ).rejects.toThrow(UnprocessableEntityException);
+
+    // 3. Empty/non-serving order rejects applyDiscount with 409
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 42, tableId: null })
+      .mockResolvedValueOnce({
+        id: 42,
+        orderCode: 'HD-42',
+        orderType: 'TAKEAWAY',
+        tableId: null,
+        status: 'PAID',
+        items: [],
+      });
+    await expect(
+      service.applyDiscount(
+        42,
+        { manual: { valueType: 'PERCENT', value: 10, reason: 'Giảm tay' } },
+        { id: 1, isSuperAdmin: true, permissions: {} } as never,
+      ),
+    ).rejects.toThrow(ConflictException);
+
+    // 4. Checkout rejects totalAmount concurrency mismatch, invalid SPLIT amounts, and exhausted discount usage
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 42, tableId: 7 })
+      .mockResolvedValueOnce({
+        id: 42,
+        orderCode: 'HD-42',
+        status: 'SERVING',
+        tableId: 7,
+        discountId: null,
+        discountAmount: new Prisma.Decimal('0'),
+        totalAmount: new Prisma.Decimal('120000.00'),
+      });
+    await expect(
+      service.checkout(42, { paymentMethod: 'CASH', cashAmount: 90000, totalAmount: 90000 }, 1),
+    ).rejects.toThrow(ConflictException);
+
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 42, tableId: 7 })
+      .mockResolvedValueOnce({
+        id: 42,
+        orderCode: 'HD-42',
+        status: 'SERVING',
+        tableId: 7,
+        discountId: null,
+        discountAmount: new Prisma.Decimal('0'),
+        totalAmount: new Prisma.Decimal('120000.00'),
+      });
+    await expect(
+      service.checkout(
+        42,
+        { paymentMethod: 'SPLIT', cashAmount: 100000, transferAmount: 10000 },
+        1,
+      ),
+    ).rejects.toThrow(UnprocessableEntityException);
+
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 42, tableId: 7 })
+      .mockResolvedValueOnce({
+        id: 42,
+        orderCode: 'HD-42',
+        status: 'SERVING',
+        tableId: 7,
+        discountId: 5,
+        discountAmount: new Prisma.Decimal('20000.00'),
+        totalAmount: new Prisma.Decimal('100000.00'),
+      });
+    harness.tx.$executeRaw.mockResolvedValueOnce(0);
+    await expect(
+      service.checkout(42, { paymentMethod: 'CASH', cashAmount: 100000 }, 1),
+    ).rejects.toThrow(ConflictException);
+
+    // 5. applyDiscount code path + MIN_ORDER_NOT_MET + removeDiscount happy & audit paths
+    const discountsService = {
+      findValidDiscountByCodeOrId: vi.fn().mockResolvedValue({
+        discount: {
+          id: 9,
+          code: 'GIAM20',
+          name: 'Giảm 20k',
+          valueType: 'FIXED',
+          value: new Prisma.Decimal('20000.00'),
+          maxDiscountAmount: null,
+          scope: 'ORDER',
+          minOrderAmount: new Prisma.Decimal('150000.00'),
+        },
+        targetCategoryIds: [],
+        targetProductIds: [],
+      }),
+    };
+    const auditSvc = { record: vi.fn().mockResolvedValue(undefined) };
+    const posWithDisc = new PosService(
+      harness.prisma as never,
+      harness.gateway as never,
+      harness.configuration as never,
+      new KitchenSplitService(harness.prisma as never, harness.gateway as never),
+      new TableTransferService(harness.prisma as never, harness.gateway as never),
+      auditSvc as never,
+      undefined,
+      discountsService as never,
+    );
+
+    const smallOrderRow = {
+      id: 43,
+      orderCode: 'HD-43',
+      orderType: 'DINE_IN',
+      orderSource: 'POS_COUNTER',
+      tableId: 7,
+      takeawayNumber: null,
+      status: 'SERVING',
+      discountId: null,
+      discountSnapshot: null,
+      createdAt: new Date('2026-11-28T00:00:00.000Z'),
+      paidAt: null,
+      tableTransferLogs: [],
+      table: { id: 7, name: 'Bàn 07' },
+      items: [
+        {
+          id: 1,
+          productId: 11,
+          quantity: 1,
+          unitPrice: new Prisma.Decimal('100000.00'),
+          kitchenStatus: 'PRINTED',
+          batchNo: 1,
+          itemNote: null,
+          modifiersSnapshot: [],
+          product: { id: 11, categoryId: 10, name: 'Mì bò', station: 'BEP_NAU', comboParents: [] },
+        },
+      ],
+    };
+
+    // MIN_ORDER_NOT_MET blocked with 409
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 43, tableId: 7 })
+      .mockResolvedValueOnce(smallOrderRow);
+    await expect(
+      posWithDisc.applyDiscount(
+        43,
+        { code: 'GIAM20' },
+        { id: 1, isSuperAdmin: true, permissions: {} } as never,
+      ),
+    ).rejects.toThrow(ConflictException);
+
+    // Valid code apply when minOrderAmount met + removeDiscount succeeds
+    discountsService.findValidDiscountByCodeOrId.mockResolvedValueOnce({
+      discount: {
+        id: 9,
+        code: 'GIAM20',
+        name: 'Giảm 20k',
+        valueType: 'FIXED',
+        value: new Prisma.Decimal('20000.00'),
+        maxDiscountAmount: null,
+        scope: 'ORDER',
+        minOrderAmount: new Prisma.Decimal('50000.00'),
+      },
+      targetCategoryIds: [],
+      targetProductIds: [],
+    });
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 43, tableId: 7 })
+      .mockResolvedValueOnce(smallOrderRow)
+      .mockResolvedValueOnce({ id: 43, tableId: 7 })
+      .mockResolvedValueOnce({
+        ...smallOrderRow,
+        discountId: 9,
+        discountSnapshot: {
+          kind: 'CODE',
+          discountId: 9,
+          code: 'GIAM20',
+          name: 'Giảm 20k',
+          valueType: 'FIXED',
+          value: 20000,
+          maxDiscountAmount: null,
+          scope: 'ORDER',
+          targetCategoryIds: [],
+          targetProductIds: [],
+          minOrderAmount: 50000,
+          appliedAt: '2026-11-28T00:00:00.000Z',
+          appliedBy: 1,
+          reason: null,
+        },
+      });
+    harness.tx.order.update
+      .mockResolvedValueOnce({
+        ...smallOrderRow,
+        discountId: 9,
+        subtotalAmount: new Prisma.Decimal('100000.00'),
+        discountAmount: new Prisma.Decimal('20000.00'),
+        totalAmount: new Prisma.Decimal('80000.00'),
+      })
+      .mockResolvedValueOnce({
+        ...smallOrderRow,
+        discountId: null,
+        discountSnapshot: null,
+        subtotalAmount: new Prisma.Decimal('100000.00'),
+        discountAmount: new Prisma.Decimal('0.00'),
+        totalAmount: new Prisma.Decimal('100000.00'),
+      });
+
+    const appliedRes = await posWithDisc.applyDiscount(
+      43,
+      { code: 'GIAM20' },
+      { id: 1, isSuperAdmin: true, permissions: {} } as never,
+    );
+    expect(appliedRes.discountAmount).toBe(20000);
+    expect(appliedRes.totalAmount).toBe(80000);
+
+    const removedRes = await posWithDisc.removeDiscount(43, 1);
+    expect(removedRes.discountAmount).toBe(0);
+    expect(removedRes.totalAmount).toBe(100000);
+    expect(auditSvc.record).toHaveBeenCalledTimes(2);
+  });
+
+  it('covers splitCheckout (full, partial split, discount guard, invalid split amounts) and cancelOrder with COMBO cancellation slips', async () => {
+    const harness = createHarness();
+    const service = createPosService(harness);
+
+    // 1. splitCheckout blocks when order has active discount or invalid item selection
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 50, tableId: 7 })
+      .mockResolvedValueOnce({
+        id: 50,
+        orderCode: 'HD-50',
+        status: 'SERVING',
+        tableId: 7,
+        discountId: 1,
+        discountAmount: new Prisma.Decimal('10000'),
+        items: [],
+      });
+    await expect(
+      service.splitCheckout(50, { items: [{ orderItemId: 1, quantity: 1 }], paymentMethod: 'CASH' }, 1),
+    ).rejects.toThrow(ConflictException);
+
+    // 2. Partial splitCheckout creates paid split order and decrements remaining quantity
+    const splitOrderRow = {
+      id: 51,
+      orderCode: 'HD-51',
+      orderType: 'DINE_IN',
+      orderSource: 'POS_COUNTER',
+      tableId: 7,
+      takeawayNumber: null,
+      status: 'SERVING',
+      discountId: null,
+      discountAmount: new Prisma.Decimal('0'),
+      discountSnapshot: null,
+      paymentAccountId: null,
+      table: { id: 7, name: 'Bàn 07' },
+      items: [
+        {
+          id: 101,
+          productId: 11,
+          quantity: 2,
+          unitPrice: new Prisma.Decimal('50000.00'),
+          modifiersSnapshot: [],
+          itemNote: 'Ít hành',
+          batchNo: 1,
+          itemSource: 'POS_COUNTER',
+          isTakeaway: false,
+          kitchenStatus: 'PRINTED',
+          product: { id: 11, name: 'Mì bò', station: 'BEP_NAU' },
+        },
+      ],
+    };
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 51, tableId: 7 })
+      .mockResolvedValueOnce(splitOrderRow);
+    harness.tx.order.create.mockResolvedValueOnce({
+      id: 52,
+      orderCode: 'HD-52',
+    });
+    harness.tx.orderItem.findMany.mockResolvedValueOnce([
+      { quantity: 1, unitPrice: new Prisma.Decimal('50000.00') },
+    ]);
+
+    const partial = await service.splitCheckout(
+      51,
+      { items: [{ orderItemId: 101, quantity: 1 }], paymentMethod: 'CASH', cashAmount: 50000 },
+      3,
+    );
+    expect(partial).toMatchObject({
+      isFullCheckout: false,
+      paidOrderId: 52,
+      remainingOrderId: 51,
+      remainingTotalAmount: 50000,
+      paidTotalAmount: 50000,
+      status: 'SERVING',
+    });
+
+    // 3. Full selection splitCheckout closes original order & frees table
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 51, tableId: 7 })
+      .mockResolvedValueOnce({
+        ...splitOrderRow,
+        items: [{ ...splitOrderRow.items[0]!, quantity: 1 }],
+      });
+    const full = await service.splitCheckout(
+      51,
+      { items: [{ orderItemId: 101, quantity: 1 }], paymentMethod: 'TRANSFER', transferAmount: 50000 },
+      3,
+    );
+    expect(full).toMatchObject({
+      isFullCheckout: true,
+      paidOrderId: 51,
+      remainingOrderId: null,
+      status: 'PAID',
+    });
+
+    // 4. cancelOrder generates COMBO kitchen cancellation slips and resets table to AVAILABLE
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 60, tableId: 8 })
+      .mockResolvedValueOnce({
+        id: 60,
+        orderCode: 'HD-60',
+        orderType: 'DINE_IN',
+        tableId: 8,
+        status: 'SERVING',
+        cashierId: 3,
+        table: { name: 'Bàn 08' },
+        items: [
+          {
+            id: 201,
+            quantity: 2,
+            kitchenStatus: 'PRINTED',
+            product: {
+              name: 'Combo Lẩu',
+              station: 'COMBO',
+              comboParents: [
+                { quantity: 1, childProduct: { name: 'Mì Kim Chi', station: 'BEP_NAU' } },
+                { quantity: 2, childProduct: { name: 'Khoai Chiên', station: 'BEP_CHIEN' } },
+              ],
+            },
+          },
+        ],
+      });
+    harness.tx.order.update.mockResolvedValueOnce({ id: 60, orderCode: 'HD-60', status: 'VOIDED' });
+
+    const cancelled = await service.cancelOrder(60, { voidReason: 'Khách về gấp' }, 3);
+    expect(cancelled).toMatchObject({
+      orderId: 60,
+      status: 'VOIDED',
+      requireCancellationSlip: true,
+    });
+    expect(cancelled.kitchenCancellationSlips).toHaveLength(2);
+    expect(harness.tx.diningTable.update).toHaveBeenCalledWith({
+      where: { id: 8 },
+      data: { status: 'AVAILABLE', activeOrderId: null },
+    });
+  });
+
+  it('covers createTable, updateTable, deleteTable (recent/archive/hard), and rotateTableQr guards & audit logs', async () => {
+    const harness = createHarness();
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const txTable = {
+      ...harness.tx.diningTable,
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: 20, name: 'Bàn 20', status: 'AVAILABLE', activeOrderId: null }),
+      delete: vi.fn().mockResolvedValue({ id: 20 }),
+    };
+    harness.prisma.diningTable = txTable as never;
+    harness.tx.diningTable = txTable as never;
+    (harness.tx.order as { count?: unknown }).count = vi.fn().mockResolvedValue(0);
+
+    const svc = new PosService(
+      harness.prisma as never,
+      harness.gateway as never,
+      harness.configuration as never,
+      new KitchenSplitService(harness.prisma as never, harness.gateway as never),
+      new TableTransferService(harness.prisma as never, harness.gateway as never),
+      audit as never,
+    );
+
+    // 1. createTable blocks "Mang về" & duplicates, creates valid physical table
+    await expect(svc.createTable({ name: 'Mang về' }, 1)).rejects.toMatchObject({ status: 400 });
+    txTable.findFirst.mockResolvedValueOnce({ id: 1, name: 'Bàn 01' });
+    await expect(svc.createTable({ name: 'Bàn 01' }, 1)).rejects.toThrow(ConflictException);
+    const created = await svc.createTable({ name: 'Bàn 20' }, 1);
+    expect(created).toMatchObject({ id: 20, name: 'Bàn 20' });
+
+    // 2. updateTable guards "Mang về", 404, OCCUPIED, duplicate, and succeeds
+    await expect(svc.updateTable(20, { name: 'Takeaway 1' }, 1)).rejects.toMatchObject({ status: 400 });
+    txTable.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.updateTable(999, { name: 'Bàn 99' }, 1)).rejects.toMatchObject({ status: 404 });
+    txTable.findUnique.mockResolvedValueOnce({ id: 2, name: 'Bàn 02', status: 'OCCUPIED', activeOrderId: 88 });
+    await expect(svc.updateTable(2, { name: 'Bàn 02 Mới' }, 1)).rejects.toThrow(ConflictException);
+    txTable.findUnique.mockResolvedValueOnce({ id: 20, name: 'Bàn 20', status: 'AVAILABLE', activeOrderId: null });
+    txTable.findFirst.mockResolvedValueOnce({ id: 1, name: 'Bàn 01' });
+    await expect(svc.updateTable(20, { name: 'Bàn 01' }, 1)).rejects.toThrow(ConflictException);
+    txTable.findUnique.mockResolvedValueOnce({ id: 20, name: 'Bàn 20', status: 'AVAILABLE', activeOrderId: null });
+    txTable.update.mockResolvedValueOnce({ id: 20, name: 'Bàn 20 VIP', status: 'AVAILABLE', activeOrderId: null });
+    await expect(svc.updateTable(20, { name: 'Bàn 20 VIP' }, 1)).resolves.toMatchObject({ name: 'Bàn 20 VIP' });
+
+    // 3. deleteTable guards 404, OCCUPIED, 30d recent orders -> archives >30d or hard deletes =0
+    txTable.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.deleteTable(999, 1)).rejects.toMatchObject({ status: 404 });
+    txTable.findUnique.mockResolvedValueOnce({ id: 2, name: 'Bàn 02', status: 'OCCUPIED', activeOrderId: 88 });
+    await expect(svc.deleteTable(2, 1)).rejects.toThrow(ConflictException);
+    txTable.findUnique.mockResolvedValueOnce({ id: 20, name: 'Bàn 20', status: 'AVAILABLE', activeOrderId: null });
+    (harness.tx.order as { count: ReturnType<typeof vi.fn> }).count.mockResolvedValueOnce(2);
+    await expect(svc.deleteTable(20, 1)).rejects.toMatchObject({ status: 400 });
+
+    txTable.findUnique.mockResolvedValueOnce({ id: 20, name: 'Bàn 20', status: 'AVAILABLE', activeOrderId: null });
+    (harness.tx.order as { count: ReturnType<typeof vi.fn> }).count
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(5);
+    await expect(svc.deleteTable(20, 1)).resolves.toMatchObject({ deleted: true, archived: true });
+
+    txTable.findUnique.mockResolvedValueOnce({ id: 21, name: 'Bàn 21', status: 'AVAILABLE', activeOrderId: null });
+    (harness.tx.order as { count: ReturnType<typeof vi.fn> }).count
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0);
+    await expect(svc.deleteTable(21, 1)).resolves.toMatchObject({ deleted: true, archived: false });
+
+    // 4. rotateTableQr rotates short token and records audit
+    txTable.findUnique.mockResolvedValueOnce({
+      id: 20,
+      name: 'Bàn 20',
+      qrToken: 'oldtoken'.padEnd(64, '0'),
+      status: 'AVAILABLE',
+      activeOrderId: null,
+    });
+    txTable.update.mockResolvedValueOnce({
+      id: 20,
+      name: 'Bàn 20',
+      qrToken: 'ban20-k7m9pq',
+      status: 'AVAILABLE',
+      activeOrderId: null,
+    });
+    const rotated = await svc.rotateTableQr(20, 1);
+    expect(rotated.qrToken).toBe('ban20-k7m9pq');
+    expect(harness.gateway.emitTableQrRotated).toHaveBeenCalledWith(20, null);
+  });
+
+  it('covers submitPosDraft replay/conflicts/validation/success and patchOrderItems remove/update/add/merge branches', async () => {
+    const harness = createHarness();
+    (harness.gateway as Record<string, unknown>).emitPosDraftsUpdated = vi.fn();
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const orderItem = {
+      ...harness.tx.orderItem,
+      delete: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+      create: vi.fn().mockResolvedValue({ id: 501 }),
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      aggregate: vi.fn().mockResolvedValue({ _max: { batchNo: 2 } }),
+      findMany: vi.fn().mockResolvedValue([
+        { unitPrice: new Prisma.Decimal('100.00'), quantity: 2, kitchenStatus: 'SERVED' },
+      ]),
+    };
+    const posDraft = {
+      findUnique: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
+    };
+    harness.tx.orderItem = orderItem as never;
+    (harness.tx as Record<string, unknown>).posDraft = posDraft;
+
+    const svc = new PosService(
+      harness.prisma as never,
+      harness.gateway as never,
+      harness.configuration as never,
+      new KitchenSplitService(harness.prisma as never, harness.gateway as never),
+      new TableTransferService(harness.prisma as never, harness.gateway as never),
+      audit as never,
+    );
+
+    const draftBase = {
+      id: 'draft-1',
+      orderType: 'TAKEAWAY',
+      tableId: null,
+      items: [{ productId: 11, quantity: 1, modifiers: [], isTakeaway: true }],
+      note: 'Không hành',
+      revision: 2,
+      submittedOrderId: null,
+      submitIdempotencyKey: null,
+      updatedAt: new Date('2026-11-28T01:00:00.000Z'),
+    };
+
+    // 1. submitPosDraft guards: 404, replay mismatch vs replay hit, stale revision, empty items, happy takeaway
+    posDraft.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.submitPosDraft('missing', { expectedRevision: 1, idempotencyKey: 'idem-key-0000000000001' }, 1)).rejects.toMatchObject({ status: 404 });
+
+    posDraft.findUnique.mockResolvedValueOnce({ ...draftBase, submittedOrderId: 77, submitIdempotencyKey: 'idem-key-9999999999999' });
+    await expect(svc.submitPosDraft('draft-1', { expectedRevision: 2, idempotencyKey: 'idem-key-0000000000001' }, 1)).rejects.toThrow(ConflictException);
+
+    posDraft.findUnique.mockResolvedValueOnce({ ...draftBase, submittedOrderId: 77, submitIdempotencyKey: 'idem-key-0000000000001' });
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 77,
+      orderCode: 'ORD-077',
+      orderType: 'TAKEAWAY',
+      orderSource: 'POS_COUNTER',
+      tableId: null,
+      table: null,
+      takeawayNumber: 3,
+      takeawayLabelFormat: 'SHORT',
+      status: 'SERVING',
+      subtotalAmount: new Prisma.Decimal('100.00'),
+      discountAmount: new Prisma.Decimal('0.00'),
+      totalAmount: new Prisma.Decimal('100.00'),
+      createdAt: new Date('2026-11-28T01:00:00.000Z'),
+    });
+    const replay = await svc.submitPosDraft('draft-1', { expectedRevision: 2, idempotencyKey: 'idem-key-0000000000001' }, 1);
+    expect(replay.idempotentReplay).toBe(true);
+    expect(replay.order.orderCode).toBe('ORD-077');
+
+    posDraft.findUnique.mockResolvedValueOnce({ ...draftBase, revision: 3 });
+    await expect(svc.submitPosDraft('draft-1', { expectedRevision: 2, idempotencyKey: 'idem-key-0000000000001' }, 1)).rejects.toThrow(ConflictException);
+
+    posDraft.findUnique.mockResolvedValueOnce({ ...draftBase, items: [] });
+    await expect(svc.submitPosDraft('draft-1', { expectedRevision: 2, idempotencyKey: 'idem-key-0000000000001' }, 1)).rejects.toMatchObject({ status: 400 });
+
+    posDraft.findUnique.mockResolvedValueOnce(draftBase);
+    harness.tx.order.create.mockResolvedValueOnce({
+      id: 78,
+      orderCode: 'ORD-078',
+      orderType: 'TAKEAWAY',
+      orderSource: 'POS_COUNTER',
+      tableId: null,
+      takeawayNumber: 1,
+      takeawayLabelFormat: 'FULL',
+      status: 'SERVING',
+      subtotalAmount: new Prisma.Decimal('100.00'),
+      discountAmount: new Prisma.Decimal('0.00'),
+      totalAmount: new Prisma.Decimal('100.00'),
+      createdAt: new Date('2026-11-28T01:00:00.000Z'),
+    });
+    const submitted = await svc.submitPosDraft('draft-1', { expectedRevision: 2, idempotencyKey: 'idem-key-0000000000002' }, 1);
+    expect(submitted.idempotentReplay).toBe(false);
+    expect(submitted.order.orderId).toBe(78);
+
+    // 2. patchOrderItems covers: NEW delete, PRINTED cancel slip, expectedKitchenStatus conflict, isTakeaway toggle, PRINTED quantity update, merge addItems
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 90, tableId: 4 })
+      .mockResolvedValueOnce({
+        id: 90,
+        orderCode: 'ORD-090',
+        orderType: 'DINE_IN',
+        tableId: 4,
+        table: { id: 4, name: 'Bàn 04' },
+        status: 'SERVING',
+        discountSnapshot: null,
+        totalAmount: new Prisma.Decimal('300.00'),
+        items: [
+          {
+            id: 1,
+            productId: 11,
+            quantity: 1,
+            unitPrice: new Prisma.Decimal('100.00'),
+            itemNote: '',
+            isTakeaway: false,
+            kitchenStatus: 'NEW',
+            itemSource: 'POS_COUNTER',
+            modifiersSnapshot: [],
+            product: { name: 'Mì bò', station: 'BEP_NAU', comboParents: [] },
+          },
+          {
+            id: 2,
+            productId: 11,
+            quantity: 1,
+            unitPrice: new Prisma.Decimal('100.00'),
+            itemNote: null,
+            isTakeaway: false,
+            kitchenStatus: 'PRINTED',
+            itemSource: 'POS_COUNTER',
+            modifiersSnapshot: [],
+            product: { name: 'Mì bò', station: 'BEP_NAU', comboParents: [] },
+          },
+          {
+            id: 3,
+            productId: 11,
+            quantity: 2,
+            unitPrice: new Prisma.Decimal('100.00'),
+            itemNote: 'Ít hành',
+            isTakeaway: false,
+            kitchenStatus: 'PRINTED',
+            itemSource: 'POS_COUNTER',
+            modifiersSnapshot: [],
+            product: { name: 'Mì bò', station: 'BEP_NAU', comboParents: [] },
+          },
+          {
+            id: 4,
+            productId: 11,
+            quantity: 1,
+            unitPrice: new Prisma.Decimal('100.00'),
+            itemNote: '',
+            isTakeaway: false,
+            kitchenStatus: 'NEW',
+            itemSource: 'POS_COUNTER',
+            modifiersSnapshot: [],
+            product: { name: 'Mì bò', station: 'BEP_NAU', comboParents: [] },
+          },
+        ],
+      });
+
+    const patched = await svc.patchOrderItems(
+      90,
+      {
+        removeItemIds: [1, 2],
+        updates: [
+          { orderItemId: 3, quantity: 1, itemNote: 'Thêm hành' },
+          { orderItemId: 4, isTakeaway: true },
+        ],
+        addItems: [{ productId: 11, quantity: 1, modifiers: [], isTakeaway: false }],
+      },
+      1,
+    );
+    expect(patched.orderId).toBe(90);
+    expect(patched.requireCancellationSlip).toBe(true);
+    expect(orderItem.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+    expect(orderItem.update).toHaveBeenCalledWith({ where: { id: 4 }, data: { isTakeaway: true } });
+    expect(orderItem.createMany).toHaveBeenCalled();
+
+    // Rejects stale expectedKitchenStatus='NEW' when item is already PRINTED
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 91, tableId: null })
+      .mockResolvedValueOnce({
+        id: 91,
+        orderCode: 'ORD-091',
+        orderType: 'TAKEAWAY',
+        tableId: null,
+        table: null,
+        takeawayNumber: 5,
+        takeawayLabelFormat: 'SHORT',
+        status: 'SERVING',
+        discountSnapshot: null,
+        totalAmount: new Prisma.Decimal('100.00'),
+        items: [
+          {
+            id: 5,
+            productId: 11,
+            quantity: 1,
+            unitPrice: new Prisma.Decimal('100.00'),
+            kitchenStatus: 'PRINTED',
+            modifiersSnapshot: [],
+            product: { name: 'Mì bò', station: 'BEP_NAU', comboParents: [] },
+          },
+        ],
+      });
+    await expect(
+      svc.patchOrderItems(91, { updates: [{ orderItemId: 5, expectedKitchenStatus: 'NEW', quantity: 2 }] }, 1),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: ErrorCodes.POS_ITEM_ALREADY_PRINTED }),
+    });
+
+    // 3. rotateTakeawayQr, shortenLegacyQrTokens (legacy -> short & noop), and checkQrOrderStillPending
+    (harness.tx as Record<string, unknown>).masterData = {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({}),
+      create: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+    };
+    (harness.prisma as Record<string, unknown>).masterData = (harness.tx as Record<string, unknown>).masterData;
+    const txWithMaster = harness.tx as unknown as {
+      masterData: { findUnique: ReturnType<typeof vi.fn>; upsert: ReturnType<typeof vi.fn> };
+      diningTable: { findMany: ReturnType<typeof vi.fn>; findFirst?: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+    };
+    txWithMaster.masterData.findUnique
+      .mockResolvedValueOnce({ metadata: { qrToken: 'a'.repeat(64) } })
+      .mockResolvedValueOnce({ metadata: { qrToken: 'a'.repeat(64) } });
+    const rotTakeaway = await svc.rotateTakeawayQr(1);
+    expect(rotTakeaway.qrToken).toMatch(/^mangve-/);
+
+    txWithMaster.diningTable.findFirst = vi.fn().mockResolvedValue(null);
+    txWithMaster.diningTable.findMany.mockResolvedValueOnce([
+      { id: 1, name: 'Bàn 01', qrToken: 'b'.repeat(64) },
+      { id: 2, name: 'Bàn 02', qrToken: 'ban02-k7m9pq' },
+    ]);
+    txWithMaster.masterData.findUnique.mockResolvedValueOnce({ metadata: { qrToken: 'c'.repeat(64) } });
+    const shortened = await svc.shortenLegacyQrTokens(1);
+    expect(shortened).toEqual({ updatedTables: 1, updatedTakeaway: true });
+
+    txWithMaster.diningTable.findMany.mockResolvedValueOnce([{ id: 2, name: 'Bàn 02', qrToken: 'ban02-k7m9pq' }]);
+    txWithMaster.masterData.findUnique.mockResolvedValueOnce({ metadata: { qrToken: 'mangve-k7m9pq' } });
+    const noopShorten = await svc.shortenLegacyQrTokens(1);
+    expect(noopShorten).toEqual({ updatedTables: 0, updatedTakeaway: false });
+
+    await expect(svc.checkQrOrderStillPending({ orderId: 0 })).resolves.toEqual({ stillPending: true });
+    harness.prisma.order.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.checkQrOrderStillPending({ orderId: 500 })).resolves.toEqual({ stillPending: false });
+    harness.prisma.order.findUnique.mockResolvedValueOnce({ id: 501, status: 'PENDING', orderSource: 'QR_CODE' });
+    await expect(svc.checkQrOrderStillPending({ orderId: 501, kind: 'QR_NEW' })).resolves.toEqual({ stillPending: true });
+    harness.prisma.order.findUnique.mockResolvedValueOnce({ id: 502, status: 'SERVING', orderSource: 'QR_CODE' });
+    harness.prisma.orderItem.findFirst = vi.fn().mockResolvedValueOnce({ id: 99 });
+    await expect(svc.checkQrOrderStillPending({ orderId: 502, kind: 'QR_ADDON', batchNo: 2 })).resolves.toEqual({ stillPending: true });
+    harness.prisma.order.findUnique.mockResolvedValueOnce({ id: 503, status: 'PAID', orderSource: 'QR_CODE' });
+    await expect(svc.checkQrOrderStillPending({ orderId: 503, kind: 'QR_OVERDUE_REMINDER' })).resolves.toEqual({ stillPending: false });
+  });
+
+  it('covers createOrder DINE_IN/conflicts, createTable validation/duplicate, and approveQrOrder approve/reject/conflicts', async () => {
+    const harness = createHarness();
+    const svc = createPosService(harness);
+
+    // createOrder DINE_IN missing/occupied table -> ConflictException (409)
+    harness.tx.diningTable.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      svc.createOrder({ orderType: 'DINE_IN', tableId: 7, items: [{ productId: 11, quantity: 1 }] }, 3),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    // createOrder DINE_IN success -> marks table OCCUPIED and returns created order
+    harness.tx.diningTable.findUnique.mockResolvedValueOnce({ id: 7, name: 'Bàn 07', status: 'AVAILABLE', activeOrderId: null });
+    harness.tx.order.create.mockResolvedValueOnce({
+      id: 70, orderCode: 'HD-20261128-0070', orderType: 'DINE_IN', orderSource: 'POS_COUNTER',
+      tableId: 7, takeawayNumber: null, status: 'SERVING', totalAmount: new Prisma.Decimal('100.00'),
+    });
+    const dineIn = await svc.createOrder({ orderType: 'DINE_IN', tableId: 7, items: [{ productId: 11, quantity: 1 }] }, 3);
+    expect(dineIn).toMatchObject({ orderId: 70, tableId: 7, status: 'SERVING' });
+    expect(harness.tx.diningTable.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { status: 'OCCUPIED', activeOrderId: 70 } });
+
+    // createTable rejects takeaway name (400) & duplicate active table name (409)
+    await expect(svc.createTable({ name: 'Mang về VIP' }, 1)).rejects.toBeInstanceOf(BadRequestException);
+    const txWithTableExtra = harness.tx as unknown as {
+      diningTable: { findFirst: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    };
+    txWithTableExtra.diningTable.findFirst = vi.fn().mockResolvedValueOnce({ id: 7, name: 'Bàn 07' });
+    (harness.prisma as unknown as typeof txWithTableExtra).diningTable.findFirst = txWithTableExtra.diningTable.findFirst;
+    await expect(svc.createTable({ name: 'Bàn 07' }, 1)).rejects.toBeInstanceOf(ConflictException);
+
+    // approveQrOrder 404, 409 non-PENDING, approve -> SERVING, reject -> VOIDED + AVAILABLE
+    harness.tx.order.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.approveQrOrder(999, { approved: true }, 1)).rejects.toBeInstanceOf(NotFoundException);
+
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 80, tableId: 7 })
+      .mockResolvedValueOnce({ id: 80, status: 'SERVING', orderSource: 'QR_CODE', tableId: 7, table: { name: 'Bàn 07' } });
+    await expect(svc.approveQrOrder(80, { approved: true }, 1)).rejects.toBeInstanceOf(ConflictException);
+
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 81, tableId: 7 })
+      .mockResolvedValueOnce({ id: 81, orderCode: 'HD-81', status: 'PENDING', orderSource: 'QR_CODE', tableId: 7, table: { name: 'Bàn 07' } });
+    harness.tx.order.update.mockResolvedValueOnce({ id: 81, orderCode: 'HD-81', status: 'SERVING' });
+    await expect(svc.approveQrOrder(81, { approved: true }, 1)).resolves.toEqual({ orderId: 81, status: 'SERVING' });
+
+    harness.tx.order.findUnique
+      .mockResolvedValueOnce({ id: 82, tableId: 7 })
+      .mockResolvedValueOnce({ id: 82, orderCode: 'HD-82', status: 'PENDING', orderSource: 'QR_CODE', tableId: 7, table: { name: 'Bàn 07' } });
+    harness.tx.order.update.mockResolvedValueOnce({ id: 82, orderCode: 'HD-82', status: 'VOIDED' });
+    await expect(
+      svc.approveQrOrder(82, { approved: false, reason: 'Khách báo huỷ đơn QR' }, 1),
+    ).resolves.toEqual({ orderId: 82, status: 'VOIDED' });
+    expect(harness.tx.diningTable.update).toHaveBeenLastCalledWith({
+      where: { id: 7 },
+      data: { status: 'AVAILABLE', activeOrderId: null },
+    });
   });
 });

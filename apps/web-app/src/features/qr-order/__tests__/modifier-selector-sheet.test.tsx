@@ -99,4 +99,47 @@ describe('ModifierSelectorSheet (QR) — allowedSubstituteNames matrix enforceme
       }),
     );
   });
+
+  it('supports switching between multiple allowed substitutes, entering item note, and adjusting quantity', () => {
+    const onConfirm = vi.fn();
+    render(
+      <ModifierSelectorSheet
+        open
+        product={qrSeafoodProduct}
+        onOpenChange={vi.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    // Uncheck Mực -> default substitute Tôm, allows switching to Ngao
+    fireEvent.click(screen.getByTestId('modifier-option-303'));
+    expect(screen.getByText('Thay thế bằng Tôm')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Đổi sang Ngao' }));
+    expect(screen.getByText('Thay thế bằng Ngao')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('modifier-note-input'), {
+      target: { value: 'Ít cay, không hành' },
+    });
+    fireEvent.click(screen.getByLabelText('Tăng số lượng'));
+    fireEvent.click(screen.getByLabelText('Tăng số lượng'));
+    fireEvent.click(screen.getByLabelText('Giảm số lượng'));
+    expect(screen.getByTestId('modifier-qty')).toHaveTextContent('2');
+
+    fireEvent.click(screen.getByTestId('confirm-modifier-btn'));
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        quantity: 2,
+        itemNote: 'Ít cay, không hành',
+        modifiers: [
+          {
+            groupId: 30,
+            modifierId: 303,
+            action: 'SUBSTITUTED',
+            substituteModifierId: 301,
+            substituteName: 'Ngao',
+          },
+        ],
+      }),
+    );
+  });
 });

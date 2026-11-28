@@ -475,6 +475,66 @@ describe('Security Hardening Utilities & Guards', () => {
         '113.161.77.88',
         1,
       );
+
+      // Prefix pattern, CIDR /24 match, missing GPS shop coordinates fallback, and rate-limit bucket expiry cleanup
+      const { normalizeClientIp } = await import('../qr-security.service');
+      expect(
+        isWifiIpAllowed('192.168.5.44', { allowedWifiIps: ['192.168.5.'], autoSyncPosIp: false }, null),
+      ).toBe(true);
+      expect(
+        isWifiIpAllowed('10.20.30.99', { allowedWifiIps: ['10.20.30.0/24'], autoSyncPosIp: false }, null),
+      ).toBe(true);
+      expect(normalizeClientIp('::ffff:192.168.1.15')).toBe('192.168.1.15');
+      expect(normalizeClientIp('::1')).toBe('127.0.0.1');
+
+      await service.updateConfig(
+        {
+          wifiProtectionEnabled: false,
+          autoSyncPosIp: true,
+          allowedWifiIps: [],
+          wifiSsid: '',
+          wifiPassword: '',
+          geoProtectionEnabled: true,
+          shopLatitude: null,
+          shopLongitude: null,
+          geoRadiusMeters: 200,
+          applySecurityToTakeaway: true,
+        },
+        '113.161.77.88',
+        1,
+      );
+      await expect(service.verifyGuestQrAccess({ clientIp: '203.0.113.55' })).resolves.toBeUndefined();
+    });
+
+    it('enforces general /api/v1 rate limits, non-API bypass, and bucket cleanup on overflow', () => {
+      const rl = new RateLimitGuard();
+      rl.setForceEnabled(true);
+
+      const nonApi = createMockHttpContext({ method: 'GET', url: '/health' });
+      expect(rl.canActivate(nonApi.context)).toBe(true);
+
+      const apiReq = createMockHttpContext({
+        method: 'GET',
+        url: '/api/v1/pos/orders/1',
+        headers: { authorization: 'Bearer valid-bearer-token-123456' },
+      });
+      expect(rl.canActivate(apiReq.context)).toBe(true);
+      expect(apiReq.headersWritten['X-RateLimit-Remaining']).toBe('299');
+
+      const internalBuckets = (rl as unknown as {
+        buckets: Map<string, { timestamps: number[]; expiresAt: number }>;
+        lastCleanupAt: number;
+      });
+      internalBuckets.lastCleanupAt = 0;
+      for (let i = 0; i < 4050; i += 1) {
+        internalBuckets.buckets.set(`k-${i}`, {
+          timestamps: [1],
+          expiresAt: i < 200 ? 1 : Date.now() + 60_000,
+        });
+      }
+      const sweepCtx = createMockHttpContext({ method: 'GET', url: '/api/v1/menu/products' });
+      expect(rl.canActivate(sweepCtx.context)).toBe(true);
+      expect(internalBuckets.buckets.size).toBeLessThan(4000);
     });
   });
 });

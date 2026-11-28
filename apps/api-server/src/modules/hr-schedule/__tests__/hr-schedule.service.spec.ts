@@ -905,5 +905,111 @@ describe('EmployeesService and SchedulesService', () => {
       }),
     );
   });
+
+  it('records detailed masked Vietnamese audit diffs across all employee fields on updateEmployee', async () => {
+    const auditLog = { record: vi.fn().mockResolvedValue(undefined) };
+    const beforeEmp = {
+      id: 12,
+      fullName: 'Nguyễn Văn Anh',
+      shortName: 'V.Anh',
+      dob: new Date('1998-01-10T00:00:00.000Z'),
+      phone: '0901112222',
+      address: '12 Lê Lợi',
+      citizenId: '079098001234',
+      citizenIdIssuedPlace: 'CA TP.HCM',
+      startDate: '2025-05-01T00:00:00.000Z',
+      positionId: 1,
+      specialtyId: 2,
+      position: { id: 1, name: 'Thu Ngân' },
+      specialty: { id: 2, name: 'Pha Chế' },
+      bankName: 'VPBank',
+      bankAccountNo: '1234567890',
+      bankAccountName: 'NGUYEN VAN ANH',
+      note: 'Ghi chú cũ',
+      attachmentUrls: [],
+      isDeleted: false,
+    };
+    const afterEmp = {
+      ...beforeEmp,
+      fullName: 'Nguyễn Văn Bảo',
+      shortName: 'V.Bảo',
+      dob: '1998-02-15',
+      phone: '0909998888',
+      address: '99 Nguyễn Huệ',
+      citizenId: '079098009999',
+      citizenIdIssuedPlace: 'Cục CSQLHC',
+      startDate: new Date('2026-01-15T00:00:00.000Z'),
+      positionId: 3,
+      specialtyId: 4,
+      position: { id: 3, name: 'Quản Lý' },
+      specialty: { id: 4, name: 'Bếp Nấu' },
+      bankName: 'Vietcombank',
+      bankAccountNo: '9988776655',
+      bankAccountName: 'NGUYEN VAN BAO',
+      note: 'Ghi chú mới',
+      isActive: true,
+    };
+
+    const tx = {
+      employee: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce(beforeEmp)
+          .mockResolvedValueOnce(afterEmp),
+        findMany: vi.fn().mockResolvedValue([]),
+        update: vi.fn().mockResolvedValue(afterEmp),
+      },
+      masterData: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ id: 3, category: MdmCategory.POSITION, name: 'Quản Lý', isActive: true })
+          .mockResolvedValueOnce({ id: 4, category: MdmCategory.SPECIALTY, name: 'Bếp Nấu', isActive: true }),
+      },
+    };
+    const prisma = {
+      ...tx,
+      $transaction: vi.fn(async (cb: (client: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+
+    const service = new EmployeesService(
+      prisma as never,
+      { findOrCreate: vi.fn(async (_c: string, name: string) => ({ id: name === 'Quản Lý' ? 3 : 4 })) } as never,
+      auditLog as never,
+    );
+    await service.updateEmployee(
+      12,
+      {
+        fullName: 'Nguyễn Văn Bảo',
+        positionId: 3,
+        specialtyId: 4,
+        phone: '0909998888',
+        address: '99 Nguyễn Huệ',
+        citizenId: '079098009999',
+        citizenIdIssuedPlace: 'Cục CSQLHC',
+        dob: '1998-02-15',
+        startDate: '2026-01-15',
+        bankName: 'Vietcombank',
+        bankAccountNo: '9988776655',
+        bankAccountName: 'NGUYEN VAN BAO',
+        note: 'Ghi chú mới',
+      },
+      { id: 1, employeeId: 1, username: 'admin', isSuperAdmin: true } as never,
+    );
+
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        module: 'EMPLOYEES',
+        action: 'Cập nhật hồ sơ',
+        metadata: expect.objectContaining({
+          changes: expect.arrayContaining([
+            { field: 'Họ và tên', from: 'Nguyễn Văn Anh', to: 'Nguyễn Văn Bảo' },
+            { field: 'Chức vụ', from: 'Thu Ngân', to: 'Quản Lý' },
+            { field: 'Chuyên môn', from: 'Pha Chế', to: 'Bếp Nấu' },
+            { field: 'Ngân hàng', from: 'VPBank', to: 'Vietcombank' },
+          ]),
+        }),
+      }),
+    );
+  });
 });
 

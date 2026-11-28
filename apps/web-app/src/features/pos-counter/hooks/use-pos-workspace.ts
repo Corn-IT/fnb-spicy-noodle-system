@@ -1,86 +1,31 @@
 import {
-  ErrorCodes,
   formatTakeawayLabel,
-  type OrderDetailResponse,
-  type PaymentMethod,
-  type PosDraftResponse,
-  type Product,
-  TableActionType,
-  type ApplyPosDiscountRequest,
-  type CheckoutOrderRequest,
   type PosOrderSummary,
   type PosTableGridResponse,
-  type SplitCheckoutOrderRequest,
-  type TableActionRequest,
 } from '@fnb/shared';
-import { useQueryClient } from '@tanstack/react-query';
 import * as React from 'react';
 
-import { useThermalPrinter, useThermalPrinterConfigStore } from '@/components/print-slips';
 import { useAppMessages } from '@/hooks/use-app-messages';
-import { ApiClientError } from '@/lib/api-client';
 import { evaluateOrderPendingAlert } from '@/lib/qr-pending-reminder';
 import { getActiveQrReminderConfig } from '@/lib/qr-voice-announcer';
-import {
-  buildInitialSelectedByGroup,
-  computeOrderModifiersPayload,
-  hydrateModifierSelectionFromExisting,
-  inferModifierSelectionsFromLabels,
-} from '@/lib/modifier-selection';
 import { useAuthStore } from '@/stores/auth.store';
-import type { ProductOptionsDialogInitialValue } from '../components/product-options-dialog';
 import {
-  useApproveQrOrderMutation,
-  useCancelPosOrderMutation,
-  useCheckoutOrderMutation,
-  useCreatePosDraftMutation,
-  useDeletePosDraftMutation,
-  usePatchOrderItemsMutation,
-  usePosOrderDetailQuery,
   usePosDraftsQuery,
+  usePosOrderDetailQuery,
   usePosProductsQuery,
   usePosTableGridQuery,
-  useProvisionalBillMutation,
-  useReprintKitchenMutation,
-  useSplitCheckoutOrderMutation,
-  useSplitKitchenMutation,
-  useApplyPosDiscountMutation,
-  useSplitProvisionalBillMutation,
-  useSubmitPosDraftMutation,
-  useUpdatePosDraftMutation,
-  useTableActionMutation,
-  useRemovePosDiscountMutation,
-  posQueryKeys,
 } from '../api/pos.api';
-import type { LiveInvoiceDraftTarget } from '../components/live-invoice-panel';
-import type { PosMenuSelectedItem } from '../components/pos-menu-types';
-import type {
-  SplitOrderDialogMode,
-  SplitSelectedItemSummary,
-} from '../components/split-order-items-dialog';
-import { findMatchingDraftIndex } from '../utils/order-item-merge';
+import { usePosBillingActions } from './use-pos-billing-actions';
 import { usePosCashierSocket } from './use-pos-cashier-socket';
+import { usePosDrafts } from './use-pos-drafts';
+import { usePosOrderItems } from './use-pos-order-items';
+import type {
+  PosEditingItemTarget,
+  PosWorkspaceViewEvent,
+  UsePosWorkspaceOptions,
+} from './use-pos-workspace-types';
 
-/**
- * Sự kiện điều hướng mà mỗi giao diện POS (chuột / cảm ứng) tự quyết định cách hiển thị:
- * - `draft-started`: vừa chọn bàn trống hoặc bắt đầu đơn mang về mới → cần mở thực đơn.
- * - `order-opened`: vừa chọn bàn / đơn mang về đang có hoá đơn.
- * - `draft-submitted`: vừa tạo đơn từ giỏ nháp thành công (đơn mới đã được chọn).
- */
-export type PosWorkspaceViewEvent = 'draft-started' | 'draft-target-picker' | 'draft-parked' | 'draft-discarded' | 'order-opened' | 'draft-submitted';
-
-export interface UsePosWorkspaceOptions {
-  onViewChange?: (event: PosWorkspaceViewEvent) => void;
-}
-
-export interface PosEditingItemTarget {
-  kind: 'draft' | 'order';
-  product: Product;
-  draftIndex?: number;
-  orderItemId?: number;
-  editInstanceKey: string;
-  initialValue: ProductOptionsDialogInitialValue;
-}
+export type { PosEditingItemTarget, PosWorkspaceViewEvent, UsePosWorkspaceOptions };
 
 /**
  * Toàn bộ state, truy vấn, mutation và handler nghiệp vụ của quầy POS.
@@ -93,9 +38,9 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   const emitViewChange = (event: PosWorkspaceViewEvent) => {
     onViewChangeRef.current?.(event);
   };
+
   // Đơn do chính máy này đang đóng (thanh toán, thanh toán tách trọn đơn, huỷ, gộp sang bàn khác):
-  // giao diện dùng để phân biệt với đơn bị đóng ở máy khác. Đánh dấu TRƯỚC khi gọi API (dữ liệu đơn
-  // đã đóng có thể về trước khi lệnh trả kết quả) và GỠ ngay nếu lệnh lỗi / đơn vẫn còn mở.
+  // giao diện dùng để phân biệt với đơn bị đóng ở máy khác. Đánh dấu TRƯỚC khi gọi API và GỠ ngay nếu lỗi.
   const locallyClosedOrderIdsRef = React.useRef<Set<number>>(new Set());
   const markClosingLocally = (orderId: number) => {
     locallyClosedOrderIdsRef.current.add(orderId);
@@ -113,6 +58,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       vars: { reason: resolved.description ?? 'Vui lòng thử lại' },
     });
   };
+
   const tableGridQuery = usePosTableGridQuery();
   const gridData = tableGridQuery.data;
   const productsQuery = usePosProductsQuery();
@@ -123,7 +69,10 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   );
   const draftsQuery = usePosDraftsQuery();
   const parkedDrafts = draftsQuery.data ?? [];
+
   const [selectedOrderId, setSelectedOrderId] = React.useState<number | null>(null);
+  const [addonIsTakeaway, setAddonIsTakeaway] = React.useState(false);
+
   const { addonBadgesByOrderId, clearAddonBadge } = usePosCashierSocket({
     onQrAutoCancelled: (payload) => {
       if (payload.kind === 'NEW' && payload.orderId === selectedOrderId) {
@@ -131,7 +80,7 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       }
     },
   });
-  const thermalPrinter = useThermalPrinter();
+
   const currentUser = useAuthStore((s) => s.user);
   const canCreateOrder = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.create);
   const canUpdateOrder = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.update);
@@ -143,52 +92,60 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.tableAction,
   );
   const canCheckout = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.checkout);
-
-  const canDeleteDrafts = Boolean(currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.deleteDrafts);
-  const draftOperationRef = React.useRef(false);
-  const [draftOperationPending, setDraftOperationPending] = React.useState(false);
-
-  const [draftTarget, setDraftTarget] = React.useState<LiveInvoiceDraftTarget | null>(null);
-  const [draftItems, setDraftItems] = React.useState<PosMenuSelectedItem[]>([]);
-  const [activeSavedDraft, setActiveSavedDraft] = React.useState<{ id: string; revision: number } | null>(null);
-  const [pendingDraftHydration, setPendingDraftHydration] = React.useState<PosDraftResponse | null>(null);
-  const [draftIsDirty, setDraftIsDirty] = React.useState(false);
-  const draftSubmitKeyRef = React.useRef<string | null>(null);
-  const [addonIsTakeaway, setAddonIsTakeaway] = React.useState(false);
-
-  const [tableActionOpen, setTableActionOpen] = React.useState(false);
-  const [checkoutOpen, setCheckoutOpen] = React.useState(false);
-  const [discountDialogOpen, setDiscountDialogOpen] = React.useState(false);
-  const [splitDialogMode, setSplitDialogMode] = React.useState<SplitOrderDialogMode | null>(null);
-  const [editingItemTarget, setEditingItemTarget] = React.useState<PosEditingItemTarget | null>(null);
-  const [lastSplitPaymentAccountId, setLastSplitPaymentAccountId] = React.useState<number | null>(
-    null,
+  const canDeleteDrafts = Boolean(
+    currentUser?.isSuperAdmin || currentUser?.permissions?.pos?.deleteDrafts,
   );
 
   const { data: currentOrder } = usePosOrderDetailQuery(selectedOrderId);
 
-  const createDraftMutation = useCreatePosDraftMutation();
-  const updateDraftMutation = useUpdatePosDraftMutation();
-  const deleteDraftMutation = useDeletePosDraftMutation();
-  const submitDraftMutation = useSubmitPosDraftMutation();
-  const approveQrMutation = useApproveQrOrderMutation();
-  const patchItemsMutation = usePatchOrderItemsMutation();
-  const splitKitchenMutation = useSplitKitchenMutation();
-  const reprintKitchenMutation = useReprintKitchenMutation();
-  const provisionalBillMutation = useProvisionalBillMutation();
-  const splitProvisionalBillMutation = useSplitProvisionalBillMutation();
-  const checkoutMutation = useCheckoutOrderMutation();
-  const splitCheckoutMutation = useSplitCheckoutOrderMutation();
-  const tableActionMutation = useTableActionMutation();
-  const cancelOrderMutation = useCancelPosOrderMutation();
-  const applyDiscountMutation = useApplyPosDiscountMutation();
-  const removeDiscountMutation = useRemovePosDiscountMutation();
+  const clearEditingTargetRef = React.useRef<() => void>(() => undefined);
 
+  const drafts = usePosDrafts({
+    products,
+    productsLoaded: productsQuery.isSuccess,
+    canCreateOrder,
+    canUpdateOrder,
+    canDeleteDrafts,
+    emitViewChange,
+    onDraftResetOrderSelection: () => setSelectedOrderId(null),
+    onDraftSubmittedOrder: (orderId) => setSelectedOrderId(orderId),
+    onClearEditingTarget: () => clearEditingTargetRef.current(),
+    notifyErr,
+  });
+
+  const orderItems = usePosOrderItems({
+    selectedOrderId,
+    currentOrder,
+    productsById,
+    draftItems: drafts.draftItems,
+    addonIsTakeaway,
+    canCreateOrder,
+    canUpdateOrder,
+    isDraftOperationBusy: () => drafts.draftOperationRef.current,
+    onAddDraftMenuItem: drafts.addDraftMenuItem,
+    onReplaceDraftItem: drafts.replaceDraftItem,
+    notifyErr,
+  });
+
+  clearEditingTargetRef.current = () => orderItems.setEditingItemTarget(null);
+
+  const { setEditingItemTarget } = orderItems;
   React.useEffect(() => {
-    setLastSplitPaymentAccountId(null);
     setAddonIsTakeaway(false);
     setEditingItemTarget(null);
-  }, [selectedOrderId]);
+  }, [selectedOrderId, setEditingItemTarget]);
+
+  const billing = usePosBillingActions({
+    selectedOrderId,
+    currentOrder,
+    gridData,
+    cashierName: currentUser?.fullName ?? currentUser?.username,
+    setSelectedOrderId,
+    clearAddonBadge,
+    markClosingLocally,
+    unmarkClosingLocally,
+    notifyErr,
+  });
 
   const selectedTableRow = React.useMemo(
     () =>
@@ -197,7 +154,6 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         : null,
     [gridData?.tables, selectedOrderId],
   );
-
   const selectedTakeawayRow = React.useMemo(
     () =>
       selectedOrderId !== null
@@ -205,7 +161,6 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
         : null,
     [gridData?.takeaways, selectedOrderId],
   );
-
   const selectedActivePendingOrder =
     selectedTableRow?.activeOrder ?? selectedTakeawayRow ?? null;
 
@@ -237,57 +192,44 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   }, [selectedActivePendingOrder, selectedTableRow, selectedTakeawayRow?.status, alertClockMs]);
 
   const handleSelectTable = (table: PosTableGridResponse['tables'][number]) => {
-    if (draftOperationRef.current) return;
-    if (draftTarget && draftIsDirty && draftItems.length > 0 && table.status !== 'AVAILABLE') {
+    if (drafts.draftOperationRef.current) return;
+    if (drafts.draftTarget && drafts.draftIsDirty && drafts.draftItems.length > 0 && table.status !== 'AVAILABLE') {
       notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
       return;
     }
     if (table.status === 'AVAILABLE' || !table.activeOrderId) {
       if (!canCreateOrder) {
         setSelectedOrderId(null);
-        setDraftTarget(null);
-        setDraftItems([]);
+        drafts.setDraftTarget(null);
+        drafts.setDraftItems([]);
         return;
       }
-      if (draftTarget && table.status === 'AVAILABLE') {
-        setDraftTarget({ orderType: 'DINE_IN', tableId: table.id, tableName: table.name });
-        setDraftIsDirty(true);
+      if (drafts.draftTarget && table.status === 'AVAILABLE') {
+        drafts.setDraftTarget({ orderType: 'DINE_IN', tableId: table.id, tableName: table.name });
+        drafts.setDraftIsDirty(true);
         emitViewChange('draft-started');
         return;
       }
-      // Source B: Click empty table -> prepare DINE_IN draft and switch to Menu tab
       setSelectedOrderId(null);
-      setActiveSavedDraft(null);
-      draftSubmitKeyRef.current = null;
-      setDraftIsDirty(false);
-      setDraftTarget({
-        orderType: 'DINE_IN',
-        tableId: table.id,
-        tableName: table.name,
-      });
-      setDraftItems([]);
+      drafts.resetDineInDraftForTable(table);
       emitViewChange('draft-started');
       return;
     }
 
-    setDraftTarget(null);
-    setDraftItems([]);
+    drafts.setDraftTarget(null);
+    drafts.setDraftItems([]);
     setSelectedOrderId(table.activeOrderId);
     clearAddonBadge(table.activeOrderId);
     emitViewChange('order-opened');
   };
 
   const handleSelectTakeawayOrder = (order: PosOrderSummary) => {
-    if (draftOperationRef.current) return;
-    if (draftTarget && draftIsDirty && draftItems.length > 0) {
+    if (drafts.draftOperationRef.current) return;
+    if (drafts.draftTarget && drafts.draftIsDirty && drafts.draftItems.length > 0) {
       notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
       return;
     }
-    setDraftTarget(null);
-    setDraftItems([]);
-    setActiveSavedDraft(null);
-    setDraftIsDirty(false);
-    draftSubmitKeyRef.current = null;
+    drafts.detachDraftOnOpenOrder();
     setSelectedOrderId(order.orderId);
     clearAddonBadge(order.orderId);
     emitViewChange('order-opened');
@@ -309,1030 +251,42 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
   };
 
   const handleStartNewTakeaway = () => {
-    if (draftOperationRef.current) return;
-    if (!canCreateOrder) return;
-    // Source C: Click [+ TẠO ĐƠN MANG VỀ] -> prepare TAKEAWAY draft (tableId: null) and switch to Menu tab
+    if (drafts.draftOperationRef.current || !canCreateOrder) return;
     setSelectedOrderId(null);
-    if (!draftTarget) {
-      setDraftItems([]);
-      setActiveSavedDraft(null);
-      draftSubmitKeyRef.current = null;
-      setDraftIsDirty(false);
-    } else {
-      setDraftIsDirty(true);
-    }
-    setDraftTarget({ orderType: 'TAKEAWAY' });
+    drafts.assignTargetDraft({ orderType: 'TAKEAWAY' });
     emitViewChange('draft-started');
   };
 
   const handleStartUntargetedDraft = () => {
-    if (draftOperationRef.current) return;
-    if (!canCreateOrder) return;
+    if (drafts.draftOperationRef.current || !canCreateOrder) return;
     setSelectedOrderId(null);
-    if (!draftTarget) {
-      setDraftItems([]);
-      setActiveSavedDraft(null);
-      draftSubmitKeyRef.current = null;
-      setDraftIsDirty(false);
-    } else {
-      setDraftIsDirty(true);
-    }
-    setDraftTarget({ orderType: null });
+    drafts.assignTargetDraft({ orderType: null });
     emitViewChange('draft-started');
-  };
-
-  // Mọi thay đổi món trên hoá đơn đang mở (chạm thêm món, nút −/+) đi qua một hàng đợi: lần sau chờ
-  // lần trước xong (kể cả tải lại đơn) mới chạy. Thêm món luôn gửi "addItems" để server tự cộng dồn
-  // vào dòng trùng trong giao dịch có khoá dòng; −/+ áp dụng mức thay đổi lên số lượng mới nhất.
-  const queryClient = useQueryClient();
-  const orderMutationQueueRef = React.useRef<Promise<void>>(Promise.resolve());
-  const enqueueOrderMutation = (task: () => Promise<void>) => {
-    const run = orderMutationQueueRef.current.then(task);
-    orderMutationQueueRef.current = run.catch(() => undefined);
-    return run;
-  };
-
-  const addItemToLiveOrder = async (orderId: number, item: PosMenuSelectedItem) => {
-    try {
-      const canMarkTakeaway =
-        currentOrder?.orderType === 'DINE_IN' &&
-        (currentOrder.items?.length ?? 0) > 0 &&
-        Boolean(item.isTakeaway ?? addonIsTakeaway);
-      await patchItemsMutation.mutateAsync({
-        orderId,
-        input: {
-          addItems: [
-            {
-              productId: item.productId,
-              quantity: item.quantity,
-              modifiers: item.modifiers,
-              ...(item.itemNote ? { itemNote: item.itemNote } : {}),
-              ...(canMarkTakeaway ? { isTakeaway: true } : {}),
-            },
-          ],
-        },
-      });
-      notify('pos.order.addItemSuccess', {
-        variant: 'success',
-        vars: { quantity: item.quantity, itemName: item.name },
-        duration: 3000,
-      });
-    } catch (err) {
-      notifyErr('pos.order.addItemError', err);
-    }
-  };
-
-  const handleAddItemFromMenu = async (item: PosMenuSelectedItem) => {
-    if (draftOperationRef.current) return;
-    if (selectedOrderId && currentOrder) {
-      if (!canUpdateOrder) return;
-      const orderId = selectedOrderId;
-      await enqueueOrderMutation(() => addItemToLiveOrder(orderId, item));
-      return;
-    }
-
-    if (!canCreateOrder) return;
-
-    if (!draftTarget) {
-      setDraftTarget({ orderType: null });
-    }
-    setDraftIsDirty(true);
-
-    setDraftItems((prev) => {
-      const existingIndex = findMatchingDraftIndex(prev, item);
-      if (existingIndex < 0) return [...prev, item];
-      return prev.map((entry, index) =>
-        index === existingIndex ? { ...entry, quantity: entry.quantity + item.quantity } : entry,
-      );
-    });
-  };
-
-  const handleUpdateDraftQty = (index: number, delta: number) => {
-    if (draftOperationRef.current) return;
-    setDraftIsDirty(true);
-    setDraftItems((prev) =>
-      prev.map((item, idx) =>
-        idx === index ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item,
-      ),
-    );
-  };
-
-  const handleRemoveDraftItem = (index: number) => {
-    if (draftOperationRef.current) return;
-    setDraftIsDirty(true);
-    setDraftItems((prev) => prev.filter((_, idx) => idx !== index));
-  };
-
-  const draftStateForSave = () => ({
-    orderType: draftTarget?.orderType ?? null,
-    tableId: draftTarget?.orderType === 'DINE_IN' ? draftTarget.tableId : null,
-    items: draftItems.map((item) => ({
-      productId: item.productId,
-      quantity: item.quantity,
-      modifiers: item.modifiers,
-      ...(item.itemNote ? { itemNote: item.itemNote } : {}),
-      ...(item.isTakeaway ? { isTakeaway: true } : {}),
-    })),
-    note: null,
-  });
-
-  const persistCurrentDraft = async () => {
-    const state = draftStateForSave();
-    if (activeSavedDraft) {
-      const updated = await updateDraftMutation.mutateAsync({
-        id: activeSavedDraft.id,
-        input: { ...state, expectedRevision: activeSavedDraft.revision },
-      });
-      setActiveSavedDraft({ id: updated.id, revision: updated.revision });
-      setDraftIsDirty(false);
-      return updated;
-    }
-    const created = await createDraftMutation.mutateAsync(state);
-    setActiveSavedDraft({ id: created.id, revision: created.revision });
-    setDraftIsDirty(false);
-    return created;
-  };
-
-  const handleSaveDraft = async () => {
-    const canSave = activeSavedDraft ? canUpdateOrder : canCreateOrder;
-    if (!canSave || draftItems.length === 0 || draftOperationRef.current) return;
-    draftOperationRef.current = true;
-    setDraftOperationPending(true);
-    try {
-      const saved = draftIsDirty || !activeSavedDraft ? await persistCurrentDraft() : null;
-      notify('pos.draft.saved', { variant: 'success', vars: { itemCount: saved?.items.length ?? draftItems.length } });
-      setSelectedOrderId(null);
-      setDraftTarget(null);
-      setDraftItems([]);
-      setActiveSavedDraft(null);
-      setDraftIsDirty(false);
-      draftSubmitKeyRef.current = null;
-      emitViewChange('draft-parked');
-    } catch (err) {
-      notifyErr('pos.draft.saveError', err);
-    } finally {
-      draftOperationRef.current = false;
-      setDraftOperationPending(false);
-    }
-  };
-
-  const toSelectedDraftItems = React.useCallback((draft: PosDraftResponse): PosMenuSelectedItem[] => draft.items.map((item) => {
-    const product = products.find((candidate) => candidate.id === item.productId);
-    if (!product) {
-      return {
-        productId: item.productId,
-        name: `Món #${item.productId}`,
-        quantity: item.quantity,
-        unitPrice: 0,
-        modifiers: item.modifiers,
-        modifierLabels: [],
-        ...(item.itemNote ? { itemNote: item.itemNote } : {}),
-        ...(item.isTakeaway ? { isTakeaway: true } : {}),
-      };
-    }
-    const selectedByGroup = buildInitialSelectedByGroup(product);
-    const manualSubstituteByModifierId: Record<number, number> = {};
-    for (const selection of item.modifiers) {
-      const selected = selectedByGroup[selection.groupId] ?? [];
-      if (selection.action === 'REMOVED_DEFAULT' || selection.action === 'SUBSTITUTED') {
-        selectedByGroup[selection.groupId] = selected.filter((id) => id !== selection.modifierId);
-      }
-      if (selection.action === 'SUBSTITUTED') {
-        if (selection.substituteModifierId !== undefined) {
-          selectedByGroup[selection.groupId] = [...new Set([...(selectedByGroup[selection.groupId] ?? []), selection.substituteModifierId])];
-          manualSubstituteByModifierId[selection.modifierId] = selection.substituteModifierId;
-        }
-      } else {
-        selectedByGroup[selection.groupId] = [...new Set([...(selectedByGroup[selection.groupId] ?? []), selection.modifierId])];
-      }
-    }
-    const computed = computeOrderModifiersPayload(product, selectedByGroup, manualSubstituteByModifierId);
-    return {
-      productId: item.productId,
-      name: product.name,
-      quantity: item.quantity,
-      unitPrice: product.price + computed.extraPrice,
-      modifiers: item.modifiers,
-      modifierLabels: computed.modifierLabels,
-      ...(item.itemNote ? { itemNote: item.itemNote } : {}),
-      ...(item.isTakeaway ? { isTakeaway: true } : {}),
-    };
-  }), [products]);
-
-  React.useEffect(() => {
-    if (!pendingDraftHydration) return;
-    if (activeSavedDraft?.id !== pendingDraftHydration.id) {
-      setPendingDraftHydration(null);
-      return;
-    }
-    if (!productsQuery.isSuccess) return;
-    const hydratedItems = toSelectedDraftItems(pendingDraftHydration);
-    setDraftItems((current) => current.map((item) => {
-      const hydrated = hydratedItems.find((candidate) => candidate.productId === item.productId
-        && JSON.stringify(candidate.modifiers) === JSON.stringify(item.modifiers));
-      return hydrated
-        ? { ...item, name: hydrated.name, unitPrice: hydrated.unitPrice, modifierLabels: hydrated.modifierLabels }
-        : item;
-    }));
-    setPendingDraftHydration(null);
-  }, [activeSavedDraft?.id, pendingDraftHydration, productsQuery.isSuccess, toSelectedDraftItems]);
-
-  const handleResumeDraft = (draft: PosDraftResponse) => {
-    if (draftOperationRef.current) return;
-    if (draftTarget && draftIsDirty && draftItems.length > 0) {
-      notify('pos.draft.saveBeforeSwitch', { variant: 'warning' });
-      return;
-    }
-    setSelectedOrderId(null);
-    setDraftTarget(draft.orderType === 'DINE_IN'
-      ? { orderType: 'DINE_IN', tableId: draft.tableId, tableName: draft.tableName ?? undefined }
-      : draft.orderType === 'TAKEAWAY'
-        ? { orderType: 'TAKEAWAY' }
-        : { orderType: null });
-    setDraftItems(toSelectedDraftItems(draft));
-    setActiveSavedDraft({ id: draft.id, revision: draft.revision });
-    setPendingDraftHydration(productsQuery.isSuccess ? null : draft);
-    setDraftIsDirty(false);
-    draftSubmitKeyRef.current = null;
-    emitViewChange('draft-started');
-  };
-
-  const clearDraft = () => {
-    setActiveSavedDraft(null);
-    setPendingDraftHydration(null);
-    setDraftTarget(null);
-    setDraftItems([]);
-    setDraftIsDirty(false);
-    setEditingItemTarget(null);
-    draftSubmitKeyRef.current = null;
-  };
-
-  const handleDeleteDraft = async (draft: { id: string; revision: number }): Promise<boolean> => {
-    if (!canDeleteDrafts || draftOperationRef.current) return false;
-    draftOperationRef.current = true;
-    setDraftOperationPending(true);
-    try {
-      await deleteDraftMutation.mutateAsync({ id: draft.id, revision: draft.revision });
-      if (activeSavedDraft?.id === draft.id) {
-        clearDraft();
-        emitViewChange('draft-discarded');
-      }
-      notify('pos.draft.deleted', { variant: 'success' });
-      return true;
-    } catch (err) {
-      notifyErr('pos.draft.deleteError', err);
-      return false;
-    } finally {
-      draftOperationRef.current = false;
-      setDraftOperationPending(false);
-    }
-  };
-
-  const handleDiscardDraft = async (): Promise<boolean> => {
-    if (draftOperationRef.current || !draftTarget) return false;
-    if (activeSavedDraft) return handleDeleteDraft(activeSavedDraft);
-    clearDraft();
-    emitViewChange('draft-discarded');
-    return true;
-  };
-
-  const handleSubmitDraftOrder = async () => {
-    if (!canCreateOrder || !draftTarget || draftItems.length === 0 || draftOperationRef.current) return;
-    if (draftTarget.orderType === null || (draftTarget.orderType === 'DINE_IN' && draftTarget.tableId === null)) {
-      notify('pos.draft.assignTarget', { variant: 'warning' });
-      return;
-    }
-
-    draftOperationRef.current = true;
-    setDraftOperationPending(true);
-    try {
-      let saved = activeSavedDraft;
-      if (!saved || draftIsDirty) {
-        const persisted = await persistCurrentDraft();
-        saved = { id: persisted.id, revision: persisted.revision };
-      }
-      const idempotencyKey = draftSubmitKeyRef.current ?? (typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`);
-      draftSubmitKeyRef.current = idempotencyKey;
-      const response = await submitDraftMutation.mutateAsync({
-        id: saved.id,
-        input: { expectedRevision: saved.revision, idempotencyKey },
-      });
-      const created = response.order;
-
-      setDraftTarget(null);
-      setDraftItems([]);
-      setActiveSavedDraft(null);
-      setDraftIsDirty(false);
-      draftSubmitKeyRef.current = null;
-      setSelectedOrderId(created.orderId);
-      emitViewChange('draft-submitted');
-
-      notify('pos.order.createSuccess', {
-        variant: 'success',
-        vars: { targetLabel: `${created.tableLabel ?? created.orderCode}` },
-      });
-    } catch (err) {
-      notifyErr('pos.order.createError', err);
-    } finally {
-      draftOperationRef.current = false;
-      setDraftOperationPending(false);
-    }
-  };
-
-  const handleApproveQrOrder = async () => {
-    if (!selectedOrderId) return;
-    try {
-      await approveQrMutation.mutateAsync({
-        orderId: selectedOrderId,
-        input: { approved: true },
-      });
-      notify('pos.order.approveQrSuccess', { variant: 'success' });
-    } catch (err) {
-      notifyErr('pos.order.approveQrError', err);
-    }
-  };
-
-  const handleUpdateOrderItemQuantity = async (orderItemId: number, newQuantity: number) => {
-    if (!selectedOrderId) return;
-    const orderId = selectedOrderId;
-    // Người dùng bấm −/+ trên số lượng đang thấy: giữ đúng mức thay đổi đó và cộng vào số lượng mới
-    // nhất (đơn có thể vừa được cộng dồn bởi một lần chạm món trước trong hàng đợi).
-    const shownQuantity = currentOrder?.items.find((i) => i.id === orderItemId)?.quantity;
-    const delta = shownQuantity === undefined ? null : newQuantity - shownQuantity;
-    await enqueueOrderMutation(async () => {
-      const latest = queryClient
-        .getQueryData<OrderDetailResponse>(posQueryKeys.orderDetail(orderId))
-        ?.items.find((i) => i.id === orderItemId);
-      const quantity =
-        delta === null || !latest ? newQuantity : Math.max(1, latest.quantity + delta);
-      if (latest && quantity === latest.quantity) return;
-      try {
-        await patchItemsMutation.mutateAsync({
-          orderId,
-          input: { updates: [{ orderItemId, quantity }] },
-        });
-      } catch (err) {
-        notifyErr('pos.order.addItemError', err);
-      }
-    });
-  };
-
-  const handleToggleOrderItemTakeaway = async (orderItemId: number, nextIsTakeaway: boolean) => {
-    if (!selectedOrderId) return;
-    const orderId = selectedOrderId;
-    await enqueueOrderMutation(async () => {
-      try {
-        await patchItemsMutation.mutateAsync({
-          orderId,
-          input: { updates: [{ orderItemId, isTakeaway: nextIsTakeaway }] },
-        });
-      } catch (err) {
-        notifyErr('pos.order.addItemError', err);
-      }
-    });
-  };
-
-  const handleRemoveOrCancelOrderItem = async (orderItemId: number) => {
-    if (!selectedOrderId) return;
-    const result = await patchItemsMutation.mutateAsync({
-      orderId: selectedOrderId,
-      input: {
-        removeItemIds: [orderItemId],
-      },
-    });
-
-    if (result.requireCancellationSlip && result.kitchenCancellationSlips.length > 0) {
-      thermalPrinter.printKitchenCancelItem({
-        orderCode: currentOrder?.orderCode,
-        slips: result.kitchenCancellationSlips,
-      });
-      notify('pos.order.cancelItemSlipSuccess', {
-        variant: 'warning',
-        vars: { stationCount: result.kitchenCancellationSlips.length },
-      });
-    }
-  };
-
-  const handleOpenEditDraftItem = (index: number) => {
-    if (!canCreateOrder || draftOperationRef.current) return;
-    const targetItem = draftItems[index];
-    if (!targetItem) return;
-    const product = productsById.get(targetItem.productId);
-    if (!product) {
-      notify('pos.order.editItemError', {
-        variant: 'destructive',
-        vars: { reason: 'Món này hiện không còn trong thực đơn.' },
-      });
-      return;
-    }
-    const { selectedByGroup, manualSubstituteByModifierId } = hydrateModifierSelectionFromExisting(
-      product,
-      targetItem.modifiers,
-    );
-    setEditingItemTarget({
-      kind: 'draft',
-      draftIndex: index,
-      product,
-      editInstanceKey: `draft-${index}-${targetItem.productId}-${targetItem.quantity}`,
-      initialValue: {
-        quantity: targetItem.quantity,
-        selectedByGroup,
-        manualSubstituteByModifierId,
-        itemNote: targetItem.itemNote ?? '',
-      },
-    });
-  };
-
-  const handleOpenEditOrderItem = (orderItemId: number) => {
-    if (!canUpdateOrder || !currentOrder || !selectedOrderId) return;
-    if (currentOrder.status !== 'PENDING' && currentOrder.status !== 'SERVING') return;
-    const targetItem = currentOrder.items.find((item) => item.id === orderItemId);
-    if (!targetItem || targetItem.kitchenStatus !== 'NEW') return;
-    const product = productsById.get(targetItem.productId);
-    if (!product) {
-      notify('pos.order.editItemError', {
-        variant: 'destructive',
-        vars: { reason: 'Món này hiện không còn khả dụng để chỉnh sửa tuỳ chọn.' },
-      });
-      return;
-    }
-    const selections =
-      targetItem.modifierSelections && targetItem.modifierSelections.length > 0
-        ? targetItem.modifierSelections
-        : inferModifierSelectionsFromLabels(product, targetItem.modifiers);
-    const { selectedByGroup, manualSubstituteByModifierId } = hydrateModifierSelectionFromExisting(
-      product,
-      selections,
-    );
-    setEditingItemTarget({
-      kind: 'order',
-      orderItemId,
-      product,
-      editInstanceKey: `order-${orderItemId}-${targetItem.productId}-${targetItem.quantity}`,
-      initialValue: {
-        quantity: targetItem.quantity,
-        selectedByGroup,
-        manualSubstituteByModifierId,
-        itemNote: targetItem.itemNote ?? '',
-      },
-    });
-  };
-
-  const handleConfirmEditItem = async (updatedItem: PosMenuSelectedItem) => {
-    const target = editingItemTarget;
-    if (!target) return;
-
-    if (target.kind === 'draft' && target.draftIndex !== undefined) {
-      const idx = target.draftIndex;
-      setDraftIsDirty(true);
-      setDraftItems((prev) =>
-        prev.map((entry, entryIdx) =>
-          entryIdx === idx
-            ? {
-                ...updatedItem,
-                ...(entry.isTakeaway ? { isTakeaway: true } : {}),
-              }
-            : entry,
-        ),
-      );
-      setEditingItemTarget(null);
-      return;
-    }
-
-    if (target.kind === 'order' && target.orderItemId !== undefined) {
-      if (!selectedOrderId || !canUpdateOrder) return;
-      const orderId = selectedOrderId;
-      const orderItemId = target.orderItemId;
-      await enqueueOrderMutation(async () => {
-        try {
-          await patchItemsMutation.mutateAsync({
-            orderId,
-            input: {
-              updates: [
-                {
-                  orderItemId,
-                  expectedKitchenStatus: 'NEW',
-                  quantity: updatedItem.quantity,
-                  modifiers: updatedItem.modifiers,
-                  itemNote: updatedItem.itemNote ?? null,
-                },
-              ],
-            },
-          });
-          setEditingItemTarget(null);
-          notify('pos.order.editItemSuccess', {
-            variant: 'success',
-            vars: { quantity: updatedItem.quantity, itemName: updatedItem.name },
-            duration: 2500,
-          });
-        } catch (err) {
-          const errorCode =
-            err instanceof ApiClientError
-              ? err.code
-              : typeof err === 'object' && err !== null && 'code' in err
-                ? String((err as { code?: unknown }).code)
-                : undefined;
-          const statusCode =
-            err instanceof ApiClientError
-              ? err.statusCode
-              : typeof err === 'object' && err !== null && 'statusCode' in err
-                ? Number((err as { statusCode?: unknown }).statusCode)
-                : undefined;
-          if (errorCode === ErrorCodes.POS_ITEM_ALREADY_PRINTED || statusCode === 409) {
-            void queryClient.invalidateQueries({ queryKey: posQueryKeys.orderDetail(orderId) });
-            void queryClient.invalidateQueries({ queryKey: posQueryKeys.tableGrid() });
-            setEditingItemTarget(null);
-            notifyErr('pos.order.editItemError', err);
-            return;
-          }
-          notifyErr('pos.order.editItemError', err);
-          throw err;
-        }
-      });
-    }
-  };
-
-  const handleSplitKitchen = async () => {
-    if (!selectedOrderId || splitKitchenMutation.isPending) return;
-    try {
-      const response = await splitKitchenMutation.mutateAsync(selectedOrderId);
-      clearAddonBadge(selectedOrderId);
-      if (response.tickets.length > 0) {
-        thermalPrinter.printKitchenSplit({
-          orderCode: currentOrder?.orderCode ?? `#${selectedOrderId}`,
-          orderType: currentOrder?.orderType,
-          tableLabel: currentOrder?.tableLabel,
-          takeawayNumber: currentOrder?.takeawayNumber,
-          takeawayLabelFormat: currentOrder?.takeawayLabelFormat,
-          orderNote: currentOrder?.note,
-          tickets: response.tickets,
-        });
-        notify('pos.kitchen.splitSuccess', {
-          variant: 'success',
-          vars: { batchNo: response.batchNo, ticketCount: response.tickets.length },
-        });
-      } else {
-        notify('pos.kitchen.splitNoNewItems', {
-          variant: 'info',
-          vars: { message: response.message ?? 'Không có món mới cần tách' },
-          duration: 3500,
-        });
-      }
-    } catch (err) {
-      notifyErr('pos.kitchen.splitError', err);
-    }
-  };
-
-  const handleReprintKitchen = async (batchNo?: number) => {
-    if (!selectedOrderId || reprintKitchenMutation.isPending) return;
-    try {
-      const response = await reprintKitchenMutation.mutateAsync({
-        orderId: selectedOrderId,
-        input: batchNo ? { batchNo } : undefined,
-      });
-      if (response.tickets.length > 0) {
-        thermalPrinter.printKitchenSplit({
-          orderCode: currentOrder?.orderCode ?? `#${selectedOrderId}`,
-          orderType: currentOrder?.orderType,
-          tableLabel: currentOrder?.tableLabel,
-          takeawayNumber: currentOrder?.takeawayNumber,
-          takeawayLabelFormat: currentOrder?.takeawayLabelFormat,
-          orderNote: currentOrder?.note,
-          isReprint: true,
-          tickets: response.tickets,
-        });
-        notify(batchNo ? 'pos.kitchen.reprintBatchSuccess' : 'pos.kitchen.reprintAllSuccess', {
-          variant: 'info',
-          vars: batchNo
-            ? { batchNo, ticketCount: response.tickets.length }
-            : { ticketCount: response.tickets.length },
-        });
-      } else {
-        notify('pos.kitchen.reprintEmpty', {
-          variant: 'info',
-          vars: { message: response.message ?? 'Không có món đã in nào để in lại' },
-        });
-      }
-    } catch (err) {
-      notifyErr('pos.kitchen.reprintError', err);
-    }
-  };
-
-  const handlePrintProvisionalBill = async () => {
-    if (!selectedOrderId || provisionalBillMutation.isPending) return;
-    try {
-      const bill = await provisionalBillMutation.mutateAsync(selectedOrderId);
-      if (bill.vietQrPayload && typeof Image !== 'undefined') {
-        const img = new Image();
-        img.src = bill.vietQrPayload;
-        if (img.decode) {
-          try {
-            await Promise.race([
-              img.decode(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500)),
-            ]);
-          } catch {
-            // fallback handled by ProvisionalVietQrSlip
-          }
-        }
-      }
-      thermalPrinter.printProvisionalVietQr({
-        ...bill,
-        tableLabel: currentOrder?.tableLabel,
-        takeawayLabelFormat: bill.takeawayLabelFormat ?? currentOrder?.takeawayLabelFormat,
-        cashierName: currentUser?.fullName ?? currentUser?.username,
-        createdAt: currentOrder?.createdAt,
-      });
-      if (bill.qrOverLimit && bill.paymentAccount) {
-        notify('pos.paymentQr.overLimitWarning', {
-          variant: 'warning',
-          vars: {
-            accountLabel: bill.paymentAccount.label,
-            bankName: bill.paymentAccount.bankName,
-            accountNo: bill.paymentAccount.accountNo,
-          },
-        });
-      } else if (bill.qrRotated && bill.paymentAccount) {
-        notify('pos.paymentQr.rotatedInfo', {
-          variant: 'info',
-          vars: {
-            accountLabel: bill.paymentAccount.label,
-            bankName: bill.paymentAccount.bankName,
-            accountNo: bill.paymentAccount.accountNo,
-          },
-        });
-      }
-      notify('pos.provisional.printSuccess', {
-        variant: 'success',
-        vars: { orderCode: bill.orderCode },
-      });
-    } catch (err) {
-      notifyErr('pos.provisional.printError', err);
-    }
-  };
-
-  const handleApplyDiscount = async (payload: ApplyPosDiscountRequest) => {
-    if (!selectedOrderId) return;
-    try {
-      const updated = await applyDiscountMutation.mutateAsync({
-        orderId: selectedOrderId,
-        input: payload,
-      });
-      setDiscountDialogOpen(false);
-      notify('pos.discount.applySuccess', {
-        variant: 'success',
-        vars: { amount: (updated.discountAmount ?? 0).toLocaleString('vi-VN') },
-      });
-      return updated;
-    } catch (err) {
-      notifyErr('pos.discount.applyError', err);
-    }
-  };
-
-  const handleRemoveDiscount = async () => {
-    if (!selectedOrderId || removeDiscountMutation.isPending) return;
-    try {
-      await removeDiscountMutation.mutateAsync(selectedOrderId);
-      notify('pos.discount.removeSuccess', { variant: 'info' });
-    } catch (err) {
-      notifyErr('pos.discount.removeError', err);
-    }
-  };
-
-  // Thanh toán có liên quan tiền mặt (CASH / SPLIT) khi chọn "Xác nhận & Không in":
-  // tự động bung két theo hành động thanh toán (không phụ thuộc quyền `pos.openCashDrawer`).
-  // Trường hợp có in hoá đơn (`printReceipt = true`), `printOfficialReceipt` đã tự gộp xung mở két.
-  const autoKickCashDrawerForNoPrintCashPayment = (paymentMethod: PaymentMethod) => {
-    if (paymentMethod !== 'CASH' && paymentMethod !== 'SPLIT') return;
-    const printerConfig = useThermalPrinterConfigStore.getState().config;
-    if (printerConfig.driver === 'BROWSER' || !printerConfig.cashDrawerKick) return;
-    void thermalPrinter.kickCashDrawerNow().catch(() => undefined);
-  };
-
-  const handleConfirmCheckout = async (payload: CheckoutOrderRequest) => {
-    if (!selectedOrderId) return;
-    markClosingLocally(selectedOrderId);
-    try {
-      const orderSnapshot = currentOrder;
-      const response = await checkoutMutation.mutateAsync({
-        orderId: selectedOrderId,
-        input: payload,
-      });
-
-      if (payload.printReceipt && orderSnapshot) {
-        const resolvedTableLabel =
-          orderSnapshot.tableLabel ??
-          (orderSnapshot.orderType === 'TAKEAWAY'
-            ? formatTakeawayLabel(orderSnapshot.takeawayNumber, orderSnapshot.takeawayLabelFormat)
-            : `Bàn #${orderSnapshot.tableId}`);
-        const discountLabel =
-          orderSnapshot.discountSnapshot?.kind === 'CODE'
-            ? (orderSnapshot.discountSnapshot.code ?? orderSnapshot.discountSnapshot.name)
-            : (orderSnapshot.discountSnapshot?.name ?? null);
-        thermalPrinter.printOfficialReceipt({
-          orderCode: orderSnapshot.orderCode,
-          tableLabel: resolvedTableLabel,
-          cashierName: currentUser?.fullName ?? currentUser?.username,
-          paidAt: response.paidAt,
-          paymentMethod: payload.paymentMethod,
-          cashAmount: payload.cashAmount,
-          transferAmount: payload.transferAmount,
-          subtotalAmount: orderSnapshot.subtotalAmount,
-          discountAmount: orderSnapshot.discountAmount,
-          discountLabel,
-          totalAmount: orderSnapshot.totalAmount,
-          items: orderSnapshot.items
-            .filter((item) => item.kitchenStatus !== 'CANCELLED')
-            .map((item) => ({
-              name: item.name,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              lineTotal: item.lineTotal,
-              modifiers: item.modifiers,
-              pricedModifiers: item.pricedModifiers,
-              note: item.itemNote,
-              ...(orderSnapshot.orderType !== 'TAKEAWAY' && item.isTakeaway
-                ? { isTakeaway: true }
-                : {}),
-            })),
-        });
-      } else {
-        autoKickCashDrawerForNoPrintCashPayment(payload.paymentMethod);
-      }
-
-      setCheckoutOpen(false);
-      clearAddonBadge(selectedOrderId);
-      setSelectedOrderId(null);
-      notify(payload.printReceipt ? 'pos.checkout.successWithPrint' : 'pos.checkout.successNoPrint', {
-        variant: 'success',
-      });
-    } catch (err) {
-      unmarkClosingLocally(selectedOrderId);
-      notifyErr('pos.checkout.error', err);
-    }
-  };
-
-  const handlePrintSplitProvisional = async (
-    selectedItems: SplitSelectedItemSummary[],
-    splitTotal: number,
-  ) => {
-    if (!currentOrder || splitProvisionalBillMutation.isPending) return;
-    try {
-      const bill = await splitProvisionalBillMutation.mutateAsync({
-        orderId: currentOrder.orderId,
-        input: {
-          items: selectedItems.map((item) => ({
-            orderItemId: item.orderItemId,
-            quantity: item.quantity,
-          })),
-        },
-      });
-      setLastSplitPaymentAccountId(bill.paymentAccount?.id ?? null);
-
-      if (bill.vietQrPayload && typeof Image !== 'undefined') {
-        const img = new Image();
-        img.src = bill.vietQrPayload;
-        if (img.decode) {
-          try {
-            await Promise.race([
-              img.decode(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500)),
-            ]);
-          } catch {
-            // fallback handled by ProvisionalVietQrSlip
-          }
-        }
-      }
-      thermalPrinter.printProvisionalVietQr({
-        ...bill,
-        tableLabel: currentOrder.tableLabel,
-        cashierName: currentUser?.fullName ?? currentUser?.username,
-        createdAt: currentOrder.createdAt,
-      });
-      setSplitDialogMode(null);
-      if (bill.qrOverLimit && bill.paymentAccount) {
-        notify('pos.paymentQr.overLimitWarning', {
-          variant: 'warning',
-          vars: {
-            accountLabel: bill.paymentAccount.label,
-            bankName: bill.paymentAccount.bankName,
-            accountNo: bill.paymentAccount.accountNo,
-          },
-        });
-      } else if (bill.qrRotated && bill.paymentAccount) {
-        notify('pos.paymentQr.rotatedInfo', {
-          variant: 'info',
-          vars: {
-            accountLabel: bill.paymentAccount.label,
-            bankName: bill.paymentAccount.bankName,
-            accountNo: bill.paymentAccount.accountNo,
-          },
-        });
-      }
-      notify('pos.split.provisionalSuccess', {
-        variant: 'success',
-        vars: {
-          itemCount: selectedItems.length,
-          amount: splitTotal.toLocaleString('vi-VN'),
-        },
-      });
-    } catch (err) {
-      notifyErr('pos.split.provisionalError', err);
-    }
-  };
-
-  const handleConfirmSplitCheckout = async (
-    payload: SplitCheckoutOrderRequest,
-    selectedItems: SplitSelectedItemSummary[],
-    splitTotal: number,
-  ) => {
-    if (!selectedOrderId || !currentOrder) return;
-    markClosingLocally(selectedOrderId);
-    try {
-      const orderSnapshot = currentOrder;
-      const response = await splitCheckoutMutation.mutateAsync({
-        orderId: selectedOrderId,
-        input: {
-          ...payload,
-          ...(lastSplitPaymentAccountId ? { paymentAccountId: lastSplitPaymentAccountId } : {}),
-        },
-      });
-      setLastSplitPaymentAccountId(null);
-
-      if (payload.printReceipt) {
-        const resolvedTableLabel =
-          orderSnapshot.tableLabel ??
-          (orderSnapshot.orderType === 'TAKEAWAY'
-            ? formatTakeawayLabel(orderSnapshot.takeawayNumber, orderSnapshot.takeawayLabelFormat)
-            : `Bàn #${orderSnapshot.tableId}`);
-        thermalPrinter.printOfficialReceipt({
-          orderCode: response.paidOrderCode,
-          tableLabel: resolvedTableLabel,
-          cashierName: currentUser?.fullName ?? currentUser?.username,
-          paidAt: response.paidAt,
-          paymentMethod: payload.paymentMethod,
-          cashAmount: payload.cashAmount,
-          transferAmount: payload.transferAmount,
-          totalAmount: splitTotal,
-          items: selectedItems.map((item) => ({
-            name: item.name,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            lineTotal: item.lineTotal,
-            modifiers: item.modifiers,
-            ...(item.pricedModifiers !== undefined ? { pricedModifiers: item.pricedModifiers } : {}),
-            note: item.note,
-            ...(orderSnapshot.orderType !== 'TAKEAWAY' && item.isTakeaway
-              ? { isTakeaway: true }
-              : {}),
-          })),
-        });
-      } else {
-        autoKickCashDrawerForNoPrintCashPayment(payload.paymentMethod);
-      }
-
-      setSplitDialogMode(null);
-      if (response.isFullCheckout) {
-        setSelectedOrderId(null);
-      } else {
-        unmarkClosingLocally(selectedOrderId);
-      }
-      notify(
-        response.isFullCheckout
-          ? 'pos.split.checkoutFullSuccess'
-          : 'pos.split.checkoutPartialSuccess',
-        {
-          variant: 'success',
-          vars: response.isFullCheckout
-            ? undefined
-            : {
-                paidOrderCode: response.paidOrderCode,
-                remainingAmount: response.remainingTotalAmount.toLocaleString('vi-VN'),
-              },
-        },
-      );
-    } catch (err) {
-      unmarkClosingLocally(selectedOrderId);
-      notifyErr('pos.split.checkoutError', err);
-    }
-  };
-
-  const handleConfirmTableAction = async (input: TableActionRequest) => {
-    if (!selectedOrderId) return;
-    // Chuyển / hoán đổi bàn giữ nguyên đơn đang mở; chỉ gộp bàn mới đóng đơn này.
-    const closesThisOrder = input.action === TableActionType.MERGE;
-    if (closesThisOrder) markClosingLocally(selectedOrderId);
-    try {
-      const mergedTargetOrderId =
-        input.action === TableActionType.MERGE
-          ? (gridData?.tables.find((t) => t.id === input.targetTableId)?.activeOrderId ?? null)
-          : null;
-      const result = await tableActionMutation.mutateAsync({
-        orderId: selectedOrderId,
-        input,
-      });
-      if (result.requireKitchenNoticePrint && result.kitchenTransferSlip) {
-        thermalPrinter.printTableTransferNotice({
-          ...result.kitchenTransferSlip,
-          cashierName: currentUser?.fullName || currentUser?.username || 'Thu ngân',
-        });
-      }
-      setTableActionOpen(false);
-      if (result.action === TableActionType.MERGE && mergedTargetOrderId) {
-        setSelectedOrderId(mergedTargetOrderId);
-      }
-      const actionText =
-        result.action === 'MOVE'
-          ? 'chuyển'
-          : result.action === 'MERGE'
-            ? 'gộp'
-            : result.action === 'TO_TAKEAWAY'
-              ? 'chuyển sang Mang về'
-              : 'hoán đổi';
-      notify(
-        result.requireKitchenNoticePrint
-          ? 'pos.tableAction.successPrinted'
-          : 'pos.tableAction.successSynced',
-        {
-          variant: 'success',
-          vars: { actionText },
-        },
-      );
-    } catch (err) {
-      if (closesThisOrder) unmarkClosingLocally(selectedOrderId);
-      notifyErr('pos.tableAction.error', err);
-    }
-  };
-
-  const handleCancelOrder = async (reason?: string) => {
-    if (!selectedOrderId || cancelOrderMutation.isPending) return;
-    markClosingLocally(selectedOrderId);
-    const isTakeaway = currentOrder?.orderType === 'TAKEAWAY';
-    try {
-      const defaultReason = isTakeaway
-        ? 'Thu ngân huỷ đơn mang về'
-        : 'Tất cả món trong đơn đã bị huỷ bởi thu ngân';
-      const resolvedReason =
-        typeof reason === 'string' && reason.trim().length >= 10
-          ? reason.trim()
-          : defaultReason;
-
-      const orderSnapshot = currentOrder;
-      const response = await cancelOrderMutation.mutateAsync({
-        orderId: selectedOrderId,
-        input: {
-          voidReason: resolvedReason,
-        },
-      });
-      if (
-        response.requireCancellationSlip &&
-        response.kitchenCancellationSlips.length > 0
-      ) {
-        thermalPrinter.printKitchenCancelItem({
-          orderCode: orderSnapshot?.orderCode,
-          slips: response.kitchenCancellationSlips,
-        });
-      }
-      setSelectedOrderId(null);
-      notify(isTakeaway ? 'pos.order.voidTakeawaySuccess' : 'pos.order.voidTableSuccess', {
-        variant: 'success',
-      });
-    } catch (err) {
-      unmarkClosingLocally(selectedOrderId);
-      notifyErr('pos.order.voidError', err);
-    }
   };
 
   const activeBadgeCount = currentOrder
     ? currentOrder.items.filter((i) => i.kitchenStatus !== 'CANCELLED').length
-    : draftItems.length;
+    : drafts.draftItems.length;
   const activeTotal = currentOrder
     ? currentOrder.totalAmount
-    : draftItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+    : drafts.draftItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const activeLabel = currentOrder
     ? (currentOrder.tableLabel ??
       (currentOrder.orderType === 'TAKEAWAY'
         ? formatTakeawayLabel(currentOrder.takeawayNumber, currentOrder.takeawayLabelFormat)
         : `Bàn #${currentOrder.tableId}`))
-    : draftTarget?.orderType === 'TAKEAWAY'
+    : drafts.draftTarget?.orderType === 'TAKEAWAY'
       ? 'Đơn Mang về mới'
-      : draftTarget?.orderType === 'DINE_IN'
-        ? draftTarget.tableName ?? 'Chưa gán bàn'
-        : draftTarget?.orderType === null
+      : drafts.draftTarget?.orderType === 'DINE_IN'
+        ? drafts.draftTarget.tableName ?? 'Chưa gán bàn'
+        : drafts.draftTarget?.orderType === null
           ? 'Giỏ chưa gán bàn'
           : 'Đang chọn bàn';
 
   const clearSelection = () => {
-    if (draftOperationRef.current) return;
+    if (drafts.draftOperationRef.current) return;
     setSelectedOrderId(null);
-    setDraftTarget(null);
-    setDraftItems([]);
-    setActiveSavedDraft(null);
-    setDraftIsDirty(false);
-    setEditingItemTarget(null);
-    draftSubmitKeyRef.current = null;
+    drafts.clearDraft();
   };
 
   return {
@@ -1342,13 +296,13 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
     products,
     draftsQuery,
     parkedDrafts,
-    activeDraftId: activeSavedDraft?.id ?? null,
+    activeDraftId: drafts.activeSavedDraft?.id ?? null,
     currentOrder: currentOrder ?? null,
     currentUser,
     selectedOrderId,
-    draftTarget,
-    draftItems,
-      draftIsDirty,
+    draftTarget: drafts.draftTarget,
+    draftItems: drafts.draftItems,
+    draftIsDirty: drafts.draftIsDirty,
     addonIsTakeaway,
     setAddonIsTakeaway,
     addonBadgesByOrderId,
@@ -1358,8 +312,8 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       canUpdateOrder,
       canDeleteOrder,
       canDeleteDrafts,
-      canDiscardDraft: !activeSavedDraft || canDeleteDrafts,
-      canSaveDraft: activeSavedDraft ? canUpdateOrder : canCreateOrder,
+      canDiscardDraft: !drafts.activeSavedDraft || canDeleteDrafts,
+      canSaveDraft: drafts.activeSavedDraft ? canUpdateOrder : canCreateOrder,
       canSplitKitchen,
       canTableAction,
       canCheckout,
@@ -1370,33 +324,17 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       activeLabel,
     },
     pending: {
-      isDraftPending: draftOperationPending,
-      isSplitPending: splitKitchenMutation.isPending,
-      isProvisionalPending: provisionalBillMutation.isPending,
-      isApprovingQr: approveQrMutation.isPending,
-      isSubmittingDraft: submitDraftMutation.isPending || createDraftMutation.isPending || updateDraftMutation.isPending,
-      isSavingDraft: createDraftMutation.isPending || updateDraftMutation.isPending,
-      isCancellingOrder: cancelOrderMutation.isPending,
-      isReprintPending: reprintKitchenMutation.isPending,
-      isDiscountPending: applyDiscountMutation.isPending || removeDiscountMutation.isPending,
-      isApplyingDiscount: applyDiscountMutation.isPending,
-      isCheckoutPending: checkoutMutation.isPending,
-      isTableActionPending: tableActionMutation.isPending,
-      isSplitDialogPending:
-        splitCheckoutMutation.isPending || splitProvisionalBillMutation.isPending,
-      isPatchingItems: patchItemsMutation.isPending,
+      isDraftPending: drafts.draftOperationPending,
+      isApprovingQr: orderItems.isApprovingQr,
+      isSubmittingDraft: drafts.isSubmittingDraft,
+      isSavingDraft: drafts.isSavingDraft,
+      isPatchingItems: orderItems.isPatchingItems,
+      ...billing.pending,
     },
     dialogs: {
-      tableActionOpen,
-      setTableActionOpen,
-      checkoutOpen,
-      setCheckoutOpen,
-      discountDialogOpen,
-      setDiscountDialogOpen,
-      splitDialogMode,
-      setSplitDialogMode,
-      editingItemTarget,
-      setEditingItemTarget,
+      ...billing.dialogs,
+      editingItemTarget: orderItems.editingItemTarget,
+      setEditingItemTarget: orderItems.setEditingItemTarget,
     },
     isOrderClosedLocally,
     actions: {
@@ -1407,31 +345,22 @@ export function usePosWorkspace({ onViewChange }: UsePosWorkspaceOptions = {}) {
       startNewTakeaway: handleStartNewTakeaway,
       startUntargetedDraft: handleStartUntargetedDraft,
       chooseDraftTarget: () => emitViewChange('draft-target-picker'),
-      addItemFromMenu: handleAddItemFromMenu,
-      updateDraftQty: handleUpdateDraftQty,
-      removeDraftItem: handleRemoveDraftItem,
-      openEditDraftItem: handleOpenEditDraftItem,
-      saveDraft: handleSaveDraft,
-      resumeDraft: handleResumeDraft,
-      deleteDraft: handleDeleteDraft,
-      discardDraft: handleDiscardDraft,
-      submitDraftOrder: handleSubmitDraftOrder,
-      approveQrOrder: handleApproveQrOrder,
-      updateOrderItemQuantity: handleUpdateOrderItemQuantity,
-      toggleOrderItemTakeaway: handleToggleOrderItemTakeaway,
-      removeOrCancelOrderItem: handleRemoveOrCancelOrderItem,
-      openEditOrderItem: handleOpenEditOrderItem,
-      confirmEditItem: handleConfirmEditItem,
-      splitKitchen: handleSplitKitchen,
-      reprintKitchen: handleReprintKitchen,
-      printProvisionalBill: handlePrintProvisionalBill,
-      applyDiscount: handleApplyDiscount,
-      removeDiscount: handleRemoveDiscount,
-      confirmCheckout: handleConfirmCheckout,
-      printSplitProvisional: handlePrintSplitProvisional,
-      confirmSplitCheckout: handleConfirmSplitCheckout,
-      confirmTableAction: handleConfirmTableAction,
-      cancelOrder: handleCancelOrder,
+      addItemFromMenu: orderItems.addItemFromMenu,
+      updateDraftQty: drafts.handleUpdateDraftQty,
+      removeDraftItem: drafts.handleRemoveDraftItem,
+      openEditDraftItem: orderItems.openEditDraftItem,
+      saveDraft: drafts.handleSaveDraft,
+      resumeDraft: drafts.handleResumeDraft,
+      deleteDraft: drafts.handleDeleteDraft,
+      discardDraft: drafts.handleDiscardDraft,
+      submitDraftOrder: drafts.handleSubmitDraftOrder,
+      approveQrOrder: orderItems.approveQrOrder,
+      updateOrderItemQuantity: orderItems.updateOrderItemQuantity,
+      toggleOrderItemTakeaway: orderItems.toggleOrderItemTakeaway,
+      removeOrCancelOrderItem: orderItems.removeOrCancelOrderItem,
+      openEditOrderItem: orderItems.openEditOrderItem,
+      confirmEditItem: orderItems.confirmEditItem,
+      ...billing.actions,
     },
   };
 }

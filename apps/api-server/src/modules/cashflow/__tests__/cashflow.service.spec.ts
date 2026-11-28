@@ -532,4 +532,96 @@ describe('CashflowService', () => {
       service.listSettlements({ page: 1, limit: 20, closerKeyword: 'thu ngan' }),
     ).resolves.toMatchObject({ total: 0 });
   });
+
+  it('guards compensateSettlement (422/404/409/negative/shortage), setDefaultBudget 422, and default budget missing fallback', async () => {
+    const h = createHarness();
+    const svc = new CashflowService(h.prisma as never);
+
+    // Default budget missing -> preview returns 0
+    h.prisma.masterData.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.getDefaultOpeningBudget()).resolves.toBe(0);
+
+    await expect(svc.setDefaultBudget({ openingBudget: -100 }, 1)).rejects.toBeInstanceOf(
+      UnprocessableEntityException,
+    );
+
+    await expect(svc.compensateSettlement(1, { note: '' } as never, 1)).rejects.toBeInstanceOf(
+      UnprocessableEntityException,
+    );
+
+    const txComp = {
+      cashDrawerSettlement: {
+        findUnique: vi.fn(),
+        update: vi.fn(),
+      },
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ username: 'admin', employee: { fullName: 'Admin' } }),
+      },
+    };
+    const prismaComp = {
+      $transaction: vi.fn(async (cb: (client: typeof txComp) => Promise<unknown>) => cb(txComp)),
+    };
+    const svcComp = new CashflowService(prismaComp as never);
+
+    txComp.cashDrawerSettlement.findUnique.mockResolvedValueOnce(null);
+    await expect(svcComp.compensateSettlement(999, { note: 'Không tồn tại' }, 1)).rejects.toMatchObject({ status: 404 });
+
+    txComp.cashDrawerSettlement.findUnique.mockResolvedValueOnce({
+      id: 2,
+      discrepancyAmount: new Prisma.Decimal('0.00'),
+    });
+    await expect(svcComp.compensateSettlement(2, { note: 'Đã khớp' }, 1)).rejects.toThrow(ConflictException);
+
+    // Compensating larger amount on SURPLUS that drives actualCountedCash negative -> 422
+    txComp.cashDrawerSettlement.findUnique.mockResolvedValueOnce({
+      id: 3,
+      settlementDate: new Date('2026-11-27T00:00:00.000Z'),
+      expectedCashInDrawer: new Prisma.Decimal('0.00'),
+      actualCountedCash: new Prisma.Decimal('100000.00'),
+      discrepancyAmount: new Prisma.Decimal('100000.00'),
+    });
+    await expect(
+      svcComp.compensateSettlement(3, { compensationAmount: 200000, note: 'Quá số thực' }, 1),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    // Shortage partial compensation adds cash and stays SHORTAGE
+    txComp.cashDrawerSettlement.findUnique.mockResolvedValueOnce({
+      id: 4,
+      settlementDate: new Date('2026-11-27T00:00:00.000Z'),
+      shiftName: 'CA_NGAY',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashSales: new Prisma.Decimal('200000.00'),
+      totalTransferSales: new Prisma.Decimal('0.00'),
+      totalCashImports: new Prisma.Decimal('0.00'),
+      expectedCashInDrawer: new Prisma.Decimal('1200000.00'),
+      actualCountedCash: new Prisma.Decimal('1100000.00'),
+      discrepancyAmount: new Prisma.Decimal('-100000.00'),
+      status: 'SHORTAGE',
+      denominationsDetail: denominations,
+      note: null,
+      closedBy: 1,
+      createdAt: new Date('2026-11-27T15:00:00.000Z'),
+    });
+    txComp.cashDrawerSettlement.update.mockResolvedValueOnce({
+      id: 4,
+      settlementDate: new Date('2026-11-27T00:00:00.000Z'),
+      shiftName: 'CA_NGAY',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashSales: new Prisma.Decimal('200000.00'),
+      totalTransferSales: new Prisma.Decimal('0.00'),
+      totalCashImports: new Prisma.Decimal('0.00'),
+      expectedCashInDrawer: new Prisma.Decimal('1200000.00'),
+      actualCountedCash: new Prisma.Decimal('1150000.00'),
+      discrepancyAmount: new Prisma.Decimal('-50000.00'),
+      status: 'SHORTAGE',
+      denominationsDetail: denominations,
+      note: '[Đã bù ...]',
+      closedBy: 1,
+      closer: { username: 'admin', employee: { fullName: 'Admin' } },
+      createdAt: new Date('2026-11-27T15:00:00.000Z'),
+    });
+    const shortageRes = await svcComp.compensateSettlement(4, { compensationAmount: 50000, note: 'Bù một phần' }, 1);
+    expect(shortageRes.discrepancyAmount).toBe(-50000);
+    expect(shortageRes.status).toBe('SHORTAGE');
+  });
 });

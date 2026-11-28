@@ -242,5 +242,22 @@ describe('MasterDataPage (Wave 2 Comprehensive)', () => {
     await waitFor(() => {
       expect(deleteSpy).toHaveBeenCalledWith('/api/v1/mdm/21');
     });
+
+    // Edit existing record + sync normalized name + toggle status
+    const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValue({ id: 21, name: 'Ba Chỉ Bò Mỹ' });
+
+    await user.click(screen.getByTestId('edit-mdm-btn-21'));
+    expect(await screen.findByTestId('mdm-upsert-dialog')).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('mdm-name-input'), { target: { value: 'Ba Chỉ Bò Mỹ' } });
+    fireEvent.click(screen.getByTestId('mdm-sync-normalized-btn'));
+    fireEvent.click(screen.getByTestId('submit-mdm-btn'));
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith('/api/v1/mdm/21', expect.objectContaining({ name: 'Ba Chỉ Bò Mỹ' }));
+    });
+
+    await user.click(screen.getByTestId('toggle-mdm-status-21'));
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith('/api/v1/mdm/21', { isActive: false });
+    });
   });
 });

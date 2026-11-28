@@ -504,4 +504,95 @@ describe('DiscountsService', () => {
       response: expect.objectContaining({ code: ErrorCodes.DISCOUNT_EXPIRED }),
     });
   });
+
+  it('guards locked code/scope/value fields when usedCount > 0 and rejects usageLimit < usedCount or duplicate code on update', async () => {
+    const usedDiscount = makeDiscountRow({
+      id: 50,
+      code: 'USED10',
+      valueType: 'PERCENT',
+      value: new Prisma.Decimal(10),
+      scope: 'ORDER',
+      usedCount: 5,
+      targets: [{ id: 1, discountId: 50, categoryId: 100, productId: null }],
+    });
+    const unusedDiscount = makeDiscountRow({
+      id: 51,
+      code: 'UNUSED',
+      valueType: 'FIXED',
+      value: new Prisma.Decimal(15000),
+      scope: 'ORDER',
+      usedCount: 0,
+    });
+    const { service } = createDiscountsHarness([usedDiscount, unusedDiscount]);
+
+    await expect(
+      service.update(50, { code: 'RENAMED', name: 'Đổi code', valueType: 'PERCENT', value: 10, scope: 'ORDER' }, 1),
+    ).rejects.toThrow(ConflictException);
+
+    await expect(
+      service.update(50, { code: 'USED10', name: 'Đổi target', valueType: 'PERCENT', value: 10, scope: 'ORDER' }, 1),
+    ).rejects.toThrow(ConflictException);
+
+    await expect(
+      service.update(50, { code: 'USED10', name: 'Hạ limit', valueType: 'PERCENT', value: 10, scope: 'ORDER', targetCategoryIds: [100], usageLimit: 3 }, 1),
+    ).rejects.toThrow(UnprocessableEntityException);
+
+    await expect(
+      service.update(51, { code: 'USED10', name: 'Trùng code', valueType: 'FIXED', value: 15000, scope: 'ORDER' }, 1),
+    ).rejects.toThrow(ConflictException);
+
+    const updatedOk = await service.update(
+      51,
+      {
+        code: 'UNUSED_NEW',
+        name: 'Cập nhật target mới',
+        valueType: 'FIXED',
+        value: 20000,
+        scope: 'PRODUCT',
+        targetProductIds: [1],
+      },
+      1,
+    );
+    expect(updatedOk.code).toBe('UNUSED_NEW');
+  });
+
+  it('covers toggleStatus (404/409/toggle), remove (404/delete/archive), keyword list, and non-groupBy fallback', async () => {
+    const unused = makeDiscountRow({
+      id: 60,
+      code: 'DEL60',
+      name: 'Xoá hẳn',
+      scope: 'CATEGORY',
+      usedCount: 0,
+      targets: [{ id: 1, discountId: 60, categoryId: 100, productId: null }],
+    });
+    const archived = makeDiscountRow({ id: 61, code: 'ARCH61', isArchived: true });
+    const referenced = makeDiscountRow({ id: 62, code: 'REF62', usedCount: 0 });
+    const { service, client } = createDiscountsHarness([unused, archived, referenced], {
+      allOrdersDiscountIds: [62],
+    });
+
+    const filtered = await service.list({ page: 1, limit: 10, keyword: 'del', scope: 'CATEGORY', status: 'active' });
+    expect(filtered.items.map((d) => d.code)).toEqual(['DEL60']);
+    const archivedList = await service.list({ page: 1, limit: 10, status: 'archived' });
+    expect(archivedList.items.map((d) => d.code)).toEqual(['ARCH61']);
+    await expect(service.list({ page: 1, limit: 10, status: 'inactive' })).resolves.toMatchObject({ total: expect.any(Number) });
+    await expect(service.list({ page: 1, limit: 10, status: 'expired' })).resolves.toMatchObject({ total: expect.any(Number) });
+
+    // Non-groupBy fallback path in computeTotalDiscountedMap
+    (client.order as { groupBy?: unknown }).groupBy = undefined;
+    (client.order as { findMany?: unknown }).findMany = vi.fn().mockResolvedValue([
+      { discountId: 60, discountAmount: new Prisma.Decimal(12000) },
+    ]);
+    const listFallback = await service.list({ page: 1, limit: 10, keyword: 'DEL60' });
+    expect(listFallback.items[0]?.totalDiscountedAmount).toBe(12000);
+
+    await expect(service.toggleStatus(999, { isActive: false }, 1)).rejects.toThrow(NotFoundException);
+    await expect(service.toggleStatus(61, { isActive: true }, 1)).rejects.toThrow(ConflictException);
+    const disabled = await service.toggleStatus(60, { isActive: false }, 1);
+    expect(disabled.isActive).toBe(false);
+
+    await expect(service.remove(999, 1)).rejects.toThrow(NotFoundException);
+    await expect(service.remove(60, 1)).resolves.toEqual({ deleted: true, archived: false });
+    await expect(service.remove(62, 1)).resolves.toEqual({ deleted: false, archived: true });
+  });
 });

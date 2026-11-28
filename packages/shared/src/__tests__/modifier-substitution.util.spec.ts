@@ -105,4 +105,112 @@ describe('modifier-substitution.util', () => {
       defaultSubstituteName: 'Ngao',
     });
   });
+
+  it('parses persisted allowedSubstituteNames JSON safely', async () => {
+    const { parseAllowedSubstituteNamesFromJson } = await import(
+      '../utils/modifier-substitution.util'
+    );
+
+    expect(parseAllowedSubstituteNamesFromJson(null)).toBeNull();
+    expect(parseAllowedSubstituteNamesFromJson('Tôm')).toBeNull();
+    expect(parseAllowedSubstituteNamesFromJson([' Mực ', 42, '', '  ', 'Ngao'])).toEqual([
+      'Mực',
+      'Ngao',
+    ]);
+  });
+
+  it('covers all validation error branches in validateGroupSubstitutionRules', () => {
+    expect(
+      validateGroupSubstitutionRules({
+        allowSubstitution: false,
+        modifiers: [{ name: 'Tôm', allowedSubstituteNames: ['Tôm'], defaultSubstituteName: 'Tôm' }],
+      }),
+    ).toBeNull();
+
+    expect(
+      validateGroupSubstitutionRules({
+        allowSubstitution: true,
+        modifiers: [{ name: 'Tôm', allowedSubstituteNames: ['   '], defaultSubstituteName: '' }],
+      }),
+    ).toContain('không được để trống');
+
+    expect(
+      validateGroupSubstitutionRules({
+        allowSubstitution: true,
+        modifiers: [{ name: 'Tôm', allowedSubstituteNames: ['Bạch Tuộc'], defaultSubstituteName: '' }],
+      }),
+    ).toContain('không tồn tại trong nhóm');
+
+    expect(
+      validateGroupSubstitutionRules({
+        allowSubstitution: true,
+        modifiers: [{ name: 'Tôm', allowedSubstituteNames: [], defaultSubstituteName: 'Tôm' }],
+      }),
+    ).toContain('không thể là chính nó');
+
+    expect(
+      validateGroupSubstitutionRules({
+        allowSubstitution: true,
+        modifiers: [{ name: 'Tôm', allowedSubstituteNames: null, defaultSubstituteName: 'Ghẹ' }],
+      }),
+    ).toContain('không tồn tại trong nhóm');
+  });
+
+  it('handles no-op, unchanged, and legacy null fallback branches in syncSubstitutionRulesOnModifierChange', () => {
+    const legacyList = [
+      { name: 'Ngao', allowedSubstituteNames: null, defaultSubstituteName: 'Tôm' },
+      { name: 'Mực', allowedSubstituteNames: ['Ngao'], defaultSubstituteName: 'Ngao' },
+      { name: 'Sò', allowedSubstituteNames: null, defaultSubstituteName: '' },
+    ];
+
+    expect(
+      syncSubstitutionRulesOnModifierChange(legacyList, {
+        type: 'rename',
+        oldName: ' ',
+        newName: 'Sò Điệp',
+      }),
+    ).toEqual(legacyList);
+
+    expect(
+      syncSubstitutionRulesOnModifierChange(legacyList, {
+        type: 'rename',
+        oldName: 'Tôm',
+        newName: 'Tôm',
+      }),
+    ).toEqual(legacyList);
+
+    const renamed = syncSubstitutionRulesOnModifierChange(legacyList, {
+      type: 'rename',
+      oldName: 'Tôm',
+      newName: 'Tôm Sú',
+    });
+    expect(renamed[0]).toMatchObject({ allowedSubstituteNames: null, defaultSubstituteName: 'Tôm Sú' });
+    expect(renamed[1]).toStrictEqual(legacyList[1]);
+    expect(renamed[2]).toBe(legacyList[2]);
+
+    expect(
+      syncSubstitutionRulesOnModifierChange(legacyList, {
+        type: 'remove',
+        removedName: '  ',
+      }),
+    ).toEqual(legacyList);
+
+    const afterRemove = syncSubstitutionRulesOnModifierChange(legacyList, {
+      type: 'remove',
+      removedName: 'Tôm',
+    });
+    expect(afterRemove[0]?.defaultSubstituteName).toBe('Mực');
+    expect(afterRemove[1]).toStrictEqual(legacyList[1]);
+    expect(afterRemove[2]).toBe(legacyList[2]);
+
+    const clearedDefault = syncSubstitutionRulesOnModifierChange(
+      [{ name: 'Ngao', allowedSubstituteNames: ['Tôm'], defaultSubstituteName: 'Tôm' }],
+      { type: 'remove', removedName: 'Tôm' },
+    );
+    expect(clearedDefault[0]).toEqual({
+      name: 'Ngao',
+      allowedSubstituteNames: [],
+      defaultSubstituteName: '',
+    });
+  });
 });

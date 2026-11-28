@@ -782,5 +782,94 @@ describe('Physical Thermal Printer Engine (iMin D3-505 + iPOS.vn iTP6 80mm ESC/P
       fireEvent.change(rightMarginInput, { target: { value: '12' } });
       expect(useThermalPrinterConfigStore.getState().config.rightMarginMm).toBe(8);
     });
+
+    it('handles RawBT WebSocket failure modes, DOM intent fallback, and LAN response schema fallback directly', async () => {
+      const payload = new Uint8Array([0x1b, 0x40, 0x0a]);
+
+      // 1. WebSocket undefined + fallbackToIntent=false rejects cleanly; true falls back to DOM anchor click
+      vi.stubGlobal('WebSocket', undefined);
+      await expect(
+        dispatchRawbtUsbPrint(payload, { fallbackToIntent: false }),
+      ).rejects.toThrow('Trình duyệt không hỗ trợ WebSocket');
+
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+      const domFallback = await dispatchRawbtUsbPrint(payload, { fallbackToIntent: true });
+      expect(domFallback.transport).toBe('RAWBT_INTENT');
+      expect(domFallback.rawbtUri).toMatch(/^rawbt:base64,/);
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+
+      // 2. WebSocket throwing on construction + onerror + timeout + send throwing
+      vi.stubGlobal(
+        'WebSocket',
+        vi.fn(() => {
+          throw new Error('WS constructor blocked');
+        }),
+      );
+      await expect(dispatchRawbtUsbPrint(payload, { fallbackToIntent: false })).rejects.toThrow(
+        'WS constructor blocked',
+      );
+
+      class ErrorWebSocket {
+        binaryType = 'blob';
+        onopen: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        close = vi.fn();
+        send = vi.fn();
+        constructor() {
+          queueMicrotask(() => this.onerror?.());
+        }
+      }
+      vi.stubGlobal('WebSocket', ErrorWebSocket);
+      await expect(
+        dispatchRawbtUsbPrint(payload, { wsUrl: 'ws://127.0.0.1:40213/', fallbackToIntent: false }),
+      ).rejects.toThrow('Không kết nối được RawBT WebSocket');
+
+      class SendThrowWebSocket {
+        binaryType = 'blob';
+        onopen: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        close = vi.fn();
+        send = vi.fn(() => {
+          throw new Error('Buffer full');
+        });
+        constructor() {
+          queueMicrotask(() => this.onopen?.());
+        }
+      }
+      vi.stubGlobal('WebSocket', SendThrowWebSocket);
+      await expect(dispatchRawbtUsbPrint(payload, { fallbackToIntent: false })).rejects.toThrow('Buffer full');
+
+      vi.useFakeTimers();
+      try {
+        class HangingWebSocket {
+          binaryType = 'blob';
+          onopen: (() => void) | null = null;
+          onerror: (() => void) | null = null;
+          close = vi.fn();
+          send = vi.fn();
+        }
+        vi.stubGlobal('WebSocket', HangingWebSocket);
+        const pending = expect(
+          dispatchRawbtUsbPrint(payload, { fallbackToIntent: false, wsTimeoutMs: 250 }),
+        ).rejects.toThrow('Quá thời gian kết nối RawBT WebSocket (250ms)');
+        await vi.advanceTimersByTimeAsync(260);
+        await pending;
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // 3. dispatchLanEscPosPrint falls back safely when API returns partial payload
+      vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ partial: true });
+      const lanRes = await dispatchLanEscPosPrint(payload, {
+        lanHost: ' 192.168.1.201 ',
+        lanPort: 9100,
+        lanTimeoutMs: 3000,
+      });
+      expect(lanRes).toMatchObject({
+        transport: 'LAN_ESCPOS',
+        bytesSent: 3,
+        lanResponse: { host: '192.168.1.201', port: 9100, bytesSent: 3 },
+      });
+    });
   });
 });

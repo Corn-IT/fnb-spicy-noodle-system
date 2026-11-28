@@ -465,4 +465,35 @@ describe('AppShell global QR overdue warning banner & reminder monitor', () => {
       value: 'visible',
     });
   });
+
+  it('displays offline network banner when window goes offline and hides it on online recovery', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ tables: [], takeaways: [] });
+
+    render(
+      <QueryProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/dashboard']} future={routerFutureFlags}>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route path="/dashboard" element={<div data-testid="dash-body">Dashboard</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryProvider>,
+    );
+
+    expect(screen.getByTestId('dash-body')).toBeInTheDocument();
+    expect(screen.queryByTestId('network-offline-banner')).not.toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    expect(await screen.findByTestId('network-offline-banner')).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('network-offline-banner')).not.toBeInTheDocument();
+    });
+  });
 });

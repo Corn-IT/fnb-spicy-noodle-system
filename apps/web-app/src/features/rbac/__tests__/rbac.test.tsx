@@ -419,4 +419,67 @@ describe('RBAC Users Module (Wave 1 Comprehensive)', () => {
       );
     });
   });
+
+  it('filters users by search, views session history, handles revoke-session error & success, and retries initial error', async () => {
+    const getSpy = vi
+      .spyOn(apiClient, 'get')
+      .mockRejectedValueOnce(new Error('Network down'))
+      .mockImplementation(async (url: string) => {
+        if (url.includes('/session-history')) {
+          return {
+            userId: 2,
+            username: 'cashier01',
+            items: [
+              {
+                id: 1,
+                eventType: 'LOGIN',
+                actionLabel: 'Đăng nhập',
+                summary: 'Đăng nhập thành công',
+                actorUsername: 'cashier01',
+                actorFullName: 'Nguyễn Văn Anh',
+                ipAddress: '192.168.1.55',
+                deviceLabel: 'Chrome',
+                previousIp: null,
+                previousDevice: null,
+                createdAt: '2026-11-28T01:00:00.000Z',
+              },
+            ],
+          } as never;
+        }
+        return sampleUsersResponse as never;
+      });
+    const postSpy = vi
+      .spyOn(apiClient, 'post')
+      .mockRejectedValueOnce(new Error('Không thể thu hồi lúc này'))
+      .mockResolvedValueOnce({ revoked: true } as never);
+
+    renderRbacPage('/rbac?keyword=cash');
+    expect(await screen.findByTestId('error-retry-btn')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('error-retry-btn'));
+
+    expect(await screen.findByTestId('revoke-session-btn-2')).toBeInTheDocument();
+    const searchInput = screen.getByPlaceholderText('Tìm kiếm tài khoản, nhân sự, vai trò...');
+    fireEvent.change(searchInput, { target: { value: 'cashier01' } });
+    fireEvent.change(searchInput, { target: { value: '' } });
+
+    // Open session history dialog & full audit drawer
+    fireEvent.click(screen.getByTestId('session-history-btn-2'));
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenCalledWith(expect.stringContaining('/api/v1/users/2/session-history'), expect.anything()),
+    );
+
+    // Revoke session: first error inline inside dialog, second click succeeds
+    fireEvent.click(screen.getByTestId('revoke-session-btn-2'));
+    expect(await screen.findByTestId('revoke-session-dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('confirm-revoke-session-btn'));
+    expect(await screen.findByText('Không thể thu hồi lúc này')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('confirm-revoke-session-btn'));
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/api/v1/users/2/revoke-session');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('revoke-session-dialog')).not.toBeInTheDocument();
+    });
+  });
 });

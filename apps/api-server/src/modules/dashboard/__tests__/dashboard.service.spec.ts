@@ -508,4 +508,71 @@ describe('DashboardService', () => {
     expect(res.revenueSeries?.buckets[6]?.key).toBe('2026-11-17');
     expect(res.revenueSeries?.buckets[6]?.totalSales).toBe(450000);
   });
+
+  it('supports custom date range, catches failing sibling services gracefully, and filters getDailyItemSales by station/category/search', async () => {
+    const { service, now } = buildMockDeps();
+    const custom = await service.getOverview(
+      { preset: 'custom', fromDate: '2026-11-16', toDate: '2026-11-17' },
+      makeSuperAdmin(),
+      now,
+    );
+    expect(custom.meta.fromDate).toBe('2026-11-16');
+    expect(custom.meta.toDate).toBe('2026-11-17');
+
+    const degradedSvc = new DashboardService(
+      {
+        order: {
+          findMany: vi.fn().mockResolvedValue([]),
+          aggregate: vi.fn().mockResolvedValue({ _count: { _all: 0 }, _sum: { totalAmount: null } }),
+        },
+        orderItem: { findMany: vi.fn().mockResolvedValue([]) },
+        inventoryImport: { findMany: vi.fn().mockResolvedValue([]) },
+        cashDrawerSettlement: { findFirst: vi.fn().mockResolvedValue(null) },
+        auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+        workSchedule: { findMany: vi.fn().mockResolvedValue([]) },
+      } as never,
+      { getTableGrid: vi.fn().mockRejectedValue(new Error('pos err')) } as never,
+      { getDefaultOpeningBudget: vi.fn().mockRejectedValue(new Error('cf err')) } as never,
+      { list: vi.fn().mockRejectedValue(new Error('qr err')) } as never,
+      undefined,
+      { getPayrollSummary: vi.fn().mockRejectedValue(new Error('pr err')) } as never,
+    );
+    const degraded = await degradedSvc.getOverview({ preset: 'today' }, makeSuperAdmin(), now);
+    expect(degraded.liveTables).toBeNull();
+    expect(degraded.staffing?.payrollSummary).toBeNull();
+
+    const sales = await service.getDailyItemSales(
+      { preset: 'today', station: 'PHA_CHE', categoryId: 20, search: 'tra' },
+      makeSuperAdmin(),
+      now,
+    );
+    expect(sales.summary.totalQuantity).toBeGreaterThanOrEqual(0);
+
+    // Minimal dashboard.view-only user (all operational modules disabled -> exercises false permission branches)
+    const minimalViewer: AuthPrincipal = {
+      id: 99,
+      employeeId: 99,
+      username: 'viewer_only',
+      isSuperAdmin: false,
+      permissions: UserPermissionsSchema.parse({ dashboard: { view: true } }),
+    };
+    const minimalOverview = await service.getOverview({ preset: 'today' }, minimalViewer, now);
+    expect(minimalOverview.kpis.revenue).toBeNull();
+    expect(minimalOverview.kpis.cashDrawer).toBeNull();
+    expect(minimalOverview.kpis.transfer).toBeNull();
+    expect(minimalOverview.kpis.inventory).toBeNull();
+    expect(minimalOverview.kpis.profit).toBeNull();
+    expect(minimalOverview.kpis.openOrders).toBeNull();
+    expect(minimalOverview.kitchenStations).toBeNull();
+    expect(minimalOverview.topProducts).toBeNull();
+    expect(minimalOverview.recentInvoices).toEqual([]);
+
+    const minimalSales = await service.getDailyItemSales(
+      { preset: 'today', station: 'BEP_NAU', search: 'khong_khop_999' },
+      minimalViewer,
+      now,
+    );
+    expect(minimalSales.summary.totalQuantity).toBe(0);
+    expect(minimalSales.items).toEqual([]);
+  });
 });

@@ -7,6 +7,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RbacRouteGuard } from '@/components/layout/rbac-route-guard';
 import { useToastStore } from '@/components/ui/toast';
 import { DashboardPage } from '@/features/dashboard';
+import {
+  formatDashboardDateVi,
+  getDashboardCustomRangeError,
+} from '@/features/dashboard/api/dashboard.api';
+import { DashboardAlertsStrip } from '@/features/dashboard/components/dashboard-alerts-strip';
+import { DashboardInsightsRow } from '@/features/dashboard/components/dashboard-insights-row';
+import { DashboardKpiGrid } from '@/features/dashboard/components/dashboard-kpi-grid';
+import { formatVnd, parseCurrencyValue } from '@/utils/currency';
 import { apiClient } from '@/lib/api-client';
 import * as excelExportLib from '@/lib/excel-export';
 import { QueryProvider } from '@/providers/query-provider';
@@ -777,5 +785,183 @@ describe('DashboardPage (/dashboard)', () => {
     );
 
     expect(screen.getByTestId('rbac-forbidden-screen')).toBeInTheDocument();
+  });
+
+  it('renders DashboardKpiGrid blind-mode shield, null-permission fallbacks, negative growth, and null profit metrics', () => {
+    const base = makeSuperAdminOverview();
+    const { rerender } = render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <DashboardKpiGrid
+          data={{
+            ...base,
+            kpis: {
+              revenue: null,
+              cashDrawer: { ...base.kpis.cashDrawer!, blindMode: true },
+              transfer: null,
+              inventory: null,
+              openOrders: {
+                totalOpenAmount: 190000,
+                occupiedTableCount: 3,
+                pendingTableCount: 1,
+                availableTableCount: 16,
+                totalPhysicalTables: 20,
+                takeawayOpenCount: 2,
+                unprintedKitchenItemsCount: 4,
+              },
+              profit: null,
+            },
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('kpi-revenue-blind')).toBeInTheDocument();
+    expect(screen.getByTestId('kpi-cash-blind')).toBeInTheDocument();
+    expect(screen.getByTestId('kpi-open-tables')).toHaveTextContent('4/20 bàn');
+    expect(screen.getByText('4 chờ in')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Vào Kết ca để nhập số thực đếm/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Xem trạng thái TK VietQR/i }));
+
+    rerender(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <DashboardKpiGrid
+          data={{
+            ...base,
+            kpis: {
+              revenue: { ...base.kpis.revenue!, growthPercent: -12.5 },
+              cashDrawer: null,
+              transfer: { ...base.kpis.transfer!, byAccount: [] },
+              inventory: { ...base.kpis.inventory!, costToRevenuePercent: null },
+              openOrders: null,
+              profit: {
+                grossProfitAfterInventory: -50000,
+                estimatedLaborCost: null,
+                netOperatingProfit: null,
+                marginPercent: -5.4,
+              },
+            },
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Không có quyền xem Quỹ & Kết ca.')).toBeInTheDocument();
+    expect(screen.getByText('Chưa phát sinh chuyển khoản')).toBeInTheDocument();
+    expect(screen.getByText('Biên -5.4%')).toBeInTheDocument();
+    expect(screen.getByText('Chưa cộng trừ quỹ lương kỳ')).toBeInTheDocument();
+  });
+
+  it('covers DashboardAlertsStrip empty/overdue/addon/blocked states and currency formatting edge cases', () => {
+    const emptyRender = render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <DashboardAlertsStrip alerts={{ pendingQrTables: [], pendingPaymentEdits: [], nearLimitQrAccounts: [] }} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('dashboard-alerts-strip')).not.toBeInTheDocument();
+    emptyRender.unmount();
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <DashboardAlertsStrip
+          alerts={{
+            pendingQrTables: [
+              {
+                orderId: 301,
+                orderCode: 'HD-301',
+                tableId: 4,
+                tableLabel: 'Bàn 04',
+                kind: 'ADDON',
+                totalAmount: 95000,
+                pendingSince: '2026-11-17T14:28:00.000Z',
+                waitSeconds: 30,
+                isOverdue: false,
+              },
+            ],
+            pendingPaymentEdits: [
+              {
+                orderId: 302,
+                orderCode: 'HD-302',
+                tableLabel: 'Mang về #02',
+                totalAmount: 65000,
+                currentMethod: null,
+                requestedMethod: 'CASH',
+                requestedByName: 'Lan',
+                requestedAt: '2026-11-17T14:25:00.000Z',
+              },
+            ],
+            nearLimitQrAccounts: [
+              {
+                id: 9,
+                label: 'TK Phụ',
+                bankCode: 'ACB',
+                accountNo: '999999',
+                usedDay: 5000000,
+                dailyLimit: null,
+                dayPercent: null,
+                status: 'DAY_FULL',
+              },
+            ],
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/Gọi thêm QR/)).toBeInTheDocument();
+    expect(screen.getByText('N/A → CASH')).toBeInTheDocument();
+    expect(screen.getByText('DAY_FULL')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Xử lý/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Duyệt/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Tài khoản/i }));
+
+    expect(parseCurrencyValue('')).toBe(0);
+    expect(parseCurrencyValue('00.000')).toBe(0);
+    expect(parseCurrencyValue('125.000')).toBe(125000);
+    expect(formatVnd(null)).toBe('0 đ');
+    expect(formatVnd(Number.NaN)).toBe('0 đ');
+    expect(formatVnd('12.5', { withSuffix: false, signed: true })).toContain('+12,5');
+    expect(formatVnd(-5000, { signed: true })).toContain('-5.000 đ');
+
+    // DashboardInsightsRow restricted/empty fallbacks & station tab filter
+    const base = makeSuperAdminOverview();
+    const { rerender } = render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <DashboardInsightsRow
+          data={{
+            ...base,
+            meta: {
+              ...base.meta,
+              scope: { ...base.meta.scope, canViewProfit: false },
+            },
+            topProducts: null,
+            discountsAndRisk: null,
+            staffing: null,
+            recentInventoryImports: [],
+            recentAuditLogs: [],
+          }}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Không có quyền xem thống kê món bán chạy.')).toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <DashboardInsightsRow data={base} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Combo' }));
+
+    expect(formatDashboardDateVi('2026-11-28')).toBe('28/11/2026');
+    expect(formatDashboardDateVi('invalid')).toBe('invalid');
+    expect(getDashboardCustomRangeError({ preset: 'today' })).toBeNull();
+    expect(getDashboardCustomRangeError({ preset: 'custom' })).toBe(
+      'Vui lòng chọn đầy đủ Từ ngày và Đến ngày.',
+    );
+    expect(
+      getDashboardCustomRangeError({
+        preset: 'custom',
+        fromDate: '2026-11-20',
+        toDate: '2026-11-10',
+      }),
+    ).toBeTruthy();
   });
 });

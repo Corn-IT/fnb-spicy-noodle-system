@@ -8,7 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BaseTable } from '@/components/base-table/base-table';
 import { CommandPalette } from '@/components/layout/command-palette';
 import { RbacRouteGuard } from '@/components/layout/rbac-route-guard';
-import { ResizableSidebar } from '@/components/layout/resizable-sidebar';
+import {
+  MobileSidebarNav,
+  ResizableSidebar,
+  TabletIconRail,
+} from '@/components/layout/resizable-sidebar';
 import { TopNavbar, executeCleanLogout } from '@/components/layout/top-navbar';
 import { Toaster, useToastStore } from '@/components/ui/toast';
 import { ProfilePage, type JoinedUserProfile } from '@/features/profile';
@@ -802,6 +806,161 @@ describe('Story 08 — Shell, Navbar, Command Palette, Profile & BaseTable 60fps
       );
 
       vi.useRealTimers();
+    });
+
+    it('should resize desktop sidebar via mouse drag, clamp width, and render TabletIconRail & MobileSidebarNav', async () => {
+      vi.useFakeTimers();
+      const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValue({ ok: true });
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: {
+          id: 1,
+          employeeId: 1,
+          username: 'superadmin',
+          fullName: 'Quản trị viên',
+          isSuperAdmin: true,
+          permissions: UserPermissionsSchema.parse({}),
+        },
+      });
+
+      const onOpenDrawer = vi.fn();
+      const onCloseMobile = vi.fn();
+      const onOpenCmd = vi.fn();
+
+      render(
+        <MemoryRouter initialEntries={['/dashboard']} future={routerFutureFlags}>
+          <ResizableSidebar />
+          <TabletIconRail onOpenDrawer={onOpenDrawer} />
+          <MobileSidebarNav onClose={onCloseMobile} onOpenCommandPalette={onOpenCmd} />
+        </MemoryRouter>,
+      );
+
+      const resizer = screen.getByTestId('sidebar-resizer');
+      fireEvent.mouseDown(resizer, { clientX: 240 });
+      fireEvent.mouseMove(window, { clientX: 290 });
+      fireEvent.mouseUp(window);
+
+      await act(async () => {
+        vi.advanceTimersByTime(520);
+      });
+      expect(useUiPreferencesStore.getState().sidebarWidth).toBe(310);
+      expect(patchSpy).toHaveBeenCalledWith('/api/v1/profile/ui-prefs', { sidebarWidth: 310 });
+
+      fireEvent.click(screen.getByTestId('tablet-rail-expand-btn'));
+      expect(onOpenDrawer).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByText('Tìm nhanh màn hình...'));
+      expect(onCloseMobile).toHaveBeenCalled();
+      expect(onOpenCmd).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+
+    it('opens CommandPalette via Ctrl+K, filters accessible routes, prefetches on hover, and navigates on selection', async () => {
+      vi.spyOn(apiClient, 'get').mockResolvedValue({ storeName: 'Mì Cay', navLabels: {}, navOrder: [], navGroupOrder: [] });
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-token',
+        user: {
+          id: 1,
+          employeeId: 1,
+          username: 'superadmin',
+          fullName: 'Quản trị viên',
+          isSuperAdmin: true,
+          permissions: UserPermissionsSchema.parse({}),
+        },
+      });
+
+      const onOpenChange = vi.fn();
+      render(
+        <QueryProvider>
+          <MemoryRouter initialEntries={['/dashboard']} future={routerFutureFlags}>
+            <Routes>
+              <Route path="/dashboard" element={<div>DASHBOARD</div>} />
+              <Route path="/pos" element={<div>POS SCREEN</div>} />
+            </Routes>
+            <CommandPalette open={true} onOpenChange={onOpenChange} />
+          </MemoryRouter>
+        </QueryProvider>,
+      );
+
+      // Ctrl+K toggles command palette state via onOpenChange(!open)
+      fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+
+      const input = await screen.findByPlaceholderText('Tìm nhanh màn hình chức năng (Ctrl+K)...');
+      fireEvent.change(input, { target: { value: 'zzzz_none' } });
+      expect(await screen.findByText('Không tìm thấy màn hình phù hợp với quyền của bạn.')).toBeInTheDocument();
+
+      fireEvent.change(input, { target: { value: '' } });
+      const posItem = (await screen.findAllByText('Bán hàng POS'))[0]!;
+      fireEvent.mouseEnter(posItem);
+      fireEvent.mouseLeave(posItem);
+      fireEvent.pointerDown(posItem, { button: 0 });
+      fireEvent.click(posItem);
+      expect(await screen.findByText('POS SCREEN')).toBeInTheDocument();
+    });
+
+    it('covers RbacRouteGuard unauthenticated redirects, requireSuperAdmin checks, and allowed rendering', () => {
+      const renderGuard = (initialPath: string, props: { module?: 'pos' | 'rbac'; requireSuperAdmin?: boolean }) =>
+        render(
+          <MemoryRouter initialEntries={[initialPath]} future={routerFutureFlags}>
+            <Routes>
+              <Route path="/login" element={<div data-testid="login-redirected">LOGIN</div>} />
+              <Route
+                path={initialPath}
+                element={
+                  <RbacRouteGuard {...props}>
+                    <div data-testid="guard-allowed">OK</div>
+                  </RbacRouteGuard>
+                }
+              />
+            </Routes>
+          </MemoryRouter>,
+        );
+
+      // 1. !user && !accessToken -> redirect /login (from '/' skips authNotice)
+      useAuthStore.getState().clearAuth();
+      const first = renderGuard('/', { module: 'pos' });
+      expect(screen.getByTestId('login-redirected')).toBeInTheDocument();
+      first.unmount();
+
+      // 2. !user && accessToken present -> redirect /login (from '/orders' attaches UNAUTHENTICATED)
+      useAuthStore.setState({ accessToken: 'orphan-tok', user: null, authNotice: null });
+      const second = renderGuard('/orders', { module: 'pos' });
+      expect(screen.getByTestId('login-redirected')).toBeInTheDocument();
+      second.unmount();
+
+      // 3. Authenticated non-superAdmin hitting requireSuperAdmin -> 403 screen
+      useAuthStore.getState().setAuth({
+        accessToken: 'staff-tok',
+        user: {
+          id: 5,
+          employeeId: 5,
+          username: 'cashier',
+          fullName: 'Thu ngân',
+          isSuperAdmin: false,
+          permissions: UserPermissionsSchema.parse({ pos: { view: true } }),
+        },
+      });
+      const third = renderGuard('/rbac', { requireSuperAdmin: true });
+      expect(screen.getByTestId('rbac-forbidden-screen')).toBeInTheDocument();
+      third.unmount();
+
+      // 4. SuperAdmin renders protected content even with requireSuperAdmin
+      useAuthStore.getState().setAuth({
+        accessToken: 'admin-tok',
+        user: {
+          id: 1,
+          employeeId: 1,
+          username: 'superadmin',
+          fullName: 'Admin',
+          isSuperAdmin: true,
+          permissions: UserPermissionsSchema.parse({}),
+        },
+      });
+      const fourth = renderGuard('/rbac', { requireSuperAdmin: true });
+      expect(screen.getByTestId('guard-allowed')).toBeInTheDocument();
+      fourth.unmount();
     });
   });
 });
