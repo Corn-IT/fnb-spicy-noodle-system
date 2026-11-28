@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent installer for VPS sysctl HTTP/3 tuning + systemd monitoring services/timers (Ubuntu 24.04+).
+# Idempotent installer for VPS sysctl HTTP/3 tuning + systemd monitoring & Telegram bot services/timers (Ubuntu 24.04+).
 
 set -euo pipefail
 
@@ -10,7 +10,8 @@ chmod +x \
   "${SCRIPT_DIR}/docker-events-watcher.sh" \
   "${SCRIPT_DIR}/health-probe.sh" \
   "${SCRIPT_DIR}/hourly-report.sh" \
-  "${SCRIPT_DIR}/docker-prune.sh"
+  "${SCRIPT_DIR}/docker-prune.sh" \
+  "${SCRIPT_DIR}/telegram-command-bot.py"
 
 # 1. Mục 4A: Optimize UDP receive/send buffer sizes for Caddy HTTP/3 (QUIC)
 cat <<'EOF' > /etc/sysctl.d/99-caddy-quic.conf
@@ -22,7 +23,7 @@ sysctl --system >/dev/null
 # 2. Ensure monitoring env file exists with strict permissions
 if [[ ! -f /etc/fnb-monitor.env ]]; then
   cat <<'EOF' > /etc/fnb-monitor.env
-FNB_ALERT_PROJECT_NAME=LonaPOS
+FNB_ALERT_PROJECT_NAME=Ăn Vặt Tran
 FNB_DOMAIN=pos.anvattran.com
 FNB_PROJECT_DIR=/opt/fnb-pos
 FNB_TELEGRAM_BOT_TOKEN=
@@ -34,7 +35,7 @@ fi
 # 3. Install systemd units
 cat <<EOF > /etc/systemd/system/fnb-docker-watcher.service
 [Unit]
-Description=LonaPOS Docker Events Realtime Watcher
+Description=An Vat Tran Docker Events Realtime Watcher
 After=docker.service
 Requires=docker.service
 
@@ -51,7 +52,7 @@ EOF
 
 cat <<EOF > /etc/systemd/system/fnb-health-probe.service
 [Unit]
-Description=LonaPOS 1-Minute HTTPS Health & VPS Probe
+Description=An Vat Tran 1-Minute HTTPS Health & VPS Probe
 After=network-online.target docker.service
 
 [Service]
@@ -61,7 +62,7 @@ EOF
 
 cat <<'EOF' > /etc/systemd/system/fnb-health-probe.timer
 [Unit]
-Description=Run LonaPOS Health Probe every 1 minute
+Description=Run An Vat Tran Health Probe every 1 minute
 
 [Timer]
 OnBootSec=45s
@@ -74,7 +75,7 @@ EOF
 
 cat <<EOF > /etc/systemd/system/fnb-hourly-report.service
 [Unit]
-Description=LonaPOS Hourly Health Report (07:00-23:00 VN)
+Description=An Vat Tran Hourly Health Report (07:00-23:00 VN)
 After=network-online.target docker.service
 
 [Service]
@@ -84,7 +85,7 @@ EOF
 
 cat <<'EOF' > /etc/systemd/system/fnb-hourly-report.timer
 [Unit]
-Description=Run LonaPOS Hourly Health Report every hour on the hour
+Description=Run An Vat Tran Hourly Health Report every hour on the hour
 
 [Timer]
 OnCalendar=*:00:00
@@ -96,7 +97,7 @@ EOF
 
 cat <<EOF > /etc/systemd/system/fnb-docker-prune.service
 [Unit]
-Description=LonaPOS Weekly Docker Build Cache Prune
+Description=An Vat Tran Weekly Docker Build Cache Prune
 After=docker.service
 
 [Service]
@@ -106,7 +107,7 @@ EOF
 
 cat <<'EOF' > /etc/systemd/system/fnb-docker-prune.timer
 [Unit]
-Description=Run LonaPOS Weekly Docker Prune (Sundays 04:00)
+Description=Run An Vat Tran Weekly Docker Prune (Sundays 04:00)
 
 [Timer]
 OnCalendar=Sun *-*-* 04:00:00
@@ -116,11 +117,29 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
+cat <<EOF > /etc/systemd/system/fnb-telegram-bot.service
+[Unit]
+Description=An Vat Tran Telegram Admin Command Bot
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 ${SCRIPT_DIR}/telegram-command-bot.py
+Restart=always
+RestartSec=5
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
 systemctl enable --now \
   fnb-docker-watcher.service \
   fnb-health-probe.timer \
   fnb-hourly-report.timer \
-  fnb-docker-prune.timer
+  fnb-docker-prune.timer \
+  fnb-telegram-bot.service
 
 echo "[install-vps-monitoring] Installed & started all systemd units cleanly."

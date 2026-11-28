@@ -11,7 +11,7 @@ if [[ -f "${MONITOR_ENV_FILE}" ]]; then
   set +a
 fi
 
-FNB_ALERT_PROJECT_NAME="${FNB_ALERT_PROJECT_NAME:-LonaPOS}"
+FNB_ALERT_PROJECT_NAME="${FNB_ALERT_PROJECT_NAME:-Ăn Vặt Tran}"
 FNB_DOMAIN="${FNB_DOMAIN:-pos.anvattran.com}"
 FNB_PROJECT_DIR="${FNB_PROJECT_DIR:-/opt/fnb-pos}"
 FNB_MONITOR_STATE_DIR="${FNB_MONITOR_STATE_DIR:-/run/fnb-monitor}"

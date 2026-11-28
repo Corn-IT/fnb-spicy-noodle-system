@@ -7,8 +7,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib-telegram.sh
 source "${SCRIPT_DIR}/lib-telegram.sh"
 
+FORCE=0
+RESET_WINDOW=1
+ON_DEMAND=0
+STDOUT_ONLY=0
+
+for arg in "$@"; do
+  case "${arg}" in
+    --force) FORCE=1 ;;
+    --no-reset) RESET_WINDOW=0 ;;
+    --on-demand) ON_DEMAND=1 ;;
+    --stdout) STDOUT_ONLY=1 ;;
+  esac
+done
+
 HOUR_VN="$(vn_hour)"
-if [[ "${1:-}" != "--force" ]]; then
+if (( FORCE == 0 )); then
   if (( 10#${HOUR_VN} < 7 || 10#${HOUR_VN} > 23 )); then
     exit 0
   fi
@@ -23,7 +37,7 @@ health_summary="$(python3 - "${HEALTH_URL}" <<'PY'
 import html, json, sys, time, urllib.request
 t0 = time.monotonic()
 try:
-    req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "LonaPOS-HourlyReport/1.0"})
+    req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "AnVatTran-HealthReport/1.0"})
     with urllib.request.urlopen(req, timeout=8) as r:
         ms = int((time.monotonic() - t0) * 1000)
         body = json.loads(r.read().decode("utf-8"))
@@ -38,8 +52,12 @@ except Exception as err:
 PY
 )"
 
-# 2. Fetch internal loopback metrics & reset 1h counters (no internet exposure)
-metrics_json="$(docker compose exec -T api-server wget -qO- 'http://127.0.0.1:3000/internal/metrics?reset=1' 2>/dev/null || echo '{}')"
+# 2. Fetch internal loopback metrics (resets 1h counters only on scheduled hourly runs unless --no-reset)
+metrics_url="http://127.0.0.1:3000/internal/metrics"
+if (( RESET_WINDOW == 1 )); then
+  metrics_url="${metrics_url}?reset=1"
+fi
+metrics_json="$(docker compose exec -T api-server wget -qO- "${metrics_url}" 2>/dev/null || echo '{}')"
 parsed_metrics="$(python3 - "${metrics_json}" <<'PY'
 import json, sys
 try:
@@ -206,7 +224,12 @@ read -r orders_today occupied_tables total_tables <<<"${pos_counts}"
 proj_html="$(escape_tg_html "${FNB_ALERT_PROJECT_NAME}")"
 domain_html="$(escape_tg_html "${FNB_DOMAIN}")"
 
-msg="📊 <b>[${proj_html}] BÁO CÁO HỆ THỐNG (1H)</b>
+report_title="📊 <b>[${proj_html}] BÁO CÁO HỆ THỐNG (1H)</b>"
+if (( ON_DEMAND == 1 )); then
+  report_title="📊 <b>[${proj_html}] TRẠNG THÁI HỆ THỐNG (CHỦ ĐỘNG)</b>"
+fi
+
+msg="${report_title}
 ────────────────
 <b>1. Tổng quan dịch vụ</b>
 ${health_summary}
@@ -237,4 +260,8 @@ ${docker_stats_text}
 • Bàn có khách: <b>${occupied_tables}/${total_tables} bàn</b>
 • 1h qua: <b>${win_reqs} req</b> · Chậm: <b>${win_slow}</b> · 5xx: <b>${win_5xx}</b>"
 
-send_telegram_message "${msg}"
+if (( STDOUT_ONLY == 1 )); then
+  printf '%s\n' "${msg}"
+else
+  send_telegram_message "${msg}"
+fi
