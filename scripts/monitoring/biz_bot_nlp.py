@@ -27,18 +27,24 @@ STRONG_DOMAIN_PATTERN = re.compile(
     r"bang luong|quy luong|luong nhan vien|tien luong|tinh luong|"
     r"loi nhuan|lai lo|lai bao nhieu|loi bao nhieu|"
     r"nhat ky|audit|thong ke|bao cao|tong quan|tinh hinh quan|"
-    r"ban dang ngoi|ban co khach|ban trong|bao nhieu ban|may ban|ban nao|mang ve|"
+    r"ban dang ngoi|ban co khach|ban trong|bao nhieu ban|may ban|ban nao|mang ve|gop ban|chuyen ban|tach ban|doi ban|ban so|ban ao|"
     r"don qr|qr cho|tra sua|mi cay|ga ran|tokbokki|lau|pizza|"
     r"db|database|du lieu|he thong|pos|cua hang|mon an|do uong|"
+    r"may in|in nhiet|rawbt|imin|itp6|80mm|phan he|tinh nang|module|"
+    r"quyen|phan quyen|rbac|mdm|master data|single session|phien dang nhap|dang nhap|bi da|bi vang|thiet bi|"
+    r"web push|chuong bao|giong noi|invariant|bat bien|delta split|tach bep|tam tinh|blind mode|luu tam|gio tam|nhap tam|"
+    r"doi mon|mon chinh|auto check|cap cay|"
+    r"nhan vien|nhan su|thu ngan|phu bep|so dien thoai|sdt|cccd|so tai khoan|stk|ho so|bang cong|"
     r"(?:hd|ord)-[a-z0-9-]+"
     r")\b"
 )
 
 QUESTION_SIGNAL_PATTERN = re.compile(
     r"(?:\?|\b(?:bao nhieu|may|gi|nao|the nao|nhu nao|sao roi|ra sao|duoc khong|khong nh[ie]|"
-    r"truy cap|ket noi|ai truc|ai huy|ai chot|ai ban|luc nao|khi nao|cho xem|kiem tra|tra cuu|"
+    r"truy cap|ket noi|ai truc|ai huy|ai chot|ai ban|ai dang|luc nao|khi nao|cho xem|kiem tra|tra cuu|"
     r"xem|thong ke|bao cao|tong hop|so sanh|tang hay giam|duoc bao|het bao|"
-    r"con khong|chua|liet ke|top)\b)"
+    r"con khong|chua|liet ke|top|cach|huong dan|quy trinh|co che|cong thuc|nguyen ly|"
+    r"tai sao|vi sao|do dau|do sao|khac gi|khac phuc|xu ly|cau hinh)\b)"
 )
 
 COMPLEX_AI_SIGNALS = (
@@ -49,6 +55,23 @@ COMPLEX_AI_SIGNALS = (
     "giai thich", "nhan xet", "de xuat", "bao nhieu ly", "may ly", "may phan",
     "bao nhieu phan", "may to", "bao nhieu to", "tra sua", "mi cay", "ga ran",
     "pizza", "tokbokki", "lau ", "mon gi",
+)
+
+HOWTO_OR_SYSTEM_AI_SIGNALS = (
+    "cach ", "huong dan", "quy trinh", "hoat dong", "nguyen ly", "co che", "cong thuc",
+    "tinh nang", "phan he", "la gi", "la sao", "do dau", "do sao", "khac gi",
+    "su co", "khac phuc", "xu ly", "ket noi", "cau hinh",
+    "may in", "rawbt", "imin", "itp6", "invariant", "bat bien", "rbac", "phan quyen",
+    "single session", "blind mode", "mdm", "master data", "delta split",
+    "gio tam", "luu tam", "nhap tam", "doi mon", "mon chinh", "tam tinh",
+    "dang nhap", "bi da", "bi vang", "thiet bi", "web push",
+    "so dien thoai", "sdt", "stk", "cccd", "thong tin nhan vien", "nhan vien ten",
+)
+
+FOLLOW_UP_PRONOUN_PATTERN = re.compile(
+    r"\b(?:mon do|nguoi do|nhan vien do|ban do|don do|cai do|muc do|"
+    r"con hom qua|con hom nay|con tuan|con thang|the con|"
+    r"chi tiet hon|cu the hon|liet ke them|giai thich them|noi ro hon|ro hon)\b"
 )
 
 # Short standalone command-like natural phrases allowed even without "?" or "xem"
@@ -65,7 +88,11 @@ GREETING_OR_FILLER = {
 }
 
 
-def looks_like_shop_question(raw_text: str, is_direct: bool = False) -> bool:
+def looks_like_shop_question(
+    raw_text: str,
+    is_direct: bool = False,
+    has_recent_memory: bool = False,
+) -> bool:
     """
     Decide whether an unprompted group message should be processed by Bot #2
     rather than ignored as human chatter.
@@ -81,6 +108,9 @@ def looks_like_shop_question(raw_text: str, is_direct: bool = False) -> bool:
         return False
 
     if re.search(r"\b(?:hd|ord)-\d+", norm):
+        return True
+
+    if has_recent_memory and FOLLOW_UP_PRONOUN_PATTERN.search(norm):
         return True
 
     has_domain = bool(STRONG_DOMAIN_PATTERN.search(norm))
@@ -140,7 +170,10 @@ def classify_fast_path(raw_text: str) -> tuple[str, str] | None:
     if m_code:
         return ("don", m_code.group(1).upper())
 
-    if any(sig in norm for sig in COMPLEX_AI_SIGNALS):
+    if FOLLOW_UP_PRONOUN_PATTERN.search(norm):
+        return None
+
+    if any(sig in norm for sig in COMPLEX_AI_SIGNALS) or any(sig in norm for sig in HOWTO_OR_SYSTEM_AI_SIGNALS):
         return None
 
     period_arg = extract_period_phrase(norm)

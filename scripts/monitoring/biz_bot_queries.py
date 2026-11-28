@@ -715,7 +715,7 @@ def handle_audit(arg: str = "", cfg: dict[str, str] | None = None) -> str:
     where_sql = f"WHERE module = {_sql_quote(mod_clean)}" if mod_clean else ""
     rows = run_readonly_sql_json(
         f"""
-        SELECT module, action, summary,
+        SELECT module, action, summary, ip_address, device_label,
                to_char(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI dd/mm') AS at_vn
         FROM audit_logs
         {where_sql}
@@ -732,7 +732,12 @@ def handle_audit(arg: str = "", cfg: dict[str, str] | None = None) -> str:
         lines.append("• Chưa ghi nhận nhật ký nào.")
     else:
         for r in rows:
-            lines.append(f"• [{html.escape(str(r['module']))} · {html.escape(str(r['at_vn']))}] {html.escape(str(r['summary']))}")
+            meta_parts = [p for p in (r.get("device_label"), r.get("ip_address")) if p]
+            meta_suffix = f" <i>({html.escape(' · '.join(str(p) for p in meta_parts))})</i>" if meta_parts else ""
+            lines.append(
+                f"• [{html.escape(str(r['module']))} · {html.escape(str(r['at_vn']))}] "
+                f"{html.escape(str(r['summary']))}{meta_suffix}"
+            )
     return "\n".join(lines)
 
 
@@ -874,10 +879,12 @@ def handle_help(cfg: dict[str, str] | None = None) -> str:
         "• /luong <code>[ky]</code> — Quỹ lương ước tính theo nhân viên",
         "• /loinhuan <code>[ky]</code> — Doanh thu − Kho − Lương",
         "",
-        "<b>5. Hỏi tự do bằng tiếng Việt &amp; AI</b>",
-        "• Gõ thẳng câu hỏi vào nhóm, VD: <i>\"Hôm nay có bao nhiêu đơn?\"</i>, <i>\"So sánh cuối tuần này với tuần trước\"</i>",
-        "• Hoặc dùng <code>/hoi &lt;câu hỏi&gt;</code>",
+        "<b>5. Hỏi tự do Hệ thống &amp; Database (Chủ quán / Quản lý)</b>",
+        "• Hỏi trực tiếp số liệu, nhân sự, phiên đăng nhập/IP, hoặc cách dùng 16 phân hệ, máy in RawBT/LAN, RBAC, 10 Invariants.",
+        "• VD: <i>\"Hôm nay có bao nhiêu đơn?\"</i>, <i>\"Cách kết nối máy in RawBT iMin D3-505?\"</i>, <i>\"Nhân viên bị văng đăng nhập là do sao?\"</i>",
+        "• Dùng <code>/hoi &lt;câu hỏi&gt;</code> hoặc gõ <code>/quen</code> để xóa ngữ cảnh hội thoại gần đây.",
         "• Tham số <code>[ky]</code>: <code>homnay</code>, <code>homqua</code>, <code>tuan</code>, <code>thang</code>, <code>dd/mm</code>, <code>dd/mm-dd/mm</code>",
+        "• <i>Phạm vi bảo mật: Chỉ hỏi đáp trong hệ thống POS &amp; Database Ăn Vặt Tran.</i>",
     ])
 
 
