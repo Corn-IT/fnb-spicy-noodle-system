@@ -90,7 +90,10 @@
     "table": {
       "keywords": [
         "ban an", "ban so", "may ban", "ban trong", "ban dang", "cho ngoi",
-        "mang ve", "ban nao", "cac ban", "so ban", "phong ban"
+        "mang ve", "ban nao", "cac ban", "so ban", "phong ban",
+        "bao nhieu ban", "tong so ban", "con ban trong", "ban con trong",
+        "ban co khach", "so do ban", "tinh trang ban", "liet ke ban",
+        "danh sach ban", "chi tiet ban"
       ],
       "accentDisambiguation": {
         "disqualifyIfRawOnly": ["bán chạy", "bán nhiều", "bán chậm", "bán ít", "bán được", "bán hàng"]
@@ -102,6 +105,9 @@
         "bao nhieu don", "may don", "so don", "tong don", "tong so don",
         "cac don", "nhung don", "mot don", "1 don", "2 don", "3 don", "5 don", "10 don",
         "ma don", "don nao", "don gan nhat", "don moi nhat",
+        "don qr", "don khach quet qr", "khach quet qr", "khach tu dat",
+        "chua thanh toan", "don chua thanh toan", "don dang phuc vu",
+        "don cho xac nhan", "don cho duyet", "chi tiet don", "chi tiet hoa don",
         "order", "bill", "phieu tinh tien"
       ]
     },
@@ -130,12 +136,15 @@
     },
     "kitchen": {
       "keywords": [
-        "tram bep", "bep nau", "bep chien", "pha che", "gui bep", "tinh hinh bep", "bep"
+        "tram bep", "bep nau", "bep chien", "pha che", "gui bep", "tinh hinh bep",
+        "khu bep", "khu vuc bep", "bao nhieu bep", "may tram bep", "may khu bep",
+        "danh sach bep", "bep"
       ]
     },
     "schedule": {
       "keywords": [
-        "lich truc", "lich lam viec", "phan ca", "di lam", "truc hom nay", "ca truc", "lich ca"
+        "lich truc", "lich lam viec", "phan ca", "di lam", "truc hom nay", "ca truc", "lich ca",
+        "ai di lam", "ai truc", "co ai truc", "lich lam", "ca hom nay", "ca lam viec", "lich tuan"
       ]
     },
     "payroll": {
@@ -145,7 +154,8 @@
     },
     "revenue": {
       "keywords": [
-        "doanh thu", "tong thu", "tien ban hang", "thu duoc bao nhieu", "ban duoc bao nhieu"
+        "doanh thu", "tong thu", "tien ban hang", "thu duoc bao nhieu", "ban duoc bao nhieu",
+        "ban duoc bao nhieu tien", "hom nay ban sao", "hom nay thu ve"
       ]
     },
     "profit": {
@@ -226,14 +236,22 @@
     ]
   },
   "systemDocCues": [
-    "cach dung", "huong dan su dung", "huong dan", "tinh nang nao",
-    "he thong co gi", "co may phan he", "phan he", "module nao",
-    "may in", "rawbt", "imin", "80mm", "in nhiet",
+    "cach dung", "huong dan su dung", "huong dan", "tinh nang nao", "tinh nang gi", "chuc nang nao", "chuc nang gi",
+    "he thong co gi", "he thong co nhung", "co may phan he", "phan he", "module nao",
+    "lam sao de", "lam the nao de", "cach tao", "cach them", "cach sua", "cach xoa",
+    "cach huy", "cach in", "cach mo", "cach tach", "cach chuyen", "cach gop",
+    "cach doi", "cach chot", "cach tinh", "quy trinh", "nguyen ly", "co che",
+    "may in", "rawbt", "imin", "80mm", "in nhiet", "lan 9100", "rj11", "bung ket",
     "10 quy tac", "invariant", "hard invariant", "kien truc he thong",
-    "chot ca hoat dong", "cong thuc ket ca", "rbac la gi", "phan quyen nhu the nao",
+    "chot ca hoat dong", "cong thuc ket ca", "blind mode", "bu chenh lech",
+    "rbac la gi", "phan quyen nhu the nao", "single session", "phim tat", "ctrl+j", "ctrl+k",
     "quang ma qr", "wifi", "geofencing", "mdm la gi", "chuyen ban nhu the nao",
     "gop ban nhu the nao", "tach don nhu the nao", "mang ve nhu the nao",
-    "quy tac", "tach bep", "hoat dong the nao", "hoat dong nhu the nao", "phan ra"
+    "tach thanh toan", "sua pttt", "duyet pttt", "gio tam", "luu tam",
+    "auto check", "auto bat", "doi mon chinh", "bao het mon", "web push",
+    "touch pos", "pos cam ung", "hub quan ly", "ty le hien thi", "display scale",
+    "ai lona", "lona ai", "dong bo telegram", "dong bo trang thai",
+    "quy tac", "tach bep", "hoat dong the nao", "hoat dong nhu the nao", "hoat dong ra sao", "phan ra"
   ],
   "intentDefinitions": [
     {
@@ -324,6 +342,41 @@
       "requiredPermission": "invoices.view",
       "commandEquivalent": "don",
       "mode": "count"
+    },
+    {
+      "id": "order_detail",
+      "description": "Detailed lookup of a specific order code (HD-... / ORD-...)",
+      "requiredPermission": "invoices.view",
+      "commandEquivalent": "don",
+      "mode": "single"
+    },
+    {
+      "id": "menu_catalog",
+      "description": "Menu catalog, unavailable items, categories, and single product price/sales lookup",
+      "requiredPermission": "pos.view",
+      "commandEquivalent": null,
+      "mode": "snapshot"
+    },
+    {
+      "id": "payment_breakdown",
+      "description": "Cash vs transfer revenue and QR vs POS order source breakdown",
+      "requiredPermission": "dashboard.view",
+      "commandEquivalent": "doanhthu",
+      "mode": "report"
+    },
+    {
+      "id": "staff_list",
+      "description": "Employee roster and headcount summary",
+      "requiredPermission": "employees.view",
+      "commandEquivalent": null,
+      "mode": "snapshot"
+    },
+    {
+      "id": "active_sessions",
+      "description": "Currently logged-in POS sessions and IPs",
+      "requiredPermission": "rbac.view",
+      "commandEquivalent": null,
+      "mode": "snapshot"
     },
     {
       "id": "table_live_status",

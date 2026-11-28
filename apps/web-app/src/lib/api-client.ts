@@ -37,7 +37,10 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown;
   params?: Record<string, string | number | boolean | undefined | null>;
   skipAuthRefresh?: boolean;
+  timeoutMs?: number;
 }
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 let refreshPromise: Promise<string | null> | null = null;
 
@@ -275,7 +278,11 @@ async function parseErrorResponse(response: Response): Promise<ApiErrorResponse>
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body, params, headers: customHeaders, skipAuthRefresh, ...rest } = options;
+  const { body, params, headers: customHeaders, skipAuthRefresh, timeoutMs, ...rest } = options;
+  const effectiveTimeoutMs =
+    typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : DEFAULT_REQUEST_TIMEOUT_MS;
   const url = buildUrl(path, params);
 
   const executeFetch = async (token: string | null): Promise<Response> => {
@@ -291,7 +298,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     const controller = !rest.signal && typeof AbortController === 'function' ? new AbortController() : null;
     const timeoutId =
       controller && typeof setTimeout === 'function'
-        ? setTimeout(() => controller.abort(), 15_000)
+        ? setTimeout(() => controller.abort(), effectiveTimeoutMs)
         : null;
 
     try {
@@ -308,13 +315,19 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
               : JSON.stringify(body),
       });
     } catch (error) {
-      const isTimeout = error instanceof Error && error.name === 'AbortError';
+      const errName =
+        error && typeof error === 'object' && 'name' in error
+          ? String((error as { name?: unknown }).name)
+          : '';
+      const isTimeout =
+        errName === 'AbortError' || errName === 'TimeoutError' || Boolean(controller?.signal.aborted);
+      const timeoutSec = Math.max(1, Math.round(effectiveTimeoutMs / 1000));
       throw new ApiClientError({
         statusCode: isTimeout ? 408 : 0,
         error: isTimeout ? 'Request Timeout' : 'Network Error',
         code: 'NETWORK_ERROR',
         message: isTimeout
-          ? 'Máy chủ phản hồi quá thời gian chờ (15 giây). Vui lòng kiểm tra kết nối mạng và thử lại.'
+          ? `Máy chủ phản hồi quá thời gian chờ (${timeoutSec} giây). Vui lòng kiểm tra kết nối mạng và thử lại.`
           : 'Mất kết nối tới máy chủ hoặc đường truyền mạng bị gián đoạn. Vui lòng kiểm tra Wi-Fi/mạng và thử lại.',
       });
     } finally {

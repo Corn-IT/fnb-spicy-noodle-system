@@ -44,6 +44,7 @@ from ..nlu.semantic_engine import match_semantic_intent
 def _answer_order_count(
     period_arg: str,
     order_type_filter: str | None = None,
+    order_status_filter: str | None = None,
     cfg: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     period = parse_period_spec(period_arg or "homnay")
@@ -76,6 +77,23 @@ def _answer_order_count(
     di_cnt = int(r.get("dine_in_count") or 0)
     total_amt = fmt_vnd(r.get("total_amount") or 0)
 
+    if order_status_filter == "UNPAID":
+        unpaid_cnt = serving + pending
+        return {
+            "text": f"📦 Kỳ <b>{html.escape(period['label'])}</b> có <b>{unpaid_cnt} đơn chưa thanh toán</b> ({serving} đang phục vụ · {pending} chờ xác nhận).",
+            "slots": {"intent": "order_count", "period_raw": period_arg or "homnay", "order_type_filter": order_type_filter or ""},
+        }
+    if order_status_filter == "PENDING":
+        return {
+            "text": f"📦 Kỳ <b>{html.escape(period['label'])}</b> có <b>{pending} đơn chờ xác nhận</b>.",
+            "slots": {"intent": "order_count", "period_raw": period_arg or "homnay", "order_type_filter": order_type_filter or ""},
+        }
+    if order_status_filter == "SERVING":
+        return {
+            "text": f"📦 Kỳ <b>{html.escape(period['label'])}</b> có <b>{serving} đơn đang phục vụ</b>.",
+            "slots": {"intent": "order_count", "period_raw": period_arg or "homnay", "order_type_filter": order_type_filter or ""},
+        }
+
     type_lbl = (
         "đơn Mang về"
         if order_type_filter == "TAKEAWAY"
@@ -106,12 +124,18 @@ def _answer_order_count(
 def _answer_recent_orders_filtered(
     period_arg: str,
     order_type_filter: str | None = None,
+    order_status_filter: str | None = None,
     limit: int = 5,
     explicit_period: bool = False,
     cfg: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     lim = max(1, min(20, int(limit or 5)))
-    where_parts = ["o.status <> 'VOIDED'"]
+    if order_status_filter == "UNPAID":
+        where_parts = ["o.status IN ('PENDING', 'SERVING')"]
+    elif order_status_filter in ("PAID", "SERVING", "PENDING"):
+        where_parts = [f"o.status = {_sql_quote(order_status_filter)}"]
+    else:
+        where_parts = ["o.status <> 'VOIDED'"]
     if order_type_filter:
         where_parts.append(f"o.order_type = {_sql_quote(order_type_filter)}")
     if explicit_period and period_arg:
@@ -302,7 +326,72 @@ def _handle_followup_local(
     return None
 
 
-def _dispatch_semantic_match(sem: dict[str, Any], cfg: dict[str, str] | None = None) -> dict[str, Any] | None:
+def _answer_menu_catalog(
+    norm_q: str,
+    period_arg: str,
+    cache: EntityCache | None = None,
+    cfg: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    prods = cache.get_products(cfg=cfg) if cache is not None else run_readonly_sql_json(
+        "SELECT id, name, price, station, is_available FROM products ORDER BY sort_order ASC, id ASC",
+        max_rows=300,
+        cfg=cfg,
+    )
+    if not prods:
+        return {"text": "📋 Thực đơn hiện chưa có món nào.", "slots": {"intent": "menu_catalog"}}
+    if any(k in norm_q for k in ("tam het", "het mon", "tam ngung")):
+        paused = [p for p in prods if not bool(p.get("is_available", True))]
+        if not paused:
+            return {"text": f"✅ Hiện không có món nào tạm hết — cả <b>{len(prods)} món</b> đều đang mở bán.", "slots": {"intent": "menu_catalog"}}
+        return {"text": f"⏸ Có <b>{len(paused)}/{len(prods)} món</b> tạm hết: {', '.join(html.escape(str(p['name'])) for p in paused[:12])}.", "slots": {"intent": "menu_catalog"}}
+
+    padded_q = f" {norm_q} "
+    matched = sorted(
+        [p for p in prods if len(strip_vi(str(p.get("name") or ""))) >= 4 and f" {strip_vi(str(p['name']))} " in padded_q],
+        key=lambda p: len(strip_vi(str(p["name"]))),
+        reverse=True,
+    )
+    if matched:
+        asks_sales = any(k in norm_q for k in ("ban duoc", "bao nhieu phan", "may phan", "may ly", "may to", "doanh thu"))
+        return _query_single_product(str(matched[0]["name"]), period_arg, ask_price_only=(not asks_sales), cfg=cfg)
+
+    if any(k in norm_q for k in ("dat nhat", "re nhat")):
+        asc = "re nhat" in norm_q
+        sorted_p = sorted(prods, key=lambda p: float(p.get("price") or 0), reverse=(not asc))
+        top1 = sorted_p[0]
+        return {"text": f"🍜 Món giá {'thấp' if asc else 'cao'} nhất thực đơn: <b>{html.escape(str(top1['name']))}</b> (<b>{fmt_vnd(top1['price'])}</b>).", "slots": {"intent": "menu_catalog"}}
+
+    avail_cnt = sum(1 for p in prods if p.get("is_available", True))
+    sample = ", ".join(f"{html.escape(str(p['name']))} ({fmt_vnd(p['price'])})" for p in prods[:8])
+    return {"text": f"📋 Thực đơn có <b>{len(prods)} món</b> ({avail_cnt} đang bán). Một số món: {sample}.", "slots": {"intent": "menu_catalog"}}
+
+
+def _answer_staff_list(cfg: dict[str, str] | None = None) -> dict[str, Any]:
+    rows = run_readonly_sql_json(
+        """
+        SELECT COALESCE(e.short_name, e.full_name) AS name, pos.name AS pos_name
+        FROM employees e
+        LEFT JOIN master_data pos ON pos.id = e.position_id
+        WHERE e.is_deleted = FALSE
+        ORDER BY e.id ASC
+        """,
+        max_rows=50,
+        cfg=cfg,
+    )
+    if not rows:
+        return {"text": "👥 Chưa ghi nhận nhân sự nào đang hoạt động.", "slots": {"intent": "staff_list"}}
+    names = ", ".join(
+        f"{html.escape(str(r['name']))}" + (f" ({html.escape(str(r['pos_name']))})" if r.get("pos_name") else "")
+        for r in rows[:15]
+    )
+    return {"text": f"👥 Quán hiện có <b>{len(rows)} nhân sự</b>: {names}.", "slots": {"intent": "staff_list"}}
+
+
+def _dispatch_semantic_match(
+    sem: dict[str, Any],
+    cache: EntityCache | None = None,
+    cfg: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
     iid = sem.get("intent_id")
     period_arg = str(sem.get("period") or "homnay")
     if iid == "product_top_popularity":
@@ -333,6 +422,22 @@ def _dispatch_semantic_match(sem: dict[str, Any], cfg: dict[str, str] | None = N
     if iid == "order_top_value":
         res = _answer_order_top_value(period_arg, cfg=cfg)
         return {**res, "route": "local_semantic", "intent_id": iid}
+    if iid == "order_detail" and sem.get("order_code"):
+        return {"text": handle_don(str(sem["order_code"]), cfg=cfg), "slots": {"intent": "order_detail", "order_code": sem["order_code"]}, "route": "local_semantic", "intent_id": iid}
+    if iid == "menu_catalog":
+        res = _answer_menu_catalog(str(sem.get("norm_text") or ""), period_arg, cache=cache, cfg=cfg)
+        return {**res, "route": "local_semantic", "intent_id": iid}
+    if iid == "payment_breakdown":
+        sl = _handle_targeted_slice(str(sem.get("norm_text") or ""), period_arg, cfg=cfg)
+        if sl:
+            return {**sl, "route": "local_semantic", "intent_id": iid}
+    if iid == "staff_list":
+        res = _answer_staff_list(cfg=cfg)
+        return {**res, "route": "fast_path", "intent_id": iid}
+    if iid == "active_sessions":
+        sl = _handle_targeted_slice("dang dang nhap", period_arg, cfg=cfg)
+        if sl:
+            return {**sl, "route": "fast_path", "intent_id": iid}
     if iid == "table_live_status":
         return {"text": handle_ban(cfg=cfg), "slots": {"intent": "ban"}, "route": "fast_path", "intent_id": iid}
     if iid == "recent_orders":
@@ -340,6 +445,7 @@ def _dispatch_semantic_match(sem: dict[str, Any], cfg: dict[str, str] | None = N
         res = _answer_recent_orders_filtered(
             period_arg,
             order_type_filter=sem.get("order_type_filter"),
+            order_status_filter=sem.get("order_status_filter"),
             limit=lim,
             explicit_period=bool(sem.get("explicit_period")),
             cfg=cfg,
@@ -349,6 +455,7 @@ def _dispatch_semantic_match(sem: dict[str, Any], cfg: dict[str, str] | None = N
         res = _answer_order_count(
             period_arg,
             order_type_filter=sem.get("order_type_filter"),
+            order_status_filter=sem.get("order_status_filter"),
             cfg=cfg,
         )
         return {**res, "route": "local_semantic", "intent_id": iid}
@@ -449,6 +556,19 @@ def try_answer_locally(
     sem = match_semantic_intent(clean_q)
     if sem.get("guard_blocked"):
         return None
+    if sem.get("intent_id") == "system_docs":
+        if allow_kb_fallback:
+            proj_dir = (cfg or {}).get("project_dir") or None
+            if proj_dir == "/tmp":
+                proj_dir = None
+            chunks = search_system_docs(clean_q, project_dir=proj_dir, max_chunks=2)
+            if chunks:
+                body = "\n\n".join(
+                    f"📘 <b>{html.escape(str(c.get('heading') or c.get('source')))}</b>\n{html.escape(str(c.get('content') or c.get('snippet') or ''))}"
+                    for c in chunks
+                )
+                return {"text": body, "slots": {"intent": "system_kb"}, "route": "system_kb"}
+        return None
 
     semantic_superlative_ids = {
         "product_top_popularity",
@@ -473,7 +593,7 @@ def try_answer_locally(
 
     # High-specificity semantic superlatives run before slices/entity match
     if sem.get("matched") and sem.get("intent_id") in semantic_superlative_ids:
-        dispatched = _dispatch_semantic_match(sem, cfg=cfg)
+        dispatched = _dispatch_semantic_match(sem, cache=cache, cfg=cfg)
         if dispatched is not None:
             return dispatched
 
@@ -489,7 +609,7 @@ def try_answer_locally(
 
     # Remaining matched semantic fast-paths (overview, revenue, cashflow, schedule, payroll, tables...)
     if sem.get("matched"):
-        dispatched = _dispatch_semantic_match(sem, cfg=cfg)
+        dispatched = _dispatch_semantic_match(sem, cache=cache, cfg=cfg)
         if dispatched is not None:
             return dispatched
 

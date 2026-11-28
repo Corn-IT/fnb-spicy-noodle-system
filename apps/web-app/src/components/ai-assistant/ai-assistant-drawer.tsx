@@ -236,6 +236,7 @@ export function AiAssistantDrawer() {
 
   const [draftInput, setDraftInput] = React.useState('');
   const [errorBanner, setErrorBanner] = React.useState<string | null>(null);
+  const [isSlowAiWait, setIsSlowAiWait] = React.useState(false);
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
 
@@ -320,6 +321,15 @@ export function AiAssistantDrawer() {
       setErrorBanner(msg);
     },
   });
+
+  React.useEffect(() => {
+    if (!chatMutation.isPending) {
+      setIsSlowAiWait(false);
+      return;
+    }
+    const slowHintTimer = window.setTimeout(() => setIsSlowAiWait(true), 4500);
+    return () => window.clearTimeout(slowHintTimer);
+  }, [chatMutation.isPending]);
 
   const resetMutation = useMutation({
     mutationFn: () => resetAiAssistantSession(clientSessionId),
@@ -536,7 +546,11 @@ export function AiAssistantDrawer() {
               className="flex items-center gap-2 text-xs text-muted-foreground"
             >
               <Loader2 className="h-3.5 w-3.5 animate-spin text-accent-text" />
-              <span>Lona đang kiểm tra dữ liệu...</span>
+              <span>
+                {isSlowAiWait
+                  ? 'Lona đang phân tích sâu qua Gemini (vui lòng chờ trong giây lát)...'
+                  : 'Lona đang kiểm tra dữ liệu...'}
+              </span>
             </div>
           ) : null}
 

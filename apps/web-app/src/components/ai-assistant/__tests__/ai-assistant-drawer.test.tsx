@@ -180,6 +180,7 @@ describe('AiAssistantDrawer & TopNavbar integration', () => {
       expect(postSpy).toHaveBeenCalledWith(
         '/api/v1/ai-assistant/chat',
         expect.objectContaining({ message: 'Doanh thu hôm nay?' }),
+        { timeoutMs: 65_000 },
       );
     });
 
