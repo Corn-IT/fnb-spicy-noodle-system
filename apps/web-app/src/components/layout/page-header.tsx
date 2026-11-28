@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { APP_NAVIGATION_ROUTE_MAP } from '@/components/layout/command-palette';
+import { APP_NAVIGATION_ROUTE_MAP } from '@/lib/app-navigation';
 import { resolvePageHeader, useStoreSettings } from '@/hooks/use-store-settings';
 import { cn } from '@/utils/cn';
 

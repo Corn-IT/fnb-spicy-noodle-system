@@ -8,7 +8,7 @@ import {
   type AppNavigationRoute,
   buildOrderedNavigationSections,
   canUserAccessRoute,
-} from '@/components/layout/command-palette';
+} from '@/lib/app-navigation';
 import { startPendingNavigation, usePendingRoutePath } from '@/components/loading';
 import { StoreBrandLogo } from '@/components/store-brand-logo';
 import { Button } from '@/components/ui/button';

@@ -15,7 +15,7 @@ import {
   Wallet,
 } from 'lucide-react';
 
-import type { PermissionModuleKey } from '@/components/layout/command-palette';
+import type { PermissionModuleKey } from '@/lib/app-navigation';
 import { POS_DEFAULT_PATH, POS_TOUCH_PATH } from '@/lib/pos-device-mode';
 import type { AuthenticatedUser } from '@/stores/auth.store';
 
