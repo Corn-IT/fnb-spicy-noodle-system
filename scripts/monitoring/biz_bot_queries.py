@@ -20,6 +20,7 @@ from biz_bot_common import (
     fmt_signed_vnd,
     fmt_vnd,
     get_biz_config,
+    get_staff_telegram_map,
     parse_period_spec,
     run_readonly_sql_json,
     strip_vi,
@@ -472,6 +473,11 @@ def handle_topmon(arg: str = "", cfg: dict[str, str] | None = None) -> str:
             f"🗓 Kỳ: <b>{html.escape(period['label'])}</b>",
             "────────────────",
         ]
+        if rows:
+            lines.append(
+                f"• Chậm nhất: <b>{html.escape(str(rows[0]['name']))}</b> ({rows[0]['qty_sold']} phần)"
+            )
+            lines.append("")
         for idx, r in enumerate(rows, 1):
             st = STATION_NAMES_VI.get(r.get("station", ""), r.get("station", ""))
             lines.append(f"{idx}. {html.escape(str(r['name']))} ({st}) — <b>{r['qty_sold']} phần</b> ({fmt_vnd(r['price'])})")
@@ -493,8 +499,13 @@ def handle_topmon(arg: str = "", cfg: dict[str, str] | None = None) -> str:
         f"🗓 Kỳ: <b>{html.escape(period['label'])}</b>",
         "────────────────",
         f"• Đã bán: <b>{summary.get('totalQuantity', 0)} phần</b> ({summary.get('totalProductsSold', 0)} món / {summary.get('totalOrders', 0)} đơn)",
-        "",
     ]
+    if items:
+        top1 = items[0]
+        lines.append(
+            f"• 🏆 Bán chạy nhất: <b>{html.escape(str(top1['name']))}</b> ({top1['qty']} phần · {fmt_vnd(top1['revenue'])})"
+        )
+    lines.append("")
     if items:
         for idx, it in enumerate(items, 1):
             lines.append(
@@ -761,6 +772,14 @@ def handle_lich(arg: str = "", cfg: dict[str, str] | None = None) -> str:
     cells = week_data.get("cells") or []
     today_dow = today.weekday()
 
+    staff_map = get_staff_telegram_map(cfg)
+
+    def _fmt_emp(e: dict[str, Any]) -> str:
+        raw_name = str(e.get("shortName") or e.get("fullName") or "")
+        safe = html.escape(raw_name)
+        handle = staff_map.get(strip_vi(raw_name))
+        return f"{safe} ({html.escape(handle)})" if handle else safe
+
     if not show_full_week:
         day_cells = [c for c in cells if c.get("dayOfWeek") == today_dow and c.get("employees")]
         lines = [
@@ -771,7 +790,7 @@ def handle_lich(arg: str = "", cfg: dict[str, str] | None = None) -> str:
             lines.append("• Chưa xếp ca làm cho hôm nay.")
         else:
             for c in day_cells:
-                emp_names = ", ".join(html.escape(str(e.get("shortName") or e.get("fullName"))) for e in c["employees"])
+                emp_names = ", ".join(_fmt_emp(e) for e in c["employees"])
                 lines.append(f"• <b>{html.escape(str(c['timeSlot']))}</b>: {emp_names}")
         lines.append(f"\n💡 <i>Xem cả tuần: gõ</i> <code>/lich tuan</code>")
         return "\n".join(lines)
@@ -787,7 +806,7 @@ def handle_lich(arg: str = "", cfg: dict[str, str] | None = None) -> str:
             lines.append(f"• <b>{WEEKDAY_NAMES_VI[dow]} ({day_str})</b>: Chưa xếp")
             continue
         slots = [
-            f"{html.escape(str(c['timeSlot']))}: {', '.join(html.escape(str(e.get('shortName') or e.get('fullName'))) for e in c['employees'])}"
+            f"{html.escape(str(c['timeSlot']))}: {', '.join(_fmt_emp(e) for e in c['employees'])}"
             for c in day_cells
         ]
         lines.append(f"• <b>{WEEKDAY_NAMES_VI[dow]} ({day_str})</b>: " + " | ".join(slots))
@@ -879,10 +898,11 @@ def handle_help(cfg: dict[str, str] | None = None) -> str:
         "• /luong <code>[ky]</code> — Quỹ lương ước tính theo nhân viên",
         "• /loinhuan <code>[ky]</code> — Doanh thu − Kho − Lương",
         "",
-        "<b>5. Hỏi tự do Hệ thống &amp; Database (Chủ quán / Quản lý)</b>",
-        "• Hỏi trực tiếp số liệu, nhân sự, phiên đăng nhập/IP, hoặc cách dùng 16 phân hệ, máy in RawBT/LAN, RBAC, 10 Invariants.",
-        "• VD: <i>\"Hôm nay có bao nhiêu đơn?\"</i>, <i>\"Cách kết nối máy in RawBT iMin D3-505?\"</i>, <i>\"Nhân viên bị văng đăng nhập là do sao?\"</i>",
-        "• Dùng <code>/hoi &lt;câu hỏi&gt;</code> hoặc gõ <code>/quen</code> để xóa ngữ cảnh hội thoại gần đây.",
+        "<b>5. Cách gọi Bot &amp; Hỏi tự do Hệ thống/DB</b>",
+        "• 4 cách gọi Bot: <code>Lona</code> / <code>Bot</code> / <code>Trợ lý</code>, tag <code>@POS_Lona_bot</code>, <b>Reply</b> tin nhắn của Bot, hoặc lệnh <code>/...</code>",
+        "• Emoji trạng thái: 👀 tiếp nhận · ⚡ cục bộ 0-token · 🤔 Gemini AI · 👍 hoàn tất · 🫡 ngoài phạm vi",
+        "• VD 0-token: <i>\"Lona ơi món nào bán chạy nhất tuần này?\"</i>, <i>\"Bot doanh thu tiền mặt hôm nay?\"</i>",
+        "• Lệnh phụ: <code>/token</code> (tỷ lệ 0-token), <code>/hoi &lt;câu hỏi&gt;</code>, <code>/quen</code> (xóa ngữ cảnh)",
         "• Tham số <code>[ky]</code>: <code>homnay</code>, <code>homqua</code>, <code>tuan</code>, <code>thang</code>, <code>dd/mm</code>, <code>dd/mm-dd/mm</code>",
         "• <i>Phạm vi bảo mật: Chỉ hỏi đáp trong hệ thống POS &amp; Database Ăn Vặt Tran.</i>",
     ])

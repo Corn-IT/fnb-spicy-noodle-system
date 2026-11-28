@@ -15,12 +15,15 @@ MONITOR_DIR = Path(__file__).resolve().parent
 if str(MONITOR_DIR) not in sys.path:
     sys.path.insert(0, str(MONITOR_DIR))
 
+import tempfile  # noqa: E402
 import biz_bot_ai  # noqa: E402
 import biz_bot_common  # noqa: E402
 import biz_bot_guardrail  # noqa: E402
 import biz_bot_kb  # noqa: E402
+import biz_bot_local  # noqa: E402
 import biz_bot_nlp  # noqa: E402
 import biz_bot_queries  # noqa: E402
+import biz_bot_state  # noqa: E402
 
 # Load hyphenated filenames dynamically
 def load_mod(name: str, filename: str):
@@ -111,8 +114,9 @@ class TestPeriodAndSqlSecurity(unittest.TestCase):
 
 
 class TestVietnameseNlpAndGroupFilter(unittest.TestCase):
-    def test_group_chatter_ignored_and_questions_routed(self) -> None:
-        for chatter in (
+    def test_four_way_invocation_gating_and_diacritic_safety(self) -> None:
+        # Un-invoked group conversation MUST stay silent even if it contains shop terms or "bột"/"ai"
+        for uninvoked in (
             "ok",
             "cảm ơn sếp",
             "cảm ơn bạn nhé",
@@ -121,46 +125,54 @@ class TestVietnameseNlpAndGroupFilter(unittest.TestCase):
             "Huy ơi đi ăn cơm",
             "hẹn bạn tối mai nhé",
             "hôm nay hơi bận",
-            "oke ạ",
+            "Hôm nay nhập bao nhiêu kg bột chiên xù?",
+            "Món này cho bớt cay một chút nhé",
+            "Doanh thu hôm nay cũng ổn đó anh",
+            "Hôm nay ai bán ca sáng vậy?",
             "👍",
         ):
-            self.assertFalse(biz_bot_nlp.looks_like_shop_question(chatter, is_direct=False), f"False positive chatter: {chatter}")
+            invoked, mode, _ = biz_bot_nlp.detect_bot_invocation(uninvoked)
+            self.assertFalse(invoked, f"False positive wake-up: {uninvoked} (mode={mode})")
+            self.assertFalse(biz_bot_nlp.looks_like_shop_question(uninvoked, is_direct=False))
 
-        for q in (
-            "Hôm nay có bao nhiêu đơn?",
-            "hom nay doanh thu bao nhieu",
-            "doanh thu hôm nay",
-            "két tiền",
-            "két tiền hiện tại còn bao nhiêu?",
-            "Món nào bán chạy nhất tuần này?",
-            "Bàn nào đang có khách?",
-            "So sánh doanh thu cuối tuần này với tuần trước",
-            "Kiểm tra đơn HD-20261128-0005",
-            "Bạn có truy cập vào DB được không",
-        ):
-            self.assertTrue(biz_bot_nlp.looks_like_shop_question(q, is_direct=False), f"Should answer: {q}")
+        # 4 valid gates: wake-word, @mention, reply-to-bot, /command
+        wake_cases = (
+            ("Lona ơi doanh thu hôm nay?", "wake_word", "doanh thu hôm nay?"),
+            ("POS Lona bàn đang ngồi", "wake_word", "bàn đang ngồi"),
+            ("Bot ơi làm gì thì không tốn token?", "wake_word", "làm gì thì không tốn token?"),
+            ("Trợ lý ơi cách kết nối máy in RawBT?", "wake_word", "cách kết nối máy in RawBT?"),
+            ("AI ơi hôm nay có mấy đơn?", "wake_word", "hôm nay có mấy đơn?"),
+            ("@POS_Lona_bot thời tiết Hà Nội sao?", "mention", "thời tiết Hà Nội sao?"),
+            ("/tongquan homnay", "command", "/tongquan homnay"),
+        )
+        for text, expected_mode, expected_clean in wake_cases:
+            invoked, mode, clean = biz_bot_nlp.detect_bot_invocation(text)
+            self.assertTrue(invoked, f"Should invoke: {text}")
+            self.assertEqual(mode, expected_mode)
+            self.assertEqual(clean.lower(), expected_clean.lower())
 
-        self.assertIsNone(biz_bot_nlp.classify_fast_path("Bạn có truy cập vào DB được không"))
-
-        # Direct mention with any meaningful question must always pass through
-        self.assertTrue(biz_bot_nlp.looks_like_shop_question("@POS_Lona_bot thời tiết Hà Nội sao?", is_direct=True))
+        reply_msg = {"reply_to_message": {"from": {"id": 8695527449, "username": "POS_Lona_bot"}}}
+        inv_r, mode_r, clean_r = biz_bot_nlp.detect_bot_invocation(
+            "Hôm nay món đó bán mấy phần?", msg=reply_msg, bot_id=8695527449, bot_username="POS_Lona_bot"
+        )
+        self.assertTrue(inv_r)
+        self.assertEqual(mode_r, "reply")
+        self.assertEqual(clean_r, "Hôm nay món đó bán mấy phần?")
 
     def test_fast_path_vs_gemini_routing(self) -> None:
         self.assertEqual(biz_bot_nlp.classify_fast_path("Hôm nay có bao nhiêu đơn?"), ("don", "homnay"))
-        self.assertEqual(biz_bot_nlp.classify_fast_path("Doanh thu hôm qua sao rồi"), ("doanhthu", "homqua"))
+        self.assertEqual(biz_bot_nlp.classify_fast_path("Lona ơi doanh thu hôm qua sao rồi"), ("doanhthu", "homqua"))
         self.assertEqual(biz_bot_nlp.classify_fast_path("Két tiền hôm nay còn bao nhiêu?"), ("ket", "homnay"))
         self.assertEqual(biz_bot_nlp.classify_fast_path("Top món tuần này"), ("topmon", "tuan"))
         self.assertEqual(biz_bot_nlp.classify_fast_path("Xem đơn HD-20261128-0005"), ("don", "HD-20261128-0005"))
 
-        # Complex / analytical / item-specific -> falls through to Gemini AI (None)
+        # Analytical / doc / complex queries return None from stat fast-path
         for complex_q in (
-            "Khung giờ nào bán chạy nhất tuần này?",
-            "So sánh doanh thu tuần này với tuần trước",
-            "Hôm nay bán được bao nhiêu ly trà sữa?",
+            "Phân tích xu hướng doanh thu tuần này",
             "Khách ăn mì cay cấp độ mấy nhiều nhất?",
-            "Thu ngân nào hủy nhiều đơn nhất tháng này?",
+            "Cách kết nối máy in RawBT với iMin D3-505?",
         ):
-            self.assertIsNone(biz_bot_nlp.classify_fast_path(complex_q), f"Expected AI fallback for: {complex_q}")
+            self.assertIsNone(biz_bot_nlp.classify_fast_path(complex_q), f"Expected non-fast-path for: {complex_q}")
 
 
 class TestBotSeparationAndHandlers(unittest.TestCase):
@@ -437,25 +449,22 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
         self.assertFalse(is_ref_sec)
 
     def test_system_questions_and_followup_nlp_routing(self) -> None:
-        system_questions = [
-            "Cách kết nối máy in nhiệt RawBT với máy iMin D3-505 như thế nào?",
-            "Hệ thống có những phân hệ nào?",
-            "Tại sao bấm In tạm tính xong bàn vẫn giữ màu đỏ?",
-            "Công thức tính két tiền khi chốt ca như thế nào?",
-            "Ai đang đăng nhập POS trên IP nào?",
-            "Số điện thoại của nhân viên Huy là gì?",
-            "Logic đổi món chính và cấp độ cay hoạt động thế nào?",
-        ]
-        for q in system_questions:
-            self.assertTrue(biz_bot_nlp.looks_like_shop_question(q, is_direct=False), f"Must route system Q: {q}")
-            self.assertIsNone(biz_bot_nlp.classify_fast_path(q), f"System Q must go to Gemini+docs, not stat fast-path: {q}")
+        doc_questions = (
+            "Lona ơi cách kết nối máy in nhiệt RawBT với máy iMin D3-505 như thế nào?",
+            "Bot ơi tại sao bấm In tạm tính xong bàn vẫn giữ màu đỏ?",
+            "Trợ lý ơi công thức tính két tiền khi chốt ca như thế nào?",
+            "@POS_Lona_bot logic đổi món chính và cấp độ cay hoạt động thế nào?",
+        )
+        for q in doc_questions:
+            invoked, _, clean = biz_bot_nlp.detect_bot_invocation(q)
+            self.assertTrue(invoked, f"Must wake on: {q}")
+            self.assertTrue(biz_bot_nlp.is_system_doc_question(clean), f"Must require system docs: {q}")
+            self.assertIsNone(biz_bot_nlp.classify_fast_path(clean), f"Must go to Gemini+docs: {q}")
 
-        # Pronoun follow-ups work ONLY with active memory, while chatter stays ignored
-        self.assertTrue(biz_bot_nlp.looks_like_shop_question("Còn hôm qua thì sao?", is_direct=False, has_recent_memory=True))
-        self.assertTrue(biz_bot_nlp.looks_like_shop_question("Hôm nay món đó bán được bao nhiêu phần?", is_direct=False, has_recent_memory=True))
-        self.assertIsNone(biz_bot_nlp.classify_fast_path("Hôm nay món đó bán được bao nhiêu phần?"))
-        for chatter in ("ok", "cảm ơn bạn nhé", "hôm nay hơi bận", "Huy ơi đi ăn cơm"):
-            self.assertFalse(biz_bot_nlp.looks_like_shop_question(chatter, is_direct=False, has_recent_memory=True))
+        # "Em có coding được không?" when un-invoked stays silent; when calling Bot/Lona -> blocked 0-token
+        self.assertFalse(biz_bot_nlp.detect_bot_invocation("Em có coding được không?")[0])
+        allowed_coding, _ = biz_bot_guardrail.check_pre_guardrail("có coding được không?")
+        self.assertFalse(allowed_coding)
 
     def test_conversation_memory_ttl_quen_and_anti_poisoning(self) -> None:
         now = [1000.0]
@@ -481,8 +490,8 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
         def fake_gemini(question, cfg=None, rate_limiter=None, history=None, reply_context=None):
             captured_histories.append(list(history or []))
             if "thơ" in question.lower():
-                return {"text": biz_bot_guardrail.SCOPE_REFUSAL_MSG, "is_refusal": True}
-            return {"text": "<b>Mì cay bò Mỹ</b> bán được <b>12 phần</b> hôm nay.", "is_refusal": False}
+                return {"text": biz_bot_guardrail.SCOPE_REFUSAL_MSG, "is_refusal": True, "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}}
+            return {"text": "<b>Mì cay bò Mỹ</b> bán được <b>12 phần</b> hôm nay.", "is_refusal": False, "usage": {"prompt_tokens": 100, "output_tokens": 30, "total_tokens": 130}}
 
         with mock.patch.object(bot2_mod, "answer_with_gemini_detailed", side_effect=fake_gemini):
             r_bad = bot2_mod.dispatch_message(
@@ -493,12 +502,13 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
                 memory=mem,
                 chat_id="-1001",
             )
-            self.assertEqual(r_bad, biz_bot_guardrail.SCOPE_REFUSAL_MSG)
+            self.assertIn(biz_bot_guardrail.SCOPE_REFUSAL_MSG, r_bad or "")
+            self.assertIn("0 token", r_bad or "")
             self.assertEqual(mem.get_history("-1001"), [])
 
-            # Turn 1 valid AI answer gets saved
+            # Turn 1 valid AI answer gets saved when invoked via wake-word
             r1 = bot2_mod.dispatch_message(
-                "Hôm nay bán được bao nhiêu phần Mì cay?",
+                "Lona ơi hôm nay bán được bao nhiêu phần Mì cay?",
                 cfg,
                 limiter,
                 is_direct=False,
@@ -506,6 +516,7 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
                 chat_id="-1001",
             )
             self.assertIn("12 phần", r1 or "")
+            self.assertIn("~130 token", r1 or "")
             self.assertEqual(len(mem.get_history("-1001")), 1)
 
             # Layer 3 / model refusal also MUST NOT poison memory
@@ -519,12 +530,12 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
             )
             self.assertEqual(len(mem.get_history("-1001")), 1)
 
-            # Turn 2 follow-up receives Turn 1 history
+            # Turn 2 follow-up via reply receives Turn 1 history
             _ = bot2_mod.dispatch_message(
                 "Còn hôm qua thì sao?",
                 cfg,
                 limiter,
-                is_direct=False,
+                is_direct=True,
                 memory=mem,
                 chat_id="-1001",
             )
@@ -556,6 +567,164 @@ class TestSystemKbGuardrailAndMemory(unittest.TestCase):
             m_ai.assert_not_called()
         self.assertIn("50 đơn", hyb_fp or "")
         self.assertIn("ngoài phạm vi hệ thống", hyb_fp or "")
+
+
+class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
+    def _base_cfg(self, tmpdir: str = "/tmp") -> dict[str, str]:
+        return {
+            "bot_token": "tok",
+            "chat_id": "-1001",
+            "gemini_api_key": "fake",
+            "gemini_model": "gemini-3.5-flash-lite",
+            "gemini_fallback_model": "gemini-flash-lite-latest",
+            "project_name": "Ăn Vặt Tran",
+            "project_dir": tmpdir,
+            "domain": "pos.anvattran.com",
+            "ro_db_user": "fnb_bot_ro",
+            "high_void_threshold": "150000",
+            "alert_state_file": f"{tmpdir}/state.json",
+            "staff_tg_map_raw": '{"Huy": "@huy_pos", "Lan": "@lan_pos"}',
+        }
+
+    def test_two_way_sender_tagging_and_safe_tg_html(self) -> None:
+        m_user = {"from": {"id": 555, "username": "minhtuan21", "first_name": "Tuấn"}, "chat": {"id": -1001}}
+        h1, lbl1 = biz_bot_common.format_sender_mention(m_user)
+        self.assertEqual((h1, lbl1), ("@minhtuan21", "@minhtuan21"))
+
+        m_nouser = {"from": {"id": 777, "first_name": "Quản lý <Lona>"}, "chat": {"id": -1001}}
+        h2, _ = biz_bot_common.format_sender_mention(m_nouser)
+        self.assertEqual(h2, '<a href="tg://user?id=777">Quản lý &lt;Lona&gt;</a>')
+        safe_kept = biz_bot_common.sanitize_telegram_html(f"{h2}\n<b>OK</b> <a href=\"https://evil.com\">phish</a>")
+        self.assertIn('<a href="tg://user?id=777">', safe_kept)
+        self.assertIn("&lt;a href=", safe_kept)
+
+        m_anon = {"from": {"id": 1087968824, "is_bot": True}, "chat": {"id": -1001}, "sender_chat": {"id": -1001, "title": "POS-Overview"}}
+        h3, _ = biz_bot_common.format_sender_mention(m_anon)
+        self.assertEqual(h3, "")
+
+    def test_superlative_and_zero_token_reply_followup_and_stages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._base_cfg(tmp)
+            mem_file = f"{tmp}/mem.json"
+            stats_file = f"{tmp}/stats.json"
+            log_file = f"{tmp}/qa.jsonl"
+            now = [2000.0]
+            mem = biz_bot_state.ConversationMemory(max_turns=4, ttl_sec=600, clock=lambda: now[0], persist_path=mem_file)
+            telemetry = biz_bot_state.TelemetryStore(stats_path=stats_file, qa_log_path=log_file)
+            limiter = biz_bot_ai.AiRateLimiter()
+            stages: list[str] = []
+
+            daily_items_week = {
+                "summary": {"totalQuantity": 500, "totalProductsSold": 40, "totalOrders": 210},
+                "items": [
+                    {"productId": 1, "name": "Mì Bò Mỹ", "qty": 121, "revenue": 5500000, "sharePercent": 10.1},
+                    {"productId": 2, "name": "Mì Thập Cẩm", "qty": 99, "revenue": 4970000, "sharePercent": 9.1},
+                ],
+            }
+            user_msg = {"message_id": 88, "from": {"id": 101, "username": "tuan_owner", "first_name": "Tuấn"}, "chat": {"id": -1001}}
+
+            with (
+                mock.patch.object(biz_bot_local, "call_internal_biz", return_value=daily_items_week),
+                mock.patch.object(bot2_mod, "answer_with_gemini_detailed") as m_ai,
+            ):
+                r1 = bot2_mod.dispatch_message_detailed(
+                    "Lona ơi món nào bán chạy nhất tuần này?",
+                    cfg=cfg,
+                    rate_limiter=limiter,
+                    status_cb=stages.append,
+                    memory=mem,
+                    chat_id="-1001",
+                    msg=user_msg,
+                    telemetry=telemetry,
+                )
+                m_ai.assert_not_called()
+            self.assertIsNotNone(r1)
+            assert r1 is not None
+            self.assertEqual(r1["route"], "local")
+            self.assertEqual(stages, ["received", "local"])
+            self.assertTrue(r1["text"].startswith("@tuan_owner\n"))
+            self.assertIn("Bán chạy nhất là <b>Mì Bò Mỹ</b>", r1["text"])
+            self.assertIn("⚡ Cục bộ · 0 token", r1["text"])
+            telemetry.record_interaction("Lona ơi món nào bán chạy nhất tuần này?", r1["text"], r1["route"], r1["sender_label"], msg_id=88)
+
+            # Reload ConversationMemory from disk (simulating service restart) -> context survives!
+            mem_reloaded = biz_bot_state.ConversationMemory(max_turns=4, ttl_sec=600, clock=lambda: now[0], persist_path=mem_file)
+            self.assertEqual(mem_reloaded.get_slots("-1001").get("product_name"), "Mì Bò Mỹ")
+
+            # Turn 2 reply to bot ("Hôm nay món đó bán được bao nhiêu phần?") -> resolved at 0 Gemini tokens!
+            reply_msg = {
+                "message_id": 89,
+                "from": {"id": 101, "username": "tuan_owner"},
+                "chat": {"id": -1001},
+                "reply_to_message": {"from": {"id": 8695527449, "username": "POS_Lona_bot"}},
+            }
+            sql_side_effects = [
+                [{"id": 1, "name": "Mì Bò Mỹ", "price": 45000, "station": "BEP_NAU", "is_available": True}],
+                [{"qty_sold": 22, "order_cnt": 13, "gross_rev": 990000}],
+            ]
+            with (
+                mock.patch.object(biz_bot_local, "run_readonly_sql_json", side_effect=sql_side_effects),
+                mock.patch.object(bot2_mod, "answer_with_gemini_detailed") as m_ai2,
+            ):
+                r2 = bot2_mod.dispatch_message_detailed(
+                    "Hôm nay món đó bán được bao nhiêu phần?",
+                    cfg=cfg,
+                    rate_limiter=limiter,
+                    memory=mem_reloaded,
+                    chat_id="-1001",
+                    msg=reply_msg,
+                    bot_id=8695527449,
+                    telemetry=telemetry,
+                )
+                m_ai2.assert_not_called()
+            assert r2 is not None
+            self.assertIn("Mì Bò Mỹ", r2["text"])
+            self.assertIn("<b>22 phần</b>", r2["text"])
+            self.assertIn("⚡ Cục bộ · 0 token", r2["text"])
+            telemetry.record_interaction("Hôm nay món đó bán được bao nhiêu phần?", r2["text"], r2["route"], r2["sender_label"], msg_id=89)
+
+            # Check /token telemetry & rolling JSONL log
+            tok_res = bot2_mod.dispatch_message_detailed("/token", cfg=cfg, rate_limiter=limiter, telemetry=telemetry, msg=user_msg)
+            assert tok_res is not None
+            self.assertIn("Cục bộ 0-token: <b>2 lượt</b>", tok_res["text"])
+            self.assertIn("100%", tok_res["text"])
+            log_lines = Path(log_file).read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(log_lines), 2)
+
+    def test_local_meta_slices_and_entity_matching(self) -> None:
+        cfg = self._base_cfg()
+        meta_res = biz_bot_local.try_answer_locally("làm gì thì không tốn token?", cfg=cfg)
+        self.assertIsNotNone(meta_res)
+        assert meta_res is not None
+        self.assertIn("0 token", meta_res["text"])
+
+        # Cache loads employees & products cleanly, including staff Telegram @mention
+        cache = biz_bot_local.EntityCache()
+        emp_rows = [{"id": 3, "full_name": "Nguyễn Quốc Huy", "short_name": "Huy", "phone": "0901000004", "bank_name": "MB", "bank_account_no": "12345", "start_vn": "01/01/2026", "position_name": "Thu ngân", "specialty_name": ""}]
+        prod_batch = [{"id": 7, "name": "Trà Sữa Trân Châu", "price": 25000, "station": "PHA_CHE", "is_available": True}]
+        with mock.patch.object(
+            biz_bot_local,
+            "run_readonly_sql_json",
+            side_effect=[emp_rows, prod_batch, prod_batch],
+        ):
+            emp_res = biz_bot_local.try_answer_locally("số điện thoại của nhân viên Huy là gì?", cfg=cfg, cache=cache)
+            self.assertIsNotNone(emp_res)
+            assert emp_res is not None
+            self.assertIn("@huy_pos", emp_res["text"])
+            self.assertIn("0901000004", emp_res["text"])
+
+            price_res = biz_bot_local.try_answer_locally("Trà Sữa Trân Châu giá bao nhiêu?", cfg=cfg, cache=cache)
+            assert price_res is not None
+            self.assertIn("25.000đ", price_res["text"])
+
+        # Off-topic coding question via wake-word blocked at 0 tokens cleanly
+        limiter = biz_bot_ai.AiRateLimiter()
+        with mock.patch.object(bot2_mod, "answer_with_gemini_detailed") as m_ai:
+            ref_res = bot2_mod.dispatch_message_detailed("Bot ơi có coding được không?", cfg=cfg, rate_limiter=limiter)
+            m_ai.assert_not_called()
+        assert ref_res is not None
+        self.assertTrue(ref_res["is_refusal"])
+        self.assertEqual(ref_res["route"], "guardrail_block")
 
 
 if __name__ == "__main__":
