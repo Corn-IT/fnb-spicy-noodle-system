@@ -19,6 +19,7 @@ from biz_bot_common import (
     get_biz_config,
     send_chat_action,
     send_tg_message,
+    set_message_reaction,
     tg_api,
 )
 from biz_bot_nlp import classify_fast_path, looks_like_shop_question
@@ -259,17 +260,23 @@ def main() -> int:
 
                 msg_id = msg.get("message_id")
                 is_direct = is_direct_message_to_bot(msg, bot_id, bot_username)
+
+                def on_accept_processing(_chat_id: str = chat_id, _msg_id: int | None = msg_id) -> None:
+                    set_message_reaction(bot_token, _chat_id, _msg_id, "👀")
+                    send_chat_action(bot_token, _chat_id, "typing")
+
                 try:
                     reply = dispatch_message(
                         raw_text,
                         cfg=cfg,
                         rate_limiter=rate_limiter,
                         is_direct=is_direct,
-                        typing_cb=lambda: send_chat_action(bot_token, chat_id, "typing"),
+                        typing_cb=on_accept_processing,
                     )
                     if reply:
                         last_msg_at = time.monotonic()
                         send_tg_message(bot_token, chat_id, reply, reply_to_message_id=msg_id)
+                        set_message_reaction(bot_token, chat_id, msg_id, "👍")
                         print(f"[biz-bot] replied msg_id={msg_id} chars={len(reply)}", flush=True)
                     else:
                         print(f"[biz-bot] ignored non-query text={raw_text[:60]!r}", flush=True)

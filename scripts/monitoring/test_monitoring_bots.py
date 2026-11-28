@@ -189,8 +189,21 @@ class TestBotSeparationAndHandlers(unittest.TestCase):
         self.assertIn("/tongquan", help_txt or "")
         self.assertIn("/loinhuan", help_txt or "")
 
-        # Casual chatter ignored even inside dispatch_message
-        self.assertIsNone(bot2_mod.dispatch_message("cảm ơn bạn nhé", cfg, limiter, is_direct=False))
+        # Casual chatter ignored even inside dispatch_message (typing_cb must NOT fire)
+        chatter_cb = mock.Mock()
+        self.assertIsNone(bot2_mod.dispatch_message("cảm ơn bạn nhé", cfg, limiter, is_direct=False, typing_cb=chatter_cb))
+        chatter_cb.assert_not_called()
+
+        # Valid command fires typing_cb once (used to attach 👀 reaction & typing)
+        cmd_cb = mock.Mock()
+        help_res = bot2_mod.dispatch_message("/help", cfg, limiter, is_direct=False, typing_cb=cmd_cb)
+        self.assertIn("/tongquan", help_res or "")
+        cmd_cb.assert_called_once()
+
+        # set_message_reaction gracefully ignores non-fatal errors and validates payload
+        with mock.patch.object(biz_bot_common, "tg_api", side_effect=RuntimeError("network")) as m_tg:
+            biz_bot_common.set_message_reaction("tok", "-1001", 42, "👀")
+            m_tg.assert_called_once()
 
     def test_anonymous_group_admin_allowed_while_bots_blocked(self) -> None:
         self.assertTrue(bot2_mod.is_human_or_anonymous_admin_message({"from": {"id": 123, "is_bot": False}}, 8695527449))
