@@ -50,7 +50,9 @@ SYSTEM_DOC_SIGNALS = (
 
 SYSTEM_META_SELF_SIGNALS = (
     "khong ton token", "ton token", "tiet kiem token", "kiem tra token", "quota", "api key",
-    "trang thai gemini", "biet lam gi", "lam duoc gi", "giup duoc gi",
+    "trang thai gemini", "thong tin gemini", "bao nhieu luot", "may luot", "con hoi duoc",
+    "model du phong", "free tier", "gioi han gemini", "biet lam gi", "lam duoc gi",
+    "giup duoc gi", "gioi thieu em", "gioi thieu ve",
     "cac cau lenh", "danh sach lenh", "truy cap vao db", "truy cap db", "ket noi db",
     "coding", "viet code",
 )

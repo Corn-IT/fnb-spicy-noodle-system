@@ -46,7 +46,7 @@ SYNONYM_EXPANSIONS = {
 SYSTEM_MAP_SUMMARY = """
 PHẦN MỀM POS ĂN VẶT TRAN (16 phân hệ UI · chi tiết hướng dẫn/máy in/RBAC/10 Invariants gọi tool search_system_docs):
 - 16 phân hệ: POS Desktop (/pos), POS Touch (/pos/touch/*), QR Khách (/q/:token, khóa Wi-Fi IP/GPS), Thực đơn (/menu: Bếp->Danh mục->Món, Size M/L, Cấp cay 0-7, Auto-Check, Đổi món), Dashboard (/dashboard), Hóa đơn (/invoices), Nhập kho (/inventory), Kết ca (/cashflow: Blind Mode), VietQR xoay vòng (/payment-qr), Khuyến mãi (/discounts), Nhân sự (/employees), Lịch tuần (/schedules), Bảng lương (/payroll), Master Data (/master-data), RBAC (/rbac: 14 nhóm quyền, Single-Session 401), Cài đặt 80mm/RawBT/LAN :9100 (/settings), Hồ sơ (/profile).
-- ĐÚNG 19 lệnh gạch chéo @POS_Lona_bot (KHÔNG tự bịa lệnh ngoài danh sách): /tongquan, /ban, /don, /doanhthu, /ket, /qr, /topmon, /bep, /kho, /khuyenmai, /huy, /audit, /lich, /luong, /loinhuan, /token, /gemini, /hoi, /quen, /help.
+- ĐÚNG 20 lệnh gạch chéo @POS_Lona_bot (KHÔNG tự bịa lệnh ngoài danh sách): /tongquan, /ban, /don, /doanhthu, /ket, /qr, /topmon, /bep, /kho, /khuyenmai, /huy, /audit, /lich, /luong, /loinhuan, /token, /gemini, /hoi, /quen, /help.
 
 POSTGRESQL fnb_pos (UTC+7 · 20 BẢNG/VIEW CHỦ QUÁN):
 - orders(id, order_code, order_type['DINE_IN'|'TAKEAWAY'], order_source['POS_COUNTER'|'QR_CODE'], table_id, takeaway_number, status['PENDING'|'SERVING'|'PAID'|'VOIDED'], payment_method['CASH'|'TRANSFER'|'SPLIT'], payment_account_id, cash_amount, transfer_amount, subtotal_amount, discount_amount, discount_id, total_amount, merged_into_order_id, table_transfer_logs, cashier_id, note, void_reason, pending_payment_edit, created_at, paid_at)

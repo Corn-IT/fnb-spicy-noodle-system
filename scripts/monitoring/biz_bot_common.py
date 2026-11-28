@@ -119,6 +119,7 @@ def get_biz_config(env_file: str | None = None) -> dict[str, str]:
         "memory_file": env.get("FNB_BIZ_MEMORY_FILE", "/var/lib/fnb-biz-alerts/biz-memory.json").strip() or "/var/lib/fnb-biz-alerts/biz-memory.json",
         "qa_log_file": env.get("FNB_BIZ_QA_LOG_FILE", "/var/lib/fnb-biz-alerts/biz-qa-log.jsonl").strip() or "/var/lib/fnb-biz-alerts/biz-qa-log.jsonl",
         "token_stats_file": env.get("FNB_BIZ_TOKEN_STATS_FILE", "/var/lib/fnb-biz-alerts/biz-token-stats.json").strip() or "/var/lib/fnb-biz-alerts/biz-token-stats.json",
+        "member_cache_file": env.get("FNB_BIZ_MEMBER_CACHE_FILE", "/var/lib/fnb-biz-alerts/tg-members.json").strip() or "/var/lib/fnb-biz-alerts/tg-members.json",
         "staff_tg_map_raw": env.get("FNB_BIZ_STAFF_TELEGRAM_MAP", "").strip(),
         "gemini_tier_name": env.get("FNB_GEMINI_TIER_NAME", "Free Tier").strip() or "Free Tier",
         "gemini_rpd_limit": env.get("FNB_GEMINI_RPD_LIMIT", "500").strip() or "500",
@@ -624,36 +625,84 @@ def extract_third_party_mentions(
     cfg: dict[str, str] | None = None,
     bot_username: str = "POS_Lona_bot",
     exclude_handles: set[str] | None = None,
+    msg: dict[str, Any] | None = None,
+    member_aliases: dict[str, str] | None = None,
+    short_member_aliases: dict[str, str] | None = None,
+    exclude_user_ids: set[int] | None = None,
 ) -> list[str]:
     """
-    Extract @username tags requested/mentioned in a message (excluding the bot itself and sender),
-    plus optional mapped staff usernames when caller explicitly asks to tag/nhắc someone by name.
+    Extract @username / Telegram clickable user tags requested in a message (excluding the bot & sender):
+    1) Explicit @username tokens & Telegram text_mention entities,
+    2) Auto-learned Telegram group members (full names + cue-gated unique short names),
+    3) Optional FNB_BIZ_STAFF_TELEGRAM_MAP env aliases.
     """
     txt = raw_text or ""
     excluded = {f"@{(bot_username or 'POS_Lona_bot').lower()}", "@pos_lona_bot"}
     for h in exclude_handles or set():
         if h:
             excluded.add(h.strip().lower())
+    excl_ids = set(exclude_user_ids or set())
 
     found: list[str] = []
     seen_lower: set[str] = set()
-    for m in re.finditer(r"(?<![A-Za-z0-9_])@([A-Za-z0-9_]{3,64})\b", txt):
-        tag = f"@{m.group(1)}"
-        low = tag.lower()
-        if low in excluded or low in seen_lower:
-            continue
-        seen_lower.add(low)
-        found.append(tag)
 
+    def _add_tag(tag_str: str, uid: int | None = None) -> None:
+        if not tag_str:
+            return
+        if uid is not None and uid in excl_ids:
+            return
+        low = tag_str.lower()
+        if low in excluded or low in seen_lower:
+            return
+        m_id = re.search(r"tg://user\?id=(\d+)", tag_str)
+        if m_id and int(m_id.group(1)) in excl_ids:
+            return
+        seen_lower.add(low)
+        found.append(tag_str)
+
+    # 1a. Explicit @username tokens
+    for m in re.finditer(r"(?<![A-Za-z0-9_])@([A-Za-z0-9_]{3,64})\b", txt):
+        _add_tag(f"@{m.group(1)}")
+
+    # 1b. Telegram text_mention entities (when user tapped member picker without @username)
+    if isinstance(msg, dict):
+        for ent in msg.get("entities") or []:
+            if isinstance(ent, dict) and ent.get("type") == "text_mention" and isinstance(ent.get("user"), dict):
+                u = ent["user"]
+                if u.get("is_bot"):
+                    continue
+                uid = u.get("id")
+                uname = str(u.get("username") or "").strip().lstrip("@")
+                if uname and re.fullmatch(r"[A-Za-z0-9_]{3,64}", uname):
+                    _add_tag(f"@{uname}", uid=uid if isinstance(uid, int) else None)
+                elif isinstance(uid, int) and uid > 0:
+                    disp = " ".join(p for p in (str(u.get("first_name") or "").strip(), str(u.get("last_name") or "").strip()) if p).strip() or "Bạn"
+                    _add_tag(f'<a href="tg://user?id={uid}">{html.escape(disp)}</a>', uid=uid)
+
+    # 2 & 3. Vietnamese name lookup (FNB_BIZ_STAFF_TELEGRAM_MAP + learned Telegram group directory)
     norm = strip_vi(txt)
-    if any(k in norm for k in ("tag ", "nhac ", "goi ", "bao voi ")):
-        smap = get_staff_telegram_map(cfg)
-        for staff_norm, handle in smap.items():
-            if len(staff_norm) >= 2 and re.search(rf"(?<![a-z0-9]){re.escape(staff_norm)}(?![a-z0-9])", norm):
-                low = handle.lower()
-                if low not in excluded and low not in seen_lower:
-                    seen_lower.add(low)
-                    found.append(handle)
+    has_tag_cue = any(
+        re.search(rf"(?:^|\s){cue}\b", norm)
+        for cue in ("tag", "nhac", "goi", "bao", "cho", "gui", "moi", "nho", "chao", "noi voi", "gioi thieu", "gui toi")
+    )
+    if has_tag_cue:
+        combined_exact: dict[str, str] = {}
+        if member_aliases:
+            combined_exact.update(member_aliases)
+        combined_exact.update(get_staff_telegram_map(cfg))
+        for alias_norm, tag_target in sorted(combined_exact.items(), key=lambda kv: -len(kv[0])):
+            if len(alias_norm) >= 2 and re.search(rf"(?<![a-z0-9]){re.escape(alias_norm)}(?![a-z0-9])", norm):
+                _add_tag(tag_target)
+
+        # Unique single-word short names ONLY when preceded by explicit tag/call/honorific word
+        # so Vietnamese nouns like "tuần" ("tuan") or "tháng" ("thang") never trigger false mentions.
+        if short_member_aliases:
+            for short_norm, tag_target in sorted(short_member_aliases.items(), key=lambda kv: -len(kv[0])):
+                if len(short_norm) < 3:
+                    continue
+                pat = rf"(?<![a-z0-9])(?:tag|nhac|moi|chao|gui|nho|anh|chi|em|ban|sep)\s+(?:(?:anh|chi|em|ban|sep)\s+)?{re.escape(short_norm)}(?![a-z0-9])"
+                if re.search(pat, norm):
+                    _add_tag(tag_target)
     return found
 
 
