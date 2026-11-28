@@ -3,7 +3,7 @@ import { type QueryClient } from '@tanstack/react-query';
 import { ChevronDown, LogOut, Menu, Search, User } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import { APP_NAVIGATION_ROUTES } from '@/components/layout/command-palette';
+import { APP_NAVIGATION_ROUTES } from '@/lib/app-navigation';
 import { MobileAlertControlButton } from '@/components/layout/mobile-alert-controls';
 import { StoreBrandLogo } from '@/components/store-brand-logo';
 import { Button } from '@/components/ui/button';

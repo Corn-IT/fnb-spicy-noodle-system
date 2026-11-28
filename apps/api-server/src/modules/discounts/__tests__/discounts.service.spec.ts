@@ -371,4 +371,137 @@ describe('DiscountsService', () => {
     expect(res.total).toBe(1);
     expect(res.items.map((item) => item.code)).toEqual(['GIOVANG15K']);
   });
+
+  it('supports list filters (active/inactive/expired/archived/scope), target updates when unused, toggleStatus & non-groupBy totals', async () => {
+    const unused = makeDiscountRow({
+      id: 30,
+      code: 'COMBO20K',
+      name: 'Giảm 20k',
+      scope: 'CATEGORY',
+      valueType: 'FIXED',
+      value: new Prisma.Decimal(20000),
+      maxDiscountAmount: null,
+      usedCount: 0,
+      isActive: true,
+      targets: [{ id: 1, discountId: 30, categoryId: 100, productId: null }],
+    });
+    const archived = makeDiscountRow({
+      id: 31,
+      code: 'OLD',
+      isActive: false,
+      isArchived: true,
+    });
+    const { service, client } = createDiscountsHarness([unused, archived], {
+      paidOrders: [
+        { discountId: 30, discountAmount: new Prisma.Decimal(20000), status: 'PAID' },
+      ],
+    });
+
+    // Drop groupBy to exercise findMany fallback inside computeTotalDiscountedMap
+    delete (client.order as { groupBy?: unknown }).groupBy;
+    (client.order as { findMany?: unknown }).findMany = vi.fn(async () => [
+      { discountId: 30, discountAmount: new Prisma.Decimal(20000) },
+    ]);
+
+    await expect(service.list({ page: 1, limit: 20, status: 'active', scope: 'CATEGORY' })).resolves.toMatchObject({
+      total: 1,
+    });
+    await expect(service.list({ page: 1, limit: 20, status: 'inactive' })).resolves.toBeDefined();
+    await expect(service.list({ page: 1, limit: 20, status: 'expired' })).resolves.toBeDefined();
+    await expect(service.list({ page: 1, limit: 20, status: 'archived' })).resolves.toMatchObject({
+      total: 1,
+    });
+
+    const toggledOff = await service.toggleStatus(30, { isActive: false }, 1);
+    expect(toggledOff.isActive).toBe(false);
+    await expect(service.toggleStatus(31, { isActive: true }, 1)).rejects.toThrow(ConflictException);
+    await expect(service.toggleStatus(999, { isActive: true }, 1)).rejects.toThrow(NotFoundException);
+
+    // Unused discount can change code, valueType, scope, targets
+    const edited = await service.update(
+      30,
+      {
+        code: 'MON10',
+        name: 'Đổi sang món',
+        valueType: 'PERCENT',
+        value: 10,
+        maxDiscountAmount: 25000,
+        scope: 'PRODUCT',
+        targetProductIds: [1],
+        isActive: true,
+      },
+      1,
+    );
+    expect(edited.code).toBe('MON10');
+    expect(edited.targetProductIds).toEqual([1]);
+
+    // Invalid product target fails with 422
+    await expect(
+      service.create(
+        {
+          code: 'BADPROD',
+          name: 'Invalid prod',
+          valueType: 'FIXED',
+          value: 5000,
+          scope: 'PRODUCT',
+          targetProductIds: [999],
+        },
+        1,
+      ),
+    ).rejects.toThrow(UnprocessableEntityException);
+
+    await expect(service.update(31, { code: 'OLD', name: 'Arch', valueType: 'FIXED', value: 1000, scope: 'ORDER' }, 1)).rejects.toThrow(
+      ConflictException,
+    );
+    await expect(service.update(999, { code: 'NONE', name: 'None', valueType: 'FIXED', value: 1000, scope: 'ORDER' }, 1)).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it('finds applicable discounts for live POS orders and enforces schedule windows on findValidDiscountByCodeOrId', async () => {
+    const now = new Date('2026-11-27T12:00:00.000+07:00');
+    const eligible = makeDiscountRow({
+      id: 40,
+      code: 'ELIGIBLE20',
+      valueType: 'FIXED',
+      value: new Prisma.Decimal(20000),
+      maxDiscountAmount: null,
+      scope: 'ORDER',
+      usageLimit: 10,
+      usedCount: 2,
+    });
+    const highMinOrder = makeDiscountRow({
+      id: 41,
+      code: 'VIP500K',
+      valueType: 'FIXED',
+      value: new Prisma.Decimal(50000),
+      maxDiscountAmount: null,
+      scope: 'ORDER',
+      minOrderAmount: new Prisma.Decimal(500000),
+    });
+    const expired = makeDiscountRow({
+      id: 42,
+      code: 'EXPIRED',
+      endsAt: new Date('2026-11-01T00:00:00.000Z'),
+    });
+
+    const { service, client } = createDiscountsHarness([eligible, highMinOrder, expired]);
+
+    const applicable = await service.findApplicableForOrderItems(
+      [{ productId: 1, categoryId: 100, unitPrice: 100000, quantity: 2 }],
+      now,
+    );
+    expect(applicable.map((d) => d.code)).toEqual(['ELIGIBLE20', 'VIP500K']);
+    expect(applicable[0].isEligibleForCurrentOrder).toBe(true);
+    expect(applicable[1].warningCode).toBe('MIN_ORDER_NOT_MET');
+
+    const byCode = await service.findValidDiscountByCodeOrId(client as never, { code: 'eligible20' }, now);
+    expect(byCode.discount.id).toBe(40);
+    await expect(service.findValidDiscountByCodeOrId(client as never, { discountId: 999 }, now)).rejects.toThrow(
+      NotFoundException,
+    );
+    await expect(service.findValidDiscountByCodeOrId(client as never, { code: 'EXPIRED' }, now)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: ErrorCodes.DISCOUNT_EXPIRED }),
+    });
+  });
 });

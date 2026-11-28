@@ -35,7 +35,7 @@ Khởi tạo ứng dụng Backend `@fnb/api-server` (`apps/api-server/`) trên n
   13. `WorkSchedule` (`@@map("work_schedules")`)
 - [ ] `apps/api-server/prisma/migrations/<timestamp>_init_schema_and_constraints/migration.sql` — Chứa DDL tạo 13 bảng + **BẮT BUỘC** nhúng nguyên văn 6 cụm SQL Constraints & Indexes tại `.agents/rules/01` (§3).
 - [ ] `apps/api-server/prisma/seed.ts` — Script khởi tạo dữ liệu mẫu idempotent (`upsert` / transaction):
-  - 2 nhân viên & 2 tài khoản liên kết 1-1: `superadmin` (`is_super_admin = true`) và `cashier01` (`Password@123` bcrypt cost=10).
+  - Tài khoản liên kết 1-1 (`seed-data.ts` hiện hành nạp 4 tài khoản: `superadmin` (`is_super_admin = true`), `admin`, `adminview`, và thu ngân `thungan` — lịch sử spec ban đầu gọi là `cashier01`, mật khẩu `Password@123` bcrypt cost=10; kèm 8 nhân viên vận hành).
   - 5 nhóm `master_data` (`POSITION`, `SPECIALTY`, `INGREDIENT`, `UNIT`, `SUPPLIER`) theo đúng `docs/bmad/02-RBAC-And-MDM-Matrix.md` (§7.1 & §7.2).
   - 30 bàn ăn vật lý (`Bàn 01` đến `Bàn 30`, kèm `qr_token` duy nhất; **CẤM TUYỆT ĐỐI** tạo bản ghi bàn `"Mang về"`).
   - Thực đơn mẫu thuộc đủ 4 nhóm `station`: `BEP_NAU` (Mì kim chi bò, Mì hải sản, Lẩu mini), `BEP_CHIEN` (Khoai tây chiên, Phô mai que, Cá viên chiên), `PHA_CHE` (Trà đào cam sả, Trà sữa truyền thống, Pepsi), và `COMBO` (Combo Đôi liên kết qua `combo_items`).

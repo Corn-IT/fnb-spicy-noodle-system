@@ -72,6 +72,7 @@ type ProductRecord = {
 
 interface CachedPublicMenuCatalog {
   expiresAt: number;
+  revision: number;
   stations: Array<{ id: number; code: string; name: string; sortOrder: number }>;
   categories: Array<{ id: number; code: string; name: string; stationCode: string | null; sortOrder: number }>;
   products: Array<ReturnType<MenuService['toProduct']>>;
@@ -95,7 +96,12 @@ export class MenuService {
 
   private async getCachedPublicMenuCatalog(): Promise<CachedPublicMenuCatalog> {
     const now = Date.now();
-    if (this.publicMenuCatalogCache && this.publicMenuCatalogCache.expiresAt > now) {
+    const currentRevision = this.posSocketGateway?.getMenuCatalogRevision?.() ?? 0;
+    if (
+      this.publicMenuCatalogCache &&
+      this.publicMenuCatalogCache.expiresAt > now &&
+      this.publicMenuCatalogCache.revision === currentRevision
+    ) {
       return this.publicMenuCatalogCache;
     }
 
@@ -178,6 +184,7 @@ export class MenuService {
 
     const cached: CachedPublicMenuCatalog = {
       expiresAt: now + PUBLIC_MENU_CACHE_TTL_MS,
+      revision: currentRevision,
       stations,
       categories,
       products: visibleProducts.map((product) => this.toProduct(product as ProductRecord)),
@@ -522,7 +529,11 @@ export class MenuService {
       } else if (station !== 'COMBO' && existing.station === 'COMBO') {
         await tx.comboItem.deleteMany({ where: { parentProductId: id } });
       }
-      if (station === 'COMBO' && parsed.data.comboItems === undefined) {
+      if (
+        station === 'COMBO' &&
+        parsed.data.comboItems === undefined &&
+        (!Array.isArray(existing.comboParents) || existing.comboParents.length === 0)
+      ) {
         throw new BadRequestException({ message: 'Sản phẩm COMBO phải có ít nhất một món thành phần' });
       }
 

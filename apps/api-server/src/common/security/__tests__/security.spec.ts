@@ -306,6 +306,43 @@ describe('Security Hardening Utilities & Guards', () => {
       });
       expect(guard.canActivate(otherUserOnSameIp.context)).toBe(true);
     });
+
+    it('bypasses non-HTTP contexts and prunes expired or overflow buckets cleanly', () => {
+      const wsContext = { getType: () => 'ws' } as unknown as ExecutionContext;
+      expect(guard.canActivate(wsContext)).toBe(true);
+
+      // Seed buckets beyond cleanup threshold and ensure expired/oldest entries prune cleanly
+      for (let i = 0; i < 65; i += 1) {
+        const ctx = createMockHttpContext({
+          method: 'GET',
+          url: '/api/v1/public/menu',
+          ip: `192.0.2.${i}`,
+        });
+        expect(guard.canActivate(ctx.context)).toBe(true);
+      }
+      expect(guard.getBucketCount()).toBeGreaterThan(0);
+
+      // Simulate hitting sensitive list endpoint cap (60 req/min)
+      for (let i = 0; i < 60; i += 1) {
+        const ctx = createMockHttpContext({
+          method: 'GET',
+          url: '/api/v1/audit-logs',
+          ip: '198.51.100.200',
+          headers: { authorization: 'Bearer list-harvester-token-1234567890' },
+        });
+        expect(guard.canActivate(ctx.context)).toBe(true);
+      }
+      const blockedList = createMockHttpContext({
+        method: 'GET',
+        url: '/api/v1/audit-logs',
+        ip: '198.51.100.200',
+        headers: { authorization: 'Bearer list-harvester-token-1234567890' },
+      });
+      expect(() => guard.canActivate(blockedList.context)).toThrow(HttpException);
+
+      guard.resetAll();
+      expect(guard.getBucketCount()).toBe(0);
+    });
   });
 
   describe('QrSecurityService (Wi-Fi Lock + GPS Geofencing)', () => {
@@ -418,6 +455,26 @@ describe('Security Hardening Utilities & Guards', () => {
           longitude: 106.7009,
         }),
       ).resolves.toBeUndefined();
+
+      const cfg = await service.getConfigResponse('113.161.77.88');
+      expect(cfg.detectedClientIp).toBe('113.161.77.88');
+      expect(cfg.wifiSsid).toBe('Mi Cay POS Free');
+
+      await service.updateConfig(
+        {
+          wifiProtectionEnabled: true,
+          autoSyncPosIp: false,
+          allowedWifiIps: ['192.168.1.1'],
+          wifiSsid: 'Quán Mới',
+          wifiPassword: 'newpassword',
+          geoProtectionEnabled: false,
+          shopLatitude: 10.78,
+          shopLongitude: 106.71,
+          geoRadiusMeters: 300,
+        },
+        '113.161.77.88',
+        1,
+      );
     });
   });
 });

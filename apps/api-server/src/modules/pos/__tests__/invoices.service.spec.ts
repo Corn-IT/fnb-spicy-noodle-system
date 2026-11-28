@@ -497,4 +497,220 @@ describe('InvoicesService', () => {
     expect(res.items[0]?.takeawayLabelFormat).toBe('LETTER');
     expect(res.items[1]?.takeawayLabelFormat).toBe('NUMBER');
   });
+
+  it('recalculates settled cashflow snapshots when voidInvoice voids a PAID order inside a settled shift', async () => {
+    const harness = createHarness();
+    const settledShift = {
+      id: 88,
+      settlementDate: new Date('2026-11-27T00:00:00.000Z'),
+      shiftName: 'Ca Sáng (08:00 - 15:00)',
+      openingBudget: new Prisma.Decimal('1000000.00'),
+      totalCashImports: new Prisma.Decimal('120000.00'),
+      actualCountedCash: new Prisma.Decimal('980000.00'),
+    };
+    const txWithCashflow = {
+      ...harness.tx,
+      $queryRaw: vi.fn(async (strings: TemplateStringsArray) => {
+        const sql = strings.raw.join('');
+        harness.queries.push(sql);
+        if (sql.includes('FROM orders') && sql.includes("status = 'PAID'")) {
+          return [{ totalCashSales: new Prisma.Decimal('100000.00'), totalTransferSales: new Prisma.Decimal('50000.00') }];
+        }
+        return [];
+      }),
+      cashDrawerSettlement: {
+        findMany: vi.fn().mockResolvedValue([settledShift]),
+        update: vi.fn().mockResolvedValue({ ...settledShift, id: 88 }),
+      },
+    };
+    harness.prisma.$transaction.mockImplementation(async (operation: (client: typeof txWithCashflow) => Promise<unknown>) =>
+      operation(txWithCashflow),
+    );
+    txWithCashflow.order.findUnique.mockResolvedValue({
+      id: 701,
+      status: 'PAID',
+      paidAt: new Date('2026-11-27T04:00:00.000Z'), // 11:00 AM GMT+7 inside Ca Sáng (08:00-15:00)
+      discountId: null,
+      discountAmount: new Prisma.Decimal('0.00'),
+    });
+    txWithCashflow.order.update.mockResolvedValue({
+      id: 701,
+      orderCode: 'HD-20261127-0701',
+      status: 'VOIDED',
+      voidReason: 'Khách phản ánh tính nhầm tiền',
+    });
+
+    const auditLogService = { record: vi.fn() };
+    const service = new InvoicesService(harness.prisma as never, auditLogService as never);
+
+    const res = await service.voidInvoice(701, { voidReason: 'Khách phản ánh tính nhầm tiền' }, 1);
+    expect(res.syncedSettlementIds).toEqual([88]);
+    expect(txWithCashflow.cashDrawerSettlement.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 88 },
+        data: expect.objectContaining({
+          totalCashSales: new Prisma.Decimal('100000.00'),
+          expectedCashInDrawer: new Prisma.Decimal('980000.00'),
+          discrepancyAmount: new Prisma.Decimal('0.00'),
+          status: 'MATCHED',
+        }),
+      }),
+    );
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ syncedSettlementIds: [88] }),
+      }),
+    );
+  });
+
+  it('rejects REJECT review flows, missing pending edits, invalid SPLIT edits, and missing invoice lookup', async () => {
+    const harness = createHarness();
+    const auditLogService = { record: vi.fn() };
+    const service = new InvoicesService(harness.prisma as never, auditLogService as never);
+
+    harness.prisma.order.findUnique.mockResolvedValueOnce(null);
+    await expect(service.get(9999)).rejects.toThrow('Không tìm thấy hoá đơn');
+
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 800,
+      orderCode: 'HD-800',
+      status: 'SERVING',
+      totalAmount: new Prisma.Decimal('100000.00'),
+    });
+    await expect(
+      service.requestPaymentMethodEdit(
+        800,
+        { paymentMethod: 'CASH', reason: 'Chưa thanh toán không thể sửa' },
+        { id: 1, isSuperAdmin: true, permissions: {} } as never,
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 801,
+      orderCode: 'HD-801',
+      status: 'PAID',
+      paymentMethod: 'CASH',
+      paidAt: new Date('2026-11-27T05:00:00.000Z'),
+      pendingPaymentEdit: null,
+    });
+    await expect(
+      service.reviewPaymentMethodEdit(
+        801,
+        { decision: 'REJECT' },
+        { id: 1, isSuperAdmin: true, permissions: {} } as never,
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 802,
+      orderCode: 'HD-802',
+      status: 'PAID',
+      paymentMethod: 'CASH',
+      paidAt: new Date('2026-11-27T05:00:00.000Z'),
+      pendingPaymentEdit: {
+        paymentMethod: 'TRANSFER',
+        cashAmount: 0,
+        transferAmount: 100000,
+        reason: 'Khách đổi sang QR',
+        requestedBy: 2,
+        requestedByName: 'Cashier',
+        requestedByUsername: 'cashier01',
+        requestedAt: '2026-11-27T05:05:00.000Z',
+      },
+    });
+    harness.tx.order.update.mockResolvedValueOnce({});
+    const rejected = await service.reviewPaymentMethodEdit(
+      802,
+      { decision: 'REJECT', reviewNote: 'Chưa nhận tiền CK' },
+      { id: 1, isSuperAdmin: true, permissions: {} } as never,
+    );
+    expect(rejected).toEqual({ orderId: 802, orderCode: 'HD-802', status: 'REJECTED' });
+  });
+
+  it('filters invoices across search fields, resolves QR account when editing CASH -> TRANSFER, and reads pricedModifiers', async () => {
+    const harness = createHarness();
+    const qrService = {
+      selectForAmount: vi.fn().mockResolvedValue({ account: { id: 9, label: 'QR #9' } }),
+    };
+    const auditLogService = { record: vi.fn() };
+    harness.prisma.$queryRaw = vi.fn().mockResolvedValue([{ id: 7 }]) as never;
+    (harness.prisma.order as { count?: unknown }).count = vi.fn().mockResolvedValue(1);
+    (harness.prisma.order as { findMany?: unknown }).findMany = vi.fn().mockResolvedValue([]);
+
+    const svc = new InvoicesService(harness.prisma as never, auditLogService as never, qrService as never);
+    await expect(svc.list({ page: 1, limit: 20, fromDate: '2026-11-27', toDate: '2026-11-27', searchField: 'note', keyword: 'ít cay' })).resolves.toMatchObject({ total: 1 });
+    await expect(svc.list({ page: 1, limit: 20, fromDate: '2026-11-27', toDate: '2026-11-27', searchField: 'discount_code', keyword: 'VIP', discountCode: 'VIP', paymentMethod: 'CASH', orderType: 'DINE_IN' })).resolves.toMatchObject({ total: 1 });
+    await expect(svc.list({ page: 1, limit: 20, fromDate: '2026-11-27', toDate: '2026-11-27', searchField: 'table', keyword: 'mang về 02' })).resolves.toMatchObject({ total: 1 });
+    await expect(svc.list({ page: 1, limit: 20, searchField: 'bad_field' as never })).rejects.toMatchObject({ status: 422 });
+
+    // Trigger resolvePaymentAccountIdForEdit on CASH -> TRANSFER approval
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 805,
+      orderCode: 'HD-805',
+      status: 'PAID',
+      paymentMethod: 'CASH',
+      paymentAccountId: null,
+      paidAt: new Date('2026-11-27T05:00:00.000Z'),
+      pendingPaymentEdit: {
+        paymentMethod: 'TRANSFER',
+        cashAmount: 0,
+        transferAmount: 100000,
+        reason: 'Đổi sang QR',
+        requestedBy: 2,
+        requestedByName: 'Cashier',
+        requestedByUsername: 'cashier01',
+        requestedAt: '2026-11-27T05:05:00.000Z',
+      },
+    });
+    harness.tx.paymentAccount = { findMany: vi.fn() };
+    harness.tx.order.update.mockResolvedValueOnce({});
+    const approved = await svc.reviewPaymentMethodEdit(
+      805,
+      { decision: 'APPROVE' },
+      { id: 1, isSuperAdmin: true, permissions: {} } as never,
+    );
+    expect(approved.status).toBe('APPROVED');
+    expect(qrService.selectForAmount).toHaveBeenCalled();
+
+    harness.prisma.order.findUnique.mockResolvedValueOnce({
+      id: 806,
+      orderCode: 'HD-806',
+      orderType: 'DINE_IN',
+      orderSource: 'POS_COUNTER',
+      tableId: 7,
+      takeawayNumber: null,
+      status: 'PAID',
+      subtotalAmount: new Prisma.Decimal('100000'),
+      discountAmount: new Prisma.Decimal('0'),
+      totalAmount: new Prisma.Decimal('100000'),
+      discountSnapshot: null,
+      paymentMethod: 'CASH',
+      cashAmount: new Prisma.Decimal('100000'),
+      transferAmount: new Prisma.Decimal('0'),
+      paymentAccount: null,
+      note: null,
+      voidReason: null,
+      pendingPaymentEdit: null,
+      createdAt: new Date('2026-11-27T05:00:00.000Z'),
+      paidAt: new Date('2026-11-27T05:10:00.000Z'),
+      table: { id: 7, name: 'Bàn 07' },
+      items: [
+        {
+          id: 1,
+          productId: 11,
+          quantity: 1,
+          unitPrice: new Prisma.Decimal('100000'),
+          modifiersSnapshot: [{ name: 'Thêm bò', extraPrice: 20000 }, { name: 'Ít hành', extraPrice: 0 }],
+          itemNote: null,
+          batchNo: 1,
+          kitchenStatus: 'PRINTED',
+          createdAt: new Date('2026-11-27T05:00:00.000Z'),
+          product: { id: 11, name: 'Mì bò', station: 'BEP_NAU' },
+        },
+      ],
+    });
+    const detail = await svc.get(806);
+    expect(detail.items[0]?.modifiers).toEqual(['Thêm bò', 'Ít hành']);
+    expect(detail.items[0]?.pricedModifiers).toEqual(['Thêm bò']);
+  });
 });

@@ -1,7 +1,7 @@
 # 🌶️ TÀI LIỆU GIẢI PHÁP & CẨM NANG HƯỚNG DẪN SỬ DỤNG TOÀN DIỆN
 ## Hệ thống POS & Quản trị Vận hành Thời gian thực — Quán Mì Cay (`fnb-spicy-noodle-system`)
 
-> **Phiên bản tài liệu:** 2.0.0 (Cập nhật đồng bộ toàn hệ thống ngày `2026-11-26` — Stories 01–21)  
+> **Phiên bản tài liệu:** 2.0.1 (Cập nhật đồng bộ toàn hệ thống ngày `2026-11-28` — Stories 01–21 + QA Comprehensive Audit)  
 > **Mục tiêu tài liệu:** Cung cấp cái nhìn tổng thể về **Giải pháp vận hành khép kín** và **Hướng dẫn thao tác từng bước trực quan nhất** cho Chủ quán, Quản lý cửa hàng, Thu ngân quầy POS (cả giao diện Desktop và POS Cảm ứng kiểu iPOS), Nhân viên phục vụ và Bếp/Pha chế (hỗ trợ giao diện Sáng/Tối tương phản cao và phóng to tỷ lệ hiển thị 80%–150%).
 
 ---

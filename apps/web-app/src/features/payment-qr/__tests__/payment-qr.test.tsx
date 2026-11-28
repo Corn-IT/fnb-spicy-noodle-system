@@ -323,4 +323,132 @@ describe('Story 13 — Payment QR Management & Automatic Rotation UI (/payment-q
       expect(screen.queryByText('TK Phụ 1 (Vietcombank)')).not.toBeInTheDocument();
     });
   });
+
+  it('exercises reorder, primary deactivation dialog, delete dialog, limit hierarchy validation, and orders drawer filters', async () => {
+    const accountsCopy: PaymentAccount[] = [
+      { ...mockAccounts[0] },
+      { ...mockAccounts[1], isActive: false, status: 'INACTIVE', hasOrders: false, orderCount: 0 },
+    ];
+    useAuthStore.getState().setAuth({
+      accessToken: 'token',
+      user: {
+        id: 1,
+        employeeId: 1,
+        username: 'superadmin',
+        fullName: 'Chủ Quán Sơn Bảo',
+        isSuperAdmin: true,
+        permissions: UserPermissionsSchema.parse({
+          paymentQr: { view: true, create: true, update: true, delete: true },
+        }),
+      },
+    });
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/payment-qr') return accountsCopy;
+      if (url.startsWith('/api/v1/payment-qr/1/orders')) {
+        return {
+          ...mockOrdersResponse,
+          total: 25,
+          page: 1,
+          limit: 20,
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const putSpy = vi.spyOn(apiClient, 'put').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/payment-qr/reorder') return [...accountsCopy].reverse();
+      return { ...accountsCopy[0], isActive: false, status: 'INACTIVE' };
+    });
+    const deleteSpy = vi.spyOn(apiClient, 'delete').mockResolvedValue({ deletedId: 2 });
+
+    render(
+      <QueryProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <SocketProvider>
+          <MemoryRouter future={routerFutureFlags}>
+            <PaymentQrPage />
+          </MemoryRouter>
+        </SocketProvider>
+      </QueryProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('qr-delete-2')).not.toBeDisabled());
+
+    // Delete inactive unused QR #2
+    fireEvent.click(screen.getByTestId('qr-delete-2'));
+    await waitFor(() => expect(screen.getByTestId('payment-qr-delete-dialog')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('confirm-delete-payment-qr-btn'));
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('/api/v1/payment-qr/2'));
+
+    // Primary QR deactivation dialog (with 2 active accounts simulated by clicking status-btn-1 when accounts have 2 actives -> test reorder first)
+    fireEvent.click(screen.getByTestId('qr-view-orders-1'));
+    await waitFor(() => expect(screen.getByTestId('payment-qr-orders-drawer')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Hôm nay' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tất cả thời gian' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sau' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Trước' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    // Create drawer limit hierarchy error: dailyLimit > monthlyLimit
+    fireEvent.click(screen.getByTestId('btn-create-payment-qr'));
+    await waitFor(() => expect(screen.getByTestId('payment-qr-form-drawer')).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId('payment-qr-label-input'), { target: { value: 'TK Mới Limit Sai' } });
+    fireEvent.click(screen.getByTestId('payment-qr-bank-select'));
+    fireEvent.click(screen.getByTestId('payment-qr-bank-option-MB'));
+    fireEvent.change(screen.getByTestId('payment-qr-account-no-input'), { target: { value: '0987654321' } });
+    fireEvent.change(screen.getByTestId('payment-qr-account-name-input'), { target: { value: 'NGUYEN VAN B' } });
+    fireEvent.change(screen.getByTestId('payment-qr-daily-limit-input'), { target: { value: '10000000' } });
+    fireEvent.change(screen.getByTestId('payment-qr-monthly-limit-input'), { target: { value: '5000000' } });
+    fireEvent.click(screen.getByTestId('payment-qr-submit-btn'));
+    expect(screen.getByTestId('payment-qr-form-error')).toBeInTheDocument();
+    expect(putSpy).not.toHaveBeenCalled();
+  });
+
+  it('supports priority reordering (move up/down) and primary QR deactivation confirmation modal', async () => {
+    useAuthStore.getState().setAuth({
+      accessToken: 'token',
+      user: {
+        id: 1,
+        employeeId: 1,
+        username: 'superadmin',
+        fullName: 'Chủ Quán Sơn Bảo',
+        isSuperAdmin: true,
+        permissions: UserPermissionsSchema.parse({
+          paymentQr: { view: true, create: true, update: true, delete: true },
+        }),
+      },
+    });
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/payment-qr') return mockAccounts;
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const putSpy = vi.spyOn(apiClient, 'put').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/payment-qr/reorder') return [mockAccounts[1], mockAccounts[0]];
+      return { ...mockAccounts[0], isActive: false, status: 'INACTIVE' };
+    });
+
+    render(
+      <QueryProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <SocketProvider>
+          <MemoryRouter future={routerFutureFlags}>
+            <PaymentQrPage />
+          </MemoryRouter>
+        </SocketProvider>
+      </QueryProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('qr-move-down-1')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('qr-move-down-1'));
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith('/api/v1/payment-qr/reorder', { orderedIds: [2, 1] });
+    });
+
+    // Deactivating primary active account #1 opens confirmation dialog
+    fireEvent.click(screen.getByTestId('qr-status-btn-1'));
+    await waitFor(() => expect(screen.getByTestId('payment-qr-deactivate-dialog')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('confirm-deactivate-primary-qr-btn'));
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith('/api/v1/payment-qr/1', { isActive: false });
+    });
+  });
 });

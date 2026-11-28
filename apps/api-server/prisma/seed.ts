@@ -353,6 +353,9 @@ export async function resetAllOperationalAndSeed(prisma: PrismaClient): Promise<
   await prisma.$transaction(async (tx) => {
     await tx.diningTable.updateMany({ data: { status: 'AVAILABLE', activeOrderId: null } });
     await tx.diningTable.deleteMany({ where: { name: { notIn: tableNames } } });
+    await tx.pushSubscription.deleteMany({});
+    await tx.posDraft.deleteMany({});
+    await tx.takeawaySequence.deleteMany({});
     await tx.auditLog.deleteMany({});
     await tx.workSchedule.deleteMany({});
     await tx.inventoryImport.deleteMany({});

@@ -21,6 +21,7 @@ import {
   buildFullStaffPermissions,
   cloneDefaultPermissions,
   PermissionMatrixChecklist,
+  RBAC_MODULE_CONFIGS,
 } from './permission-modules';
 
 export interface CreateUserDialogProps {
@@ -69,6 +70,23 @@ export function CreateUserDialog({ open, onOpenChange }: CreateUserDialogProps) 
           ...modulePerms,
           [permKey]: !modulePerms[permKey],
         },
+      };
+    });
+  };
+
+  const handleToggleModulePermissions = (moduleKey: keyof UserPermissions, checked: boolean) => {
+    const modConfig = RBAC_MODULE_CONFIGS.find((m) => m.key === moduleKey);
+    if (!modConfig) return;
+    setPermissions((prev) => {
+      const nextModulePerms = { ...(prev[moduleKey] as Record<string, boolean>) };
+      for (const perm of modConfig.permissions) {
+        if (!perm.superAdminOnly) {
+          nextModulePerms[perm.key] = checked;
+        }
+      }
+      return {
+        ...prev,
+        [moduleKey]: nextModulePerms,
       };
     });
   };
@@ -250,6 +268,7 @@ export function CreateUserDialog({ open, onOpenChange }: CreateUserDialogProps) 
                 permissions={permissions}
                 testIdPrefix="create-perm"
                 onToggle={handleTogglePermission}
+                onToggleModule={handleToggleModulePermissions}
               />
             </div>
 

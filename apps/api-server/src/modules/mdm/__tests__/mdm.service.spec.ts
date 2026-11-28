@@ -473,4 +473,153 @@ describe('MdmService', () => {
       data: { station: 'BEP_NAU' },
     });
   });
+
+  it('should ensure default kitchen stations once when table is empty and emit menu updates for stations/categories', async () => {
+    const emitMenuUpdated = vi.fn();
+    const record = vi.fn().mockResolvedValue(undefined);
+    const prisma = {
+      masterData: {
+        count: vi.fn().mockResolvedValue(0),
+        upsert: vi.fn().mockResolvedValue({ id: 1 }),
+        findMany: vi.fn().mockResolvedValue([
+          { id: 1, category: 'KITCHEN_STATION', name: 'Bếp Nấu', normalizedName: 'bep nau', metadata: { code: 'BEP_NAU', sortOrder: 1 }, isActive: true },
+        ]),
+      },
+    };
+    const service = new MdmService(
+      prisma as never,
+      { emitMenuUpdated } as never,
+      { record } as never,
+    );
+
+    const rows = await service.lookup({ category: MdmCategory.KITCHEN_STATION, page: 1, limit: 20, activeOnly: true });
+    expect(rows).toHaveLength(1);
+    expect(prisma.masterData.upsert).toHaveBeenCalledTimes(4);
+  });
+
+  it('should reject invalid MENU_CATEGORY defaultStation, negative sortOrder, negative last_price, and active-order station switch', async () => {
+    const prisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 15,
+          category: MdmCategory.MENU_CATEGORY,
+          name: 'Mì Cay',
+          normalizedName: 'mi cay',
+          metadata: { defaultStation: 'BEP_NAU', sortOrder: 1 },
+          isActive: true,
+        }),
+      },
+      orderItem: { count: vi.fn().mockResolvedValue(2) },
+    };
+    const service = new MdmService(prisma as never);
+
+    await expect(service.update(15, { metadata: { defaultStation: 'invalid station!' } }))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(service.update(15, { metadata: { sortOrder: -5 } }))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(service.update(15, { metadata: { defaultStation: 'BEP_CHIEN' } }))
+      .rejects.toMatchObject({ status: 409 });
+
+    const ingPrisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 16,
+          category: MdmCategory.INGREDIENT,
+          name: 'Tôm',
+          normalizedName: 'tom',
+          metadata: {},
+          isActive: true,
+        }),
+      },
+    };
+    await expect(new MdmService(ingPrisma as never).update(16, { metadata: { last_price: -10 } }))
+      .rejects.toMatchObject({ status: 400 });
+  });
+
+  it('should guard UNIT / KITCHEN_STATION / MENU_CATEGORY deletion and record rich Vietnamese audit diffs on update', async () => {
+    const emitMenuUpdated = vi.fn();
+    const record = vi.fn().mockResolvedValue(undefined);
+    const updatedRow = {
+      id: 21,
+      category: MdmCategory.MENU_CATEGORY,
+      name: 'Mì Bò Cay Mới',
+      normalizedName: 'mi bo cay moi',
+      metadata: { defaultStation: 'BEP_NAU', isHidden: true, description: 'Bán tối', sortOrder: 4 },
+      isActive: true,
+    };
+    const prisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 21,
+          category: MdmCategory.MENU_CATEGORY,
+          name: 'Mì Bò Cay',
+          normalizedName: 'mi bo cay',
+          metadata: { defaultStation: 'BEP_NAU', isHidden: false, description: '', sortOrder: 1 },
+          isActive: true,
+        }),
+        findFirst: vi.fn().mockResolvedValue(null),
+        update: vi.fn().mockResolvedValue(updatedRow),
+      },
+      product: { count: vi.fn().mockResolvedValue(1) },
+    };
+    const service = new MdmService(prisma as never, { emitMenuUpdated } as never, { record } as never);
+
+    await service.update(
+      21,
+      { name: 'Mì Bò Cay Mới', metadata: { isHidden: true, description: 'Bán tối', sortOrder: 4 } },
+      { id: 1, employeeId: 1, username: 'admin', isSuperAdmin: true } as never,
+    );
+    expect(emitMenuUpdated).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({
+      module: 'MENU',
+      action: 'Cập nhật danh mục món',
+      metadata: expect.objectContaining({
+        changes: expect.arrayContaining([
+          { field: 'Tên hiển thị', from: 'Mì Bò Cay', to: 'Mì Bò Cay Mới' },
+          { field: 'Hiển thị POS/QR', from: 'Đang hiện', to: 'Đang ẩn' },
+          { field: 'Thứ tự hiển thị', from: '1', to: '4' },
+        ]),
+      }),
+    }));
+
+    // Deletion blocked for MENU_CATEGORY with products and UNIT referenced by INGREDIENT.default_unit
+    await expect(service.softDisable(21)).rejects.toMatchObject({ status: 400 });
+
+    const unitPrisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 31,
+          category: MdmCategory.UNIT,
+          name: 'Kg',
+          normalizedName: 'kg',
+          metadata: {},
+        }),
+        findMany: vi.fn().mockResolvedValue([
+          { name: 'Bò', metadata: { default_unit: 'kg' } },
+        ]),
+      },
+      inventoryImport: { count: vi.fn().mockResolvedValue(0) },
+    };
+    await expect(new MdmService(unitPrisma as never).softDisable(31)).rejects.toMatchObject({ status: 409 });
+
+    // KITCHEN_STATION cannot be disabled while active MENU_CATEGORY or product children exist
+    const stationPrisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 41,
+          category: MdmCategory.KITCHEN_STATION,
+          name: 'Bếp Nấu',
+          normalizedName: 'bep nau',
+          metadata: { code: 'BEP_NAU' },
+          isActive: true,
+        }),
+        findMany: vi.fn().mockResolvedValue([
+          { id: 10, metadata: { defaultStation: 'BEP_NAU' } },
+        ]),
+        update: vi.fn(),
+      },
+      product: { count: vi.fn().mockResolvedValue(2) },
+    };
+    await expect(new MdmService(stationPrisma as never).softDisable(41)).rejects.toMatchObject({ status: 400 });
+  });
 });

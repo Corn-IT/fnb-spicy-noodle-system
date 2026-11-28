@@ -38,7 +38,9 @@ Khi bấm Đăng xuất, thực hiện **ĐÚNG** thứ tự:
 ## 4. POS Desktop (`/pos`) & POS Cảm ứng Touch Shell (`/pos/touch/*`)
 
 ### 4.1. POS Desktop Split-View (`/pos`)
-- Trái: Sơ đồ bàn (`AVAILABLE` / `PENDING` / `OCCUPIED`) + khu Mang về (`MV-#`) và Thực đơn 3 tầng động (Cấp cay, Size M/L, Auto-Check, Đổi món chính, Topping, cờ `Gói mang về` từng món).
+- **POS Desktop (`/pos`):** Bố cục Split-View (`>= 820px` dùng `clamp(...)` giữ tỷ lệ hợp lý trên 80%–150% scale; `< 820px` chuyển sang 3 tab `Bàn · Món · Đơn`). Bảng bàn, khu Mang về và Live Invoice Panel dùng chung hook `usePosWorkspace` với Touch POS.
+- **Mobile 3-Layer Alert Banner (`mobile-alert-controls.tsx` & `use-mobile-order-alerts.ts`):** Banner kích hoạt loa trên di động render **in-flow** (`shrink-0`, **FORBIDDEN** `fixed` đè lên nút thao tác) và chỉ mở khoá âm thanh thụ động ở sự kiện `click`/`keydown` (**NEVER** `pointerdown`/`touchend`) để tránh thu gọn banner giữa lúc chạm làm trượt mục tiêu nút bấm trên iOS/WebKit.
+- **POS Desktop Detail:** Trái: Sơ đồ bàn (`AVAILABLE` / `PENDING` / `OCCUPIED`) + khu Mang về (`MV-#`) và Thực đơn 3 tầng động (Cấp cay, Size M/L, Auto-Check, Đổi món chính, Topping, cờ `Gói mang về` từng món).
 - Phải: `LiveInvoicePanel` theo từng lượt gọi (`batch_no`), áp/gỡ giảm giá, `[Tách đơn]`, `[In lại bếp]`, `[Chuyển/Gộp/Đổi bàn/Mang về]`, `[In tạm tính / Tạm tính tách đơn]`, `[Thanh toán / Tách thanh toán]`. Khi đơn không còn `PENDING`/`SERVING`, bắt buộc khoá/ẩn toàn bộ nút thao tác ghi.
 - Giỏ chưa gửi có thể bắt đầu từ bàn, từ Mang về hoặc chưa gán bàn; phải có mục riêng để lưu/resume/xoá giỏ đã lưu trên mọi máy POS. Draft hiển thị giá hiện tại để tham khảo nhưng backend chỉ chốt giá mới nhất lúc tạo đơn. Trước khi gửi phải chọn bàn vật lý còn trống hoặc Mang về. Draft không chiếm trạng thái bàn hay xuất hiện trong danh sách đơn/QR khách. Khi TAKEAWAY được MOVE/MERGE vào bàn, các món chuyển phải có `is_takeaway = false` để phiếu bếp không còn nhãn `[MANG VỀ]`.
 - Với đơn TAKEAWAY đang mở, thao tác bàn trên invoice gọi nhãn **`Gán bàn`** và mở picker MOVE hiện có; tiếp tục dùng kiểm tra bàn trống và flow in thông báo đổi bàn đã có.
@@ -54,7 +56,7 @@ Khi bấm Đăng xuất, thực hiện **ĐÚNG** thứ tự:
 - **TouchShellLayout & Thanh đáy 4 nút (`Bán hàng · Hoá đơn · Kết ca · Quản lý`):** Tự động ẩn khi ở màn gọi món/tính tiền (`TouchOrderScreen`).
 - **Trung tâm Quản lý (`/pos/touch/hub`) & 2 màn cảm ứng chuyên biệt:**
   - `/pos/touch/stock-status`: Báo hết món & topping 1 chạm (`menu` permission).
-  - `/pos/touch/printer`: Cấu hình máy in & mở két tiền (`pos.view`, nút **Mở két tiền** bắt buộc xác nhận 2 bước + quyền `pos.openCashDrawer`).
+  - `/pos/touch/printer`: Cấu hình máy in & mở két tiền (`pos.view`, nút **Mở két tiền** thủ công yêu cầu xác nhận 2 bước và quyền `pos.openCashDrawer || settings.update || isSuperAdmin`).
   - Tái sử dụng các màn sẵn có qua `React.lazy()` trong `router.tsx` (tuân thủ Invariant 1): `/pos/touch/dashboard`, `/pos/touch/invoices`, `/pos/touch/cashflow`, `/pos/touch/inventory`, `/pos/touch/menu`, `/pos/touch/discounts`, `/pos/touch/payment-qr`, `/pos/touch/settings`, `/pos/touch/profile`.
 
 ## 5. QR Order Page (`/q/:token` & `/qr/:token` — Mobile-first)
@@ -70,7 +72,7 @@ Khi bấm Đăng xuất, thực hiện **ĐÚNG** thứ tự:
 1. **Browser Kiosk (`BROWSER`):** `#thermal-print-container` + `@page { size: 80mm auto; margin: 0; }` + `break-after: page` + Chrome/Edge `--kiosk-printing`.
 2. **Android POS USB (`RAWBT`):** Cho máy `iMin D3-505` (Android 11) cắm cáp USB tới máy in nhiệt `iPOS.vn iTP6` (80mm / 576 dots) qua RawBT Print Service, gửi byte ESC/POS trực tiếp.
 3. **LAN ESC/POS (`LAN_ESCPOS`):** Gửi payload ESC/POS qua `POST /api/v1/pos/print/lan-escpos` tới IP máy in cổng TCP `:9100`.
-- Hỗ trợ xung lệnh mở két tiền `RJ11 24V` (`ESC p`) qua RawBT / LAN ESC/POS (chỉ kích hoạt khi có quyền `pos:openCashDrawer`).
+- Hỗ trợ xung lệnh mở két tiền `RJ11 24V` (`ESC p`, `0x1b 0x70`) qua RawBT / LAN ESC/POS: UI `/pos/touch/printer` và tab Phần cứng trong `/settings` yêu cầu `pos:openCashDrawer || settings:update || isSuperAdmin`; tự động bung két sau thanh toán tiền mặt không in bill chỉ cần quyền thanh toán (`pos:checkout`); API `POST /api/v1/pos/print/lan-escpos` chặn byte `ESC p` nếu thiếu `pos:openCashDrawer || pos:checkout || settings:update || isSuperAdmin`.
 
 ### 5 Mẫu Phiếu Chuẩn (Cấu hình động qua `storeSettings.printTemplates`, cỡ chữ `6pt–16pt` bước `0.5pt`):
 1. `kitchen` — Phiếu tách bếp cắt rời từng trạm (`BEP_NAU`, `BEP_CHIEN`, `PHA_CHE`, `BEP_*`, nhãn `GỌI THÊM - LƯỢT N`, nhãn `[MANG VỀ]`).

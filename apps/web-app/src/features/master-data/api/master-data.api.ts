@@ -8,8 +8,18 @@ import {
 } from '@fnb/shared';
 
 import { apiClient } from '@/lib/api-client';
+import { broadcastMenuSync } from '@/lib/menu-sync';
 
 export type { MdmListResponse };
+
+function invalidateMasterDataCaches(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['mdm'] });
+  void queryClient.invalidateQueries({ queryKey: ['menu'] });
+  void queryClient.invalidateQueries({ queryKey: ['menu-products'] });
+  void queryClient.invalidateQueries({ queryKey: ['pos'] });
+  void queryClient.invalidateQueries({ queryKey: ['public-menu'] });
+  broadcastMenuSync();
+}
 
 export function useMdmListQuery(filter: MdmLookupQuery) {
   return useQuery({
@@ -35,8 +45,7 @@ export function useCreateMdmMutation() {
     mutationFn: (body: UpsertMdmInput) =>
       apiClient.post<MdmItem>('/api/v1/mdm', body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['mdm'] });
-      void queryClient.invalidateQueries({ queryKey: ['menu'] });
+      invalidateMasterDataCaches(queryClient);
     },
   });
 }
@@ -48,8 +57,7 @@ export function useUpdateMdmMutation(id: number) {
     mutationFn: (body: UpdateMdmInput) =>
       apiClient.put<MdmItem>(`/api/v1/mdm/${id}`, body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['mdm'] });
-      void queryClient.invalidateQueries({ queryKey: ['menu'] });
+      invalidateMasterDataCaches(queryClient);
     },
   });
 }
@@ -61,8 +69,7 @@ export function usePatchMdmItemMutation() {
     mutationFn: ({ id, body }: { id: number; body: UpdateMdmInput }) =>
       apiClient.put<MdmItem>(`/api/v1/mdm/${id}`, body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['mdm'] });
-      void queryClient.invalidateQueries({ queryKey: ['menu'] });
+      invalidateMasterDataCaches(queryClient);
     },
   });
 }
@@ -74,8 +81,7 @@ export function useDeleteMdmMutation() {
     mutationFn: (id: number) =>
       apiClient.delete<MdmItem>(`/api/v1/mdm/${id}`),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['mdm'] });
-      void queryClient.invalidateQueries({ queryKey: ['menu'] });
+      invalidateMasterDataCaches(queryClient);
     },
   });
 }

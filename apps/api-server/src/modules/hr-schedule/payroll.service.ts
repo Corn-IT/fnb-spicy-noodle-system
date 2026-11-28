@@ -149,8 +149,6 @@ export class PayrollService {
         : Promise.resolve([]),
     ]);
 
-    const employees = [...rawEmployees].sort(compareEmployeesForDisplay);
-
     const empProfileMap = new Map<number, EmployeePayrollProfile>();
     const periodOverrideMap = new Map<number, PeriodPayrollOverride>();
 
@@ -238,6 +236,27 @@ export class PayrollService {
         }
       }
     }
+
+    // EC-HR-02: Include soft-deleted employees who have attendance or manual period overrides in [fromDate, toDate]
+    const activeIds = new Set(rawEmployees.map((emp) => emp.id));
+    const missingReferencedIds = Array.from(
+      new Set([...attendanceByEmpId.keys(), ...periodOverrideMap.keys()]),
+    ).filter((id) => !activeIds.has(id));
+
+    const deletedReferencedEmployees =
+      missingReferencedIds.length > 0
+        ? await this.prisma.employee.findMany({
+            where: { id: { in: missingReferencedIds } },
+            orderBy: [{ id: 'asc' }],
+            include: {
+              position: { select: { name: true, normalizedName: true, metadata: true } },
+              specialty: { select: { name: true, normalizedName: true, metadata: true } },
+              user: { select: { username: true, isSuperAdmin: true, isActive: true } },
+            },
+          })
+        : [];
+
+    const employees = [...rawEmployees, ...deletedReferencedEmployees].sort(compareEmployeesForDisplay);
 
     const normalizedKeyword = normalizeVietnameseString(keyword ?? '');
     const rows: PayrollRow[] = [];

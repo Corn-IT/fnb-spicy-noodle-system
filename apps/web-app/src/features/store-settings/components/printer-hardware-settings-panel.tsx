@@ -82,9 +82,17 @@ const PAPER_WIDTH_OPTIONS: ReadonlyArray<{
 export function PrinterHardwareSettingsPanel({
   storeSettings,
   confirmCashDrawerKick = false,
-  canKickCashDrawer = true,
+  canKickCashDrawer: canKickCashDrawerProp,
 }: PrinterHardwareSettingsPanelProps) {
-  const canEdit = useAuthStore((state) => Boolean(state.user?.isSuperAdmin));
+  const currentUser = useAuthStore((state) => state.user);
+  const canEdit = Boolean(currentUser?.isSuperAdmin);
+  const canKickCashDrawer =
+    canKickCashDrawerProp ??
+    Boolean(
+      currentUser?.isSuperAdmin ||
+        currentUser?.permissions?.pos?.openCashDrawer ||
+        currentUser?.permissions?.settings?.update,
+    );
   const config = useThermalPrinterConfigStore((s) => s.config);
   const setDriver = useThermalPrinterConfigStore((s) => s.setDriver);
   const updateConfig = useThermalPrinterConfigStore((s) => s.updateConfig);

@@ -84,7 +84,11 @@ export function InventoryPage() {
 
   const isSameDayRecord = React.useCallback(
     (record: InventoryImportRecord) => {
-      const recordDay = record.importDate.slice(0, 10);
+      const createdDate = record.createdAt ? new Date(record.createdAt) : null;
+      const recordDay =
+        createdDate && !Number.isNaN(createdDate.getTime())
+          ? getBusinessDateIso(createdDate)
+          : record.importDate.slice(0, 10);
       return recordDay === todayIso;
     },
     [todayIso],

@@ -1914,19 +1914,21 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
       expect(printDom?.textContent).not.toContain('/q/mangve-qpy2');
 
       // Switch to cashier without settings:update permission -> quick dialog becomes strictly read-only
-      useAuthStore.getState().setAuth({
-        accessToken: 'cashier-token',
-        user: {
-          id: 3,
-          employeeId: 3,
-          username: 'thungan01',
-          fullName: 'Thu Ngân',
-          isSuperAdmin: false,
-          permissions: UserPermissionsSchema.parse({
-            pos: { view: true, update: true },
-            settings: { view: false, update: false },
-          }),
-        },
+      act(() => {
+        useAuthStore.getState().setAuth({
+          accessToken: 'cashier-token',
+          user: {
+            id: 3,
+            employeeId: 3,
+            username: 'thungan01',
+            fullName: 'Thu Ngân',
+            isSuperAdmin: false,
+            permissions: UserPermissionsSchema.parse({
+              pos: { view: true, update: true },
+              settings: { view: false, update: false },
+            }),
+          },
+        });
       });
       fireEvent.click(screen.getByTestId('open-qr-template-customizer-btn'));
       expect(await screen.findByTestId('qr-card-quick-dialog')).toBeInTheDocument();
@@ -2262,16 +2264,18 @@ describe('Story 09 — QR Mobile Order (/qr/:token) & Unified POS Screen (/pos)'
       ).toBe(true);
 
       // Readonly user (no pos.update) cannot open edit on NEW items
-      useAuthStore.getState().setAuth({
-        accessToken: 'viewer-token',
-        user: {
-          id: 9,
-          employeeId: 9,
-          username: 'viewer',
-          fullName: 'Xem POS',
-          isSuperAdmin: false,
-          permissions: UserPermissionsSchema.parse({ pos: { view: true } }),
-        },
+      act(() => {
+        useAuthStore.getState().setAuth({
+          accessToken: 'viewer-token',
+          user: {
+            id: 9,
+            employeeId: 9,
+            username: 'viewer',
+            fullName: 'Xem POS',
+            isSuperAdmin: false,
+            permissions: UserPermissionsSchema.parse({ pos: { view: true } }),
+          },
+        });
       });
       await waitFor(() => {
         expect(screen.queryByTestId('edit-new-item-9002')).not.toBeInTheDocument();

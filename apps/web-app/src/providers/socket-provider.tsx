@@ -9,7 +9,7 @@ import * as React from 'react';
 import { type Socket } from 'socket.io-client';
 
 import { toast } from '@/components/ui/toast';
-import { getJwtExpirationMs, refreshAccessToken } from '@/lib/api-client';
+import { getJwtExpirationMs, getJwtSessionId, refreshAccessToken } from '@/lib/api-client';
 import { connectPosSocket, disconnectPosSocket, type SocketAuthMode } from '@/lib/socket-client';
 import { type AuthNoticeReason, useAuthStore } from '@/stores/auth.store';
 import { useUiPreferencesStore } from '@/stores/ui-preferences.store';
@@ -50,15 +50,16 @@ export interface SocketProviderProps {
 export function SocketProvider({ children }: SocketProviderProps) {
   const accessToken = useAuthStore((state) => state.accessToken);
   const userId = useAuthStore((state) => state.user?.id ?? null);
+  const sessionSid = React.useMemo(() => getJwtSessionId(accessToken), [accessToken]);
   const hasStaffSession = Boolean(accessToken && userId);
   const queryClient = useQueryClient();
   const [socket, setSocket] = React.useState<Socket | null>(null);
   const [isConnected, setIsConnected] = React.useState<boolean>(false);
   const lastReactiveRefreshAtRef = React.useRef<number>(0);
 
-  // Establish ONE persistent staff socket per authenticated user session.
-  // Rotating accessToken does NOT tear down the live socket; reconnects dynamically pull
-  // the latest accessToken from useAuthStore via `getToken`.
+  // Establish ONE persistent staff socket per authenticated user session (sid).
+  // Routine accessToken refreshes keep the same sid so the live socket stays open;
+  // rotating sid (e.g. password change) cleanly reconnects with the new session id.
   React.useEffect(() => {
     if (!hasStaffSession) {
       disconnectPosSocket('staff');
@@ -83,7 +84,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
       disconnectPosSocket('staff');
       setIsConnected(false);
     };
-  }, [hasStaffSession, userId]);
+  }, [hasStaffSession, userId, sessionSid]);
 
   // Proactive JWT access token refresh ~90s before expiry so mobile Socket.io never hits
   // expired-token Unauthorized loops on long shifts or overnight sessions.

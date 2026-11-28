@@ -313,7 +313,7 @@ export type MessageKey = keyof typeof MESSAGE_CATALOG;
 ## 6. Tiêu chí Nghiệm thu
 
 - **AC-17.1:** Sửa `qr.banner.tableMoveNotice` thành `"Cần đổi bàn xin báo nhân viên!"` → lưu trên `/settings` → tải lại trang `/qr/:token` thấy ngay banner mới; payload `GET /api/v1/public/store-settings` chỉ chứa override `qrMessages`, không chứa các thông báo nội bộ của trang quản trị.
-- **AC-17.2:** Sửa thông báo tách bếp (`pos.splitKitchen.success`) bằng tài khoản `superadmin` → tài khoản `cashier01` (chỉ có quyền `pos`, **không** có `settings.view`) gọi được `GET /api/v1/store-messages` (HTTP 200) và khi bấm `"Tách Bếp"` thấy đúng tiêu đề/nội dung đã sửa (với đúng `{count}` biến thay thế). Chưa đăng nhập gọi `GET /api/v1/store-messages` nhận **401 Unauthorized** (Invariant 8).
+- **AC-17.2:** Sửa thông báo tách bếp (`pos.splitKitchen.success`) bằng tài khoản `superadmin` → tài khoản `thungan` (`seed-data.ts`, spec cũ `cashier01`, chỉ có quyền `pos`, **không** có `settings.view`) gọi được `GET /api/v1/store-messages` (HTTP 200) và khi bấm `"Tách Bếp"` thấy đúng tiêu đề/nội dung đã sửa (với đúng `{count}` biến thay thế). Chưa đăng nhập gọi `GET /api/v1/store-messages` nhận **401 Unauthorized** (Invariant 8).
 - **AC-17.3:** Nhập chuỗi chứa biến sai `{tenKhongTonTai}` hoặc ngoặc lẻ `{abc` → UI chặn lưu & hiển thị rõ các biến hợp lệ; gọi trực tiếp API `PUT /api/v1/settings` với `{abc}` cũng bị từ chối với HTTP 400.
 - **AC-17.4:** Chỉnh sửa `error.RBAC_PERMISSION_DENIED` → khi tài khoản thiếu quyền kích hoạt lỗi 403, toast hiển thị thông điệp mới; khi để mặc định (chưa sửa), server message nguyên văn được giữ nguyên.
 - **AC-17.5:** Bấm `"Khôi phục mặc định"` tại 1 mục rồi lưu → key đó bị **xoá hoàn toàn** khỏi dòng `SYSTEM_CONFIG / store_messages` trong DB; UI hiển thị lại nguyên văn từ `MESSAGE_CATALOG`.
@@ -322,7 +322,7 @@ export type MessageKey = keyof typeof MESSAGE_CATALOG;
 - **AC-17.8:** Đăng xuất → `store_messages_cache` và `ui_preferences` không bị xoá nhầm; toàn bộ XSS `<script>` trong text tuỳ chỉnh chỉ render dạng text thuần.
 - **AC-17.9:** Test quét source xác nhận toàn bộ `features/*` không còn `toast({` với `title:` hardcoded literal; mọi key trong `MESSAGE_CATALOG` đều có cấu trúc hợp lệ và mỗi biến trong `title`/`description` mặc định khớp chính xác với mảng `variables`.
 - **AC-17.10:** Audit Log module `'SETTINGS'` ghi nhận thay đổi của `messages`, locking 409 vẫn hoạt động đồng bộ khi 2 tab admin sửa cùng lúc.
-- **AC-17.11:** `pnpm -r typecheck`, `pnpm -r test`, `pnpm -r lint`, `pnpm -r build` pass 100%; kiểm thử trình duyệt thực tế across Desktop (1440×900), Tablet (768×1024), Mobile (390×844), Sáng & Tối, với cả `superadmin` và `cashier01`.
+- **AC-17.11:** `pnpm -r typecheck`, `pnpm -r test`, `pnpm -r lint`, `pnpm -r build` pass 100%; kiểm thử trình duyệt thực tế across Desktop (1440×900), Tablet (768×1024), Mobile (390×844), Sáng & Tối, với cả `superadmin` và `thungan` (`cashier`).
 
 ---
 

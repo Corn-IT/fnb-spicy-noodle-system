@@ -145,9 +145,9 @@ Mỗi `src/features/<feature>/` **MUST** có:
 ```
 apps/api-server/
 ├── prisma/
-│   ├── schema.prisma                  # Single schema file (18 models)
+│   ├── schema.prisma                  # Single schema file (20 models)
 │   ├── seed.ts & seed-data.ts & seed-discounts.ts
-│   └── migrations/                    # 16+ SQL migrations
+│   └── migrations/                    # 20 SQL migrations
 └── src/
     ├── main.ts                        # Bootstrap + Socket.io adapter + GlobalExceptionFilter
     ├── app.module.ts                  # Root — imports 15 modules + RateLimitGuard
@@ -185,11 +185,11 @@ apps/api-server/
 - `normalized-string.util.ts` → `normalizeVietnameseString()` và `toTitleCase()` cho MDM (Invariant 7).
 - `search-normalize.util.ts` → kết hợp hàm DB `f_search_norm()` (`unaccent`, gộp `y -> i`) cho tìm kiếm mờ tiếng Việt.
 
-### 3.4. Socket.io Gateway (Dual-Mode Authentication & 15 Events)
+### 3.4. Socket.io Gateway (Dual-Mode Authentication & 16 Events)
 
 - Đúng 1 gateway: `src/gateways/pos-socket.gateway.ts`, namespace `/pos`.
-- **15 Events chuẩn (`packages/shared/src/constants/socket-events.ts`):**
-  `order:qr_new`, `order:qr_addon`, `order:qr_auto_cancelled`, `order:session_redirected`, `order:status_updated`, `qr:order_notice`, `table:qr_rotated`, `table:grid_sync`, `menu:updated`, `schedule:updated`, `payroll:updated`, `store-settings:updated`, `session:revoked`, `account:permissions_updated`, `account:preferences_updated`.
+- **16 Events chuẩn (`packages/shared/src/constants/socket-events.ts`):**
+  `order:qr_new`, `order:qr_addon`, `order:qr_auto_cancelled`, `order:session_redirected`, `order:status_updated`, `qr:order_notice`, `table:qr_rotated`, `table:grid_sync`, `pos:drafts_updated`, `menu:updated`, `schedule:updated`, `payroll:updated`, `store-settings:updated`, `session:revoked`, `account:permissions_updated`, `account:preferences_updated`.
 - **Dual-Mode Auth + Origin Check trong `afterInit` / `handleConnection`:**
   1. **Staff (`auth.token`):** Xác thực JWT `tokenType === 'access'`, `user.isActive`, và khớp `activeSessionId` (Single-Session) → join `pos_cashier_room`, `user_account_{userId}`, `user_session_{sessionId}`.
   2. **QR Guest (`auth.qrToken` + optional `auth.orderId` / `auth.guestSessionToken`):** Xác thực `qrToken` của bàn vật lý hoặc QR Mang về → chỉ join `table_session_{tableId}`, `order_session_{orderId}` (hoặc `public_menu_room`), **FORBIDDEN** join `pos_cashier_room`.
@@ -197,7 +197,7 @@ apps/api-server/
 
 ### 3.5. Prisma & Seed Data
 
-- Single `prisma/schema.prisma` (18 models). **FORBIDDEN** multi-file schema.
+- Single `prisma/schema.prisma` (20 models). **FORBIDDEN** multi-file schema.
 - `PrismaService extends PrismaClient implements OnModuleInit` — injectable. **FORBIDDEN** import `PrismaClient` trực tiếp trong service nghiệp vụ.
 - `seed.ts` / `seed-data.ts` seed: 4 tài khoản (`superadmin`, `admin`, `adminview`, `thungan` — mật khẩu mặc định `Password@123`) + 8 nhân viên vận hành, **7 nhóm `master_data`** (`POSITION`, `SPECIALTY`, `INGREDIENT`, `UNIT`, `SUPPLIER`, `MENU_CATEGORY`, `KITCHEN_STATION`) + `SYSTEM_CONFIG` (Store Settings, QR Security, Opening Budget), `dining_tables`, `products`/`combo_items`/`modifier_groups`/`modifiers`, `payment_accounts`, và `discounts` mẫu.
 

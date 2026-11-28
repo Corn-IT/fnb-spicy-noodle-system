@@ -64,6 +64,7 @@ export class PosSocketGateway
 
   private readonly logger = new Logger(PosSocketGateway.name);
   private readonly sessionConnections = new Map<string, Set<string>>();
+  private menuCatalogRevision = 0;
 
   constructor(
     @Inject(JwtService) private readonly jwtService: JwtService,
@@ -229,7 +230,12 @@ export class PosSocketGateway
     this.server?.to(SocketRooms.POS_CASHIER).emit(SocketEvents.TABLE_GRID_SYNC, payload);
   }
 
+  getMenuCatalogRevision(): number {
+    return this.menuCatalogRevision;
+  }
+
   emitMenuUpdated(payload: unknown = { updatedAt: new Date().toISOString() }): void {
+    this.menuCatalogRevision += 1;
     this.server?.emit(SocketEvents.MENU_UPDATED, payload);
   }
 

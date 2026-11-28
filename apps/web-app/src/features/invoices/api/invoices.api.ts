@@ -78,6 +78,7 @@ export interface VoidInvoiceResponse {
   orderCode: string;
   status: OrderStatus;
   voidReason: string;
+  syncedSettlementIds?: number[];
 }
 
 export function getTodayVietnamDate(): string {

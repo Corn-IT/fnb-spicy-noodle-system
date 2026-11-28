@@ -268,14 +268,33 @@ export function PayrollPage() {
         size: 210,
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
-            <span className="font-medium">{row.original.fullName}</span>
-            <Badge
-              variant="secondary"
-              className="w-fit text-xs"
-              data-testid={`payroll-short-name-${row.original.employeeId}`}
+            <span
+              className={
+                row.original.isDeleted
+                  ? 'font-medium text-muted-foreground line-through'
+                  : 'font-medium'
+              }
             >
-              {row.original.shortName}
-            </Badge>
+              {row.original.fullName}
+            </span>
+            <div className="flex flex-wrap items-center gap-1">
+              <Badge
+                variant="secondary"
+                className="w-fit text-xs"
+                data-testid={`payroll-short-name-${row.original.employeeId}`}
+              >
+                {row.original.shortName}
+              </Badge>
+              {row.original.isDeleted ? (
+                <Badge
+                  variant="outline"
+                  className="w-fit text-[11px] text-muted-foreground"
+                  data-testid={`payroll-deleted-badge-${row.original.employeeId}`}
+                >
+                  Đã nghỉ
+                </Badge>
+              ) : null}
+            </div>
           </div>
         ),
       },

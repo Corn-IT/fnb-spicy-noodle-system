@@ -264,7 +264,7 @@ export function useMobileOrderAlerts(options?: {
 /**
  * Mounted once in AppShell for authenticated POS staff.
  * Handles:
- * - Multi-gesture audio unlock (touchend / click / pointerdown / keydown) that automatically
+ * - Resilient gesture unlock (click / keydown) that automatically
  *   re-unlocks whenever iOS/Android suspends or interrupts AudioContext after backgrounding
  * - Starting/stopping Layer 2 background keep-alive & Screen Wake Lock
  * - Silently re-syncing granted Web Push subscriptions to the active session
@@ -333,16 +333,14 @@ export function useMobileOrderAlertLifecycle(options: {
       }
     };
 
-    window.addEventListener('touchend', attemptGestureUnlock, { passive: true });
+    // Unlock on click/keydown (never pointerdown/touchend) so dismissing an in-flow
+    // activation banner cannot shift layout mid-tap between pointerdown and pointerup/click.
     window.addEventListener('click', attemptGestureUnlock, { passive: true });
-    window.addEventListener('pointerdown', attemptGestureUnlock, { passive: true });
     window.addEventListener('keydown', attemptGestureUnlock, { passive: true });
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      window.removeEventListener('touchend', attemptGestureUnlock);
       window.removeEventListener('click', attemptGestureUnlock);
-      window.removeEventListener('pointerdown', attemptGestureUnlock);
       window.removeEventListener('keydown', attemptGestureUnlock);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };

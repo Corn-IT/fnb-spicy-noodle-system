@@ -571,5 +571,87 @@ describe('PaymentQrService', () => {
       expect(deleted).toEqual({ deletedId: 2 });
       expect(orders.every((o) => o.paymentAccountId === null)).toBe(true);
     });
+
+    it('reorders active priorities, rejects invalid reorder/limits/last-active deactivation, and covers non-groupBy usage/listOrders fallbacks', async () => {
+      const now = new Date('2026-11-15T10:00:00.000+07:00');
+      const { service, client } = createQrHarness(
+        [
+          makeAccount({ id: 1, priority: 1, isActive: true, dailyLimit: new Prisma.Decimal('1000000') }),
+          makeAccount({ id: 2, priority: 2, bankCode: 'VCB', accountNo: '999999', isActive: true }),
+        ],
+        [
+          {
+            id: 701,
+            orderCode: 'HD-20261115-0701',
+            orderType: 'TAKEAWAY',
+            takeawayNumber: 7,
+            paymentMethod: 'SPLIT',
+            paymentAccountId: 1,
+            status: 'PAID',
+            totalAmount: new Prisma.Decimal('200000.00'),
+            transferAmount: new Prisma.Decimal('120000.00'),
+            paidAt: new Date('2026-11-15T09:30:00.000+07:00'),
+            cashier: { username: 'cashier01', employee: { fullName: 'Nguyễn An' } },
+          },
+        ],
+      );
+
+      // Missing ID in reorder rejects with 404
+      await expect(service.reorder({ orderedIds: [999, 1] }, 1)).rejects.toThrow();
+
+      const reordered = await service.reorder({ orderedIds: [2, 1] }, 1, now);
+      expect(reordered[0]).toMatchObject({ id: 2, priority: 1 });
+      expect(reordered[1]).toMatchObject({ id: 1, priority: 2 });
+
+      // Invalid limit hierarchy (daily > monthly) rejects with 422
+      await expect(
+        service.create(
+          {
+            label: 'Bad Limit',
+            bankCode: 'MB',
+            accountNo: '123456',
+            accountName: 'NGUYEN AN',
+            isActive: true,
+            dailyLimit: 5000000,
+            monthlyLimit: 1000000,
+            yearlyLimit: null,
+          },
+          1,
+        ),
+      ).rejects.toThrow();
+
+      // Drop groupBy to exercise fallback scan loops in computeUsageMap, computeOrderCountMap & listOrders
+      delete (client.order as { groupBy?: unknown }).groupBy;
+      const listedFallback = await service.list(now);
+      expect(listedFallback.find((a) => a.id === 1)).toMatchObject({
+        usedDay: 120000,
+        orderCount: 1,
+      });
+
+      const ordersFallback = await service.listOrders(1, {
+        page: 1,
+        limit: 10,
+        fromDate: '2026-11-15',
+        toDate: '2026-11-15',
+      });
+      expect(ordersFallback.total).toBe(1);
+      expect(ordersFallback.totalTransferAmount).toBe(120000);
+      expect(ordersFallback.items[0]?.tableLabel).toContain('07');
+
+      // Cannot disable the last remaining active QR
+      await service.update(2, { isActive: false }, 1);
+      await expect(service.update(1, { isActive: false }, 1)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: ErrorCodes.PAYMENT_QR_LAST_ACTIVE }),
+      });
+
+      // buildVietQrUrl without tableCode
+      expect(
+        service.buildVietQrUrl(
+          { bankCode: 'VCB', accountNo: '999999', accountName: 'NGUYEN AN' },
+          150000,
+          'HD-99',
+        ),
+      ).toContain('amount=150000&addInfo=TT+HD-99');
+    });
   });
 });

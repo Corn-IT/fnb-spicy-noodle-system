@@ -1,0 +1,22 @@
+# Exclude BMAD tooling templates, binary media, historical screenshots, and runtime reports
+.agents/skills/
+.agents/skills.json
+skills-lock.json
+_bmad/
+_bmad-output/
+docs/test-reports/
+qa-evidence/
+apps/web-app/public/audio/
+apps/web-app/public/images/
+apps/web-app/src/components/print-slips/fonts/
+apps/web-app/e2e/all-routes-audit-output.json
+apps/web-app/e2e/baseline-audit-output.json
+graphify-out/
+*.mp3
+*.png
+*.jpg
+*.jpeg
+*.ico
+*.woff
+*.woff2
+*.ttf

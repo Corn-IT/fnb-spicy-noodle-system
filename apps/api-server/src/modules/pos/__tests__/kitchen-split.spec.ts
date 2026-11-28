@@ -312,5 +312,83 @@ describe('KitchenSplitService', () => {
       unitPrice: 199000,
       categoryId: 2,
     });
+
+    // reprintKitchen 404, empty items, COMBO breakdown with station filter, batchNo > 1, isTakeaway & transferNotice
+    prisma.order.findUnique.mockResolvedValueOnce(null);
+    await expect(service.reprintKitchen(999)).rejects.toMatchObject({ status: 404 });
+
+    prisma.order.findUnique.mockResolvedValueOnce({
+      id: 51,
+      orderCode: 'HD-51',
+      status: 'SERVING',
+      tableId: 2,
+      table: { id: 2, name: 'Bàn 02' },
+      tableTransferLogs: [],
+      items: [],
+    });
+    const emptyReprint = await service.reprintKitchen(51, { batchNo: 2 });
+    expect(emptyReprint.tickets).toEqual([]);
+
+    prisma.order.findUnique.mockResolvedValueOnce({
+      id: 52,
+      orderCode: 'HD-52',
+      status: 'SERVING',
+      tableId: 2,
+      table: { id: 2, name: 'Bàn 02' },
+      tableTransferLogs: [
+        'ignore-non-object',
+        { fromTable: 'Bàn 01', toTable: 'Bàn 02' },
+      ],
+      items: [
+        {
+          id: 101,
+          productId: 30,
+          quantity: 1,
+          unitPrice: 99000,
+          batchNo: 2,
+          kitchenStatus: 'PRINTED',
+          modifiersSnapshot: [{ name: 'Cay vừa' }],
+          itemNote: 'Ít hành',
+          isTakeaway: true,
+          product: { id: 30, name: 'Combo Vui Vẻ', station: 'COMBO', categoryId: 1, price: 99000 },
+        },
+        orderItem,
+      ],
+    });
+    prisma.comboItem.findMany.mockResolvedValueOnce([
+      { parentProductId: 30, quantity: 2, childProduct: { id: 31, name: 'Gà Rán', station: 'BEP_CHIEN' } },
+      { parentProductId: 30, quantity: 1, childProduct: { id: 32, name: 'Trà Đào', station: 'PHA_CHE' } },
+    ]);
+    const filteredReprint = await service.reprintKitchen(52, { batchNo: 2, station: 'BEP_CHIEN' }, 1);
+    expect(filteredReprint.tickets).toHaveLength(1);
+    expect(filteredReprint.tickets[0]!.station).toBe('BEP_CHIEN');
+    expect(filteredReprint.tickets[0]!.items[0]).toMatchObject({ name: 'Gà Rán', qty: 2, isTakeaway: true });
+    expect(filteredReprint.tickets[0]!.batchLabel).toContain('LƯỢT 2');
+    expect(filteredReprint.tickets[0]!.transferNotice).toContain('Chuyển từ Bàn 01 sang Bàn 02');
+
+    // Reject unknown station on physicalStation + handle non-array modifiersSnapshot
+    prisma.order.findUnique.mockResolvedValueOnce({
+      id: 53,
+      orderCode: 'HD-53',
+      status: 'SERVING',
+      tableId: 2,
+      table: { id: 2, name: 'Bàn 02' },
+      tableTransferLogs: null,
+      items: [
+        {
+          id: 102,
+          productId: 33,
+          quantity: 1,
+          unitPrice: 50000,
+          batchNo: 1,
+          kitchenStatus: 'PRINTED',
+          modifiersSnapshot: null,
+          itemNote: null,
+          isTakeaway: false,
+          product: { id: 33, name: 'Món Lỗi', station: 'INVALID_STATION', categoryId: 1, price: 50000 },
+        },
+      ],
+    });
+    await expect(service.reprintKitchen(53)).rejects.toMatchObject({ status: 409 });
   });
 });

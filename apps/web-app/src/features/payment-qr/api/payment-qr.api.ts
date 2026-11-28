@@ -65,8 +65,8 @@ export async function reorderPaymentAccounts(
 
 export async function deletePaymentAccount(
   id: number,
-): Promise<{ deleted: boolean; id: number }> {
-  return apiClient.delete<{ deleted: boolean; id: number }>(`/api/v1/payment-qr/${id}`);
+): Promise<{ deletedId: number }> {
+  return apiClient.delete<{ deletedId: number }>(`/api/v1/payment-qr/${id}`);
 }
 
 export async function fetchPaymentAccountOrders(params: {

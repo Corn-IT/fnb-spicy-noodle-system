@@ -186,4 +186,132 @@ describe('POS and invoice HTTP routes', () => {
     expect(qrSecurityService.updateConfig).toHaveBeenCalledTimes(1);
     expect(gateway.emitStoreSettingsUpdated).toHaveBeenCalledTimes(1);
   });
+
+  it('delegates POS drafts, table CRUD, QR rotation/shorten, kitchen reprint, provisional split & discounts', async () => {
+    const extPosService = {
+      ...posService,
+      listPosDrafts: vi.fn(async () => ({ drafts: [] })),
+      createPosDraft: vi.fn(async () => ({ id: 'draft-new', revision: 1 })),
+      updatePosDraft: vi.fn(async () => ({ id: 'draft-new', revision: 2 })),
+      submitPosDraft: vi.fn(async () => ({ orderId: 77 })),
+      createTable: vi.fn(async () => ({ id: 9, name: 'Bàn 09' })),
+      updateTable: vi.fn(async () => ({ id: 9, name: 'Bàn 09 VIP' })),
+      deleteTable: vi.fn(async () => ({ deleted: true })),
+      rotateTableQr: vi.fn(async () => ({ id: 9, qrToken: 'new-qr' })),
+      rotateTakeawayQr: vi.fn(async () => ({ qrToken: 'new-takeaway-qr' })),
+      shortenLegacyQrTokens: vi.fn(async () => ({ updatedCount: 3 })),
+      cancelOrder: vi.fn(async () => ({ orderId: 43, status: 'VOIDED' })),
+      getSplitProvisionalBill: vi.fn(async () => ({ orderId: 43 })),
+      splitCheckout: vi.fn(async () => ({ paidAmount: 50000 })),
+      reprintKitchen: vi.fn(async () => ({ tickets: [] })),
+      getApplicableDiscounts: vi.fn(async () => ({ items: [] })),
+      applyDiscount: vi.fn(async () => ({ orderId: 43 })),
+      removeDiscount: vi.fn(async () => ({ orderId: 43 })),
+      checkQrOrderStillPending: vi.fn(async () => ({ stillPending: true })),
+    };
+
+    class FullPosControllerModule {}
+    Module({
+      controllers: [PosController],
+      providers: [
+        { provide: PosService, useValue: extPosService },
+        { provide: QrSecurityService, useValue: qrSecurityService },
+        { provide: PosSocketGateway, useValue: gateway },
+        { provide: JwtService, useValue: { verifyAsync: async () => ({ sub: 1, tokenType: 'access' }) } },
+        { provide: PrismaService, useValue: { user: { findUnique: async () => adminRecord } } },
+        {
+          provide: JwtAuthGuard,
+          useFactory: (jwt: JwtService, prisma: PrismaService) => new JwtAuthGuard(jwt, prisma),
+          inject: [JwtService, PrismaService],
+        },
+        { provide: RbacGuard, useFactory: () => new RbacGuard(new Reflector()) },
+      ],
+    })(FullPosControllerModule);
+
+    const extApp = await NestFactory.create(FullPosControllerModule, { logger: ['error'], abortOnError: false });
+    await extApp.listen(0, '127.0.0.1');
+    const addr = extApp.getHttpServer().address() as { port: number };
+    const extBase = `http://127.0.0.1:${addr.port}`;
+    const headers = { authorization: 'Bearer test-token', 'content-type': 'application/json' };
+
+    try {
+      expect((await fetch(`${extBase}/api/v1/public/orders/qr-pending-check?orderId=42&kind=ADDON&batchNo=2`)).status).toBe(200);
+      expect(extPosService.checkQrOrderStillPending).toHaveBeenCalledWith({ orderId: 42, kind: 'ADDON', batchNo: 2 });
+
+      expect((await fetch(`${extBase}/api/v1/pos/drafts`, { headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/drafts`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ orderType: 'TAKEAWAY', tableId: null, items: [{ productId: 1, quantity: 1 }], note: null }),
+      })).status).toBe(201);
+      expect((await fetch(`${extBase}/api/v1/pos/drafts/draft-new`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ orderType: 'TAKEAWAY', tableId: null, items: [{ productId: 1, quantity: 2 }], note: null, expectedRevision: 1 }),
+      })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/drafts/draft-new/submit`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expectedRevision: 2, idempotencyKey: 'idem-key-1234567890' }),
+      })).status).toBe(201);
+
+      expect((await fetch(`${extBase}/api/v1/pos/tables`, { method: 'POST', headers, body: JSON.stringify({ name: 'Bàn 09' }) })).status).toBe(201);
+      expect((await fetch(`${extBase}/api/v1/pos/tables/9`, { method: 'PUT', headers, body: JSON.stringify({ name: 'Bàn 09 VIP' }) })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/tables/9`, { method: 'DELETE', headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/tables/9/rotate-qr`, { method: 'POST', headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/takeaway-qr/rotate`, { method: 'POST', headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/tables/shorten-qr`, { method: 'POST', headers })).status).toBe(200);
+
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43`, { headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/provisional-bill`, { method: 'POST', headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/split-provisional-bill`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ items: [{ orderItemId: 1, quantity: 1 }] }),
+      })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/split-checkout`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ items: [{ orderItemId: 1, quantity: 1 }], paymentMethod: 'CASH' }),
+      })).status).toBe(201);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/reprint-kitchen`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ batchNo: 1 }),
+      })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/applicable-discounts`, { headers })).status).toBe(200);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/discount`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code: 'GIAM10' }),
+      })).status).toBe(201);
+      expect((await fetch(`${extBase}/api/v1/pos/orders/43/discount`, { method: 'DELETE', headers })).status).toBe(200);
+
+      // TTS blank text -> 400; mocked upstream -> audio/mpeg cache hit
+      expect((await fetch(`${extBase}/api/v1/public/tts?text=%20%20`)).status).toBe(400);
+      const originalFetch = globalThis.fetch;
+      const upstreamFetchSpy = vi.fn(async () =>
+        new Response(Uint8Array.from([0x49, 0x44, 0x33]), { status: 200 }),
+      );
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.startsWith('https://translate.googleapis.com')) {
+          return upstreamFetchSpy();
+        }
+        return originalFetch(input, init);
+      });
+      try {
+        const tts1 = await originalFetch(`${extBase}/api/v1/public/tts?text=Ban%2005%20co%20don%20moi`);
+        expect(tts1.status).toBe(200);
+        expect(tts1.headers.get('content-type')).toContain('audio/mpeg');
+        const tts2 = await originalFetch(`${extBase}/api/v1/public/tts?text=Ban%2005%20co%20don%20moi`);
+        expect(tts2.status).toBe(200);
+        expect(upstreamFetchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    } finally {
+      await extApp.close();
+    }
+  });
 });

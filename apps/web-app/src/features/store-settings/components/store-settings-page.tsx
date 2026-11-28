@@ -40,7 +40,7 @@ import * as React from 'react';
 
 import { AuditHistoryButton } from '@/components/audit-history-drawer/audit-history-drawer';
 import { SystemErrorView } from '@/components/error-display';
-import { APP_NAVIGATION_ROUTES } from '@/components/layout/command-palette';
+import { APP_NAVIGATION_ROUTES } from '@/lib/app-navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { QrCardCustomizer } from '@/components/qr-card';
 import { Button } from '@/components/ui/button';
@@ -976,7 +976,14 @@ export function StoreSettingsPage() {
         </TabsContent>
 
         <TabsContent value="receipt" className="mt-4 min-w-0 w-full">
-          <PrinterHardwareSettingsPanel storeSettings={livePreviewSettings} />
+          <PrinterHardwareSettingsPanel
+            storeSettings={livePreviewSettings}
+            canKickCashDrawer={Boolean(
+              user?.isSuperAdmin ||
+                user?.permissions?.pos?.openCashDrawer ||
+                user?.permissions?.settings?.update,
+            )}
+          />
           <PrintTemplateCustomizer
             draft={draft}
             livePreviewSettings={livePreviewSettings}

@@ -36,8 +36,8 @@ fnb-spicy-noodle-system/
 ├── docs/
 │   ├── HUONG_DAN_SU_DUNG_VA_GIAI_PHAP.md   # Cẩm nang giải pháp & HDSD toàn diện cho End-User
 │   ├── bmad/                               # PRD, RBAC Matrix, Edge Cases & Invariants
-│   ├── architecture/                       # ERD, State Machines, Sequences, Audit Report
-│   └── stories/                            # 12 User Stories chi tiết
+│   ├── architecture/                       # ERD (20 bảng), State Machines, Sequences, Audit Report
+│   └── stories/                            # 21 User Stories chi tiết (story-01 .. story-21)
 ├── AGENTS.md                # Hiến pháp kỹ thuật & 10 Quy tắc bất biến (Hard Invariants)
 └── docker-compose.yml       # Cấu hình triển khai Production (Caddy + API + PostgreSQL + Backup)
 ```
@@ -95,7 +95,7 @@ Sao chép file cấu hình mẫu `.env.example` sang `.env` cho cả Backend và
 
 ### Bước 3: Build gói dùng chung, chạy Migration và nạp dữ liệu mẫu (Seed)
 
-Chạy duy nhất 1 lệnh dưới đây từ thư mục gốc để tự động sinh Prisma Client, tạo toàn bộ bảng + ràng buộc SQL và nạp sẵn dữ liệu mẫu (30 bàn, 6 danh mục thực đơn, 11 món ăn kèm nhóm tuỳ chọn đổi món thông minh, nhân sự & tài khoản mẫu):
+Chạy duy nhất 1 lệnh dưới đây từ thư mục gốc để tự động sinh Prisma Client, tạo toàn bộ 20 bảng (20 SQL migrations) + ràng buộc CHECK và nạp sẵn dữ liệu mẫu (30 bàn vật lý, 6 danh mục thực đơn, 164 món ăn/topping chuẩn kèm tuỳ chọn đổi món thông minh, nhân sự & 4 tài khoản mẫu):
 
 ```bash
 pnpm --filter @fnb/shared build
@@ -129,8 +129,10 @@ Mở trình duyệt truy cập **[http://localhost:5173](http://localhost:5173)*
 
 | Vai trò | Tên đăng nhập (`username`) | Mật khẩu (`password`) | Quyền hạn |
 | :--- | :--- | :--- | :--- |
-| **Chủ quán (SuperAdmin)** | `superadmin` | `Password@123` | Toàn quyền hệ thống (POS, Thực đơn `/menu`, Hoá đơn, Kho, Kết ca, Nhân sự, Lịch tuần, MDM, Phân quyền RBAC). |
-| **Thu ngân Quầy (Cashier)** | `cashier01` | `Password@123` | Bán hàng POS, Tách bếp, Chuyển/Ghép/Đổi bàn, Thanh toán, Nhập kho, Kết ca, Xem lịch làm việc. |
+| **Chủ quán (`SUPERADMIN`)** | `superadmin` | `Password@123` | Toàn quyền tuyệt đối trên 14 nhóm quyền (POS Desktop & `/pos/touch`, Thực đơn `/menu`, Hoá đơn, Kho, Kết ca, Nhân sự, Lịch tuần, Bảng lương, MDM, Phân quyền RBAC, Cài đặt). |
+| **Quản lý (`ADMIN`)** | `admin` | `Password@123` | Toàn quyền vận hành nghiệp vụ (trừ huỷ hoá đơn đã thu tiền `invoices:void` và thao tác `@SuperAdminOnly` ở `/rbac`). |
+| **Kiểm toán (`ADMIN_VIEW`)** | `adminview` | `Password@123` | Chỉ xem (`view`) và xuất Excel (`export`) các phân hệ quản trị & báo cáo. |
+| **Thu ngân (`CASHIER`)** | `thungan` | `Password@123` | Bán hàng POS Desktop & `/pos/touch`, Tách bếp, Chuyển/Ghép/Đổi bàn, Thanh toán, Nhập kho, Kết ca (Blind Mode), Bảng công (chỉ xem). |
 
 ---
 

@@ -3,7 +3,7 @@
 %% PROJECT: Hệ thống POS & Quản trị Vận hành Quán Mì Cay (fnb-spicy-noodle-system)
 %% PHASE: Phase 2 Baseline + Post-Implementation Sync
 %% AUTHOR: Principal System Architect & QA Auditor
-%% LAST UPDATED: 2026-11-26 (Synced with NestJS controllers, services & PosSocketGateway)
+%% LAST UPDATED: 2026-11-28 (Synced with NestJS controllers, services & PosSocketGateway)
 %% ============================================================================
 %% BAO PHỦ 4 LUỒNG TUẦN TỰ CỐT LÕI ĐÃ KIỂM ĐỊNH CHÉO:
 %% - LUỒNG 1 (SEQ-01): Khách quét QR đặt món (/q/:token hoặc /qr/:token, hỗ trợ QR Security
@@ -138,7 +138,7 @@ sequenceDiagram
         else action == 'TO_TAKEAWAY' (Tại bàn -> Mang về)
             API->>DB: Cấp takeaway_number = MAX(today) + 1; table_id = NULL; order_type = 'TAKEAWAY'; bàn nguồn -> AVAILABLE
         else action == 'MOVE' (Bàn -> Bàn trống, hoặc Mang về -> Bàn trống)
-            API->>DB: Kiểm tra targetTable AVAILABLE -> cập nhật table_id (nếu từ TAKEAWAY: set order_type='DINE_IN', is_takeaway=true)
+            API->>DB: Kiểm tra targetTable AVAILABLE -> cập nhật table_id (nếu từ TAKEAWAY: set order_type='DINE_IN', is_takeaway=false)
         else action == 'MERGE' (Bàn/Mang về -> Bàn đang OCCUPIED)
             API->>DB: Chuyển toàn bộ order_items sang đơn đích (GIỮ NGUYÊN kitchen_status), tính lại tiền, đơn nguồn -> MERGED
         else action == 'SWAP' (Hoán đổi 2 bàn đang mở)
