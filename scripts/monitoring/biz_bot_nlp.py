@@ -1,91 +1,147 @@
 #!/usr/bin/env python3
 """
-Layer 1 Vietnamese Natural-Language Fast-Path & Group Chatter Filter for @POS_Lona_bot.
-Simple high-frequency shop questions resolve in <0.3s with 0 Gemini quota;
-complex comparative/analytical questions fall through to Layer 2 Gemini AI;
-casual human chat in groups without direct mention is ignored silently.
+Layer 1 Vietnamese Natural-Language Routing & 4-Way Bot Invocation Gating for @POS_Lona_bot.
+Bot responds ONLY when addressed via:
+1) Explicit wake-word ("Lona", "POS Lona", "Bot", "Trợ lý", "AI ơi") with Unicode diacritic safety
+   (so Vietnamese words like "bột" / "bớt" / "bọt" / "ai" never wake the bot accidentally),
+2) Direct @POS_Lona_bot mention,
+3) Direct Telegram Reply to one of the bot's messages, or
+4) Slash commands (/tongquan, /topmon, /token, ...).
+Casual owner/manager discussion in the group stays 100% uninterrupted.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
+from typing import Any
 
 from biz_bot_common import strip_vi
 
-# Specific domain metrics & shop entities (matched on word boundaries to avoid false positives)
-STRONG_DOMAIN_PATTERN = re.compile(
-    r"\b(?:"
-    r"doanh thu|thu nhap|hoa don|don hang|bao nhieu don|may don|tong don|so don|"
-    r"ket tien|tien trong ket|tien ket|tien le|chot ca|ket ca|ngan sach|"
-    r"vietqr|han muc qr|han muc ngan hang|tai khoan qr|chuyen khoan|tien mat|"
-    r"mon ban chay|mon ban cham|top mon|ban chay|ban cham|mon e|thuc don|menu|"
-    r"tram bep|bep nau|bep chien|pha che|cap do cay|combo|"
-    r"nhap kho|nhap hang|nguyen lieu|nha cung cap|"
-    r"khuyen mai|ma giam|ma giam gia|voucher|chiet khau|"
-    r"don huy|huy don|huy mon|void|sua thanh toan|"
-    r"lich truc|lich lam|ca lam|xep lich|ai truc|"
-    r"bang luong|quy luong|luong nhan vien|tien luong|tinh luong|"
-    r"loi nhuan|lai lo|lai bao nhieu|loi bao nhieu|"
-    r"nhat ky|audit|thong ke|bao cao|tong quan|tinh hinh quan|"
-    r"ban dang ngoi|ban co khach|ban trong|bao nhieu ban|may ban|ban nao|mang ve|gop ban|chuyen ban|tach ban|doi ban|ban so|ban ao|"
-    r"don qr|qr cho|tra sua|mi cay|ga ran|tokbokki|lau|pizza|"
-    r"db|database|du lieu|he thong|pos|cua hang|mon an|do uong|"
-    r"may in|in nhiet|rawbt|imin|itp6|80mm|phan he|tinh nang|module|"
-    r"quyen|phan quyen|rbac|mdm|master data|single session|phien dang nhap|dang nhap|bi da|bi vang|thiet bi|"
-    r"web push|chuong bao|giong noi|invariant|bat bien|delta split|tach bep|tam tinh|blind mode|luu tam|gio tam|nhap tam|"
-    r"doi mon|mon chinh|auto check|cap cay|"
-    r"nhan vien|nhan su|thu ngan|phu bep|so dien thoai|sdt|cccd|so tai khoan|stk|ho so|bang cong|"
-    r"(?:hd|ord)-[a-z0-9-]+"
-    r")\b"
+# Wake-words matched strictly on NFC lowercase WITH accents intact!
+# Avoids Vietnamese homograph collisions: "bột" (\u1ed9) != "bot", "bớt" != "bot", "ai" != "ai ơi".
+WAKE_WORD_NFC_RE = re.compile(
+    r"(?:^|[\s,;:.!?(\"'«\[])"
+    r"(?:(?:pos[\s_-]+)?lona|bot|trợ\s+lý|ai\s+ơi)"
+    r"(?=$|[\s,;:.!?)\"'»\]])"
 )
 
-QUESTION_SIGNAL_PATTERN = re.compile(
-    r"(?:\?|\b(?:bao nhieu|may|gi|nao|the nao|nhu nao|sao roi|ra sao|duoc khong|khong nh[ie]|"
-    r"truy cap|ket noi|ai truc|ai huy|ai chot|ai ban|ai dang|luc nao|khi nao|cho xem|kiem tra|tra cuu|"
-    r"xem|thong ke|bao cao|tong hop|so sanh|tang hay giam|duoc bao|het bao|"
-    r"con khong|chua|liet ke|top|cach|huong dan|quy trinh|co che|cong thuc|nguyen ly|"
-    r"tai sao|vi sao|do dau|do sao|khac gi|khac phuc|xu ly|cau hinh)\b)"
+# Leading & trailing vocatives stripped before downstream intent matching
+_LEADING_VOCATIVE_RE = re.compile(
+    r"^\s*(?:(?:hỏi|nhờ|cho\s+hỏi|gọi|này|ê|hey)\s+)?"
+    r"(?:@pos_lona_bot|(?:pos[\s_-]+)?lona|trợ\s+lý|ai(?=\s+ơi)|bot(?=\s*(?:ơi|à|ạ|nhé|nha|này|[,:\-–])))"
+    r"(?:\s*(?:ơi|à|ạ|nhé|nha|này))?\s*[,:\-–]?\s*",
+    re.I,
+)
+_TRAILING_VOCATIVE_RE = re.compile(
+    r"[\s,]*(?:vậy|nhé|nha|thế|hả|hử|ạ|ha)?\s*(?:@pos_lona_bot|(?:pos[\s_-]+)?lona|bot|trợ\s+lý)\s*(?:ơi|à|nhé|ạ)?\s*([?!.]*)\s*$",
+    re.I,
+)
+
+# Signals forcing Gemini + search_system_docs instead of local 0-token stats
+SYSTEM_DOC_SIGNALS = (
+    "cach ", "huong dan", "quy trinh", "hoat dong", "nguyen ly", "co che", "cong thuc",
+    "phan he", "tai sao", "vi sao", "do dau", "do sao", "khac gi", "su co", "khac phuc",
+    "ket noi", "cau hinh", "may in", "rawbt", "imin", "itp6", "invariant", "bat bien",
+    "rbac", "phan quyen", "single session", "blind mode", "mdm", "master data", "delta split",
+    "gio tam", "luu tam", "nhap tam", "doi mon", "mon chinh", "bi da", "bi vang",
+    "tam tinh", "web push",
+)
+
+SYSTEM_META_SELF_SIGNALS = (
+    "khong ton token", "ton token", "tiet kiem token", "biet lam gi",
+    "lam duoc gi", "giup duoc gi", "truy cap vao db", "truy cap db", "ket noi db",
+    "coding", "viet code",
 )
 
 COMPLEX_AI_SIGNALS = (
-    "so sanh", "voi ", "tai sao", "vi sao", "phan tich", "xu huong", "khung gio",
-    "gio nao", "ngay nao", "dong nhat", "cao diem nhat", "thap nhat", "ai ban",
-    "ai huy", "ai chot", "thu ngan nao", "trung binh moi", "ty le", "chi tiet cac",
-    "nhom ", "danh muc", "cua ban ", "ban so", "khach goi", "cap do cay",
-    "giai thich", "nhan xet", "de xuat", "bao nhieu ly", "may ly", "may phan",
-    "bao nhieu phan", "may to", "bao nhieu to", "tra sua", "mi cay", "ga ran",
-    "pizza", "tokbokki", "lau ", "mon gi",
-)
-
-HOWTO_OR_SYSTEM_AI_SIGNALS = (
-    "cach ", "huong dan", "quy trinh", "hoat dong", "nguyen ly", "co che", "cong thuc",
-    "tinh nang", "phan he", "la gi", "la sao", "do dau", "do sao", "khac gi",
-    "su co", "khac phuc", "xu ly", "ket noi", "cau hinh",
-    "may in", "rawbt", "imin", "itp6", "invariant", "bat bien", "rbac", "phan quyen",
-    "single session", "blind mode", "mdm", "master data", "delta split",
-    "gio tam", "luu tam", "nhap tam", "doi mon", "mon chinh", "tam tinh",
-    "dang nhap", "bi da", "bi vang", "thiet bi", "web push",
-    "so dien thoai", "sdt", "stk", "cccd", "thong tin nhan vien", "nhan vien ten",
+    "phan tich", "xu huong", "trung binh moi", "chi tiet cac",
+    "giai thich", "nhan xet", "de xuat", "cap do cay",
 )
 
 FOLLOW_UP_PRONOUN_PATTERN = re.compile(
-    r"\b(?:mon do|nguoi do|nhan vien do|ban do|don do|cai do|muc do|"
+    r"\b(?:mon do|mon nay|nguoi do|nhan vien do|ban do|don do|cai do|muc do|"
     r"con hom qua|con hom nay|con tuan|con thang|the con|"
     r"chi tiet hon|cu the hon|liet ke them|giai thich them|noi ro hon|ro hon)\b"
 )
 
-# Short standalone command-like natural phrases allowed even without "?" or "xem"
-SHORT_DIRECT_PHRASE = re.compile(
-    r"^(?:doanh thu|ket tien|chot ca|tong quan|bao cao|top mon|mon ban chay|mon ban cham|"
-    r"ban dang ngoi|ban co khach|trang thai ban|nhap kho|khuyen mai|don huy|audit|"
-    r"lich truc|lich lam|bang luong|loi nhuan|tai khoan qr|han muc qr|vietqr)\b"
-)
 
-GREETING_OR_FILLER = {
-    "ok", "oke", "okay", "okie", "uh", "uhm", "um", "da", "vang", "rot", "roi",
-    "cam on", "thank", "thanks", "tk", "haha", "hihi", "hehe", "huhu", "hi", "hello",
-    "alo", "test", "thu", "cham", ".", "..", "...",
-}
+def is_reply_to_bot(msg: dict[str, Any] | None, bot_id: int | None, bot_username: str) -> bool:
+    if not isinstance(msg, dict):
+        return False
+    reply = msg.get("reply_to_message")
+    if not isinstance(reply, dict):
+        return False
+    from_user = reply.get("from")
+    if not isinstance(from_user, dict):
+        return False
+    if bot_id is not None and from_user.get("id") == bot_id:
+        return True
+    if bot_username and (from_user.get("username") or "").lower() == bot_username.lower():
+        return True
+    return False
+
+
+def strip_bot_addressing(raw_text: str, bot_username: str = "POS_Lona_bot") -> str:
+    txt = unicodedata.normalize("NFC", (raw_text or "").strip())
+    if bot_username:
+        txt = re.sub(rf"@{re.escape(bot_username)}\b", "", txt, flags=re.I).strip()
+    txt = re.sub(r"@pos_lona_bot\b", "", txt, flags=re.I).strip()
+
+    # Loop up to 2 passes in case caller wrote "Lona ơi @POS_Lona_bot doanh thu..."
+    for _ in range(2):
+        prev = txt
+        txt = _LEADING_VOCATIVE_RE.sub("", txt).strip()
+        if prev == txt:
+            break
+
+    def _keep_qmark(m: re.Match[str]) -> str:
+        punct = m.group(1) or ""
+        return "?" if "?" in punct else ""
+
+    # Preserve subject "bot" in questions like "bot làm gì không tốn token?" (only strip trailing vocative)
+    txt = _TRAILING_VOCATIVE_RE.sub(_keep_qmark, txt).strip()
+    return txt or unicodedata.normalize("NFC", (raw_text or "").strip())
+
+
+def detect_bot_invocation(
+    raw_text: str,
+    msg: dict[str, Any] | None = None,
+    bot_id: int | None = None,
+    bot_username: str = "POS_Lona_bot",
+) -> tuple[bool, str, str]:
+    """
+    Strictly verify whether the user intended to talk to Bot #2 via one of the 4 gates.
+    Returns (invoked, trigger_mode ['none'|'command'|'mention'|'reply'|'wake_word'], clean_question).
+    """
+    text = unicodedata.normalize("NFC", raw_text or "").strip()
+    if not text:
+        return False, "none", ""
+
+    if text.startswith("/"):
+        return True, "command", text
+
+    lower_nfc = text.lower()
+    mention_tag = f"@{bot_username.lower()}" if bot_username else "@pos_lona_bot"
+    has_mention = mention_tag in lower_nfc or "@pos_lona_bot" in lower_nfc
+    if has_mention:
+        return True, "mention", strip_bot_addressing(text, bot_username=bot_username)
+
+    if is_reply_to_bot(msg, bot_id, bot_username):
+        return True, "reply", strip_bot_addressing(text, bot_username=bot_username)
+
+    if WAKE_WORD_NFC_RE.search(lower_nfc):
+        return True, "wake_word", strip_bot_addressing(text, bot_username=bot_username)
+
+    return False, "none", ""
+
+
+def is_system_doc_question(raw_text: str) -> bool:
+    """True when the question asks about software manual, hardware, RBAC, architecture, or invariants."""
+    norm = strip_vi(raw_text)
+    if not norm or any(m in norm for m in SYSTEM_META_SELF_SIGNALS):
+        return False
+    return any(sig in norm for sig in SYSTEM_DOC_SIGNALS)
 
 
 def looks_like_shop_question(
@@ -94,41 +150,18 @@ def looks_like_shop_question(
     has_recent_memory: bool = False,
 ) -> bool:
     """
-    Decide whether an unprompted group message should be processed by Bot #2
-    rather than ignored as human chatter.
+    Compatibility wrapper preserving the strict 4-way gate:
+    Only returns True when invoked via direct mention/reply (is_direct=True), /command, or wake-word.
     """
-    norm = strip_vi(raw_text)
-    if not norm:
-        return False
     if is_direct:
-        cleaned = re.sub(r"@pos_lona_bot\b", "", norm).strip()
-        return len(cleaned) >= 2
-
-    if norm in GREETING_OR_FILLER or len(norm) < 4:
-        return False
-
-    if re.search(r"\b(?:hd|ord)-\d+", norm):
-        return True
-
-    if has_recent_memory and FOLLOW_UP_PRONOUN_PATTERN.search(norm):
-        return True
-
-    has_domain = bool(STRONG_DOMAIN_PATTERN.search(norm))
-    if not has_domain:
-        return False
-
-    has_question = bool(QUESTION_SIGNAL_PATTERN.search(norm))
-    if has_question:
-        return True
-
-    if SHORT_DIRECT_PHRASE.search(norm) and len(norm.split()) <= 6:
-        return True
-
-    return False
+        cleaned = strip_bot_addressing(raw_text)
+        return len(cleaned) >= 1
+    invoked, _, _ = detect_bot_invocation(raw_text)
+    return invoked
 
 
 def extract_period_phrase(norm_text: str) -> str:
-    """Extract period specifier from normalized Vietnamese text for Fast-Path handlers."""
+    """Extract period specifier from normalized Vietnamese text for Local & Fast-Path handlers."""
     m_range = re.search(
         r"\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\s*(?:-|–|->|\.\.|den|toi)\s*\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?",
         norm_text,
@@ -159,10 +192,10 @@ def extract_period_phrase(norm_text: str) -> str:
 
 def classify_fast_path(raw_text: str) -> tuple[str, str] | None:
     """
-    Attempt deterministic Layer 1 intent match: returns (command_key, arg_str),
-    or None if the question is complex/analytical/ambiguous and should go to Gemini AI.
+    Attempt deterministic report-list/overview match when local targeted engine didn't match first.
+    Returns (command_key, arg_str) or None if the question should fall through to Gemini AI.
     """
-    norm = strip_vi(re.sub(r"@pos_lona_bot\b", "", raw_text, flags=re.I))
+    norm = strip_vi(strip_bot_addressing(raw_text))
     if not norm:
         return None
 
@@ -170,10 +203,10 @@ def classify_fast_path(raw_text: str) -> tuple[str, str] | None:
     if m_code:
         return ("don", m_code.group(1).upper())
 
-    if FOLLOW_UP_PRONOUN_PATTERN.search(norm):
+    if FOLLOW_UP_PRONOUN_PATTERN.search(norm) or is_system_doc_question(raw_text):
         return None
 
-    if any(sig in norm for sig in COMPLEX_AI_SIGNALS) or any(sig in norm for sig in HOWTO_OR_SYSTEM_AI_SIGNALS):
+    if any(sig in norm for sig in COMPLEX_AI_SIGNALS):
         return None
 
     period_arg = extract_period_phrase(norm)
@@ -205,10 +238,10 @@ def classify_fast_path(raw_text: str) -> tuple[str, str] | None:
     if any(k in norm for k in ("tram bep", "san luong bep", "bep nau", "bep chien", "pha che", "tinh hinh bep")):
         return ("bep", period_arg)
 
-    if any(k in norm for k in ("mon ban cham", "ban cham", "ban it", "mon e")):
+    if any(k in norm for k in ("mon ban cham", "ban cham", "mon e")):
         return ("topmon", f"cham {period_arg}".strip())
 
-    if any(k in norm for k in ("top mon", "ban chay", "mon nao ban nhieu", "mon hot")):
+    if any(k in norm for k in ("top mon", "top 10", "danh sach mon", "ban chay", "mon hot")):
         return ("topmon", period_arg)
 
     if any(k in norm for k in ("nhat ky", "audit", "lich su sua")):
@@ -220,7 +253,7 @@ def classify_fast_path(raw_text: str) -> tuple[str, str] | None:
     if any(k in norm for k in ("bao nhieu don", "may don", "tong don", "so don", "don hang")):
         return ("don", period_arg)
 
-    if any(k in norm for k in ("doanh thu", "ban duoc bao nhieu tien", "thu duoc bao nhieu", "tien ban hang", "chuyen khoan va tien mat")):
+    if any(k in norm for k in ("doanh thu", "ban duoc bao nhieu tien", "thu duoc bao nhieu", "tien ban hang")):
         return ("doanhthu", period_arg)
 
     if any(k in norm for k in ("tong quan", "tinh hinh quan", "bao cao ngay", "tom tat")):
