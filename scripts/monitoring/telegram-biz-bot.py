@@ -22,7 +22,7 @@ from biz_bot_common import (
     set_message_reaction,
     tg_api,
 )
-from biz_bot_guardrail import check_pre_guardrail
+from biz_bot_guardrail import check_pre_guardrail, contains_off_topic_content
 from biz_bot_nlp import classify_fast_path, looks_like_shop_question
 from biz_bot_queries import (
     handle_audit,
@@ -279,6 +279,8 @@ def dispatch_message(
             if typing_cb:
                 typing_cb()
             res = handler(arg, cfg)
+            if contains_off_topic_content(raw_text):
+                res += "\n\n🤖 <i>Lưu ý: Phần hỏi ngoài phạm vi hệ thống POS &amp; Database tôi xin phép không hỗ trợ.</i>"
             if memory is not None:
                 memory.append_turn(mem_key, raw_text, res)
             return res
