@@ -96,6 +96,13 @@ class TestPeriodAndSqlSecurity(unittest.TestCase):
         self.assertIn("&gt; 1.000.000đ", safe)
         self.assertIn("<code>HD-1</code>", safe)
 
+    def test_run_readonly_sql_json_parses_multiline_pg_json_agg(self) -> None:
+        multiline_stdout = '[{"id":1}, \n {"id":2}]\n'
+        fake_proc = mock.Mock(returncode=0, stdout=multiline_stdout, stderr="")
+        with mock.patch.object(biz_bot_common.subprocess, "run", return_value=fake_proc):
+            rows = biz_bot_common.run_readonly_sql_json("SELECT id FROM orders", cfg={"project_dir": "/tmp", "ro_db_user": "fnb_bot_ro"})
+        self.assertEqual(rows, [{"id": 1}, {"id": 2}])
+
 
 class TestVietnameseNlpAndGroupFilter(unittest.TestCase):
     def test_group_chatter_ignored_and_questions_routed(self) -> None:
