@@ -381,4 +381,47 @@ describe('System Error Display & Recovery Suite', () => {
     const toasts = useToastStore.getState().toasts;
     expect(toasts.some((t) => t.description?.includes('vẫn được giữ nguyên'))).toBe(true);
   });
+
+  it('normalizes DATA_VALIDATION_ERROR ApiClientError cleanly for staff & guest, renders retry button, and avoids RUNTIME_CRASH toast', () => {
+    const err = new ApiClientError({
+      statusCode: 200,
+      error: 'Unexpected HTML Response',
+      code: 'DATA_VALIDATION_ERROR',
+      message: 'Máy chủ hoặc cổng kết nối trả về trang HTML thay vì dữ liệu JSON.',
+      requestId: '66666666-6666-4666-8666-666666666666',
+    });
+
+    const staffNorm = normalizeClientError(err, { audience: 'staff', path: '/settings' });
+    expect(staffNorm.key).toBe('DATA_VALIDATION_ERROR');
+    expect(staffNorm.title).toBe('Dữ liệu phản hồi chưa đúng cấu trúc');
+    expect(staffNorm.reason).toContain('HTML');
+
+    const guestNorm = normalizeClientError(err, { audience: 'guest', path: '/qr/token-secret' });
+    expect(guestNorm.key).toBe('DATA_VALIDATION_ERROR');
+    expect(guestNorm.reason).toBe('Thực đơn nhận được chưa đúng cấu trúc ứng dụng mong đợi.');
+    expect(guestNorm.reason).not.toMatch(/HTML|JSON/);
+
+    renderWithQueryAndRouter(<SystemErrorView error={err} />, ['/settings']);
+    expect(screen.getByTestId('system-error-view')).toHaveAttribute('data-error-key', 'DATA_VALIDATION_ERROR');
+    expect(screen.getByTestId('error-retry-btn')).toHaveTextContent('Thử tải lại');
+
+    queryClient.setQueryData(['test-bg-malformed-json'], { ok: true });
+    const existingQuery = queryClient.getQueryCache().find({ queryKey: ['test-bg-malformed-json'] });
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000);
+    try {
+      const onError = queryClient.getQueryCache().config.onError;
+      onError?.(err, existingQuery as never);
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    const toasts = useToastStore.getState().toasts;
+    expect(
+      toasts.some(
+        (t) =>
+          t.title === 'Dữ liệu phản hồi chưa đúng cấu trúc' &&
+          t.description?.includes('vẫn được giữ nguyên'),
+      ),
+    ).toBe(true);
+  });
 });
