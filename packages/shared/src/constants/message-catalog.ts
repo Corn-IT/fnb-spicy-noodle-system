@@ -2771,6 +2771,13 @@ export const MESSAGE_CATALOG: readonly MessageCatalogItem[] = [
     label: 'Chặn tách thanh toán khi đơn đang gắn giảm giá (POS_DISCOUNT_BLOCKS_SPLIT)',
     defaultTitle: 'Đơn đang áp dụng giảm giá, vui lòng gỡ mã giảm giá trước khi tách thanh toán',
   }),
+  defineMessage({
+    key: `error.${ErrorCodes.AI_ASSISTANT_DISABLED}`,
+    module: 'SYSTEM_ERROR',
+    kind: 'error',
+    label: 'Trợ lý AI Lona đang tạm tắt (AI_ASSISTANT_DISABLED)',
+    defaultTitle: 'Tính năng Trợ lý AI Lona hiện đang tạm tắt bởi Quản trị viên',
+  }),
   ...HTTP_ERROR_CATALOG.map((httpItem) =>
     defineMessage({
       key: httpItem.messageKey,
