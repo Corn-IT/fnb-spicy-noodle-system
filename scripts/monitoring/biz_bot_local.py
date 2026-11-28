@@ -13,7 +13,7 @@ import re
 import time
 from typing import Any
 
-from biz_bot_ai import probe_gemini_status
+from biz_bot_ai import get_model_runtime_states, probe_gemini_status
 from biz_bot_common import (
     call_internal_biz,
     fmt_signed_vnd,
@@ -183,6 +183,8 @@ def _resolve_meta_faq(
             "bao lau nua reset", "reset quota", "api key", "key con dung", "key het han",
             "trang thai gemini", "thong tin gemini", "check gemini", "check token",
             "model dang dung", "su dung token", "tieu thu token",
+            "bao nhieu luot", "may luot", "may lan", "con hoi duoc",
+            "model du phong", "free tier", "gioi han gemini", "rpm",
         )
     ) or ("token" in norm_q and any(k in norm_q for k in ("con lai", "da dung", "het ", "reset", "bao lau")))
     if asks_quota_status:
@@ -196,6 +198,7 @@ def _resolve_meta_faq(
                 project_name=cfg_eff["project_name"],
                 cfg=cfg_eff,
                 live_probe=live,
+                runtime_states=get_model_runtime_states(),
             ),
             "slots": {"intent": "meta_token_status"},
         }

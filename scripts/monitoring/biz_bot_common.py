@@ -67,14 +67,49 @@ def load_env_file(env_path: str) -> dict[str, str]:
     return merged
 
 
+DEFAULT_GEMINI_PRIMARY = "gemini-3.5-flash-lite"
+DEFAULT_GEMINI_FALLBACK = "gemini-3.1-flash-lite"
+DEFAULT_GEMINI_MODEL_POOL = (
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+    "gemini-4-hydrogen",
+)
+
+GEMINI_ALIAS_CANONICAL: dict[str, str] = {
+    "gemini-flash-lite-latest": "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
+    "gemini-3.5-flash": "gemini-3.6-flash",
+}
+
+# Verified Free Tier per-model quotas on Google AI Studio (independent daily RPD & minute RPM/TPM pools)
+GEMINI_FREE_TIER_SPECS: dict[str, dict[str, Any]] = {
+    "gemini-3.5-flash-lite": {"short": "3.5 Lite", "label": "Chính · 3.5 Flash-Lite", "rpd": 500, "rpm": 15, "tpm": 250000, "tier": "primary"},
+    "gemini-3.1-flash-lite": {"short": "3.1 Lite", "label": "Dự phòng 1 · 3.1 Flash-Lite", "rpd": 500, "rpm": 15, "tpm": 250000, "tier": "peer"},
+    "gemini-3-flash-preview": {"short": "3 Flash", "label": "Dự phòng 2 · 3 Flash", "rpd": 20, "rpm": 5, "tpm": 250000, "tier": "backup"},
+    "gemini-3.6-flash": {"short": "3.6 Flash", "label": "Dự phòng 2 · 3.6 Flash", "rpd": 20, "rpm": 5, "tpm": 250000, "tier": "backup"},
+    "gemini-3.8-flash": {"short": "3.8 Flash", "label": "Dự phòng 2 · 3.8 Flash", "rpd": 20, "rpm": 5, "tpm": 250000, "tier": "backup"},
+    "gemini-4-hydrogen": {"short": "G4 Hydro", "label": "Dự phòng 2 · Gemini 4 Hydro", "rpd": 20, "rpm": 5, "tpm": 250000, "tier": "backup"},
+}
+
+
+def canonical_gemini_model(model_name: str) -> str:
+    clean = (model_name or "").strip().removeprefix("models/")
+    return GEMINI_ALIAS_CANONICAL.get(clean, clean)
+
+
 def get_biz_config(env_file: str | None = None) -> dict[str, str]:
     env = load_env_file(env_file or os.environ.get("BIZ_BOT_ENV_FILE", "/etc/fnb-biz-bot.env"))
+    default_pool_csv = ",".join(DEFAULT_GEMINI_MODEL_POOL)
     return {
         "bot_token": env.get("FNB_BIZ_BOT_TOKEN", "").strip(),
         "chat_id": env.get("FNB_BIZ_CHAT_ID", "").strip(),
         "gemini_api_key": env.get("FNB_GEMINI_API_KEY", "").strip(),
-        "gemini_model": env.get("FNB_GEMINI_MODEL", "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite",
-        "gemini_fallback_model": env.get("FNB_GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest").strip() or "gemini-flash-lite-latest",
+        "gemini_model": env.get("FNB_GEMINI_MODEL", DEFAULT_GEMINI_PRIMARY).strip() or DEFAULT_GEMINI_PRIMARY,
+        "gemini_fallback_model": env.get("FNB_GEMINI_FALLBACK_MODEL", DEFAULT_GEMINI_FALLBACK).strip() or DEFAULT_GEMINI_FALLBACK,
+        "gemini_model_pool": env.get("FNB_GEMINI_MODEL_POOL", default_pool_csv).strip() or default_pool_csv,
         "project_name": env.get("FNB_ALERT_PROJECT_NAME", "Ăn Vặt Tran").strip() or "Ăn Vặt Tran",
         "project_dir": env.get("FNB_PROJECT_DIR", "/opt/fnb-pos").strip() or "/opt/fnb-pos",
         "domain": env.get("FNB_DOMAIN", "pos.anvattran.com").strip() or "pos.anvattran.com",
@@ -91,6 +126,82 @@ def get_biz_config(env_file: str | None = None) -> dict[str, str]:
         "gemini_tpm_limit": env.get("FNB_GEMINI_TPM_LIMIT", "250000").strip() or "250000",
         "gemini_daily_token_budget": env.get("FNB_GEMINI_DAILY_TOKEN_BUDGET", "").strip(),
     }
+
+
+def resolve_gemini_model_pool(cfg: dict[str, str] | None = None) -> list[str]:
+    """
+    Build the ordered, canonical-deduplicated Gemini model failover chain.
+    Eliminates duplicate buckets (e.g. gemini-flash-lite-latest == gemini-3.5-flash-lite).
+    """
+    c = cfg or {}
+    primary = (c.get("gemini_model") or DEFAULT_GEMINI_PRIMARY).strip()
+    fallback = (c.get("gemini_fallback_model") or "").strip()
+    raw_pool = (c.get("gemini_model_pool") or "").strip()
+    rpd_raw = str(c.get("gemini_rpd_limit") or "").strip()
+    tier_raw = (c.get("gemini_tier_name") or "Free Tier").strip().lower()
+
+    candidates: list[str] = [primary]
+    if fallback:
+        candidates.append(fallback)
+    if raw_pool:
+        candidates.extend(x.strip() for x in raw_pool.split(",") if x.strip())
+    elif not (rpd_raw.isdigit() and int(rpd_raw) != 500) and "free" in tier_raw:
+        candidates.extend(DEFAULT_GEMINI_MODEL_POOL)
+
+    result: list[str] = []
+    seen_canonical: set[str] = set()
+    for raw in candidates:
+        if not raw:
+            continue
+        canon = canonical_gemini_model(raw)
+        if canon in seen_canonical:
+            continue
+        seen_canonical.add(canon)
+        # Prefer the explicit non-alias canonical name when alias collides with primary
+        chosen = canon if (raw in GEMINI_ALIAS_CANONICAL and len(result) > 0) else raw
+        if canonical_gemini_model(chosen) == chosen and chosen in GEMINI_FREE_TIER_SPECS:
+            result.append(chosen)
+        else:
+            result.append(canon if raw in GEMINI_ALIAS_CANONICAL else raw)
+    return result or [DEFAULT_GEMINI_PRIMARY]
+
+
+def get_gemini_pool_specs(cfg: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Return quota specs ({model, short, label, rpd, rpm, tpm, tier}) for every model in the active pool."""
+    c = cfg or {}
+    models = resolve_gemini_model_pool(c)
+    rpd_raw = str(c.get("gemini_rpd_limit") or "").strip()
+    rpm_raw = str(c.get("gemini_rpm_limit") or "").strip()
+    tpm_raw = str(c.get("gemini_tpm_limit") or "").strip()
+    custom_rpd = int(rpd_raw) if rpd_raw.isdigit() and int(rpd_raw) > 0 else None
+    custom_rpm = int(rpm_raw) if rpm_raw.isdigit() and int(rpm_raw) > 0 else None
+    custom_tpm = int(tpm_raw) if tpm_raw.isdigit() and int(tpm_raw) > 0 else None
+
+    specs: list[dict[str, Any]] = []
+    for idx, model in enumerate(models):
+        canon = canonical_gemini_model(model)
+        base = GEMINI_FREE_TIER_SPECS.get(canon) or {
+            "short": model.replace("gemini-", ""),
+            "label": "Chính" if idx == 0 else f"Dự phòng {idx}",
+            "rpd": custom_rpd or 500,
+            "rpm": custom_rpm or 15,
+            "tpm": custom_tpm or 250000,
+            "tier": "primary" if idx == 0 else "backup",
+        }
+        rpd = custom_rpd if (idx == 0 and custom_rpd is not None) else int(base["rpd"])
+        rpm = custom_rpm if (idx == 0 and custom_rpm is not None) else int(base["rpm"])
+        tpm = custom_tpm if (idx == 0 and custom_tpm is not None) else int(base["tpm"])
+        specs.append({
+            "model": model,
+            "canonical": canon,
+            "short": str(base["short"]),
+            "label": str(base["label"]),
+            "rpd": rpd,
+            "rpm": rpm,
+            "tpm": tpm,
+            "tier": "primary" if idx == 0 else str(base["tier"]),
+        })
+    return specs
 
 
 def get_staff_telegram_map(cfg: dict[str, str] | None = None) -> dict[str, str]:

@@ -44,41 +44,27 @@ SYNONYM_EXPANSIONS = {
 }
 
 SYSTEM_MAP_SUMMARY = """
-TỔNG QUAN PHẦN MỀM POS ĂN VẶT TRAN (16 Phân hệ · 20 Bảng DB · 10 Hard Invariants):
-1. 16 Phân hệ giao diện:
-   - Bán hàng POS Desktop (/pos) & POS Cảm ứng iPOS (/pos/touch, /pos/touch/hub, /pos/touch/stock-status, /pos/touch/printer)
-   - Khách quét QR (/q/:token, /qr/:token) đặt tại bàn & Mang về, khóa Wi-Fi IP & GPS
-   - Thực đơn 3 tầng (/menu: Khu vực bếp -> Danh mục con -> Món + Size M/L + Cấp cay 0-7 + Auto-Check + Logic đổi món chính + Topping)
-   - Bảng điều khiển (/dashboard), Hóa đơn (/invoices: in lại, sửa PTTT 2 bước, hủy VOID), Nhập kho (/inventory: CASH_DRAWER vs EXTERNAL), Kết ca (/cashflow: Blind Mode 9 mệnh giá + bù chênh lệch)
-   - Mã QR thanh toán (/payment-qr: xoay vòng hạn mức Ngày/Tháng/Năm), Khuyến mãi (/discounts), Nhân sự (/employees), Bảng công tuần (/schedules), Bảng lương (/payroll), Master Data (/master-data: 7 danh mục chuẩn hóa), Phân quyền (/rbac: 14 nhóm quyền, Single-Session), Cài đặt động (/settings: 5 mẫu phiếu 80mm, RawBT/LAN :9100, theme/scale 80-150%), Hồ sơ (/profile).
-2. 10 Hard Invariants bất biến:
-   (1) Cô lập module FE; (2) TAKEAWAY có table_id=NULL & takeaway_number NOT NULL; (3) Delta Split bếp CHỈ in món NEW và phân rã COMBO về trạm vật lý BEP_NAU/BEP_CHIEN/PHA_CHE/BEP_*; (4) In tạm tính giữ SERVING, Thanh toán 2 bước mới PAID; (5) Bảng & đơn khóa dòng SELECT FOR UPDATE; (6) Két tiền = opening_budget + CASH + SPLIT.cash - nhập hàng CASH_DRAWER (KHÔNG cộng QR); (7) MDM chuẩn hóa không dấu chống trùng; (8) 401 lỗi xác thực/Single-Session, 403 thiếu quyền; (9) Đăng xuất giữ UI preferences; (10) Tiền tệ NUMERIC(12,2).
-3. Danh sách ĐÚNG 19 lệnh gạch chéo chính thức của @POS_Lona_bot (TUYỆT ĐỐI KHÔNG tự bịa tên lệnh khác như /overview hay /kettien):
-   /tongquan, /ban, /don, /doanhthu, /ket, /qr, /topmon, /bep, /kho, /khuyenmai, /huy, /audit, /lich, /luong, /loinhuan, /token, /gemini, /hoi, /quen, /help.
+PHẦN MỀM POS ĂN VẶT TRAN (16 phân hệ UI · chi tiết hướng dẫn/máy in/RBAC/10 Invariants gọi tool search_system_docs):
+- 16 phân hệ: POS Desktop (/pos), POS Touch (/pos/touch/*), QR Khách (/q/:token, khóa Wi-Fi IP/GPS), Thực đơn (/menu: Bếp->Danh mục->Món, Size M/L, Cấp cay 0-7, Auto-Check, Đổi món), Dashboard (/dashboard), Hóa đơn (/invoices), Nhập kho (/inventory), Kết ca (/cashflow: Blind Mode), VietQR xoay vòng (/payment-qr), Khuyến mãi (/discounts), Nhân sự (/employees), Lịch tuần (/schedules), Bảng lương (/payroll), Master Data (/master-data), RBAC (/rbac: 14 nhóm quyền, Single-Session 401), Cài đặt 80mm/RawBT/LAN :9100 (/settings), Hồ sơ (/profile).
+- ĐÚNG 19 lệnh gạch chéo @POS_Lona_bot (KHÔNG tự bịa lệnh ngoài danh sách): /tongquan, /ban, /don, /doanhthu, /ket, /qr, /topmon, /bep, /kho, /khuyenmai, /huy, /audit, /lich, /luong, /loinhuan, /token, /gemini, /hoi, /quen, /help.
 
-CƠ SỞ DỮ LIỆU POSTGRESQL (fnb_pos · múi giờ VN UTC+7 · ĐỦ 20 BẢNG CHỦ QUÁN):
-- orders(id, order_code, order_type['DINE_IN'|'TAKEAWAY'], order_source['POS_COUNTER'|'QR_CODE'], table_id, takeaway_number, takeaway_label_format, status['PENDING'|'SERVING'|'PAID'|'VOIDED'], payment_method['CASH'|'TRANSFER'|'SPLIT'], payment_account_id, cash_amount, transfer_amount, subtotal_amount, discount_amount, discount_id, discount_snapshot, total_amount, merged_into_order_id, table_transfer_logs, cashier_id, note, void_reason, pending_payment_edit, created_at, paid_at)
+POSTGRESQL fnb_pos (UTC+7 · 20 BẢNG/VIEW CHỦ QUÁN):
+- orders(id, order_code, order_type['DINE_IN'|'TAKEAWAY'], order_source['POS_COUNTER'|'QR_CODE'], table_id, takeaway_number, status['PENDING'|'SERVING'|'PAID'|'VOIDED'], payment_method['CASH'|'TRANSFER'|'SPLIT'], payment_account_id, cash_amount, transfer_amount, subtotal_amount, discount_amount, discount_id, total_amount, merged_into_order_id, table_transfer_logs, cashier_id, note, void_reason, pending_payment_edit, created_at, paid_at)
 - order_items(id, order_id, product_id, quantity, unit_price, modifiers_snapshot, item_note, batch_no, item_source, kitchen_status['NEW'|'PRINTED'|'CANCELLED'], is_takeaway, created_at)
 - dining_tables(id, name, qr_token, status['AVAILABLE'|'PENDING'|'OCCUPIED'], active_order_id)
-- pos_drafts(id, order_type, table_id, items, note, revision, created_by, updated_by, submitted_order_id, submit_idempotency_key, submitted_at, created_at, updated_at)
-- takeaway_sequences(business_date, last_number, updated_at)
-- products(id, name, subtitle, category_id, price, station['BEP_NAU'|'BEP_CHIEN'|'PHA_CHE'|'COMBO'|'BEP_*'], is_available, image_url, sort_order, created_at)
-- combo_items(parent_product_id, child_product_id, quantity)
-- modifier_groups(id, product_id, name, is_required, max_select, is_auto_select, allow_substitution)
-- modifiers(id, group_id, name, extra_price, is_default_checked, is_available, default_substitute_name, allowed_substitute_names)
-- discounts(id, code, name, value_type['PERCENT'|'FIXED'], value, max_discount_amount, scope['ORDER'|'CATEGORY'|'PRODUCT'], min_order_amount, starts_at, ends_at, active_weekdays, time_window_start, time_window_end, usage_limit, used_count, is_active, is_archived, created_by, created_at, updated_at)
-- discount_targets(id, discount_id, category_id, product_id)
-- payment_accounts(id, label, bank_code, account_no, account_name, priority, is_active, daily_limit, monthly_limit, yearly_limit, created_at, updated_at)
-- inventory_imports(id, ingredient_mdm_id, supplier_mdm_id, supplier_name_snapshot, item_name_snapshot, unit_name, unit_price, quantity, total_cost, payment_source['CASH_DRAWER'|'EXTERNAL'], import_date, note, created_by, is_deleted, deleted_at, created_at)
-- cash_drawer_settlements(id, settlement_date, shift_name, opening_budget, total_cash_sales, total_transfer_sales, total_cash_imports, expected_cash_in_drawer, actual_counted_cash, discrepancy_amount, status['MATCHED'|'SURPLUS'|'SHORTAGE'], denominations_detail, note, closed_by, created_at)
-- work_schedules(id, week_start_date, day_of_week[0=T2..6=CN], time_slot, employee_ids, created_by, updated_at)
-- employees(id, full_name, short_name, dob, phone, address, citizen_id, citizen_id_issued_place, position_id, specialty_id, start_date, bank_name, bank_account_no, bank_account_name, avatar_url, attachment_urls, note, is_deleted, deleted_at, created_at)
-- users(id, employee_id, username, is_super_admin, role_label, permissions, ui_preferences, is_active, active_session_id, active_session_ip, active_session_device, active_session_agent, active_session_at, last_revoked_notice, created_at)
-- v_bot_master_data(id, category, name, normalized_name, metadata, is_active, created_at) -- gồm 7 danh mục MDM + SYSTEM_CONFIG (store_settings, payroll_config, opening_budget, qr_security...; CHỈ trừ web_push_vapid_keys; LUÔN dùng v_bot_master_data thay cho master_data)
-- push_subscriptions(id, user_id, session_id, endpoint, user_agent, device_label, created_at, updated_at, last_notified_at)
-- audit_logs(id, module, action, actor_id, actor_full_name, actor_username, summary, ip_address, device_label, metadata, created_at)
-
-LƯU Ý BẢO MẬT KỸ THUẬT: Không tồn tại và KHÔNG bao giờ truy vấn users.password_hash, master_data gốc (row web_push_vapid_keys), hoặc push_subscriptions.p256dh/auth.
+- pos_drafts(id, order_type, table_id, items, note, created_by, submitted_order_id, submitted_at, updated_at) | takeaway_sequences(business_date, last_number)
+- products(id, name, category_id, price, station['BEP_NAU'|'BEP_CHIEN'|'PHA_CHE'|'COMBO'|'BEP_*'], is_available, sort_order) | combo_items(parent_product_id, child_product_id, quantity)
+- modifier_groups(id, product_id, name, is_required, max_select, is_auto_select, allow_substitution) | modifiers(id, group_id, name, extra_price, is_default_checked, is_available, default_substitute_name, allowed_substitute_names)
+- discounts(id, code, name, value_type['PERCENT'|'FIXED'], value, max_discount_amount, scope['ORDER'|'CATEGORY'|'PRODUCT'], min_order_amount, starts_at, ends_at, active_weekdays, time_window_start, time_window_end, usage_limit, used_count, is_active, is_archived) | discount_targets(id, discount_id, category_id, product_id)
+- payment_accounts(id, label, bank_code, account_no, account_name, priority, is_active, daily_limit, monthly_limit, yearly_limit)
+- inventory_imports(id, ingredient_mdm_id, supplier_mdm_id, supplier_name_snapshot, item_name_snapshot, unit_name, unit_price, quantity, total_cost, payment_source['CASH_DRAWER'|'EXTERNAL'], import_date, note, created_by, is_deleted)
+- cash_drawer_settlements(id, settlement_date, shift_name, opening_budget, total_cash_sales, total_transfer_sales, total_cash_imports, expected_cash_in_drawer, actual_counted_cash, discrepancy_amount, status['MATCHED'|'SURPLUS'|'SHORTAGE'], denominations_detail, note, closed_by)
+- work_schedules(id, week_start_date, day_of_week[0=T2..6=CN], time_slot, employee_ids)
+- employees(id, full_name, short_name, phone, citizen_id, position_id, specialty_id, start_date, bank_name, bank_account_no, bank_account_name, note, is_deleted)
+- users(id, employee_id, username, is_super_admin, role_label, permissions, is_active, active_session_ip, active_session_device, active_session_agent, active_session_at)
+- v_bot_master_data(id, category, name, normalized_name, metadata, is_active) -- dùng thay master_data gốc (chỉ trừ web_push_vapid_keys)
+- push_subscriptions(id, user_id, session_id, endpoint, user_agent, device_label, last_notified_at) | audit_logs(id, module, action, actor_id, actor_full_name, actor_username, summary, ip_address, device_label, metadata, created_at)
+BÍ MẬT BỊ KHÓA TUYỆT ĐỐI: users.password_hash, master_data gốc, push_subscriptions.p256dh/auth.
 """.strip()
 
 _DOC_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
