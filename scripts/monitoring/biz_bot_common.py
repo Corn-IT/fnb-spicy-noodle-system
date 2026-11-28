@@ -366,7 +366,7 @@ def run_readonly_sql_json(sql: str, max_rows: int = 50, cfg: dict[str, str] | No
         f"FROM (SELECT * FROM ({cleaned_or_err}) AS _bot_q LIMIT {bounded_limit}) AS t;"
     )
 
-    rc, out = run_cmd(
+    proc = subprocess.run(
         [
             "docker",
             "compose",
@@ -386,15 +386,19 @@ def run_readonly_sql_json(sql: str, max_rows: int = 50, cfg: dict[str, str] | No
             wrapped_sql,
         ],
         cwd=cfg["project_dir"],
+        capture_output=True,
+        text=True,
         timeout=8,
+        shell=False,
     )
-    if rc != 0:
-        raise RuntimeError(f"Lỗi truy vấn PostgreSQL: {out[:240]}")
+    if proc.returncode != 0:
+        err_msg = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"Lỗi truy vấn PostgreSQL: {err_msg[:240]}")
 
-    lines = [l.strip() for l in out.splitlines() if l.strip()]
-    if not lines:
+    raw_json = (proc.stdout or "").strip()
+    if not raw_json:
         return []
-    return json.loads(lines[-1])
+    return json.loads(raw_json)
 
 
 def tg_api(bot_token: str, method: str, payload: dict[str, Any] | None = None, timeout: int = 35) -> dict[str, Any]:
