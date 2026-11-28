@@ -29,13 +29,14 @@ STRONG_DOMAIN_PATTERN = re.compile(
     r"nhat ky|audit|thong ke|bao cao|tong quan|tinh hinh quan|"
     r"ban dang ngoi|ban co khach|ban trong|bao nhieu ban|may ban|ban nao|mang ve|"
     r"don qr|qr cho|tra sua|mi cay|ga ran|tokbokki|lau|pizza|"
+    r"db|database|du lieu|he thong|pos|cua hang|mon an|do uong|"
     r"(?:hd|ord)-[a-z0-9-]+"
     r")\b"
 )
 
 QUESTION_SIGNAL_PATTERN = re.compile(
-    r"(?:\?|\b(?:bao nhieu|may|gi|nao|the nao|nhu nao|sao roi|ra sao|"
-    r"ai truc|ai huy|ai chot|ai ban|luc nao|khi nao|cho xem|kiem tra|tra cuu|"
+    r"(?:\?|\b(?:bao nhieu|may|gi|nao|the nao|nhu nao|sao roi|ra sao|duoc khong|khong nh[ie]|"
+    r"truy cap|ket noi|ai truc|ai huy|ai chot|ai ban|luc nao|khi nao|cho xem|kiem tra|tra cuu|"
     r"xem|thong ke|bao cao|tong hop|so sanh|tang hay giam|duoc bao|het bao|"
     r"con khong|chua|liet ke|top)\b)"
 )

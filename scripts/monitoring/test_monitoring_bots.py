@@ -130,8 +130,11 @@ class TestVietnameseNlpAndGroupFilter(unittest.TestCase):
             "Bàn nào đang có khách?",
             "So sánh doanh thu cuối tuần này với tuần trước",
             "Kiểm tra đơn HD-20261128-0005",
+            "Bạn có truy cập vào DB được không",
         ):
             self.assertTrue(biz_bot_nlp.looks_like_shop_question(q, is_direct=False), f"Should answer: {q}")
+
+        self.assertIsNone(biz_bot_nlp.classify_fast_path("Bạn có truy cập vào DB được không"))
 
         # Direct mention with any meaningful question must always pass through
         self.assertTrue(biz_bot_nlp.looks_like_shop_question("@POS_Lona_bot thời tiết Hà Nội sao?", is_direct=True))
@@ -188,6 +191,31 @@ class TestBotSeparationAndHandlers(unittest.TestCase):
 
         # Casual chatter ignored even inside dispatch_message
         self.assertIsNone(bot2_mod.dispatch_message("cảm ơn bạn nhé", cfg, limiter, is_direct=False))
+
+    def test_anonymous_group_admin_allowed_while_bots_blocked(self) -> None:
+        self.assertTrue(bot2_mod.is_human_or_anonymous_admin_message({"from": {"id": 123, "is_bot": False}}, 8695527449))
+        self.assertTrue(
+            bot2_mod.is_human_or_anonymous_admin_message(
+                {
+                    "from": {"id": 1087968824, "is_bot": True, "username": "GroupAnonymousBot"},
+                    "chat": {"id": -1005994635066},
+                    "sender_chat": {"id": -1005994635066},
+                },
+                8695527449,
+            )
+        )
+        self.assertFalse(
+            bot2_mod.is_human_or_anonymous_admin_message(
+                {"from": {"id": 8695527449, "is_bot": True}, "chat": {"id": -1005994635066}},
+                8695527449,
+            )
+        )
+        self.assertFalse(
+            bot2_mod.is_human_or_anonymous_admin_message(
+                {"from": {"id": 999999, "is_bot": True}, "chat": {"id": -1005994635066}},
+                8695527449,
+            )
+        )
 
     def test_bot2_main_registers_commands_before_exiting_when_chat_id_missing(self) -> None:
         cfg_no_chat = {
