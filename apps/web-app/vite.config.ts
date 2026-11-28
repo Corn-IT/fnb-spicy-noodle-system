@@ -47,6 +47,18 @@ export default defineConfig({
               test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/,
             },
             {
+              name: 'vendor-radix',
+              test: /[\\/]node_modules[\\/]@radix-ui[\\/]/,
+            },
+            {
+              name: 'vendor-tanstack',
+              test: /[\\/]node_modules[\\/]@tanstack[\\/]/,
+            },
+            {
+              name: 'vendor-icons',
+              test: /[\\/]node_modules[\\/]lucide-react[\\/]/,
+            },
+            {
               name: 'vendor-zod',
               test: /[\\/]node_modules[\\/]zod[\\/]/,
             },
