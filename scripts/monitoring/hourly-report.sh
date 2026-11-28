@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hourly infrastructure + VPS telemetry + POS summary report sent between 07:00 and 23:00 Asia/Ho_Chi_Minh.
+# Hourly infrastructure + VPS telemetry report sent between 07:00 and 23:00 Asia/Ho_Chi_Minh.
 
 set -euo pipefail
 
@@ -212,15 +212,7 @@ docker_stats_text="$(while IFS='|' read -r cname ccpu cmem; do
 done <<<"${docker_stats_raw}")"
 [[ -z "${docker_stats_text}" ]] && docker_stats_text="• Không lấy được dữ liệu"
 
-# 5. Lightweight daily POS activity snapshot (VN timezone day)
-pos_counts="$(docker compose exec -T postgres psql -U postgres -d fnb_pos -Atc "
-  SELECT
-    (SELECT count(*) FROM orders WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh') || ' ' ||
-    (SELECT count(*) FROM dining_tables WHERE status = 'OCCUPIED') || ' ' ||
-    (SELECT count(*) FROM dining_tables);
-" 2>/dev/null || echo '0 0 0')"
-read -r orders_today occupied_tables total_tables <<<"${pos_counts}"
-
+# 5. Render pure infrastructure & API traffic report
 proj_html="$(escape_tg_html "${FNB_ALERT_PROJECT_NAME}")"
 domain_html="$(escape_tg_html "${FNB_DOMAIN}")"
 
@@ -246,7 +238,7 @@ ${health_summary}
 • Build Cache: ${docker_cache_line}
 • Uptime VPS: ${vps_uptime_str}
 
-<b>3. Hệ thống POS (Docker)</b>
+<b>3. Hệ thống Container (Docker)</b>
 • Tổng POS chiếm: <b>${pos_ram_total_str}</b> · CPU <b>${pos_cpu_total_str}</b>
 ${docker_stats_text}
 
@@ -255,10 +247,9 @@ ${docker_stats_text}
 • V8 Heap: ${api_heap_mb} MB
 • Uptime API: ${api_uptime_str}
 
-<b>5. Hoạt động quán</b>
-• Đơn hôm nay: <b>${orders_today} đơn</b>
-• Bàn có khách: <b>${occupied_tables}/${total_tables} bàn</b>
-• 1h qua: <b>${win_reqs} req</b> · Chậm: <b>${win_slow}</b> · 5xx: <b>${win_5xx}</b>"
+<b>5. Lưu lượng API (1h qua)</b>
+• Tổng request: <b>${win_reqs} req</b>
+• Request chậm (&gt;=3s): <b>${win_slow}</b> · Lỗi 5xx: <b>${win_5xx}</b>"
 
 if (( STDOUT_ONLY == 1 )); then
   printf '%s\n' "${msg}"

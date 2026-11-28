@@ -347,7 +347,7 @@ export class TelegramAlertService {
       return;
     }
 
-    if (cleanPath !== '/api/v1/health') {
+    if (cleanPath !== '/api/v1/health' && !cleanPath.startsWith('/internal/')) {
       this.windowRequests += 1;
     }
 

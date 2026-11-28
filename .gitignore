@@ -54,3 +54,7 @@ apps/web-app/e2e/baseline-audit-output.json
 
 # Graphify local knowledge graph outputs & caches (reproducible locally via .graphifyignore)
 graphify-out/
+
+# Python caches
+__pycache__/
+*.py[cod]

@@ -4,6 +4,7 @@ import { firstValueFrom, of, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GlobalExceptionFilter } from '../../filters/global-exception.filter';
 import { LoggingInterceptor } from '../../interceptors/logging.interceptor';
+import { InternalBizController, sanitizeDashboardOverviewForBot } from '../internal-biz.controller';
 import { InternalMetricsController } from '../internal-metrics.controller';
 import {
   computeCpuPercentFromSamples,
@@ -400,5 +401,167 @@ describe('MonitoringModule & TelegramAlertService', () => {
     await expect(firstValueFrom(interceptor.intercept(minimalCtx, { handle: () => of('ok') }))).resolves.toBe('ok');
     expect(loggerErrorSpy).toHaveBeenCalled();
     expect(loggerLogSpy).toHaveBeenCalled();
+  });
+
+  it('excludes /internal/biz/* from windowRequests while enforcing loopback and redacting secrets in InternalBizController', async () => {
+    const alertService = new TelegramAlertService();
+    alertService.recordRequestMetric({
+      method: 'GET',
+      url: '/internal/biz/overview?preset=today',
+      handler: 'InternalBizController.getOverview',
+      durationMs: 25,
+      ramDiffMb: 0.1,
+      cpuDiffMs: 2,
+      clientIp: '127.0.0.1',
+    });
+    expect(alertService.getMetricsSnapshot().windowRequests).toBe(0);
+
+    const mockOverview = {
+      meta: {
+        preset: 'today',
+        fromDate: '2026-11-28',
+        toDate: '2026-11-28',
+        previousFromDate: '2026-11-27',
+        previousToDate: '2026-11-27',
+        generatedAt: '2026-11-28T06:00:00.000Z',
+        isTodayIncluded: true,
+        scope: {
+          canPos: true,
+          canInvoices: true,
+          canInventory: true,
+          canCashflow: true,
+          canPaymentQr: true,
+          canDiscounts: true,
+          canSchedules: true,
+          canPayroll: true,
+          canViewProfit: true,
+        },
+      },
+      alerts: {
+        pendingQrTables: [],
+        pendingPaymentEdits: [],
+        nearLimitQrAccounts: [
+          {
+            id: 1,
+            label: 'MBBank Chinh',
+            bankCode: 'MB',
+            accountNo: '0987654321012',
+            usedDay: 8500000,
+            dailyLimit: 10000000,
+            dayPercent: 85,
+            status: 'ACTIVE',
+          },
+        ],
+      },
+      kpis: {
+        revenue: null,
+        cashDrawer: null,
+        transfer: null,
+        inventory: null,
+        openOrders: null,
+        profit: null,
+      },
+      revenueSeries: null,
+      paymentBreakdown: [],
+      paymentQrAccounts: [
+        {
+          id: 1,
+          label: 'MBBank Chinh',
+          bankCode: 'MB',
+          accountNo: '0987654321012',
+          accountName: 'TRAN VAN A',
+          priority: 1,
+          isActive: true,
+          dailyLimit: 10000000,
+          monthlyLimit: null,
+          yearlyLimit: null,
+          usedDay: 8500000,
+          usedMonth: 10000000,
+          usedYear: 10000000,
+          status: 'ACTIVE',
+          createdAt: '2026-11-01T00:00:00.000Z',
+          updatedAt: '2026-11-28T00:00:00.000Z',
+        },
+      ],
+      liveTables: {
+        tables: [
+          {
+            id: 1,
+            name: 'Bàn 01',
+            qrToken: 'secret-table-qr-token-1234',
+            status: 'AVAILABLE',
+            activeOrderId: null,
+            activeOrder: null,
+          },
+        ],
+        takeaways: [],
+      },
+      kitchenStations: null,
+      topProducts: null,
+      discountsAndRisk: null,
+      recentInventoryImports: [],
+      staffing: null,
+      recentInvoices: [],
+      recentAuditLogs: [
+        {
+          id: 1,
+          module: 'POS',
+          action: 'Huỷ đơn',
+          actorId: 1,
+          actorFullName: 'Admin',
+          actorUsername: 'admin',
+          summary: 'Hủy đơn',
+          ipAddress: '14.224.1.1',
+          deviceLabel: 'Chrome',
+          metadata: {},
+          createdAt: '2026-11-28T05:00:00.000Z',
+        },
+      ],
+    } as const;
+
+    const getOverview = vi.fn().mockResolvedValue(mockOverview);
+    const getDailyItemSales = vi.fn().mockResolvedValue({ summary: { totalOrders: 3 } });
+    const getPayrollSummary = vi.fn().mockResolvedValue({ summary: { totalSalary: 15000000 } });
+    const getScheduleWeek = vi.fn().mockResolvedValue({ weekStartDate: '2026-11-23', cells: [] });
+    const preview = vi.fn().mockResolvedValue({ expectedCashInDrawer: 500000 });
+    const listSettlements = vi.fn().mockResolvedValue({ total: 1, items: [] });
+
+    const controller = new InternalBizController(
+      { getOverview, getDailyItemSales } as never,
+      { preview, listSettlements } as never,
+      { getPayrollSummary } as never,
+      { getScheduleWeek } as never,
+    );
+
+    const loopbackReq = { socket: { remoteAddress: '127.0.0.1' }, headers: {} } as never;
+    const remoteReq = { socket: { remoteAddress: '103.252.136.192' }, headers: { 'x-forwarded-for': '127.0.0.1' } } as never;
+
+    const overviewRes = await controller.getOverview(loopbackReq, { preset: 'today' });
+    expect(getOverview).toHaveBeenCalledWith({ preset: 'today' }, expect.objectContaining({ isSuperAdmin: true }));
+    expect(overviewRes.alerts.nearLimitQrAccounts[0]?.accountNo).toBe('****1012');
+    expect(overviewRes.paymentQrAccounts[0]?.accountNo).toBe('****1012');
+    expect(overviewRes.liveTables?.tables[0]).not.toHaveProperty('qrToken');
+    expect(overviewRes.recentAuditLogs[0]?.ipAddress).toBeNull();
+    expect(overviewRes.recentAuditLogs[0]?.deviceLabel).toBeNull();
+
+    // Direct sanitize helper short account masking
+    const maskedShort = sanitizeDashboardOverviewForBot({
+      ...mockOverview,
+      paymentQrAccounts: [{ ...mockOverview.paymentQrAccounts[0]!, accountNo: '123' }],
+    } as never);
+    expect(maskedShort.paymentQrAccounts[0]?.accountNo).toBe('****');
+
+    await expect(controller.getDailyItems(loopbackReq, { preset: 'today' })).resolves.toMatchObject({ summary: { totalOrders: 3 } });
+    await expect(controller.getPayroll(loopbackReq, { fromDate: '2026-11-01', toDate: '2026-11-28' })).resolves.toMatchObject({ summary: { totalSalary: 15000000 } });
+    await expect(controller.getSchedule(loopbackReq, { weekStartDate: '2026-11-23' })).resolves.toMatchObject({ weekStartDate: '2026-11-23' });
+    await expect(controller.getCashflowPreview(loopbackReq)).resolves.toMatchObject({ expectedCashInDrawer: 500000 });
+    await expect(controller.getCashflowSettlements(loopbackReq, { page: 1, limit: 10 })).resolves.toMatchObject({ total: 1 });
+
+    await expect(controller.getOverview(remoteReq, { preset: 'today' })).rejects.toThrow(ForbiddenException);
+    expect(() => controller.getDailyItems(remoteReq, { preset: 'today' })).toThrow(ForbiddenException);
+    expect(() => controller.getPayroll(remoteReq, { fromDate: '2026-11-01', toDate: '2026-11-28' })).toThrow(ForbiddenException);
+    expect(() => controller.getSchedule(remoteReq, { weekStartDate: '2026-11-23' })).toThrow(ForbiddenException);
+    expect(() => controller.getCashflowPreview(remoteReq)).toThrow(ForbiddenException);
+    expect(() => controller.getCashflowSettlements(remoteReq, { page: 1, limit: 10 })).toThrow(ForbiddenException);
   });
 });
