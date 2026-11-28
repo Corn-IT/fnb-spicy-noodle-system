@@ -5,10 +5,25 @@ set -euo pipefail
 
 MONITOR_ENV_FILE="${MONITOR_ENV_FILE:-/etc/fnb-monitor.env}"
 if [[ -f "${MONITOR_ENV_FILE}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${MONITOR_ENV_FILE}"
-  set +a
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    line="${raw_line#"${raw_line%%[![:space:]]*}"}"
+    [[ -z "${line}" || "${line}" == \#* || "${line}" != *=* ]] && continue
+    k="${line%%=*}"
+    k="${k%"${k##*[![:space:]]}"}"
+    v="${line#*=}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    if [[ "${v}" == \"*\" && "${v}" == *\" ]]; then
+      v="${v#\"}"
+      v="${v%\"}"
+    elif [[ "${v}" == \'*\' && "${v}" == *\' ]]; then
+      v="${v#\'}"
+      v="${v%\'}"
+    fi
+    if [[ "${k}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      export "${k}=${v}"
+    fi
+  done < "${MONITOR_ENV_FILE}"
 fi
 
 FNB_ALERT_PROJECT_NAME="${FNB_ALERT_PROJECT_NAME:-Ăn Vặt Tran}"
