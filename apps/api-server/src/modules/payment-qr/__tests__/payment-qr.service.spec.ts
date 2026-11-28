@@ -653,5 +653,61 @@ describe('PaymentQrService', () => {
         ),
       ).toContain('amount=150000&addInfo=TT+HD-99');
     });
+
+    it('rejects duplicate bank+account on create/update and locks bank/accountNo edits once linked to PAID orders', async () => {
+      const existing = makeAccount({ id: 1, bankCode: 'VCB', accountNo: '111222', priority: 1 });
+      const other = makeAccount({ id: 2, bankCode: 'MB', accountNo: '333444', priority: 2 });
+      const client = {
+        paymentAccount: {
+          findUnique: vi
+            .fn()
+            .mockResolvedValueOnce(existing) // duplicate on create
+            .mockResolvedValueOnce(existing) // update(1) load
+            .mockResolvedValueOnce(existing) // update(1) locked load #2
+            .mockResolvedValueOnce(other), // update(1) dup check -> collides with 2
+          findMany: vi.fn().mockResolvedValue([existing, other]),
+        },
+        order: {
+          count: vi
+            .fn()
+            .mockResolvedValueOnce(3) // linked orders > 0
+            .mockResolvedValueOnce(0),
+        },
+        $transaction: vi.fn(async (op: (tx: unknown) => Promise<unknown>) => op(client)),
+      };
+      const service = new PaymentQrService(client as never);
+
+      await expect(
+        service.create(
+          {
+            label: 'Trùng VCB',
+            bankCode: 'VCB',
+            accountNo: '111222',
+            accountName: 'NGUYEN AN',
+            isActive: true,
+            dailyLimit: null,
+            monthlyLimit: null,
+            yearlyLimit: null,
+          },
+          1,
+        ),
+      ).rejects.toThrow(ConflictException);
+
+      await expect(
+        service.update(1, { bankCode: 'ACB' }, 1),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: ErrorCodes.PAYMENT_QR_LOCKED_FIELD }),
+      });
+
+      await expect(
+        service.update(1, { bankCode: 'MB', accountNo: '333444' }, 1),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: ErrorCodes.PAYMENT_QR_DUPLICATE_ACCOUNT }),
+      });
+
+      await expect(
+        service.listOrders(999, { page: 1, limit: 10 }),
+      ).rejects.toThrow();
+    });
   });
 });

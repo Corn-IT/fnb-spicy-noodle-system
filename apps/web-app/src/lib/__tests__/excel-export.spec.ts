@@ -72,4 +72,106 @@ describe('excel-export utilities', () => {
       { STT: '2', 'Tên món': 'Trà Đào', 'Mô tả phụ': '', 'Đơn giá': '25000', 'Trạng thái': 'Đang ẩn' },
     ]);
   });
+
+  it('triggers xlsx Blob download in exportToExcel and handles sharedStrings, workbook rels, and malformed ZIP files', async () => {
+    const { exportToExcel } = await import('../excel-export');
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:xlsx-url');
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const clickSpy = vi.fn();
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      const el = origCreate(tag);
+      if (tag === 'a') {
+        el.click = clickSpy;
+      }
+      return el;
+    }) as typeof document.createElement);
+
+    exportToExcel({
+      filename: 'bao-cao-luong',
+      sheetName: 'BangLuong',
+      rows: [{ emp: 'NV01', total: 5000000 }],
+      columns: [
+        { header: 'Mã NV', key: 'emp' },
+        { header: 'Tổng lương', key: 'total' },
+      ],
+    });
+    expect(createObjectUrl).toHaveBeenCalledTimes(1);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:xlsx-url');
+
+    // Invalid ZIP rejected cleanly
+    await expect(parseExcelFile(new Uint8Array([1, 2, 3, 4]))).rejects.toThrow(/ZIP/);
+
+    // Construct minimal stored ZIP containing sharedStrings + custom sheet path via workbook rels
+    const makeStoredZip = (files: Array<{ name: string; content: string }>) => {
+      const enc = new TextEncoder();
+      const parts: Uint8Array[] = [];
+      const central: Uint8Array[] = [];
+      let offset = 0;
+
+      for (const f of files) {
+        const nameBytes = enc.encode(f.name);
+        const dataBytes = enc.encode(f.content);
+        const lh = new Uint8Array(30 + nameBytes.length);
+        const lhv = new DataView(lh.buffer);
+        lhv.setUint32(0, 0x04034b50, true);
+        lhv.setUint16(26, nameBytes.length, true);
+        lh.set(nameBytes, 30);
+        parts.push(lh, dataBytes);
+
+        const cd = new Uint8Array(46 + nameBytes.length);
+        const cdv = new DataView(cd.buffer);
+        cdv.setUint32(0, 0x02014b50, true);
+        cdv.setUint32(20, dataBytes.length, true);
+        cdv.setUint16(28, nameBytes.length, true);
+        cdv.setUint32(42, offset, true);
+        cd.set(nameBytes, 46);
+        central.push(cd);
+
+        offset += lh.length + dataBytes.length;
+      }
+
+      const centralSize = central.reduce((s, c) => s + c.length, 0);
+      const eocd = new Uint8Array(22);
+      const ev = new DataView(eocd.buffer);
+      ev.setUint32(0, 0x06054b50, true);
+      ev.setUint16(10, files.length, true);
+      ev.setUint32(16, offset, true);
+
+      const total = offset + centralSize + eocd.length;
+      const out = new Uint8Array(total);
+      let cur = 0;
+      for (const p of [...parts, ...central, eocd]) {
+        out.set(p, cur);
+        cur += p.length;
+      }
+      return out;
+    };
+
+    const customZip = makeStoredZip([
+      {
+        name: 'xl/sharedStrings.xml',
+        content: '<sst><si><t>Tên món</t></si><si><t>Bò Mỹ</t></si></sst>',
+      },
+      {
+        name: 'xl/workbook.xml',
+        content: '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Menu" r:id="rId9"/></sheets></workbook>',
+      },
+      {
+        name: 'xl/_rels/workbook.xml.rels',
+        content: '<Relationships><Relationship Id="rId9" Target="worksheets/custom2.xml"/></Relationships>',
+      },
+      {
+        name: 'xl/worksheets/custom2.xml',
+        content: '<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c></row><row><c r="A2" t="s"><v>1</v></c></row></sheetData></worksheet>',
+      },
+    ]);
+
+    const parsedShared = await parseExcelFile(customZip.buffer);
+    expect(parsedShared).toEqual([{ 'Tên món': 'Bò Mỹ' }]);
+
+    const noSheetZip = makeStoredZip([{ name: 'xl/workbook.xml', content: '<workbook/>' }]);
+    await expect(parseExcelFile(noSheetZip)).rejects.toThrow(/sheet/);
+  });
 });

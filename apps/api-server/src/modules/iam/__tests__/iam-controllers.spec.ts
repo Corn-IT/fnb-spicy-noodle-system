@@ -9,6 +9,7 @@ import { RbacGuard } from '../../../common/guards/rbac.guard';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { IamController } from '../iam.controller';
 import { IamService } from '../iam.service';
+import { ProfileController } from '../profile.controller';
 import { PublicAvatarController } from '../public-avatar.controller';
 import { UsersController } from '../users.controller';
 
@@ -25,6 +26,17 @@ describe('IAM Controllers (Auth, Users redaction, PublicAvatar)', () => {
       user: { id: 1, username: 'admin', isSuperAdmin: true },
     })),
     logout: vi.fn(async () => undefined),
+    getProfile: vi.fn(async (userId: number) => ({ id: userId, username: 'admin' })),
+    updateProfile: vi.fn(async (userId: number, body: Record<string, unknown>) => ({ id: userId, ...body })),
+    uploadMyAvatar: vi.fn(async (userId: number) => ({ id: userId, avatarUrl: '/api/v1/public/avatars/1?v=1' })),
+    deleteMyAvatar: vi.fn(async (userId: number) => ({ id: userId, avatarUrl: null })),
+    updateUiPreferences: vi.fn(async (userId: number, body: Record<string, unknown>) => ({ id: userId, uiPreferences: body })),
+    changePassword: vi.fn(async () => ({
+      accessToken: 'acc-pw',
+      refreshToken: 'ref-pw',
+      user: { id: 1, username: 'admin' },
+      message: 'Đổi mật khẩu thành công',
+    })),
     listUsers: vi.fn(async () => ({
       page: 1,
       limit: 20,
@@ -70,7 +82,7 @@ describe('IAM Controllers (Auth, Users redaction, PublicAvatar)', () => {
   beforeAll(async () => {
     class IamCtrlTestModule {}
     Module({
-      controllers: [IamController, UsersController, PublicAvatarController],
+      controllers: [IamController, ProfileController, UsersController, PublicAvatarController],
       providers: [
         { provide: IamService, useValue: iamService },
         {
@@ -185,5 +197,62 @@ describe('IAM Controllers (Auth, Users redaction, PublicAvatar)', () => {
     } finally {
       mockPrincipal = prev;
     }
+  });
+
+  it('routes ProfileController endpoints (/profile, avatar, ui-prefs, password) and handles sessionless changePassword', async () => {
+    const getProf = await fetch(`${baseUrl}/api/v1/profile`, { headers: { authorization: 'Bearer tok' } });
+    expect(getProf.status).toBe(200);
+
+    const putProf = await fetch(`${baseUrl}/api/v1/profile`, {
+      method: 'PUT',
+      headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+      body: JSON.stringify({ fullName: 'Nguyễn Văn A' }),
+    });
+    expect(putProf.status).toBe(200);
+
+    const putAvatar = await fetch(`${baseUrl}/api/v1/profile/avatar`, {
+      method: 'PUT',
+      headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+      body: JSON.stringify({ mime: 'image/png', base64: 'iVBORw0KGgo=' }),
+    });
+    expect(putAvatar.status).toBe(200);
+
+    const delAvatar = await fetch(`${baseUrl}/api/v1/profile/avatar`, {
+      method: 'DELETE',
+      headers: { authorization: 'Bearer tok' },
+    });
+    expect(delAvatar.status).toBe(200);
+
+    const patchUi = await fetch(`${baseUrl}/api/v1/profile/ui-prefs`, {
+      method: 'PATCH',
+      headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+      body: JSON.stringify({ theme: 'dark', sidebarCollapsed: true }),
+    });
+    expect(patchUi.status).toBe(200);
+
+    const patchPw = await fetch(`${baseUrl}/api/v1/profile/password`, {
+      method: 'PATCH',
+      headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        currentPassword: 'oldPassword1',
+        newPassword: 'newPassword2',
+        confirmPassword: 'newPassword2',
+      }),
+    });
+    expect(patchPw.status).toBe(200);
+    await expect(patchPw.json()).resolves.toMatchObject({ accessToken: 'acc-pw', message: 'Đổi mật khẩu thành công' });
+    expect(patchPw.headers.get('set-cookie')).toContain('refreshToken=ref-pw');
+
+    // Direct controller check for changePassword without sessionId / without accessToken response
+    const messageOnlyIam = { changePassword: vi.fn(async () => ({ message: 'Đã cập nhật mật khẩu' })) };
+    const ctrl = new ProfileController(messageOnlyIam as never, { get: vi.fn(() => 'test') } as never);
+    const msgRes = await ctrl.changePassword(
+      { id: 5, employeeId: 5, username: 'u5', isSuperAdmin: false, permissions: UserPermissionsSchema.parse({}) },
+      { currentPassword: 'oldPassword1', newPassword: 'newPassword2', confirmPassword: 'newPassword2' },
+      { cookie: vi.fn() } as never,
+      undefined,
+    );
+    expect(msgRes).toEqual({ message: 'Đã cập nhật mật khẩu' });
+    expect(messageOnlyIam.changePassword).toHaveBeenCalledWith(5, expect.any(Object));
   });
 });

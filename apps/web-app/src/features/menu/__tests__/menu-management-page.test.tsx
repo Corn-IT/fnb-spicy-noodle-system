@@ -49,13 +49,7 @@ const deleteProductMutateAsync = vi.fn(async (id: number) => ({
   id,
 }));
 
-vi.mock('@/lib/excel-export', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/excel-export')>();
-  return {
-    ...actual,
-    exportToExcel: vi.fn(),
-  };
-});
+import * as excelExport from '@/lib/excel-export';
 
 vi.mock('../api/menu-admin.api', () => ({
   useMenuProductsQuery: () => ({
@@ -210,7 +204,51 @@ describe('MenuManagementPage regressions', () => {
     fireEvent.click(screen.getByTestId('edit-product-btn-1'));
 
     // Export Excel
+    vi.spyOn(excelExport, 'exportToExcel').mockImplementation(() => {});
     fireEvent.click(screen.getByTestId('export-menu-excel-btn'));
+
+    // Import Excel preview & confirm dialog flow
+    const validXlsx = excelExport.buildXlsxBytes(
+      [
+        {
+          name: 'Mì Bò Tươi',
+          station: 'BEP_NAU',
+          categoryName: 'Mỳ Cay Kim Chi Hàn Quốc',
+          price: 65000,
+          isAvailable: 'Đang bán',
+          sortOrder: 5,
+          subtitle: 'Cay cấp 0-7',
+          modifierGroupsText: '',
+        },
+      ],
+      [
+        { header: 'Tên món', key: 'name' },
+        { header: 'Trạm bếp', key: 'station' },
+        { header: 'Danh mục', key: 'categoryName' },
+        { header: 'Đơn giá (VNĐ)', key: 'price' },
+        { header: 'Trạng thái', key: 'isAvailable' },
+        { header: 'Thứ tự', key: 'sortOrder' },
+        { header: 'Mô tả phụ', key: 'subtitle' },
+        { header: 'Nhóm tuỳ chọn', key: 'modifierGroupsText' },
+      ],
+      'Menu',
+    );
+    const ab = new ArrayBuffer(validXlsx.byteLength);
+    new Uint8Array(ab).set(validXlsx);
+    const xlsxFile = new File([ab], 'menu.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    if (typeof xlsxFile.arrayBuffer !== 'function') {
+      Object.defineProperty(xlsxFile, 'arrayBuffer', { value: async () => ab });
+    }
+    const fileInput = screen.getByTestId('import-menu-excel-input') as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [xlsxFile] } });
+    });
+    expect(await screen.findByTestId('import-menu-excel-dialog')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('confirm-import-menu-excel-btn'));
+    });
 
     // Delete product confirm flow
     fireEvent.click(screen.getByTestId('delete-product-btn-1'));

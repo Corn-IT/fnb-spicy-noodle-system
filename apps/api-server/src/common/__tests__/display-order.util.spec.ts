@@ -98,4 +98,57 @@ describe('display-order.util', () => {
       'Đồ Uống Nóng',
     ]);
   });
+
+  it('covers resolveUserAccountTier, fallback MDMs, and client-info.util IP/UA detection branches', async () => {
+    const {
+      compareEmployeesForDisplay: cmpEmp,
+      compareUsersForDisplay: cmpUser,
+      readMetadataSortOrder,
+    } = await import('../utils/display-order.util');
+    const { extractClientIpFromHeaders, normalizeIpAddress, parseDeviceLabel } = await import(
+      '../security/client-info.util'
+    );
+
+    expect(readMetadataSortOrder(null)).toBeNull();
+    expect(readMetadataSortOrder({ sortOrder: -2 })).toBeNull();
+    expect(readMetadataSortOrder({ sortOrder: 3 })).toBe(3);
+
+    const users = [
+      { id: 10, username: 'mgr', isActive: true, permissions: { settings: { update: true } } },
+      { id: 11, username: 'viewer', isActive: true, permissions: { payroll: { view: true } } },
+      { id: 12, username: 'cashier02', isActive: false, permissions: { pos: { create: true } } },
+      { id: 13, username: 'kitchen1', isActive: true, permissions: {} },
+    ];
+    expect(users.sort(cmpUser).map((u) => u.username)).toEqual([
+      'mgr',
+      'viewer',
+      'cashier02',
+      'kitchen1',
+    ]);
+
+    const emps = [
+      { id: 20, fullName: 'B', isDeleted: true, position: { name: 'Phục Vụ' } },
+      { id: 21, fullName: 'A', isDeleted: false, position: { name: 'Bếp Chiên' }, specialty: { name: 'Bếp Chiên' } },
+      { id: 22, fullName: 'C', isDeleted: false, position: { name: 'Custom Role' } },
+    ];
+    expect(emps.sort(cmpEmp).map((e) => e.id)).toEqual([21, 22, 20]);
+
+    expect(normalizeIpAddress(null)).toBe('unknown');
+    expect(normalizeIpAddress('::ffff:192.168.1.9:4321')).toBe('192.168.1.9');
+    expect(normalizeIpAddress('::1')).toBe('127.0.0.1');
+    expect(extractClientIpFromHeaders({ 'x-real-ip': '203.0.113.9, 10.0.0.1' })).toBe('203.0.113.9');
+    expect(extractClientIpFromHeaders({}, '127.0.0.1')).toBe('127.0.0.1');
+
+    expect(parseDeviceLabel(undefined)).toBe('Không rõ thiết bị');
+    expect(parseDeviceLabel('curl/8.4.0')).toBe('API Client');
+    expect(parseDeviceLabel('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) CriOS/120')).toBe('iPhone · Chrome');
+    expect(parseDeviceLabel('Mozilla/5.0 (iPad; CPU OS 17_0) Firefox/120')).toBe('iPad · Firefox');
+    expect(parseDeviceLabel('Mozilla/5.0 (Android 14) ZaloTheme/1.0')).toBe('Android · Zalo');
+    expect(parseDeviceLabel('Mozilla/5.0 (Windows NT 10.0) Edg/120.0')).toBe('Windows · Edge');
+    expect(parseDeviceLabel('Mozilla/5.0 (Macintosh; Mac OS X) Safari/605.1')).toBe('macOS · Safari');
+    expect(parseDeviceLabel('Mozilla/5.0 (X11; Linux x86_64) coc_coc_browser/110')).toBe('Linux · Cốc Cốc');
+    expect(parseDeviceLabel('CustomUA OPR/95 FBAV/1')).toBe('Thiết bị · Opera');
+    expect(parseDeviceLabel('FBAN/Messenger')).toBe('Thiết bị · Facebook');
+    expect(parseDeviceLabel('UnknownAgent/1.0')).toBe('Thiết bị · Trình duyệt');
+  });
 });

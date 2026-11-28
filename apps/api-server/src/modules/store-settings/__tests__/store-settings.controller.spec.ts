@@ -247,5 +247,57 @@ describe('StoreSettingsController HTTP integration', () => {
     expect(pubJson.qrMessages).toEqual({
       'qr.banner.tableMoveNotice': { title: 'Khách đổi bàn vui lòng báo nhân viên' },
     });
+
+    // Delete asset endpoint removes logo & subsequent GET returns 404
+    const delAsset = await fetch(`${baseUrl}/api/v1/settings/assets/logo`, {
+      method: 'DELETE',
+      headers: { authorization: 'Bearer superadmin' },
+    });
+    expect(delAsset.status).toBe(200);
+    await expect(delAsset.json()).resolves.toMatchObject({ assets: { logo: null } });
+
+    const invalidAssetKind = await fetch(`${baseUrl}/api/v1/public/store-assets/invalid`);
+    expect(invalidAssetKind.status).toBe(422);
+
+    const badImageUpload = await fetch(`${baseUrl}/api/v1/settings/assets/logo`, {
+      method: 'PUT',
+      headers: { authorization: 'Bearer superadmin', 'content-type': 'application/json' },
+      body: JSON.stringify({ mime: 'image/png', base64: 'bm90LWEtcG5n' }),
+    });
+    expect(badImageUpload.status).toBe(400);
+
+    // Corrupted metadata in store_settings & invalid asset bytes fallback safely
+    rows.set('SYSTEM_CONFIG:store_settings', {
+      category: 'SYSTEM_CONFIG',
+      normalizedName: 'store_settings',
+      name: 'STORE_SETTINGS',
+      isActive: true,
+      metadata: { storeName: '', primaryColor: 12345 },
+    });
+    rows.set('SYSTEM_CONFIG:store_asset_logo', {
+      category: 'SYSTEM_CONFIG',
+      normalizedName: 'store_asset_logo',
+      name: 'STORE_ASSET_LOGO',
+      isActive: true,
+      metadata: { base64: 'not-image-magic', updatedAt: '2026-11-28T00:00:00.000Z' },
+    });
+    rows.set('SYSTEM_CONFIG:store_messages', {
+      category: 'SYSTEM_CONFIG',
+      normalizedName: 'store_messages',
+      name: 'STORE_MESSAGES',
+      isActive: true,
+      metadata: {
+        updatedAt: '2026-11-28T00:00:00.000Z',
+        'qr.banner.tableMoveNotice': { title: 'Legacy Flat' },
+      },
+    });
+    const fallbackPub = await fetch(`${baseUrl}/api/v1/public/store-settings`);
+    expect(fallbackPub.status).toBe(200);
+    await expect(fallbackPub.json()).resolves.toMatchObject({
+      storeName: DEFAULT_STORE_SETTINGS.storeName,
+      qrMessages: { 'qr.banner.tableMoveNotice': { title: 'Legacy Flat' } },
+    });
+    const corruptAssetRes = await fetch(`${baseUrl}/api/v1/public/store-assets/logo`);
+    expect(corruptAssetRes.status).toBe(404);
   });
 });

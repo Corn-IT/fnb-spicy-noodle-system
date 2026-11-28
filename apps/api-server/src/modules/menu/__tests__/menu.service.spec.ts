@@ -900,4 +900,101 @@ describe('MenuService', () => {
     );
     expect(importSummary).toMatchObject({ createdCount: 1, updatedCount: 1 });
   });
+
+  it('rejects malformed importProductsExcel input with 422 and resolves BEP_CHIEN / custom station codes', async () => {
+    const svcEmpty = new MenuService({} as never);
+    await expect(
+      svcEmpty.importProductsExcel({ items: [{ name: '', price: -1, station: 'BEP_NAU', isAvailable: true, sortOrder: 0 }], syncMissingAsDeleted: false }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    const created: Array<{ station: string; name: string }> = [];
+    const tx = {
+      product: {
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn(async ({ data }: { data: { station: string; name: string } }) => {
+          created.push(data);
+          return { ...productRow, id: created.length + 10, name: data.name, station: data.station, modifierGroups: [], comboParents: [] };
+        }),
+      },
+      masterData: {
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([
+            { name: 'Quầy Tráng Miệng', metadata: { stationCode: 'BEP_TRANG_MIENG' } },
+          ])
+          .mockResolvedValueOnce([]),
+        create: vi.fn().mockResolvedValue({ id: 55, name: 'Ăn Vặt', normalizedName: 'an vat', isActive: true }),
+      },
+      orderItem: { count: vi.fn().mockResolvedValue(0) },
+    };
+    const prisma = {
+      ...tx,
+      $transaction: vi.fn(async (cb: (client: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+    const svc = new MenuService(prisma as never);
+    const res = await svc.importProductsExcel({
+      items: [
+        { name: 'Khoai Tây Chiên', station: 'Bếp Chiên', price: 35000, isAvailable: true, sortOrder: 1 },
+        { name: 'Bingsu Xoài', station: 'Quầy Tráng Miệng', price: 45000, isAvailable: true, sortOrder: 2 },
+        { name: 'Canh Kim Chi', station: 'Trạm Không Rõ', price: 40000, isAvailable: true, sortOrder: 3 },
+      ],
+      syncMissingAsDeleted: false,
+    });
+
+    expect(res.createdCount).toBe(3);
+    expect(created.map((c) => c.station)).toEqual(['BEP_CHIEN', 'BEP_TRANG_MIENG', 'BEP_NAU']);
+  });
+
+  it('guards updateProduct (404 / missing combo items) and deleteProduct (404 / active order / combo parent / historical archive / clean delete)', async () => {
+    const productUpdate = vi.fn();
+    const productDelete = vi.fn().mockResolvedValue({ id: 12 });
+    const comboDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
+    const orderItemCount = vi.fn();
+    const comboItemCount = vi.fn();
+    const productFindUnique = vi.fn();
+    const auditLog = { record: vi.fn().mockResolvedValue(undefined) };
+
+    const tx = {
+      product: { findUnique: productFindUnique, update: productUpdate, delete: productDelete },
+      orderItem: { count: orderItemCount },
+      comboItem: { count: comboItemCount, deleteMany: comboDeleteMany },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (cb: (client: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+    const svc = new MenuService(prisma as never, undefined, auditLog as never);
+
+    productFindUnique.mockResolvedValueOnce(null);
+    await expect(svc.updateProduct(999, { name: 'Không tồn tại' })).rejects.toBeInstanceOf(NotFoundException);
+
+    await expect(svc.updateProduct(1, { name: 'Combo rỗng', station: 'COMBO' })).rejects.toMatchObject({ status: 422 });
+
+    productFindUnique.mockResolvedValueOnce(null);
+    await expect(svc.deleteProduct(999)).rejects.toBeInstanceOf(NotFoundException);
+
+    productFindUnique.mockResolvedValueOnce({ ...productRow, _count: { orderItems: 2, comboChildren: 0 } });
+    orderItemCount.mockResolvedValueOnce(1);
+    await expect(svc.deleteProduct(1)).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({ code: 'PRODUCT_IN_ACTIVE_ORDER' }),
+    });
+
+    productFindUnique.mockResolvedValueOnce({ ...productRow, _count: { orderItems: 0, comboChildren: 1 } });
+    orderItemCount.mockResolvedValueOnce(0);
+    comboItemCount.mockResolvedValueOnce(1);
+    await expect(svc.deleteProduct(1)).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({ code: 'PRODUCT_IN_COMBO' }),
+    });
+
+    productFindUnique.mockResolvedValueOnce({ ...productRow, id: 11, name: 'Mì Cũ', _count: { orderItems: 3, comboChildren: 0 } });
+    orderItemCount.mockResolvedValueOnce(0);
+    await expect(svc.deleteProduct(11)).resolves.toMatchObject({ deleted: true, id: 11 });
+    expect(productUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 11 }, data: expect.objectContaining({ sortOrder: -9999 }) }));
+
+    productFindUnique.mockResolvedValueOnce({ ...productRow, id: 12, name: 'Mì Mới', _count: { orderItems: 0, comboChildren: 0 } });
+    orderItemCount.mockResolvedValueOnce(0);
+    await expect(svc.deleteProduct(12)).resolves.toMatchObject({ deleted: true, id: 12 });
+    expect(productDelete).toHaveBeenCalledWith({ where: { id: 12 } });
+  });
 });

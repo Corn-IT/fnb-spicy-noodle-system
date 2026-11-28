@@ -17,12 +17,15 @@ import { ThermalPrintProvider } from '@/components/print-slips';
 import { QrCardQuickDialog } from '@/components/qr-card';
 import { useToastStore } from '@/components/ui/toast';
 import { PosUnifiedPage } from '@/features/pos-counter';
-import { ApiClientError, apiClient } from '@/lib/api-client';
+import { apiClient, ApiClientError } from '@/lib/api-client';
+import * as qrExport from '@/utils/qr-export';
 import * as socketClient from '@/lib/socket-client';
 import { QueryProvider } from '@/providers/query-provider';
 import { SocketProvider } from '@/providers/socket-provider';
 import { useAuthStore } from '@/stores/auth.store';
 import { PosMenuPanel } from '../components/pos-menu-panel';
+import { QrSecurityConfigDialog } from '../components/qr-security-config-dialog';
+import { TableManageDialog } from '../components/table-manage-dialog';
 
 const routerFutureFlags = {
   v7_startTransition: true,
@@ -356,5 +359,251 @@ describe('POS Panels, QrCardQuickDialog & Unified Page Routing (Wave 3 Comprehen
     // Switch to fast menu tab cleanly via Radix tab
     await user.click(screen.getByTestId('pos-tab-menu'));
     expect(screen.getByTestId('pos-menu-product-11')).toBeInTheDocument();
+  });
+
+  it('configures Wi-Fi + GPS anti-spam security rules and validates coordinates & error feedback in QrSecurityConfigDialog', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/qr-security-config') {
+        return {
+          wifiProtectionEnabled: false,
+          autoSyncPosIp: true,
+          allowedWifiIps: [],
+          wifiSsid: '',
+          wifiPassword: '',
+          geoProtectionEnabled: false,
+          shopLatitude: null,
+          shopLongitude: null,
+          geoRadiusMeters: 200,
+          applySecurityToTakeaway: false,
+          detectedClientIp: '192.168.1.50',
+          syncedPosIp: null,
+          updatedAt: null,
+        };
+      }
+      return [];
+    });
+    const putSpy = vi
+      .spyOn(apiClient, 'put')
+      .mockResolvedValueOnce({
+        wifiProtectionEnabled: true,
+        autoSyncPosIp: true,
+        allowedWifiIps: ['192.168.1.50'],
+        wifiSsid: 'Mi Cay',
+        wifiPassword: 'pass',
+        geoProtectionEnabled: true,
+        shopLatitude: 10.7769,
+        shopLongitude: 106.7009,
+        geoRadiusMeters: 300,
+        applySecurityToTakeaway: true,
+        detectedClientIp: '192.168.1.50',
+        syncedPosIp: '192.168.1.50',
+        updatedAt: '2026-11-28T00:00:00.000Z',
+      })
+      .mockRejectedValueOnce(new ApiClientError({ statusCode: 500, error: 'Internal Server Error', message: 'Network err' }));
+
+    const getCurrentPosition = vi.fn((success: PositionCallback) =>
+      success({
+        coords: { latitude: 10.7769, longitude: 106.7009 },
+      } as GeolocationPosition),
+    );
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: { getCurrentPosition },
+    });
+
+    const onOpenChange = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryProvider client={client}>
+        <QrSecurityConfigDialog open={true} onOpenChange={onOpenChange} />
+      </QueryProvider>,
+    );
+
+    await screen.findByTestId('add-current-ip-btn');
+
+    await user.click(screen.getByTestId('toggle-wifi-protection-btn'));
+    await user.click(screen.getByTestId('add-current-ip-btn'));
+    await user.type(screen.getByTestId('qr-wifi-ssid-input'), 'Mi Cay');
+    await user.type(screen.getByTestId('qr-wifi-password-input'), 'pass');
+
+    await user.click(screen.getByTestId('toggle-geo-protection-btn'));
+    // Missing coords blocked on save
+    await user.click(screen.getByTestId('save-qr-security-config-btn'));
+    expect(putSpy).not.toHaveBeenCalled();
+
+    // Invalid coords blocked on save
+    await user.type(screen.getByTestId('qr-shop-lat-input'), '999');
+    await user.type(screen.getByTestId('qr-shop-lng-input'), '106');
+    await user.click(screen.getByTestId('save-qr-security-config-btn'));
+    expect(putSpy).not.toHaveBeenCalled();
+
+    // Capture valid GPS & save succeeds
+    await user.click(screen.getByTestId('capture-shop-gps-btn'));
+    await user.click(screen.getByTestId('toggle-takeaway-qr-security-btn'));
+    await user.click(screen.getByTestId('save-qr-security-config-btn'));
+    await waitFor(() => expect(putSpy).toHaveBeenCalledTimes(1));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+
+    // Second save failure surfaces toast cleanly
+    await user.click(screen.getByTestId('save-qr-security-config-btn'));
+    await waitFor(() => expect(putSpy).toHaveBeenCalledTimes(2));
+  });
+
+  it('validates TableManageDialog create/rename/occupied-block/delete/rotate/shorten flows end-to-end', async () => {
+    const user = userEvent.setup();
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => {
+      if (url === '/api/v1/pos/tables') {
+        return { id: 10, name: 'Bàn 10', status: 'AVAILABLE', activeOrderId: null };
+      }
+      if (url === '/api/v1/pos/tables/1/rotate-qr') {
+        return {
+          id: 1,
+          name: 'Bàn 01',
+          qrToken: 'ban01-newshorttoken',
+          status: 'AVAILABLE',
+          activeOrderId: null,
+        };
+      }
+      if (url === '/api/v1/pos/takeaway-qr/rotate') {
+        return { qrToken: 'mangve-newshorttoken' };
+      }
+      if (url === '/api/v1/pos/tables/shorten-qr') {
+        return { updatedTables: 1, updatedTakeaway: true };
+      }
+      return {};
+    });
+    const putSpy = vi
+      .spyOn(apiClient, 'put')
+      .mockResolvedValue({ id: 1, name: 'Bàn 01 VIP', status: 'AVAILABLE', activeOrderId: null });
+    const deleteSpy = vi.spyOn(apiClient, 'delete').mockResolvedValue({ deleted: true, id: 1 });
+
+    const tables: PosTableGridResponse['tables'] = [
+      {
+        id: 1,
+        name: 'Bàn 01',
+        status: 'AVAILABLE',
+        qrToken: 'a'.repeat(64),
+        activeOrderId: null,
+        activeOrder: null,
+      },
+      {
+        id: 2,
+        name: 'Bàn 02',
+        status: 'OCCUPIED',
+        qrToken: 'ban02-shorttoken01',
+        activeOrderId: 99,
+        activeOrder: {
+          orderId: 99,
+          orderCode: 'HD-99',
+          orderType: 'DINE_IN',
+          tableId: 2,
+          tableLabel: 'Bàn 02',
+          takeawayNumber: null,
+          status: 'SERVING',
+          totalAmount: 55000,
+          createdAt: '2026-11-28T00:00:00.000Z',
+        },
+      },
+    ];
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryProvider client={client}>
+        <ThermalPrintProvider>
+          <MemoryRouter future={routerFutureFlags}>
+            <TableManageDialog
+              open={true}
+              onOpenChange={() => {}}
+              tables={tables}
+              takeawayQrToken={'b'.repeat(64)}
+              canManageTables={true}
+            />
+          </MemoryRouter>
+        </ThermalPrintProvider>
+      </QueryProvider>,
+    );
+
+    const nameInput = screen.getByTestId('pos-table-name-input');
+    const saveBtn = screen.getByTestId('save-pos-table-btn');
+
+    // Empty / <2 chars / reserved / duplicate validation branches
+    await user.click(saveBtn);
+    expect(postSpy).not.toHaveBeenCalled();
+
+    await user.type(nameInput, 'A');
+    await user.click(saveBtn);
+    await user.clear(nameInput);
+
+    await user.type(nameInput, 'Mang về 99');
+    await user.click(saveBtn);
+    await user.clear(nameInput);
+
+    await user.type(nameInput, 'Bàn 01');
+    await user.click(saveBtn);
+    expect(postSpy).not.toHaveBeenCalled();
+
+    // Valid create
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Bàn 10');
+    await user.click(saveBtn);
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/tables', { name: 'Bàn 10' }));
+
+    // Edit occupied Bàn 02 blocked; edit AVAILABLE Bàn 01 succeeds
+    await user.click(screen.getByTestId('edit-pos-table-btn-2'));
+    expect(putSpy).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId('edit-pos-table-btn-1'));
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Bàn 01 VIP');
+    await user.click(saveBtn);
+    await waitFor(() =>
+      expect(putSpy).toHaveBeenCalledWith('/api/v1/pos/tables/1', { name: 'Bàn 01 VIP' }),
+    );
+
+    // Rotate table QR & confirm
+    await user.click(screen.getByTestId('rotate-pos-table-qr-btn-1'));
+    await screen.findByTestId('table-rotate-qr-confirm-dialog');
+    await user.click(screen.getByTestId('confirm-rotate-table-qr-btn'));
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/tables/1/rotate-qr', {}));
+
+    // Delete table & confirm
+    await user.click(screen.getByTestId('delete-pos-table-btn-1'));
+    await screen.findByTestId('table-delete-confirm-dialog');
+    await user.click(screen.getByTestId('confirm-delete-table-btn'));
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('/api/v1/pos/tables/1'));
+
+    // Shorten legacy QR tokens + rotate takeaway QR
+    await user.click(screen.getByTestId('shorten-legacy-qr-btn'));
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/tables/shorten-qr', {}));
+
+    await user.click(screen.getByTestId('rotate-takeaway-qr-btn'));
+    await screen.findByTestId('table-rotate-qr-confirm-dialog');
+    await user.click(screen.getByTestId('confirm-rotate-table-qr-btn'));
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/api/v1/pos/takeaway-qr/rotate', {}));
+
+    // Download QR PNG / ZIP + Copy links + Preview Print dialog
+    const pngBlob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+    if (typeof pngBlob.arrayBuffer !== 'function') {
+      Object.defineProperty(pngBlob, 'arrayBuffer', {
+        value: async () => new Uint8Array([137, 80, 78, 71]).buffer,
+      });
+    }
+    vi.spyOn(qrExport, 'renderQrCardPngBlob').mockResolvedValue(pngBlob);
+    const dlSpy = vi.spyOn(qrExport, 'downloadBlobFile').mockImplementation(() => {});
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await user.click(screen.getByTestId('copy-takeaway-qr-btn'));
+    await user.click(screen.getByTestId('download-takeaway-qr-btn'));
+    await waitFor(() => expect(dlSpy).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByTestId('download-all-qr-zip-btn'));
+    await waitFor(() => expect(dlSpy).toHaveBeenCalledTimes(2));
+
+    await user.click(screen.getByTestId('print-takeaway-qr-btn'));
+    expect(await screen.findByTestId('table-print-qr-dialog')).toBeInTheDocument();
   });
 });

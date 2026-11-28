@@ -622,4 +622,109 @@ describe('MdmService', () => {
     };
     await expect(new MdmService(stationPrisma as never).softDisable(41)).rejects.toMatchObject({ status: 400 });
   });
+
+  it('should cover MDM update diffs, category deactivation guards, and deletion/reference guards', async () => {
+    const record = vi.fn().mockResolvedValue(undefined);
+    const prisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 50,
+          category: MdmCategory.INGREDIENT,
+          name: 'Tôm Sú',
+          normalizedName: 'tom su',
+          metadata: { default_unit: 'Kg', last_price: 200000 },
+          isActive: true,
+        }),
+        findFirst: vi.fn().mockResolvedValue(null),
+        update: vi.fn().mockResolvedValue({
+          id: 50,
+          category: MdmCategory.INGREDIENT,
+          name: 'Tôm Sú Lớn',
+          normalizedName: 'tom su lon',
+          metadata: { default_unit: 'Gr', last_price: 220000 },
+          isActive: false,
+        }),
+      },
+      employee: { count: vi.fn().mockResolvedValue(0) },
+      inventoryImport: { count: vi.fn().mockResolvedValue(0) },
+    };
+    const service = new MdmService(prisma as never, undefined, { record } as never);
+
+    await expect(
+      service.update(50, { normalizedName: '   ' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update(50, { normalizedName: 'tôm sú 😂' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update(50, { metadata: { sortOrder: -1 } }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    await service.update(
+      50,
+      {
+        name: 'Tôm Sú Lớn',
+        isActive: false,
+        metadata: { default_unit: 'Gr', last_price: 220000 },
+      },
+      { id: 1, employeeId: 1, username: 'admin', isSuperAdmin: true } as never,
+    );
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          changes: expect.arrayContaining([
+            { field: 'Trạng thái hoạt động', from: 'Hoạt động', to: 'Ngưng' },
+            { field: 'ĐVT mặc định', from: 'Kg', to: 'Gr' },
+            { field: 'Đơn giá gần nhất', from: '200.000đ', to: '220.000đ' },
+          ]),
+        }),
+      }),
+    );
+
+    // MENU_CATEGORY deactivation & discount-target deletion guards
+    const menuCatPrisma = {
+      masterData: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 61,
+          category: MdmCategory.MENU_CATEGORY,
+          name: 'Lẩu Tokbokki',
+          normalizedName: 'lau tokbokki',
+          metadata: { defaultStation: 'BEP_NAU' },
+          isActive: true,
+        }),
+      },
+      product: { count: vi.fn().mockResolvedValueOnce(2).mockResolvedValueOnce(0) },
+      discountTarget: { count: vi.fn().mockResolvedValue(1) },
+    };
+    await expect(
+      new MdmService(menuCatPrisma as never).update(61, { isActive: false }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      new MdmService(menuCatPrisma as never).softDisable(61),
+    ).rejects.toMatchObject({ status: 409 });
+
+    // POSITION & SPECIALTY & INGREDIENT deletion / deactivation guards + P2003 fallback
+    const refPrisma = {
+      masterData: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ id: 71, category: MdmCategory.SPECIALTY, name: 'Bếp Chiên', normalizedName: 'bep chien', metadata: {}, isActive: true })
+          .mockResolvedValueOnce({ id: 72, category: MdmCategory.SPECIALTY, name: 'Bếp Chiên', normalizedName: 'bep chien', metadata: {}, isActive: true })
+          .mockResolvedValueOnce({ id: 73, category: MdmCategory.POSITION, name: 'Thu Ngân', normalizedName: 'thu ngan', metadata: {}, isActive: true })
+          .mockResolvedValueOnce({ id: 74, category: MdmCategory.INGREDIENT, name: 'Mì Gói', normalizedName: 'mi goi', metadata: {}, isActive: true })
+          .mockResolvedValueOnce({ id: 75, category: MdmCategory.SUPPLIER, name: 'NCC A', normalizedName: 'ncc a', metadata: {}, isActive: true }),
+        delete: vi.fn().mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('FK violation', { code: 'P2003', clientVersion: '6.0.0' }),
+        ),
+      },
+      employee: { count: vi.fn().mockResolvedValue(3) },
+      inventoryImport: { count: vi.fn().mockResolvedValue(4) },
+    };
+    const refService = new MdmService(refPrisma as never);
+    await expect(refService.update(71, { isActive: false })).rejects.toMatchObject({ status: 400 });
+    await expect(refService.softDisable(72)).rejects.toMatchObject({ status: 409 });
+    await expect(refService.softDisable(73)).rejects.toMatchObject({ status: 409 });
+    await expect(refService.softDisable(74)).rejects.toMatchObject({ status: 409 });
+    await expect(refService.softDisable(75)).rejects.toMatchObject({ status: 409 });
+  });
 });

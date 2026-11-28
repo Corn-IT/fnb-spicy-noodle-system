@@ -5,6 +5,7 @@ import {
   createStoredZipBlob,
   downloadBlobFile,
   isLocalhostOrPrivateHost,
+  preloadQrCardLogo,
   renderQrCardPngBlob,
   sanitizeQrFilename,
 } from '../qr-export';
@@ -192,6 +193,100 @@ describe('qr-export (PNG QR Card rendering, filename sanitization & pure-JS ZIP 
       expect(fillTextCalls).toContain('Quét gọi món không cần chờ');
       expect(fillTextCalls).toContain('Quét bằng Camera hoặc Zalo');
       expect(fillTextCalls).not.toContain('pos.micay.vn/q/ban05-k7m9');
+    } finally {
+      HTMLCanvasElement.prototype.getContext = origGetContext;
+      HTMLCanvasElement.prototype.toBlob = origToBlob;
+    }
+  });
+
+  it('handles preloadQrCardLogo states, tainted canvas logo retry, missing 2d context, and private IP detection', async () => {
+    expect(isLocalhostOrPrivateHost('http://10.0.0.15:8080')).toBe(true);
+    expect(isLocalhostOrPrivateHost('http://172.16.4.1/qr')).toBe(true);
+    expect(isLocalhostOrPrivateHost('http://172.31.255.1/qr')).toBe(true);
+    expect(isLocalhostOrPrivateHost('http://172.15.0.1/qr')).toBe(false);
+    expect(isLocalhostOrPrivateHost('not-a-valid-url')).toBe(false);
+
+    await expect(preloadQrCardLogo(null)).resolves.toBeNull();
+    await expect(preloadQrCardLogo('')).resolves.toBeNull();
+
+    const OriginalImage = globalThis.Image;
+    try {
+      class MockSuccessImage {
+        crossOrigin = '';
+        naturalWidth = 64;
+        width = 64;
+        height = 32;
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        set src(_value: string) {
+          queueMicrotask(() => this.onload?.());
+        }
+      }
+      globalThis.Image = MockSuccessImage as unknown as typeof Image;
+      const loaded = await preloadQrCardLogo('https://pos.local/logo.png');
+      expect(loaded).not.toBeNull();
+
+      class MockZeroAndErrorImage {
+        crossOrigin = '';
+        naturalWidth = 0;
+        width = 0;
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        set src(value: string) {
+          queueMicrotask(() => {
+            if (value.includes('err')) this.onerror?.();
+            else this.onload?.();
+          });
+        }
+      }
+      globalThis.Image = MockZeroAndErrorImage as unknown as typeof Image;
+      await expect(preloadQrCardLogo('https://pos.local/empty.png')).resolves.toBeNull();
+      await expect(preloadQrCardLogo('https://pos.local/err.png')).resolves.toBeNull();
+    } finally {
+      globalThis.Image = OriginalImage;
+    }
+
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    const origToBlob = HTMLCanvasElement.prototype.toBlob;
+    try {
+      HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as unknown as typeof origGetContext;
+      await expect(
+        renderQrCardPngBlob({ qrUrl: 'https://pos.local/qr/1', title: 'Bàn 1', storeName: 'Quán' }),
+      ).rejects.toThrow('Cannot acquire 2D canvas context');
+
+      const mockCtx = {
+        fillStyle: '',
+        strokeStyle: '',
+        lineWidth: 0,
+        textAlign: '',
+        textBaseline: '',
+        font: '',
+        fillRect: vi.fn(),
+        strokeRect: vi.fn(),
+        fillText: vi.fn(),
+        drawImage: vi.fn(),
+      };
+      HTMLCanvasElement.prototype.getContext = vi.fn(
+        () => mockCtx as unknown as CanvasRenderingContext2D,
+      ) as unknown as typeof origGetContext;
+      vi.spyOn(QRCode, 'toCanvas').mockResolvedValue(undefined as never);
+
+      // Simulate SecurityError on tainted canvas export with logo -> retries cleanly without logo
+      let callCount = 0;
+      HTMLCanvasElement.prototype.toBlob = vi.fn((cb: BlobCallback) => {
+        callCount += 1;
+        if (callCount === 1) throw new Error('Tainted canvas');
+        cb(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }));
+      }) as unknown as typeof origToBlob;
+
+      const retried = await renderQrCardPngBlob({
+        qrUrl: 'https://pos.local/qr/1',
+        title: 'Bàn 1',
+        storeName: 'Quán',
+        preloadedLogoImage: { width: 100, height: 50 } as unknown as CanvasImageSource,
+      });
+      expect(retried.size).toBe(3);
+      expect(callCount).toBe(2);
     } finally {
       HTMLCanvasElement.prototype.getContext = origGetContext;
       HTMLCanvasElement.prototype.toBlob = origToBlob;

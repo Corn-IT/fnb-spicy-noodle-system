@@ -713,4 +713,184 @@ describe('InvoicesService', () => {
     expect(detail.items[0]?.modifiers).toEqual(['Thêm bò', 'Ít hành']);
     expect(detail.items[0]?.pricedModifiers).toEqual(['Thêm bò']);
   });
+
+  it('guards voidInvoice validation/status, reprint non-PAID blocks, and requestPaymentMethodEdit auto-approve & invalid split errors', async () => {
+    const harness = createHarness();
+    const auditLogService = { record: vi.fn().mockResolvedValue(undefined) };
+    const qrService = { selectForAmount: vi.fn().mockResolvedValue({ account: { id: 2 } }) };
+    const svc = new InvoicesService(harness.prisma as never, auditLogService as never, qrService as never);
+
+    await expect(
+      svc.voidInvoice(901, { voidReason: '' }, 1),
+    ).rejects.toMatchObject({ status: 422 });
+
+    harness.tx.order.findUnique.mockResolvedValueOnce({ id: 901, status: 'VOIDED' });
+    await expect(
+      svc.voidInvoice(901, { voidReason: 'Khách huỷ nhầm' }, 1),
+    ).rejects.toMatchObject({ status: 409 });
+
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 902,
+      orderCode: 'HD-902',
+      status: 'PAID',
+      paymentMethod: 'CASH',
+      paymentAccountId: null,
+      totalAmount: new Prisma.Decimal('100000.00'),
+      paidAt: new Date('2026-11-27T05:00:00.000Z'),
+    });
+    await expect(
+      svc.requestPaymentMethodEdit(
+        902,
+        { paymentMethod: 'SPLIT', cashAmount: 60000, transferAmount: 10000, reason: 'Sai lệch' },
+        { id: 1, isSuperAdmin: true, permissions: {} } as never,
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+
+    await expect(
+      svc.requestPaymentMethodEdit(
+        902,
+        { paymentMethod: 'CASH', reason: '' },
+        { id: 1, isSuperAdmin: true, permissions: {} } as never,
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+
+    harness.prisma.order.findUnique.mockResolvedValueOnce({
+      id: 903,
+      orderCode: 'HD-903',
+      orderType: 'TAKEAWAY',
+      orderSource: 'POS_COUNTER',
+      tableId: null,
+      takeawayNumber: 5,
+      status: 'VOIDED',
+      subtotalAmount: new Prisma.Decimal('50000'),
+      discountAmount: new Prisma.Decimal('0'),
+      totalAmount: new Prisma.Decimal('50000'),
+      discountSnapshot: null,
+      paymentMethod: 'CASH',
+      cashAmount: new Prisma.Decimal('50000'),
+      transferAmount: new Prisma.Decimal('0'),
+      paymentAccount: null,
+      note: null,
+      voidReason: 'Test',
+      pendingPaymentEdit: null,
+      createdAt: new Date('2026-11-27T05:00:00.000Z'),
+      paidAt: new Date('2026-11-27T05:10:00.000Z'),
+      table: null,
+      items: [],
+    });
+    await expect(
+      svc.reprint(903, { id: 1, isSuperAdmin: true, permissions: {} } as never),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('covers list filter variants and requestPaymentMethodEdit / reviewPaymentMethodEdit approval & rejection workflows', async () => {
+    const harness = createHarness();
+    const auditLogService = { record: vi.fn().mockResolvedValue(undefined) };
+    const qrService = { selectForAmount: vi.fn().mockResolvedValue({ account: { id: 2 } }) };
+    (harness.tx as Record<string, unknown>).paymentAccount = { findMany: vi.fn().mockResolvedValue([]) };
+    (harness.tx as Record<string, unknown>).user = {
+      findUnique: vi.fn().mockResolvedValue({ username: 'cashier01', employee: { fullName: 'Thu Ngân' } }),
+    };
+    const svc = new InvoicesService(harness.prisma as never, auditLogService as never, qrService as never);
+
+    await expect(svc.list({ page: -1, limit: 20 } as never)).rejects.toMatchObject({ status: 422 });
+    await svc.list({ page: 1, limit: 20, searchField: 'note', keyword: 'ít cay', discountCode: 'VIP10' });
+    await svc.list({ page: 1, limit: 20, searchField: 'discount_code', keyword: 'VIP10' });
+    harness.prisma.$queryRaw.mockResolvedValueOnce([{ id: 7 }]);
+    await svc.list({ page: 1, limit: 20, searchField: 'table', keyword: 'ban 07' });
+
+    harness.tx.order.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      svc.requestPaymentMethodEdit(999, { paymentMethod: 'CASH', reason: 'Sửa nhầm' }, { id: 1, isSuperAdmin: true, permissions: {} } as never),
+    ).rejects.toMatchObject({ status: 404 });
+
+    harness.tx.order.findUnique.mockResolvedValueOnce({ id: 910, status: 'SERVING', totalAmount: new Prisma.Decimal('100000') });
+    await expect(
+      svc.requestPaymentMethodEdit(910, { paymentMethod: 'CASH', reason: 'Sửa nhầm' }, { id: 1, isSuperAdmin: true, permissions: {} } as never),
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Non-approver submits PENDING_APPROVAL
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 911,
+      orderCode: 'HD-911',
+      status: 'PAID',
+      paymentMethod: 'CASH',
+      paymentAccountId: null,
+      totalAmount: new Prisma.Decimal('100000.00'),
+      paidAt: new Date('2026-11-27T05:00:00.000Z'),
+    });
+    const pendingOutcome = await svc.requestPaymentMethodEdit(
+      911,
+      { paymentMethod: 'TRANSFER', reason: 'Khách chuyển khoản bổ sung' },
+      { id: 2, username: 'cashier01', isSuperAdmin: false, permissions: { invoices: { approve: false } } } as never,
+    );
+    expect(pendingOutcome.status).toBe('PENDING_APPROVAL');
+
+    // Super admin auto-approves CASH -> TRANSFER using selectForAmount
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 912,
+      orderCode: 'HD-912',
+      status: 'PAID',
+      paymentMethod: 'CASH',
+      paymentAccountId: null,
+      totalAmount: new Prisma.Decimal('100000.00'),
+      paidAt: new Date('2026-11-27T05:00:00.000Z'),
+    });
+    const autoOutcome = await svc.requestPaymentMethodEdit(
+      912,
+      { paymentMethod: 'TRANSFER', reason: 'Đổi trực tiếp sang CK' },
+      { id: 1, username: 'superadmin', isSuperAdmin: true, permissions: {} } as never,
+    );
+    expect(autoOutcome).toMatchObject({ status: 'APPLIED', paymentMethod: 'TRANSFER', transferAmount: 100000 });
+    expect(qrService.selectForAmount).toHaveBeenCalled();
+
+    // reviewPaymentMethodEdit: 422, 404, 409 no pending, REJECT, APPROVE
+    await expect(
+      svc.reviewPaymentMethodEdit(911, { decision: 'BAD' } as never, { id: 1 } as never),
+    ).rejects.toMatchObject({ status: 422 });
+    harness.tx.order.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      svc.reviewPaymentMethodEdit(999, { decision: 'REJECT', reviewNote: 'Sai' }, { id: 1 } as never),
+    ).rejects.toMatchObject({ status: 404 });
+    harness.tx.order.findUnique.mockResolvedValueOnce({ id: 911, pendingPaymentEdit: null });
+    await expect(
+      svc.reviewPaymentMethodEdit(911, { decision: 'APPROVE' }, { id: 1 } as never),
+    ).rejects.toMatchObject({ status: 409 });
+
+    const validPending = {
+      paymentMethod: 'TRANSFER',
+      cashAmount: 0,
+      transferAmount: 100000,
+      reason: 'Khách chuyển khoản',
+      requestedBy: 2,
+      requestedByName: 'Thu Ngân',
+      requestedByUsername: 'cashier01',
+      requestedAt: '2026-11-27T05:05:00.000Z',
+    };
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 911,
+      orderCode: 'HD-911',
+      status: 'PAID',
+      paymentMethod: 'CASH',
+      paymentAccountId: null,
+      paidAt: new Date('2026-11-27T05:00:00.000Z'),
+      pendingPaymentEdit: validPending,
+    });
+    await expect(
+      svc.reviewPaymentMethodEdit(911, { decision: 'REJECT', reviewNote: 'Chưa nhận được tiền' }, { id: 1 } as never),
+    ).resolves.toMatchObject({ orderId: 911, status: 'REJECTED' });
+
+    harness.tx.order.findUnique.mockResolvedValueOnce({
+      id: 911,
+      orderCode: 'HD-911',
+      status: 'PAID',
+      paymentMethod: 'CASH',
+      paymentAccountId: null,
+      paidAt: new Date('2026-11-27T05:00:00.000Z'),
+      pendingPaymentEdit: validPending,
+    });
+    await expect(
+      svc.reviewPaymentMethodEdit(911, { decision: 'APPROVE' }, { id: 1 } as never),
+    ).resolves.toMatchObject({ orderId: 911, status: 'APPROVED', paymentMethod: 'TRANSFER' });
+  });
 });
