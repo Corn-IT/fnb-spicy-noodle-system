@@ -47,6 +47,7 @@ export class RbacToolPolicyService {
     },
     order_top_value: { label: 'Hóa đơn bán hàng (invoices.view)', check: (p) => p.permissions.invoices.view },
     recent_orders: { label: 'Hóa đơn bán hàng (invoices.view)', check: (p) => p.permissions.invoices.view },
+    order_count: { label: 'Hóa đơn bán hàng (invoices.view)', check: (p) => p.permissions.invoices.view },
     staff_top_void: { label: 'Kiểm soát đơn hủy (invoices.view)', check: (p) => p.permissions.invoices.view },
     fast_path_voids: { label: 'Hóa đơn hủy (invoices.view)', check: (p) => p.permissions.invoices.view },
     fast_path_cashflow: { label: 'Sổ quỹ & Kết ca (cashflow.view)', check: (p) => p.permissions.cashflow.view },
@@ -95,6 +96,10 @@ export class RbacToolPolicyService {
         return principal.permissions.cashflow.view
           ? { allowed: true }
           : { allowed: false, missingLabel: 'Sổ quỹ & Kết ca (cashflow.view)' };
+      case 'get_recent_orders_and_counts':
+        return principal.permissions.invoices.view || principal.permissions.pos.view
+          ? { allowed: true }
+          : { allowed: false, missingLabel: 'Hóa đơn bán hàng (invoices.view)' };
       case 'get_payroll_summary':
         return principal.permissions.payroll.view
           ? { allowed: true }

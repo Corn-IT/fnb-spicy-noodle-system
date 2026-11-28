@@ -9,8 +9,10 @@ import type {
   SemanticMatchResult,
 } from '@fnb/shared';
 import {
+  TakeawayLabelFormat,
   classifyFastPathCommand,
   detectSystemDocQuestion,
+  formatTakeawayLabel,
   matchSemanticIntent,
 } from '@fnb/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -222,16 +224,64 @@ export class LocalAiEngineService {
       return { handled: false, guardBlocked: true, period: sem.period, match: sem };
     }
 
-    // 4. Contextual follow-up shift ("còn hôm qua?", "còn tuần trước?")
-    if (
-      !sem.matched &&
-      params.slots?.lastIntent &&
-      sem.explicitPeriod &&
-      /^(?:con|the|vay)/.test(sem.normText)
-    ) {
+    // 4. Contextual follow-up shift ("còn hôm qua?") or refinement ("một đơn thôi", "chỉ đơn mang về", "top 3")
+    if (!sem.matched && params.slots?.lastIntent && !sem.guardBlocked) {
       const prevIntent = params.slots.lastIntent as SemanticIntentId;
-      const resumed: SemanticMatchResult = { ...sem, matched: true, intentId: prevIntent };
-      return this.executeSemanticIntent(resumed, principal, persona, now);
+      const prevOrderType =
+        params.slots.lastOrderType === 'TAKEAWAY' || params.slots.lastOrderType === 'DINE_IN'
+          ? (params.slots.lastOrderType as 'TAKEAWAY' | 'DINE_IN')
+          : null;
+      const prevLimit = Number(params.slots.lastLimit ?? 5) || 5;
+      const prevPeriod = (params.slots.lastPeriod as AiPeriodCode | undefined) ?? sem.period;
+
+      if (sem.explicitPeriod && /^(?:con|the|vay)/.test(sem.normText)) {
+        const resumed: SemanticMatchResult = {
+          ...sem,
+          matched: true,
+          intentId: prevIntent,
+          orderTypeFilter: sem.orderTypeFilter ?? prevOrderType,
+          topLimit: sem.explicitLimit ? sem.topLimit : prevLimit,
+          explicitLimit: sem.explicitLimit || Boolean(params.slots.lastLimit),
+        };
+        return this.executeSemanticIntent(resumed, principal, persona, now);
+      }
+
+      const words = sem.normText.split(/\s+/).filter(Boolean).length;
+      const bareNumMatch = sem.normText.match(/^(?:chi|lay|xem|cho|top)?\s*(?:(\d{1,2})|mot|hai|ba|bon|nam)\s*(?:don|hoa don|mon|cai|ban)?\s*(?:thoi|nhe|nha|nhe|a)?$/);
+      const wordMap: Record<string, number> = { mot: 1, hai: 2, ba: 3, bon: 4, nam: 5 };
+      let refinedLimit = sem.topLimit;
+      let hasRefinedLimit = sem.explicitLimit;
+      if (!hasRefinedLimit && bareNumMatch) {
+        const tok = bareNumMatch[0];
+        const wordHit = Object.entries(wordMap).find(([k]) => new RegExp(`\\b${k}\\b`).test(tok));
+        const numVal = bareNumMatch[1] ? Number(bareNumMatch[1]) : wordHit?.[1];
+        if (numVal && numVal >= 1) {
+          refinedLimit = Math.min(20, numVal);
+          hasRefinedLimit = true;
+        }
+      }
+      const isRefinableIntent = [
+        'recent_orders',
+        'order_count',
+        'order_top_value',
+        'product_list_popularity',
+        'product_list_revenue',
+        'product_top_popularity',
+        'product_top_revenue',
+      ].includes(prevIntent);
+
+      if (isRefinableIntent && words <= 8 && (hasRefinedLimit || sem.orderTypeFilter !== null)) {
+        const resumed: SemanticMatchResult = {
+          ...sem,
+          matched: true,
+          intentId: prevIntent,
+          period: sem.explicitPeriod ? sem.period : prevPeriod,
+          orderTypeFilter: sem.orderTypeFilter ?? prevOrderType,
+          topLimit: hasRefinedLimit ? refinedLimit : prevLimit,
+          explicitLimit: hasRefinedLimit || Boolean(params.slots.lastLimit),
+        };
+        return this.executeSemanticIntent(resumed, principal, persona, now);
+      }
     }
 
     if (sem.matched && sem.intentId) {
@@ -448,12 +498,23 @@ export class LocalAiEngineService {
 
     if (intentId === 'order_top_value') {
       const top = await this.prisma.order.findFirst({
-        where: { status: 'PAID', paidAt: { gte: startUtc, lt: endUtc } },
+        where: {
+          status: 'PAID',
+          paidAt: { gte: startUtc, lt: endUtc },
+          ...(sem.orderTypeFilter ? { orderType: sem.orderTypeFilter } : {}),
+        },
         orderBy: [{ totalAmount: 'desc' }, { id: 'desc' }],
         select: { orderCode: true, totalAmount: true, orderType: true, takeawayNumber: true, table: { select: { name: true } } },
       });
       if (!top) {
-        return { handled: true, route: 'local_semantic', intentId, period: sem.period, reply: `${g} kỳ ${periodSpec.label} chưa có đơn đã thanh toán${e}.` };
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          period: sem.period,
+          updatedSlots: { lastIntent: intentId, lastPeriod: sem.period, lastOrderType: sem.orderTypeFilter ?? '' },
+          reply: `${g} kỳ ${periodSpec.label} chưa có đơn đã thanh toán phù hợp${e}.`,
+        };
       }
       const loc = top.table?.name ?? (top.takeawayNumber ? `Mang về #${top.takeawayNumber}` : 'Mang về');
       return {
@@ -461,7 +522,163 @@ export class LocalAiEngineService {
         route: 'local_semantic',
         intentId,
         period: sem.period,
+        updatedSlots: { lastIntent: intentId, lastPeriod: sem.period, lastOrderType: sem.orderTypeFilter ?? '' },
         reply: `${g} hóa đơn giá trị cao nhất kỳ ${periodSpec.label} là **${top.orderCode}** (${loc}): ${fmtVnd(top.totalAmount)}${e}.`,
+      };
+    }
+
+    if (intentId === 'order_count') {
+      const rows = await this.prisma.order.findMany({
+        where: {
+          createdAt: { gte: startUtc, lt: endUtc },
+          ...(sem.orderTypeFilter ? { orderType: sem.orderTypeFilter } : {}),
+        },
+        select: { status: true, orderType: true, totalAmount: true },
+        take: 5000,
+      });
+      const activeRows = rows.filter((r) => (r.status ?? 'PAID') !== 'VOIDED');
+      const paidCount = activeRows.filter((r) => (r.status ?? 'PAID') === 'PAID').length;
+      const servingCount = activeRows.filter((r) => r.status === 'SERVING').length;
+      const pendingCount = activeRows.filter((r) => r.status === 'PENDING').length;
+      const voidCount = rows.length - activeRows.length;
+      const totalVal = activeRows.reduce((acc, r) => acc + Number(r.totalAmount ?? 0), 0);
+      const typeLabel =
+        sem.orderTypeFilter === 'TAKEAWAY'
+          ? 'đơn mang về'
+          : sem.orderTypeFilter === 'DINE_IN'
+            ? 'đơn tại bàn'
+            : 'đơn hàng';
+      let extraType = '';
+      if (!sem.orderTypeFilter && activeRows.length > 0) {
+        const twCount = activeRows.filter((r) => r.orderType === 'TAKEAWAY').length;
+        const diCount = activeRows.length - twCount;
+        extraType = ` (${twCount} mang về · ${diCount} tại bàn)`;
+      }
+      const statusParts: string[] = [];
+      if (paidCount > 0) statusParts.push(`${paidCount} đã thanh toán`);
+      if (servingCount > 0) statusParts.push(`${servingCount} đang phục vụ`);
+      if (pendingCount > 0) statusParts.push(`${pendingCount} chờ xác nhận`);
+      if (voidCount > 0) statusParts.push(`${voidCount} đã hủy`);
+      const statusDetail = statusParts.length > 0 ? ` — ${statusParts.join(' · ')}` : '';
+      return {
+        handled: true,
+        route: 'local_semantic',
+        intentId,
+        period: sem.period,
+        updatedSlots: { lastIntent: intentId, lastPeriod: sem.period, lastOrderType: sem.orderTypeFilter ?? '' },
+        reply:
+          activeRows.length > 0
+            ? `${g} kỳ ${periodSpec.label} có **${activeRows.length} ${typeLabel}**${extraType}${statusDetail} · tổng giá trị **${fmtVnd(totalVal)}**${e}.`
+            : `${g} kỳ ${periodSpec.label} chưa có ${typeLabel} nào${voidCount > 0 ? ` (có ${voidCount} đơn đã hủy)` : ''}${e}.`,
+      };
+    }
+
+    if (intentId === 'recent_orders') {
+      const limit = sem.explicitLimit ? Math.min(20, Math.max(1, sem.topLimit)) : 5;
+      const rows = await this.prisma.order.findMany({
+        where: {
+          status: { not: 'VOIDED' },
+          ...(sem.orderTypeFilter ? { orderType: sem.orderTypeFilter } : {}),
+          ...(sem.explicitPeriod ? { createdAt: { gte: startUtc, lt: endUtc } } : {}),
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+        select: {
+          orderCode: true,
+          orderType: true,
+          takeawayNumber: true,
+          takeawayLabelFormat: true,
+          status: true,
+          totalAmount: true,
+          createdAt: true,
+          table: { select: { name: true } },
+        },
+      });
+      const typeLabel =
+        sem.orderTypeFilter === 'TAKEAWAY'
+          ? 'đơn mang về'
+          : sem.orderTypeFilter === 'DINE_IN'
+            ? 'đơn tại bàn'
+            : 'đơn hàng';
+      const statusVi = (st: string | null | undefined): string => {
+        if (st === 'PAID') return 'Đã thanh toán';
+        if (st === 'SERVING') return 'Đang phục vụ';
+        if (st === 'PENDING') return 'Chờ xác nhận';
+        return st ?? '';
+      };
+      const fmtLoc = (row: (typeof rows)[number]): string => {
+        if (row.table?.name) return row.table.name;
+        if (row.takeawayNumber !== null && row.takeawayNumber !== undefined) {
+          const fmt =
+            row.takeawayLabelFormat === TakeawayLabelFormat.LETTER
+              ? TakeawayLabelFormat.LETTER
+              : TakeawayLabelFormat.NUMBER;
+          return formatTakeawayLabel(row.takeawayNumber, fmt);
+        }
+        return 'Mang về';
+      };
+      const fmtTime = (dtVal: Date | null | undefined): string => {
+        if (!dtVal) return '';
+        try {
+          return new Intl.DateTimeFormat('vi-VN', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            hour: '2-digit',
+            minute: '2-digit',
+          }).format(dtVal);
+        } catch {
+          return '';
+        }
+      };
+
+      const slotsOut = {
+        lastIntent: 'recent_orders',
+        lastPeriod: sem.period,
+        lastOrderType: sem.orderTypeFilter ?? '',
+        lastLimit: limit,
+      };
+
+      if (rows.length === 0) {
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          period: sem.period,
+          updatedSlots: slotsOut,
+          reply: `${g} chưa ghi nhận ${typeLabel} nào gần đây${sem.explicitPeriod ? ` (${periodSpec.label})` : ''}${e}.`,
+        };
+      }
+
+      if (limit === 1) {
+        const r = rows[0]!;
+        const tStr = fmtTime(r.createdAt);
+        return {
+          handled: true,
+          route: 'local_semantic',
+          intentId,
+          period: sem.period,
+          updatedSlots: slotsOut,
+          reply: `${g} ${typeLabel} gần nhất là **${r.orderCode}** (${fmtLoc(r)}) · **${fmtVnd(r.totalAmount)}** · ${statusVi(r.status)}${tStr ? ` lúc ${tStr}` : ''}${e}.`,
+        };
+      }
+
+      const headerLabel =
+        sem.orderTypeFilter === 'TAKEAWAY'
+          ? `${rows.length} đơn mang về gần nhất`
+          : sem.orderTypeFilter === 'DINE_IN'
+            ? `${rows.length} đơn tại bàn gần nhất`
+            : `${rows.length} hóa đơn gần nhất`;
+      return {
+        handled: true,
+        route: 'local_semantic',
+        intentId,
+        period: sem.period,
+        updatedSlots: slotsOut,
+        reply: `🧾 ${headerLabel}:\n${rows
+          .map((r) => {
+            const tStr = fmtTime(r.createdAt);
+            return `• **${r.orderCode}** (${fmtLoc(r)}): ${fmtVnd(r.totalAmount)} · ${statusVi(r.status)}${tStr ? ` (${tStr})` : ''}`;
+          })
+          .join('\n')}`,
       };
     }
 
@@ -615,6 +832,7 @@ export class LocalAiEngineService {
           route: 'fast_path',
           intentId,
           period: sem.period,
+          updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
           reply: prof
             ? `${g} lợi nhuận sau kho kỳ ${periodSpec.label}: **${fmtVnd(prof.grossProfitAfterInventory)}**` +
               (prof.netOperatingProfit !== null ? ` · Sau trừ lương: **${fmtVnd(prof.netOperatingProfit)}** (${prof.marginPercent ?? 0}%)` : '') +
@@ -630,6 +848,7 @@ export class LocalAiEngineService {
           route: 'fast_path',
           intentId,
           period: sem.period,
+          updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
           reply: lines.length ? `🍳 Sản lượng trạm bếp (${periodSpec.label}):\n${lines.join('\n')}` : `${g} kỳ ${periodSpec.label} chưa có số liệu trạm bếp${e}.`,
         };
       }
@@ -640,19 +859,8 @@ export class LocalAiEngineService {
           route: 'fast_path',
           intentId,
           period: sem.period,
+          updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
           reply: `${g} kỳ ${periodSpec.label} có **${dr?.voidedOrderCount ?? 0} đơn hủy** (ước tính ${fmtVnd(dr?.voidedAmount ?? 0)})${e}.`,
-        };
-      }
-      if (intentId === 'recent_orders') {
-        const inv = ov.recentInvoices.slice(0, 5);
-        return {
-          handled: true,
-          route: 'fast_path',
-          intentId,
-          period: sem.period,
-          reply: inv.length
-            ? `🧾 Hóa đơn gần nhất:\n${inv.map((i) => `• ${i.orderCode} (${i.tableLabel ?? (i.takeawayNumber ? `Mang về #${i.takeawayNumber}` : 'Mang về')}): ${fmtVnd(i.totalAmount)}`).join('\n')}`
-            : `${g} kỳ ${periodSpec.label} chưa có hóa đơn nào${e}.`,
         };
       }
       if (intentId === 'period_comparison') {
@@ -665,6 +873,7 @@ export class LocalAiEngineService {
           route: 'local_semantic',
           intentId,
           period: sem.period,
+          updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
           reply: `${g} ${periodSpec.label} đạt **${fmtVnd(cur)}** vs kỳ trước **${fmtVnd(prev)}** (${diff >= 0 ? '+' : '-'}${fmtVnd(Math.abs(diff))}${rev?.growthPercent !== null && rev?.growthPercent !== undefined ? ` · ${rev.growthPercent > 0 ? '+' : ''}${rev.growthPercent.toFixed(1)}%` : ''})${e}.`,
         };
       }
@@ -675,7 +884,7 @@ export class LocalAiEngineService {
         route: 'fast_path',
         intentId,
         period: sem.period,
-        updatedSlots: { lastIntent: intentId },
+        updatedSlots: { lastIntent: intentId, lastPeriod: sem.period },
         reply: `${g} kỳ ${periodSpec.label}: thực thu **${fmtVnd(rev?.netPaidAmount ?? 0)}** qua **${rev?.paidOrderCount ?? 0} đơn** (TB ${fmtVnd(rev?.averageOrderValue ?? 0)}/đơn)${e}.`,
       };
     }

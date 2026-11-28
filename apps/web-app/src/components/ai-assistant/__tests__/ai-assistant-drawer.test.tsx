@@ -106,7 +106,7 @@ describe('AiAssistantDrawer & TopNavbar integration', () => {
     };
 
     const chatReply: AiChatResponse = {
-      reply: 'Dạ món **Mì Cay Bò** đang gọi nhiều nhất hôm nay (25 phần) ạ.',
+      reply: 'Dạ món **Mì Cay Bò** đang gọi nhiều nhất hôm nay (`HD-20261128-0122`, 25 phần) ạ.',
       route: 'local_semantic',
       intentId: 'product_top_popularity',
       period: 'homnay',
@@ -165,8 +165,10 @@ describe('AiAssistantDrawer & TopNavbar integration', () => {
     // Click prompt chip -> displays assistant bubble with **bold** formatting and 0 token badge
     fireEvent.click(screen.getByTestId('ai-chip-top-product'));
     await waitFor(() => {
-      expect(screen.getByTestId('ai-turn-assistant')).toHaveTextContent('Mì Cay Bò');
-      expect(screen.getByTestId('ai-turn-assistant')).toHaveTextContent('Local 0 token');
+      const bubble = screen.getByTestId('ai-turn-assistant');
+      expect(bubble).toHaveTextContent('Mì Cay Bò');
+      expect(bubble.querySelector('code')).toHaveTextContent('HD-20261128-0122');
+      expect(bubble).toHaveTextContent('Local 0 token');
     });
 
     // Expand drawer width toggle & send manual question via input form
