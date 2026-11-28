@@ -1002,6 +1002,87 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
         finally:
             biz_bot_ai.reset_ai_runtime_state()
 
+    def test_auto_telegram_member_directory_and_friendly_intro_tagging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._base_cfg(tmp)
+            cfg["staff_tg_map_raw"] = ""  # Zero manual env config!
+            mem_dir = biz_bot_state.TelegramMemberDirectory(persist_path=f"{tmp}/members.json")
+            admins_payload = {
+                "ok": True,
+                "result": [
+                    {"user": {"id": 8760953465, "is_bot": False, "first_name": "Thanh", "last_name": "Loan", "username": "ThanhLoan0206"}, "custom_title": "Ngoan Xinh Yêu"},
+                    {"user": {"id": 5144091749, "is_bot": False, "first_name": "Minh Tuấn", "last_name": "- BU Huy - Dev", "username": "mintuan_2030"}},
+                    {"user": {"id": 777001, "is_bot": False, "first_name": "Bé", "last_name": "Ngân"}},  # No @username!
+                ],
+            }
+            with mock.patch.object(biz_bot_state, "tg_api", return_value=admins_payload):
+                mem_dir.refresh_admins("real_token", "-1001", force=True)
+
+            sender_msg = {
+                "message_id": 64,
+                "from": {"id": 5144091749, "username": "mintuan_2030", "first_name": "Minh Tuấn", "last_name": "- BU Huy - Dev"},
+                "chat": {"id": -1001},
+            }
+            limiter = biz_bot_ai.AiRateLimiter()
+
+            # 1. Exact repro of real group chat: "Tag Thanh Loan vào và giới thiệu em làm được gì nha Lona."
+            intro_res = bot2_mod.dispatch_message_detailed(
+                "Tag Thanh Loan vào và giới thiệu em làm được gì nha Lona.",
+                cfg=cfg,
+                rate_limiter=limiter,
+                msg=sender_msg,
+                member_directory=mem_dir,
+            )
+            assert intro_res is not None
+            self.assertTrue(intro_res["text"].startswith("@mintuan_2030 → @ThanhLoan0206\n"))
+            self.assertIn("👋 <b>Chào @ThanhLoan0206!</b>", intro_res["text"])
+            self.assertIn("20 lệnh", intro_res["text"])
+
+            # 2. Tag by cue+short name ("Tag chị Loan") in full dispatch flow
+            rev_sample = {
+                "kpis": {
+                    "revenue": {"netPaidAmount": 2500000, "paidOrderCount": 18, "dineInCount": 12, "takeawayCount": 6, "averageOrderValue": 138888, "discountAmount": 0, "subtotalAmount": 2500000},
+                    "cashDrawer": {"totalCashSales": 1500000},
+                    "transfer": {"totalTransferSales": 1000000},
+                },
+                "revenueSeries": {"buckets": []},
+            }
+            with mock.patch.object(biz_bot_queries, "call_internal_biz", return_value=rev_sample):
+                loan_short = bot2_mod.dispatch_message_detailed(
+                    "Lona ơi tag chị Loan xem doanh thu hôm nay đi",
+                    cfg=cfg,
+                    rate_limiter=limiter,
+                    msg=sender_msg,
+                    member_directory=mem_dir,
+                )
+            assert loan_short is not None
+            self.assertTrue(loan_short["text"].startswith("@mintuan_2030 → @ThanhLoan0206\n"))
+            self.assertIn("2.500.000đ", loan_short["text"])
+
+            # Explicit helper check for user without @username & short-name alias
+            ex, sh = mem_dir.build_alias_maps()
+            tags_loan = biz_bot_common.extract_third_party_mentions(
+                "Tag chị Loan vào xem nhé", cfg=cfg, member_aliases=ex, short_member_aliases=sh, exclude_user_ids={5144091749}
+            )
+            self.assertEqual(tags_loan, ["@ThanhLoan0206"])
+
+            tags_nouser = biz_bot_common.extract_third_party_mentions(
+                "Nhờ Bé Ngân kiểm tra bếp nhé", cfg=cfg, member_aliases=ex, short_member_aliases=sh, exclude_user_ids={5144091749}
+            )
+            self.assertEqual(tags_nouser, ['<a href="tg://user?id=777001">Bé Ngân</a>'])
+
+            # 3. Vietnamese nouns "tuần" ("tuan") must NOT falsely tag "Minh Tuấn"
+            no_false_tuan = biz_bot_common.extract_third_party_mentions(
+                "Cho tôi xem báo cáo tuần này", cfg=cfg, member_aliases=ex, short_member_aliases=sh
+            )
+            self.assertEqual(no_false_tuan, [])
+
+            # 4. Persisted tg-members.json survives restart cleanly
+            mem_dir2 = biz_bot_state.TelegramMemberDirectory(persist_path=f"{tmp}/members.json")
+            ex2, sh2 = mem_dir2.build_alias_maps()
+            self.assertEqual(ex2.get("thanh loan"), "@ThanhLoan0206")
+            self.assertIn("ngan", sh2)
+
 
 if __name__ == "__main__":
     unittest.main()
