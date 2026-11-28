@@ -387,22 +387,26 @@ def _handle_targeted_slice(norm_q: str, period_arg: str, cfg: dict[str, str] | N
     m_tbl = re.search(r"\bban\s*(?:so\s*)?0*(\d{1,2})\b", norm_q)
     if m_tbl and not any(k in norm_q for k in ("bao nhieu ban", "may ban", "ban nao")):
         num = int(m_tbl.group(1))
-        pattern_sql = _sql_quote(rf"(?:ban|bàn)\s*0*{num}\b")
-        rows = run_readonly_sql_json(
-            f"""
+        all_tables = run_readonly_sql_json(
+            """
             SELECT dt.name AS table_name, dt.status, o.id AS order_id, o.order_code, o.total_amount,
                    to_char(o.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI') AS since_hm
             FROM dining_tables dt
             LEFT JOIN orders o ON o.id = dt.active_order_id
-            WHERE dt.name ~* {pattern_sql}
             ORDER BY dt.id ASC
             """,
-            max_rows=1,
+            max_rows=50,
             cfg=cfg,
         )
-        if not rows:
+        t = next(
+            (
+                row for row in all_tables
+                if re.search(rf"(?<![0-9])0*{num}(?![0-9])", strip_vi(str(row.get("table_name") or "")))
+            ),
+            None,
+        )
+        if not t:
             return {"text": f"🔎 Không tìm thấy <b>Bàn {num:02d}</b> trong hệ thống.", "slots": {"intent": "table_detail"}}
-        t = rows[0]
         if t.get("status") == "AVAILABLE" or not t.get("order_id"):
             return {"text": f"✅ <b>{html.escape(str(t['table_name']))}</b> hiện đang <b>TRỐNG</b>.", "slots": {"intent": "table_detail", "table_name": t["table_name"]}}
         items = run_readonly_sql_json(
