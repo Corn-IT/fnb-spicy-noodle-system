@@ -683,10 +683,31 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
             self.assertIn("⚡ Cục bộ · 0 token", r2["text"])
             telemetry.record_interaction("Hôm nay món đó bán được bao nhiêu phần?", r2["text"], r2["route"], r2["sender_label"], msg_id=89)
 
-            # Check /token telemetry & rolling JSONL log
-            tok_res = bot2_mod.dispatch_message_detailed("/token", cfg=cfg, rate_limiter=limiter, telemetry=telemetry, msg=user_msg)
+            # Check /token telemetry, live key probe, quota countdown & rolling JSONL log
+            fake_probe = {
+                "configured": True,
+                "key_valid": True,
+                "models": [
+                    {
+                        "role": "Chính",
+                        "model": "gemini-3.5-flash-lite",
+                        "ok": True,
+                        "status_code": 200,
+                        "latency_ms": 70,
+                        "display_name": "Gemini 3.5 Flash Lite",
+                        "version": "3.5",
+                        "input_limit": 1048576,
+                        "output_limit": 65536,
+                        "error": "",
+                    }
+                ],
+            }
+            with mock.patch.object(bot2_mod, "probe_gemini_status", return_value=fake_probe):
+                tok_res = bot2_mod.dispatch_message_detailed("/token", cfg=cfg, rate_limiter=limiter, telemetry=telemetry, msg=user_msg)
             assert tok_res is not None
-            self.assertIn("Cục bộ 0-token: <b>2 lượt</b>", tok_res["text"])
+            self.assertIn("⚡ Cục bộ 0-token <b>2</b>", tok_res["text"])
+            self.assertIn("Reset ngày Google", tok_res["text"])
+            self.assertIn("Key đang hoạt động", tok_res["text"])
             self.assertIn("100%", tok_res["text"])
             log_lines = Path(log_file).read_text(encoding="utf-8").strip().splitlines()
             self.assertEqual(len(log_lines), 2)
@@ -738,6 +759,148 @@ class TestLocalIntelligenceTaggingAndTelemetry(unittest.TestCase):
         assert ref_res is not None
         self.assertTrue(ref_res["is_refusal"])
         self.assertEqual(ref_res["route"], "guardrail_block")
+
+    def test_five_audit_fixes_and_quota_probe(self) -> None:
+        cfg = self._base_cfg()
+        cfg["gemini_rpd_limit"] = "1500"
+        cfg["gemini_daily_token_budget"] = "1000000"
+        limiter = biz_bot_ai.AiRateLimiter()
+
+        # Fix #54: Command-list questions stay 0-token & return real 19 commands (never hallucinate /overview)
+        with mock.patch.object(bot2_mod, "answer_with_gemini_detailed") as m_ai:
+            cmd_help_res = bot2_mod.dispatch_message_detailed("Lona ơi các câu lệnh của em là gì?", cfg=cfg, rate_limiter=limiter)
+            m_ai.assert_not_called()
+        assert cmd_help_res is not None
+        self.assertIn("/tongquan", cmd_help_res["text"])
+        self.assertIn("/ket", cmd_help_res["text"])
+        self.assertNotIn("/overview", cmd_help_res["text"])
+
+        # Fix #52: Third-party @mention & staff alias tagging forwarded to reply header
+        sender_msg = {"message_id": 52, "from": {"id": 11, "username": "mintuan_2030", "first_name": "Tuấn"}, "chat": {"id": -1001}}
+        cc_res = bot2_mod.dispatch_message_detailed(
+            "Lona ơi Tag chị @ThanhLoan0206 vào và giới thiệu em có thể làm được gì đi",
+            cfg=cfg,
+            rate_limiter=limiter,
+            msg=sender_msg,
+        )
+        assert cc_res is not None
+        self.assertTrue(cc_res["text"].startswith("@mintuan_2030 → @ThanhLoan0206\n"))
+        self.assertEqual(
+            biz_bot_common.extract_third_party_mentions("Lona tag Lan vào nhé", cfg=cfg),
+            ["@lan_pos"],
+        )
+
+        # Fix #42 & #44 & #46: Recent N-min orders, added items, Gemini slot extraction & 0-token follow-up
+        mem = biz_bot_state.ConversationMemory()
+        with mock.patch.object(
+            biz_bot_local,
+            "run_readonly_sql_json",
+            return_value=[{"order_code": "HD-20261128-0064", "order_type": "DINE_IN", "takeaway_number": None, "table_name": "Bàn 05", "status": "SERVING", "total_amount": 140000, "created_hm": "15:10"}],
+        ):
+            r_10m = bot2_mod.dispatch_message_detailed(
+                "Lona ơi cách đây 10 phút có đơn nào không?",
+                cfg=cfg,
+                rate_limiter=limiter,
+                memory=mem,
+                chat_id="-1001",
+            )
+        assert r_10m is not None
+        self.assertEqual(r_10m["route"], "local")
+        self.assertIn("HD-20261128-0064", r_10m["text"])
+        self.assertEqual(mem.get_slots("-1001").get("order_code"), "HD-20261128-0064")
+
+        # Also verify slot extraction works after Gemini replies too!
+        mem_gem = biz_bot_state.ConversationMemory()
+        with mock.patch.object(
+            bot2_mod,
+            "answer_with_gemini_detailed",
+            return_value={"text": "Đơn <code>HD-20261128-0064</code> vừa gọi thêm món.", "is_refusal": False, "usage": {"prompt_tokens": 50, "output_tokens": 20, "total_tokens": 70}, "model_used": "gemini-3.5-flash-lite"},
+        ):
+            _ = bot2_mod.dispatch_message_detailed(
+                "Phân tích kỹ đơn vừa nãy giúp mình",
+                cfg=cfg,
+                rate_limiter=limiter,
+                is_direct=True,
+                memory=mem_gem,
+                chat_id="-1001",
+            )
+        self.assertEqual(mem_gem.get_slots("-1001").get("order_code"), "HD-20261128-0064")
+
+        # Follow-up "Đơn đó là ăn tại quán hay mang đi?" resolves at 0 Gemini tokens!
+        with (
+            mock.patch.object(
+                biz_bot_local,
+                "run_readonly_sql_json",
+                return_value=[{"order_code": "HD-20261128-0064", "order_type": "DINE_IN", "takeaway_number": None, "table_name": "Bàn 05", "status": "SERVING", "payment_method": None, "total_amount": 140000, "cashier_name": "Lan", "created_vn": "15:10 28/11"}],
+            ),
+            mock.patch.object(bot2_mod, "answer_with_gemini_detailed") as m_ai2,
+        ):
+            fu_ord = bot2_mod.dispatch_message_detailed(
+                "Đơn đó là ăn tại quán hay mang đi?",
+                cfg=cfg,
+                rate_limiter=limiter,
+                is_direct=True,
+                memory=mem_gem,
+                chat_id="-1001",
+            )
+            m_ai2.assert_not_called()
+        assert fu_ord is not None
+        self.assertIn("Ăn tại quán (Bàn 05)", fu_ord["text"])
+
+        # Fix #48: Qty-sorted superlative ranking prints qty descending & short money
+        daily_mixed = {
+            "summary": {"totalOrders": 54},
+            "items": [
+                {"productId": 3, "name": "Mì Bò Mỹ", "qty": 28, "revenue": 1260000, "sharePercent": 16.1},
+                {"productId": 4, "name": "Mì Thập Cẩm", "qty": 12, "revenue": 780000, "sharePercent": 10.0},
+                {"productId": 5, "name": "Mì Xúc Xích", "qty": 16, "revenue": 640000, "sharePercent": 8.2},
+                {"productId": 6, "name": "Nem Nướng", "qty": 13, "revenue": 520000, "sharePercent": 6.6},
+            ],
+        }
+        with mock.patch.object(biz_bot_local, "call_internal_biz", return_value=daily_mixed):
+            best_res = biz_bot_local.try_answer_locally("món nào bán chạy nhất hôm nay?", cfg=cfg)
+        assert best_res is not None
+        idx16 = best_res["text"].find("16 phần")
+        idx13 = best_res["text"].find("13 phần")
+        idx12 = best_res["text"].find("12 phần")
+        self.assertTrue(0 < idx16 < idx13 < idx12, f"Expected qty descending in: {best_res['text']}")
+
+        # Quota countdown + live probe + budget estimate in /gemini & natural ask
+        vn_dt = biz_bot_state.dt.datetime(2026, 11, 28, 15, 30, 0, tzinfo=biz_bot_common.VN_TZ)
+        rst = biz_bot_state.google_quota_reset_info(vn_dt)
+        self.assertEqual(rst["pacific_date"], "2026-11-28")
+        self.assertIn("15:00 ngày mai", rst["reset_vn_str"])
+        self.assertEqual(rst["countdown_str"], "23 giờ 30 phút")
+
+        fake_probe_ok = {
+            "configured": True,
+            "key_valid": True,
+            "models": [
+                {"role": "Chính", "model": "gemini-3.5-flash-lite", "ok": True, "status_code": 200, "latency_ms": 65, "display_name": "Gemini 3.5 Flash Lite", "version": "3.5", "input_limit": 1048576, "output_limit": 65536, "error": ""}
+            ],
+        }
+        tel = biz_bot_state.TelemetryStore()
+        tel.record_interaction("q", "a", "gemini", prompt_tokens=9000, output_tokens=1000, total_tokens=10000, now_dt=vn_dt, model_used="gemini-3.5-flash-lite")
+        tel.record_gemini_error(429, "RESOURCE_EXHAUSTED retry in 30s", now_dt=vn_dt)
+        with (
+            mock.patch.object(biz_bot_local, "probe_gemini_status", return_value=fake_probe_ok),
+            mock.patch.object(bot2_mod, "probe_gemini_status", return_value=fake_probe_ok),
+            mock.patch.object(bot2_mod, "answer_with_gemini_detailed") as m_ai_q,
+        ):
+            nat_tok = bot2_mod.dispatch_message_detailed(
+                "Lona ơi kiểm tra token còn lại và bao lâu nữa reset quota?",
+                cfg=cfg,
+                rate_limiter=limiter,
+                telemetry=tel,
+            )
+            gem_cmd = bot2_mod.dispatch_message_detailed("/gemini", cfg=cfg, rate_limiter=limiter, telemetry=tel)
+            m_ai_q.assert_not_called()
+        for res_q in (nat_tok, gem_cmd):
+            assert res_q is not None
+            self.assertIn("Key đang hoạt động", res_q["text"])
+            self.assertIn("1/1.500 lượt", res_q["text"])
+            self.assertIn("990.000 token", res_q["text"])
+            self.assertIn("HTTP 429", res_q["text"])
 
 
 if __name__ == "__main__":

@@ -16,8 +16,9 @@ import sys
 import time
 from typing import Any, Callable
 
-from biz_bot_ai import AiRateLimiter, answer_with_gemini_detailed
+from biz_bot_ai import AiRateLimiter, GeminiApiError, answer_with_gemini_detailed, probe_gemini_status
 from biz_bot_common import (
+    extract_third_party_mentions,
     format_sender_mention,
     get_biz_config,
     send_chat_action,
@@ -52,7 +53,7 @@ from biz_bot_queries import (
     handle_tongquan,
     handle_topmon,
 )
-from biz_bot_state import ConversationMemory, TelemetryStore, plain_snippet
+from biz_bot_state import ConversationMemory, TelemetryStore, extract_slots_from_text, plain_snippet
 
 MIN_MESSAGE_INTERVAL_SEC = 1.0
 GROUP_ANONYMOUS_BOT_ID = 1087968824
@@ -110,10 +111,11 @@ def register_biz_commands(bot_token: str) -> None:
         {"command": "lich", "description": "Lịch trực nhân viên hôm nay hoặc /lich tuan"},
         {"command": "luong", "description": "Bảng công & quỹ lương ước tính"},
         {"command": "loinhuan", "description": "Lợi nhuận ước tính sau kho & lương"},
-        {"command": "token", "description": "Thống kê tỷ lệ 0-token cục bộ vs Gemini AI"},
+        {"command": "token", "description": "Kiểm tra Key/Model Gemini, giờ reset quota & tỷ lệ 0-token"},
+        {"command": "gemini", "description": "Check trực tiếp API Key, model & hạn mức Gemini (0 token)"},
         {"command": "hoi", "description": "Hỏi tự do AI Gemini về hệ thống POS & Database"},
         {"command": "quen", "description": "Xóa ngữ cảnh hội thoại gần đây để hỏi chủ đề mới"},
-        {"command": "help", "description": "Hướng dẫn 18 lệnh, cách gọi Bot & emoji trạng thái"},
+        {"command": "help", "description": "Hướng dẫn 19 lệnh, cách gọi Bot & emoji trạng thái"},
     ]
     for scope in ({"type": "default"}, {"type": "all_group_chats"}):
         try:
@@ -221,6 +223,18 @@ def dispatch_message_detailed(
         mention_html = sender_mention or ""
         sender_label = mention_html or "Quản trị viên"
 
+    cc_tags = extract_third_party_mentions(
+        raw_text,
+        cfg=cfg,
+        bot_username=bot_username,
+        exclude_handles={mention_html} if mention_html.startswith("@") else None,
+    )
+    if cc_tags:
+        cc_str = " ".join(html.escape(t) for t in cc_tags)
+        header_tag = f"{mention_html} → {cc_str}" if mention_html else cc_str
+    else:
+        header_tag = mention_html
+
     def emit(stage: str) -> None:
         if status_cb:
             status_cb(stage)
@@ -238,7 +252,7 @@ def dispatch_message_detailed(
                 memory.clear(mem_key)
             body = "🧹 Đã xóa trí nhớ hội thoại gần đây. Bạn có thể hỏi sang chủ đề POS &amp; Database mới nhé!"
             return {
-                "text": _wrap_reply_text(body, mention_html, "local"),
+                "text": _wrap_reply_text(body, header_tag, "local"),
                 "route": "local",
                 "is_refusal": False,
                 "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -246,13 +260,21 @@ def dispatch_message_detailed(
                 "sender_label": sender_label,
                 "clean_question": raw_text,
             }
-        if cmd == "token":
+        if cmd in ("token", "gemini"):
             emit("received")
             emit("local")
-            store = telemetry or TelemetryStore()
-            body = store.format_token_report(project_name=cfg.get("project_name", "Ăn Vặt Tran"))
+            store = telemetry or TelemetryStore(
+                stats_path=cfg.get("token_stats_file"),
+                qa_log_path=cfg.get("qa_log_file"),
+            )
+            live = probe_gemini_status(cfg, force_refresh=(cmd == "gemini" or "check" in arg.lower()))
+            body = store.format_token_report(
+                project_name=cfg.get("project_name", "Ăn Vặt Tran"),
+                cfg=cfg,
+                live_probe=live,
+            )
             return {
-                "text": _wrap_reply_text(body, mention_html, "command"),
+                "text": _wrap_reply_text(body, header_tag, "command"),
                 "route": "command",
                 "is_refusal": False,
                 "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -265,14 +287,14 @@ def dispatch_message_detailed(
             emit("local")
             res = COMMAND_HANDLERS[cmd](arg, cfg)
             if memory is not None and cmd not in ("help", "start"):
-                cmd_slots: dict[str, Any] = {}
+                cmd_slots: dict[str, Any] = dict(extract_slots_from_text(res))
                 if cmd in _SLOT_BY_CMD:
                     cmd_slots["intent"] = _SLOT_BY_CMD[cmd]
                     if arg:
                         cmd_slots["period_raw"] = arg
                 memory.append_turn(mem_key, raw_text, res, slots=cmd_slots or None)
             return {
-                "text": _wrap_reply_text(res, mention_html, "command"),
+                "text": _wrap_reply_text(res, header_tag, "command"),
                 "route": "command",
                 "is_refusal": False,
                 "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -283,7 +305,7 @@ def dispatch_message_detailed(
         if cmd == "hoi":
             if not arg:
                 return {
-                    "text": _wrap_reply_text("💡 Gõ theo mẫu: <code>/hoi Hôm nay khung giờ nào bán chạy nhất?</code>", mention_html, "local"),
+                    "text": _wrap_reply_text("💡 Gõ theo mẫu: <code>/hoi Hôm nay khung giờ nào bán chạy nhất?</code>", header_tag, "local"),
                     "route": "local",
                     "is_refusal": True,
                     "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -304,12 +326,14 @@ def dispatch_message_detailed(
             is_ref = bool(ai_res.get("is_refusal"))
             route = "guardrail_block" if (is_ref and usage.get("total_tokens", 0) == 0) else "gemini"
             if memory is not None and not is_ref:
-                memory.append_turn(mem_key, arg, str(ai_res["text"]))
+                inferred = extract_slots_from_text(str(ai_res["text"]))
+                memory.append_turn(mem_key, arg, str(ai_res["text"]), slots=inferred or None)
             return {
-                "text": _wrap_reply_text(str(ai_res["text"]), mention_html, route, usage.get("total_tokens", 0)),
+                "text": _wrap_reply_text(str(ai_res["text"]), header_tag, route, usage.get("total_tokens", 0)),
                 "route": route,
                 "is_refusal": is_ref,
                 "usage": usage,
+                "model_used": ai_res.get("model_used", ""),
                 "trigger_mode": "command",
                 "sender_label": sender_label,
                 "clean_question": arg,
@@ -320,7 +344,7 @@ def dispatch_message_detailed(
                 "Gõ <code>/help</code> để xem các lệnh thống kê cửa hàng."
             )
             return {
-                "text": _wrap_reply_text(body, mention_html, "command"),
+                "text": _wrap_reply_text(body, header_tag, "command"),
                 "route": "command",
                 "is_refusal": False,
                 "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -352,7 +376,7 @@ def dispatch_message_detailed(
         emit("local")
         body = "👋 Dạ mình nghe đây! Bạn cần tra doanh thu, két tiền, món bán chạy hay cách dùng POS? (Gõ <code>/help</code> để xem nhanh)"
         return {
-            "text": _wrap_reply_text(body, mention_html, "local"),
+            "text": _wrap_reply_text(body, header_tag, "local"),
             "route": "local",
             "is_refusal": False,
             "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -367,7 +391,7 @@ def dispatch_message_detailed(
     allowed, pre_refusal = check_pre_guardrail(clean_q)
     if not allowed:
         return {
-            "text": _wrap_reply_text(str(pre_refusal), mention_html, "guardrail_block"),
+            "text": _wrap_reply_text(str(pre_refusal), header_tag, "guardrail_block"),
             "route": "guardrail_block",
             "is_refusal": True,
             "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -383,14 +407,15 @@ def dispatch_message_detailed(
     )
 
     # Layer 2A: Local-First 0-token focused engine (superlatives, slices, entity lookup, follow-ups, meta)
-    local_res = try_answer_locally(clean_q, cfg=cfg, slots=slots, cache=entity_cache)
+    local_res = try_answer_locally(clean_q, cfg=cfg, slots=slots, cache=entity_cache, telemetry=telemetry)
     if local_res is not None:
         emit("local")
         body = str(local_res["text"]) + off_topic_tail
         if memory is not None:
-            memory.append_turn(mem_key, clean_q, body, slots=local_res.get("slots"))
+            merged_slots = {**extract_slots_from_text(body), **(local_res.get("slots") or {})}
+            memory.append_turn(mem_key, clean_q, body, slots=merged_slots or None)
         return {
-            "text": _wrap_reply_text(body, mention_html, "local"),
+            "text": _wrap_reply_text(body, header_tag, "local"),
             "route": str(local_res.get("route") or "local"),
             "is_refusal": False,
             "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -409,14 +434,14 @@ def dispatch_message_detailed(
                 emit("local")
                 body = handler(arg, cfg) + off_topic_tail
                 if memory is not None:
-                    fp_slots: dict[str, Any] = {}
+                    fp_slots: dict[str, Any] = dict(extract_slots_from_text(body))
                     if key in _SLOT_BY_CMD:
                         fp_slots["intent"] = _SLOT_BY_CMD[key]
                         if arg:
                             fp_slots["period_raw"] = arg
                     memory.append_turn(mem_key, clean_q, body, slots=fp_slots or None)
                 return {
-                    "text": _wrap_reply_text(body, mention_html, "fast_path"),
+                    "text": _wrap_reply_text(body, header_tag, "fast_path"),
                     "route": "fast_path",
                     "is_refusal": False,
                     "usage": {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -438,12 +463,14 @@ def dispatch_message_detailed(
     is_ref = bool(ai_res.get("is_refusal"))
     route = "guardrail_block" if (is_ref and usage.get("total_tokens", 0) == 0) else "gemini"
     if memory is not None and not is_ref:
-        memory.append_turn(mem_key, clean_q, str(ai_res["text"]))
+        inferred = extract_slots_from_text(str(ai_res["text"]))
+        memory.append_turn(mem_key, clean_q, str(ai_res["text"]), slots=inferred or None)
     return {
-        "text": _wrap_reply_text(str(ai_res["text"]), mention_html, route, usage.get("total_tokens", 0)),
+        "text": _wrap_reply_text(str(ai_res["text"]), header_tag, route, usage.get("total_tokens", 0)),
         "route": route,
         "is_refusal": is_ref,
         "usage": usage,
+        "model_used": ai_res.get("model_used", ""),
         "trigger_mode": trigger_mode,
         "sender_label": sender_label,
         "clean_question": clean_q,
@@ -605,6 +632,9 @@ def main() -> int:
                             total_tokens=int(usage.get("total_tokens") or 0),
                             is_refusal=bool(res.get("is_refusal")),
                             msg_id=msg_id,
+                            raw_q=raw_text,
+                            trigger=str(res.get("trigger_mode") or ""),
+                            model_used=str(res.get("model_used") or ""),
                         )
                         print(
                             f"[biz-bot] replied msg_id={msg_id} route={res.get('route')} trigger={res.get('trigger_mode')} tokens={usage.get('total_tokens', 0)} chars={len(reply_html)}",
@@ -612,6 +642,16 @@ def main() -> int:
                         )
                     else:
                         print(f"[biz-bot] ignored un-invoked text={raw_text[:60]!r}", flush=True)
+                except GeminiApiError as gerr:
+                    telemetry.record_gemini_error(gerr.http_code, gerr.detail)
+                    on_stage("error")
+                    print(f"[biz-bot] gemini error: {gerr}", file=sys.stderr, flush=True)
+                    send_tg_message(
+                        bot_token,
+                        chat_id,
+                        f"⚠️ Gemini API phản hồi lỗi (HTTP {gerr.http_code}): <code>{html.escape(gerr.detail[:180])}</code>\n💡 Kiểm tra chi tiết: <code>/token</code>",
+                        reply_to_message_id=msg_id,
+                    )
                 except Exception as err:
                     on_stage("error")
                     print(f"[biz-bot] handler error: {err}", file=sys.stderr, flush=True)

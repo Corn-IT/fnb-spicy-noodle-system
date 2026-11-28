@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Persistent Structured Conversation Context, 7-Day Rolling Q&A Audit Log,
-and /token Telemetry Store for @POS_Lona_bot.
+Google Pacific Quota Cycle Tracking & /token / /gemini Telemetry Store.
 """
 
 from __future__ import annotations
@@ -15,7 +15,14 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from biz_bot_common import vn_now
+try:
+    from zoneinfo import ZoneInfo
+
+    LA_TZ = ZoneInfo("America/Los_Angeles")
+except Exception:
+    LA_TZ = dt.timezone(dt.timedelta(hours=-8))
+
+from biz_bot_common import VN_TZ, fmt_vnd, vn_now
 
 MAX_HISTORY_TURNS = 4
 HISTORY_TTL_SEC = 600
@@ -39,6 +46,43 @@ def plain_snippet(text: str, limit: int = 500) -> str:
     clean = re.sub(r"<[^>]+>", " ", text or "")
     clean = html.unescape(re.sub(r"\s+", " ", clean)).strip()
     return clean[:limit] if len(clean) <= limit else clean[: limit - 1] + "…"
+
+
+def extract_slots_from_text(text: str) -> dict[str, Any]:
+    """Extract referenced order_code (HD-/ORD-) and table_name (Bàn NN) from any bot reply."""
+    plain = plain_snippet(text, limit=1500)
+    slots: dict[str, Any] = {}
+    m_ord = re.search(r"\b((?:HD|ORD)-[A-Z0-9-]{4,})\b", plain, re.I)
+    if m_ord:
+        slots["order_code"] = m_ord.group(1).upper()
+    m_tbl = re.search(r"\b(?:Bàn|Ban)\s+0*(\d{1,2})\b", plain, re.I)
+    if m_tbl:
+        slots["table_name"] = f"Bàn {int(m_tbl.group(1)):02d}"
+    return slots
+
+
+def google_quota_reset_info(now_dt: dt.datetime | None = None) -> dict[str, str]:
+    """
+    Compute the current Google Gemini Developer API daily quota date (America/Los_Angeles)
+    and exact countdown to next 00:00 Pacific reset converted into Vietnam time (+07:00).
+    """
+    now_vn = (now_dt or vn_now()).astimezone(VN_TZ)
+    now_la = now_vn.astimezone(LA_TZ)
+    next_la_date = now_la.date() + dt.timedelta(days=1)
+    if isinstance(LA_TZ, dt.tzinfo):
+        next_reset_la = dt.datetime.combine(next_la_date, dt.time(0, 0), tzinfo=LA_TZ)
+    else:
+        next_reset_la = dt.datetime.combine(next_la_date, dt.time(0, 0), tzinfo=dt.timezone(dt.timedelta(hours=-8)))
+    next_reset_vn = next_reset_la.astimezone(VN_TZ)
+    delta_sec = max(0, int((next_reset_vn - now_vn).total_seconds()))
+    hours = delta_sec // 3600
+    mins = (delta_sec % 3600) // 60
+    day_word = "hôm nay" if next_reset_vn.date() == now_vn.date() else "ngày mai"
+    return {
+        "pacific_date": now_la.date().isoformat(),
+        "reset_vn_str": f"{next_reset_vn.strftime('%H:%M')} {day_word} ({next_reset_vn.strftime('%d/%m')})",
+        "countdown_str": f"{hours} giờ {mins:02d} phút",
+    }
 
 
 def _atomic_write_json(path: Path, payload: Any) -> None:
@@ -171,8 +215,15 @@ def _empty_bucket() -> dict[str, Any]:
     }
 
 
+def _fmt_num(n: Any) -> str:
+    try:
+        return f"{int(n or 0):,}".replace(",", ".")
+    except (TypeError, ValueError):
+        return "0"
+
+
 class TelemetryStore:
-    """Tracks 0-token vs Gemini usage counters and maintains a 7-day rolling Q&A log."""
+    """Tracks 0-token vs Gemini usage counters, Pacific reset cycles, errors, and 7-day rolling Q&A logs."""
 
     def __init__(
         self,
@@ -188,7 +239,14 @@ class TelemetryStore:
         self._stats: dict[str, Any] = self._load_stats()
 
     def _load_stats(self) -> dict[str, Any]:
-        default_stats = {"days": {}, "months": {}, "recent_gemini": []}
+        default_stats: dict[str, Any] = {
+            "days": {},
+            "pacific_days": {},
+            "months": {},
+            "recent_gemini": [],
+            "last_gemini_error": None,
+            "last_gemini_success": None,
+        }
         if not self._stats_path or not self._stats_path.exists():
             return default_stats
         try:
@@ -199,13 +257,39 @@ class TelemetryStore:
             return default_stats
         return {
             "days": loaded.get("days") if isinstance(loaded.get("days"), dict) else {},
+            "pacific_days": loaded.get("pacific_days") if isinstance(loaded.get("pacific_days"), dict) else {},
             "months": loaded.get("months") if isinstance(loaded.get("months"), dict) else {},
             "recent_gemini": loaded.get("recent_gemini") if isinstance(loaded.get("recent_gemini"), list) else [],
+            "last_gemini_error": loaded.get("last_gemini_error") if isinstance(loaded.get("last_gemini_error"), dict) else None,
+            "last_gemini_success": loaded.get("last_gemini_success") if isinstance(loaded.get("last_gemini_success"), dict) else None,
         }
+
+    def _save_stats(self) -> None:
+        if not self._stats_path:
+            return
+        try:
+            _atomic_write_json(self._stats_path, self._stats)
+        except Exception:
+            pass
 
     def _prune_old_days(self, today: dt.date) -> None:
         cutoff = (today - dt.timedelta(days=35)).isoformat()
         self._stats["days"] = {k: v for k, v in self._stats["days"].items() if k >= cutoff}
+        self._stats["pacific_days"] = {k: v for k, v in self._stats["pacific_days"].items() if k >= cutoff}
+
+    def record_gemini_error(
+        self,
+        http_code: int,
+        message: str,
+        now_dt: dt.datetime | None = None,
+    ) -> None:
+        now = (now_dt or vn_now()).astimezone(VN_TZ)
+        self._stats["last_gemini_error"] = {
+            "at": now.strftime("%H:%M:%S %d/%m"),
+            "code": int(http_code or 0),
+            "message": plain_snippet(message, limit=180),
+        }
+        self._save_stats()
 
     def record_interaction(
         self,
@@ -219,12 +303,20 @@ class TelemetryStore:
         is_refusal: bool = False,
         msg_id: int | None = None,
         now_dt: dt.datetime | None = None,
+        raw_q: str = "",
+        trigger: str = "",
+        model_used: str = "",
     ) -> None:
-        now = now_dt or vn_now()
+        now = (now_dt or vn_now()).astimezone(VN_TZ)
         day_key = now.date().isoformat()
+        pac_key = google_quota_reset_info(now)["pacific_date"]
         month_key = now.strftime("%Y-%m")
 
-        for bucket_map, key in ((self._stats["days"], day_key), (self._stats["months"], month_key)):
+        for bucket_map, key in (
+            (self._stats["days"], day_key),
+            (self._stats["pacific_days"], pac_key),
+            (self._stats["months"], month_key),
+        ):
             b = bucket_map.setdefault(key, _empty_bucket())
             if route == "gemini":
                 b["gemini_calls"] = int(b.get("gemini_calls", 0)) + 1
@@ -237,32 +329,39 @@ class TelemetryStore:
                 b["local_zero_token"] = int(b.get("local_zero_token", 0)) + 1
 
         if route == "gemini":
+            self._stats["last_gemini_success"] = {
+                "at": now.strftime("%H:%M:%S %d/%m"),
+                "model": model_used or "",
+            }
             recent = list(self._stats.get("recent_gemini") or [])
             recent.append({
                 "at": now.strftime("%H:%M %d/%m"),
                 "q": plain_snippet(question, limit=75),
                 "tokens": max(0, int(total_tokens)),
+                "model": model_used or "",
             })
             self._stats["recent_gemini"] = recent[-5:]
 
         self._prune_old_days(now.date())
-        if self._stats_path:
-            try:
-                _atomic_write_json(self._stats_path, self._stats)
-            except Exception:
-                pass
+        self._save_stats()
 
         if self._qa_log_path:
-            self._append_qa_log({
+            entry: dict[str, Any] = {
                 "ts": now.isoformat(timespec="seconds"),
                 "msg_id": msg_id,
                 "sender": plain_snippet(sender_label, limit=40),
+                "trigger": trigger or route,
                 "route": route,
                 "is_refusal": bool(is_refusal),
                 "q": plain_snippet(question, limit=180),
                 "a": plain_snippet(reply, limit=260),
                 "tokens": max(0, int(total_tokens)),
-            }, now.date())
+            }
+            if raw_q and raw_q.strip() != question.strip():
+                entry["raw_q"] = plain_snippet(raw_q, limit=180)
+            if model_used:
+                entry["model"] = model_used
+            self._append_qa_log(entry, now.date())
 
     def _append_qa_log(self, entry: dict[str, Any], today: dt.date) -> None:
         assert self._qa_log_path is not None
@@ -288,9 +387,17 @@ class TelemetryStore:
         except Exception:
             pass
 
-    def format_token_report(self, project_name: str = "Ăn Vặt Tran", now_dt: dt.datetime | None = None) -> str:
-        now = now_dt or vn_now()
+    def format_token_report(
+        self,
+        project_name: str = "Ăn Vặt Tran",
+        now_dt: dt.datetime | None = None,
+        cfg: dict[str, str] | None = None,
+        live_probe: dict[str, Any] | None = None,
+    ) -> str:
+        now = (now_dt or vn_now()).astimezone(VN_TZ)
+        reset_info = google_quota_reset_info(now)
         day_b = self._stats["days"].get(now.date().isoformat()) or _empty_bucket()
+        pac_b = self._stats["pacific_days"].get(reset_info["pacific_date"]) or day_b
         mon_b = self._stats["months"].get(now.strftime("%Y-%m")) or _empty_bucket()
 
         def summarize(b: dict[str, Any]) -> tuple[int, int, int, str]:
@@ -299,34 +406,106 @@ class TelemetryStore:
             gem = int(b.get("gemini_calls", 0))
             total_reqs = zero_ok + zero_blk + gem
             pct_zero = (round((zero_ok + zero_blk) * 100 / total_reqs) if total_reqs > 0 else 100)
-            tok_fmt = f"{int(b.get('gemini_total_tokens', 0)):,}".replace(",", ".")
-            return zero_ok, zero_blk, gem, f"{pct_zero}% ({tok_fmt} token)"
+            return zero_ok, zero_blk, gem, f"{pct_zero}% ({_fmt_num(b.get('gemini_total_tokens', 0))} token)"
 
         d_ok, d_blk, d_gem, d_meta = summarize(day_b)
         m_ok, m_blk, m_gem, m_meta = summarize(mon_b)
 
         lines = [
-            f"🧮 <b>[{html.escape(project_name)}] THỐNG KÊ XỬ LÝ 0-TOKEN &amp; GEMINI</b>",
-            f"🗓 Ngày <b>{now.strftime('%d/%m/%Y')}</b> · Tháng <b>{now.strftime('%m/%Y')}</b>",
+            f"🧮 <b>[{html.escape(project_name)}] TRẠNG THÁI GEMINI API &amp; TOKEN</b>",
+            f"🗓 Giờ VN: <b>{now.strftime('%H:%M · %d/%m/%Y')}</b>",
             "────────────────",
-            "<b>1. Hôm nay</b>",
-            f"• ⚡ Cục bộ 0-token: <b>{d_ok} lượt</b> (từ chối/chặn 0-token: <b>{d_blk}</b>)",
-            f"• 🤖 Gọi Gemini AI: <b>{d_gem} lượt</b> (Prompt {int(day_b.get('gemini_prompt_tokens', 0)):,} · Out {int(day_b.get('gemini_output_tokens', 0)):,})".replace(",", "."),
-            f"• Tỷ lệ miễn phí 0-token: <b>{d_meta}</b>",
-            "",
-            f"<b>2. Lũy kế tháng {now.strftime('%m/%Y')}</b>",
-            f"• ⚡ Cục bộ 0-token: <b>{m_ok} lượt</b> (từ chối/chặn 0-token: <b>{m_blk}</b>)",
-            f"• 🤖 Gọi Gemini AI: <b>{m_gem} lượt</b>",
-            f"• Tỷ lệ miễn phí 0-token: <b>{m_meta}</b>",
         ]
+
+        # 1. Live Key & Model Health (0-token probe)
+        if live_probe is not None:
+            lines.append("<b>1. Trạng thái Key &amp; Model (Check trực tiếp · 0 token)</b>")
+            if not live_probe.get("configured"):
+                lines.append("• 🔴 Chưa cấu hình <code>FNB_GEMINI_API_KEY</code>.")
+            else:
+                key_status = "🟢 Key đang hoạt động" if live_probe.get("key_valid") else "🔴 Key lỗi / bị từ chối"
+                lines.append(f"• Trạng thái API Key: <b>{key_status}</b>")
+                for m in live_probe.get("models") or []:
+                    if m.get("ok"):
+                        lim_txt = (
+                            f" · Context {_fmt_num(m.get('input_limit'))} in / {_fmt_num(m.get('output_limit'))} out"
+                            if m.get("input_limit")
+                            else ""
+                        )
+                        lines.append(
+                            f"• {html.escape(str(m['role']))}: <code>{html.escape(str(m['model']))}</code> "
+                            f"(🟢 {m.get('latency_ms', 0)}ms{lim_txt})"
+                        )
+                    else:
+                        code = m.get("status_code") or "ERR"
+                        icon = "🟠" if code == 429 else "🔴"
+                        lines.append(
+                            f"• {html.escape(str(m['role']))}: <code>{html.escape(str(m['model']))}</code> "
+                            f"({icon} HTTP {code}: {html.escape(str(m.get('error', ''))[:90])})"
+                        )
+            lines.append("")
+
+        last_err = self._stats.get("last_gemini_error")
+        if last_err:
+            lines.extend([
+                f"⚠️ <b>Lỗi Gemini gần nhất ({html.escape(str(last_err.get('at', '')))}):</b> "
+                f"HTTP {last_err.get('code', 0)} — <i>{html.escape(str(last_err.get('message', ''))[:110])}</i>",
+                "",
+            ])
+
+        # 2. Reset Countdown & Quota Estimates
+        sec_idx = 2 if live_probe is not None else 1
+        lines.extend([
+            f"<b>{sec_idx}. Thời gian Reset &amp; Hạn mức Quota</b>",
+            f"• Reset ngày Google (<code>00:00 Pacific</code>): Còn <b>{reset_info['countdown_str']}</b> "
+            f"(lúc <b>{reset_info['reset_vn_str']}</b>)",
+            "• Bảo vệ tốc độ Bot: tối đa <b>15 lượt Gemini/phút</b> (reset mỗi 60 giây)",
+        ])
+
+        rpd_limit_raw = (cfg or {}).get("gemini_rpd_limit", "")
+        tok_budget_raw = (cfg or {}).get("gemini_daily_token_budget", "")
+        pac_calls = int(pac_b.get("gemini_calls", 0))
+        pac_tok = int(pac_b.get("gemini_total_tokens", 0))
+
+        if rpd_limit_raw.isdigit() and int(rpd_limit_raw) > 0:
+            rpd_lim = int(rpd_limit_raw)
+            rem_calls = max(0, rpd_lim - pac_calls)
+            lines.append(
+                f"• Lượt gọi chu kỳ Google: <b>{pac_calls}/{_fmt_num(rpd_lim)} lượt</b> (còn lại ~<b>{_fmt_num(rem_calls)} lượt</b>)"
+            )
+        if tok_budget_raw.isdigit() and int(tok_budget_raw) > 0:
+            bud = int(tok_budget_raw)
+            rem_tok = max(0, bud - pac_tok)
+            avg_per_call = round(pac_tok / pac_calls) if pac_calls > 0 else 8000
+            est_qs = rem_tok // max(1, avg_per_call)
+            lines.append(
+                f"• Ngân sách Token chu kỳ Google: đã dùng <b>{_fmt_num(pac_tok)}/{_fmt_num(bud)}</b> · "
+                f"còn <b>{_fmt_num(rem_tok)} token</b> (~{est_qs} câu hỏi AI)"
+            )
+
+        lines.extend([
+            "• <i>Minh bạch kỹ thuật: Google Gemini Developer API không trả header số quota còn lại &amp; API Key không có ngày hết hạn cố định; xem Billing/Tier trực tiếp tại</i> <code>ai.dev/usage</code>.",
+            "",
+        ])
+
+        # 3. Actual Usage Summary
+        sec_idx += 1
+        lines.extend([
+            f"<b>{sec_idx}. Tiêu thụ thực tế</b>",
+            f"• <b>Hôm nay (VN):</b> ⚡ Cục bộ 0-token <b>{d_ok}</b> (chặn <b>{d_blk}</b>) · 🤖 Gemini <b>{d_gem}</b> · Miễn phí <b>{d_meta}</b>",
+            f"• <b>Chu kỳ Google ({reset_info['pacific_date']}):</b> <b>{pac_calls} lượt</b> · "
+            f"<b>{_fmt_num(pac_tok)} token</b> (Prompt {_fmt_num(pac_b.get('gemini_prompt_tokens', 0))} + Out {_fmt_num(pac_b.get('gemini_output_tokens', 0))})",
+            f"• <b>Tháng {now.strftime('%m/%Y')}:</b> ⚡ <b>{m_ok}</b> (chặn <b>{m_blk}</b>) · 🤖 <b>{m_gem}</b> · Miễn phí <b>{m_meta}</b>",
+        ])
 
         recent = self._stats.get("recent_gemini") or []
         if recent:
             lines.extend(["", "<b>Các câu gần đây có gọi Gemini:</b>"])
             for item in reversed(recent[-3:]):
+                m_tag = f" [{item['model']}]" if item.get("model") else ""
                 lines.append(
-                    f"• [{html.escape(str(item.get('at', '')))}] <i>{html.escape(str(item.get('q', '')))}</i> ({int(item.get('tokens', 0)):,} tok)".replace(",", ".")
+                    f"• [{html.escape(str(item.get('at', '')))}] <i>{html.escape(str(item.get('q', '')))}</i> "
+                    f"({_fmt_num(item.get('tokens', 0))} tok{html.escape(m_tag)})"
                 )
 
-        lines.append("\n💡 <i>Gợi ý: Hỏi kèm tên Bot (<code>Lona</code>/<code>Bot</code>) hoặc Reply tin nhắn trước để giải ngữ cảnh 0-token.</i>")
         return "\n".join(lines)

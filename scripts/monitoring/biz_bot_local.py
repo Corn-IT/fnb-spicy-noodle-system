@@ -13,6 +13,7 @@ import re
 import time
 from typing import Any
 
+from biz_bot_ai import probe_gemini_status
 from biz_bot_common import (
     call_internal_biz,
     fmt_signed_vnd,
@@ -32,6 +33,7 @@ from biz_bot_queries import (
     handle_bep,
     handle_doanhthu,
     handle_don,
+    handle_help,
     handle_huy,
     handle_ket,
     handle_kho,
@@ -43,6 +45,7 @@ from biz_bot_queries import (
     handle_tongquan,
     handle_topmon,
 )
+from biz_bot_state import TelemetryStore
 
 ENTITY_CACHE_TTL_SEC = 300
 
@@ -136,32 +139,89 @@ class EntityCache:
         return self._employees
 
 
-def _resolve_meta_faq(norm_q: str, cfg: dict[str, str] | None = None) -> dict[str, Any] | None:
-    proj = html.escape((cfg or get_biz_config())["project_name"])
+def _short_money(val: Any) -> str:
+    try:
+        num = round(float(val or 0))
+    except (TypeError, ValueError):
+        return "0đ"
+    if num >= 1_000_000:
+        return f"{num / 1_000_000:.2f}tr".rstrip("0").rstrip(".").replace(".", ",")
+    if num >= 1_000:
+        return f"{round(num / 1000)}k"
+    return f"{num}đ"
+
+
+def _resolve_meta_faq(
+    norm_q: str,
+    cfg: dict[str, str] | None = None,
+    telemetry: TelemetryStore | None = None,
+) -> dict[str, Any] | None:
+    cfg_eff = cfg or get_biz_config()
+    proj = html.escape(cfg_eff["project_name"])
+
     if any(k in norm_q for k in ("khong ton token", "ton token", "tiet kiem token")):
         return {
             "text": "\n".join([
                 f"💡 <b>[{proj}] CÁC CÂU HỎI 0 TOKEN vs GEMINI AI</b>",
                 "────────────────",
                 "• <b>Xử lý cục bộ ⚡ 0 token (&lt;0,3s):</b>",
-                "  1) Toàn bộ 17 lệnh <code>/...</code> (<code>/tongquan</code>, <code>/ban</code>, <code>/don</code>, <code>/doanhthu</code>, <code>/ket</code>, <code>/topmon</code>, <code>/token</code>...)",
+                "  1) Toàn bộ 19 lệnh <code>/...</code> (<code>/tongquan</code>, <code>/ban</code>, <code>/don</code>, <code>/doanhthu</code>, <code>/ket</code>, <code>/topmon</code>, <code>/token</code>, <code>/gemini</code>...)",
                 "  2) Hỏi trực diện cực trị: món chạy nhất/chậm nhất, giờ cao điểm, thu ngân hủy/bán nhiều nhất",
-                "  3) Lát cắt số liệu: tiền mặt, chuyển khoản, mang về, QR, chi tiết Bàn 01..30, so sánh 2 kỳ",
-                "  4) Tra tên món/giá/doanh số món, SĐT/STK/lịch/lương nhân viên, IP đang đăng nhập POS &amp; hỏi nối tiếp",
-                "• <b>Gọi Gemini AI 🤖 (có tốn token):</b> Phân tích mở nhiều điều kiện hoặc tra cứu tài liệu phần mềm (cách dùng 16 phân hệ, máy in RawBT/LAN, RBAC, 10 Invariants).",
-                "• Dùng <code>/token</code> để xem thống kê tiết kiệm token thực tế.",
+                "  3) Đơn N phút vừa qua, đơn vừa gọi thêm món, chi tiết Bàn 01..30, tiền mặt/CK/mang về/QR, so sánh 2 kỳ",
+                "  4) Tra tên món/giá/doanh số, SĐT/STK/lịch/lương nhân viên, IP đăng nhập &amp; hỏi nối tiếp về đơn/món vừa nhắc",
+                "• <b>Gọi Gemini AI 🤖 (có tốn token):</b> Phân tích mở nhiều điều kiện hoặc tra cứu tài liệu phần mềm (16 phân hệ, máy in RawBT/LAN, RBAC, 10 Invariants).",
+                "• Dùng <code>/token</code> để kiểm tra trạng thái Key, Model, giờ reset &amp; tỷ lệ tiết kiệm.",
             ]),
             "slots": {"intent": "meta_token"},
         }
 
-    if any(k in norm_q for k in ("biet lam gi", "lam duoc gi", "giup duoc gi", "chuc nang gi")):
+    # Check live Gemini key/model/quota status at 0 tokens when asked naturally
+    asks_quota_status = any(
+        k in norm_q
+        for k in (
+            "kiem tra token", "token con lai", "bao nhieu token", "het quota", "quota con",
+            "bao lau nua reset", "reset quota", "api key", "key con dung", "key het han",
+            "trang thai gemini", "thong tin gemini", "check gemini", "check token",
+            "model dang dung", "su dung token", "tieu thu token",
+        )
+    ) or ("token" in norm_q and any(k in norm_q for k in ("con lai", "da dung", "het ", "reset", "bao lau")))
+    if asks_quota_status:
+        store = telemetry or TelemetryStore(
+            stats_path=cfg_eff.get("token_stats_file"),
+            qa_log_path=cfg_eff.get("qa_log_file"),
+        )
+        live = probe_gemini_status(cfg_eff)
+        return {
+            "text": store.format_token_report(
+                project_name=cfg_eff["project_name"],
+                cfg=cfg_eff,
+                live_probe=live,
+            ),
+            "slots": {"intent": "meta_token_status"},
+        }
+
+    # Command list queries MUST map strictly to handle_help at 0 tokens (never let Gemini hallucinate /overview!)
+    if any(
+        k in norm_q
+        for k in (
+            "cac cau lenh", "cau lenh cua", "cac lenh cua", "danh sach lenh",
+            "nhung lenh nao", "co nhung lenh", "co lenh nao", "lenh nao",
+            "menu lenh", "huong dan lenh", "dung lenh gi", "cac lenh nhanh",
+        )
+    ):
+        return {
+            "text": handle_help(cfg=cfg_eff),
+            "slots": {"intent": "meta_help"},
+        }
+
+    if any(k in norm_q for k in ("biet lam gi", "lam duoc gi", "giup duoc gi", "chuc nang gi", "gioi thieu ve", "gioi thieu em", "gioi thieu ban")):
         return {
             "text": "\n".join([
                 f"🤖 <b>[{proj}] TRỢ LÝ @POS_Lona_bot</b>",
                 "────────────────",
                 "• <b>Tra số liệu &amp; DB 20 bảng:</b> Doanh thu, két tiền, đơn hàng/Bàn, món bán chạy/chậm, bếp, nhập kho, QR, khuyến mãi, nhân sự, lịch trực, lương, phiên IP &amp; audit.",
                 "• <b>Giải đáp phần mềm POS:</b> Hướng dẫn 16 phân hệ, máy in 80mm/RawBT/iMin, Single-Session, 10 Hard Invariants.",
-                "• Gõ <code>/help</code> để xem đầy đủ 17 lệnh nhanh &amp; cách gọi Bot (<code>Lona</code> / <code>Bot</code> / <code>@POS_Lona_bot</code> / Reply).",
+                "• Gõ <code>/help</code> để xem đủ 19 lệnh nhanh &amp; <code>/token</code> kiểm tra trạng thái Gemini/0-token.",
             ]),
             "slots": {"intent": "meta_help"},
         }
@@ -230,10 +290,14 @@ def _answer_top_product_superlative(
             "slots": {"intent": "topmon_best", "period_raw": period_arg, "period_label": period["label"]},
         }
 
-    top1 = items[0]
+    sorted_items = sorted(
+        items,
+        key=lambda it: (-int(it.get("qty") or 0), -float(it.get("revenue") or 0)),
+    )
+    top1 = sorted_items[0]
     runners = " · ".join(
-        f"{i}. {html.escape(str(it['name']))} ({it['qty']} phần)"
-        for i, it in enumerate(items[1:4], 2)
+        f"{i}. {html.escape(str(it['name']))} ({it['qty']} phần · {_short_money(it.get('revenue'))})"
+        for i, it in enumerate(sorted_items[1:4], 2)
     )
     cmd_hint = f"/topmon {period_arg}".strip()
     text_lines = [
@@ -612,6 +676,94 @@ def _handle_entity_match(
     return None
 
 
+def _handle_recent_and_addon_orders(norm_q: str, cfg: dict[str, str] | None = None) -> dict[str, Any] | None:
+    # 1. Orders that added extra items (batch_no > 1) recently
+    if any(k in norm_q for k in ("goi them", "them mon", "mon bo sung", "order them", "vua them")):
+        rows = run_readonly_sql_json(
+            """
+            SELECT o.order_code, o.order_type, o.takeaway_number, dt.name AS table_name, o.status, o.total_amount,
+                   p.name AS product_name, oi.quantity, oi.batch_no,
+                   to_char(oi.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI') AS added_hm
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            JOIN products p ON p.id = oi.product_id
+            LEFT JOIN dining_tables dt ON dt.id = o.table_id
+            WHERE oi.kitchen_status <> 'CANCELLED'
+              AND oi.batch_no > 1
+              AND (oi.created_at >= NOW() - INTERVAL '45 minutes' OR o.status IN ('PENDING', 'SERVING'))
+              AND o.created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh'
+            ORDER BY oi.created_at DESC, oi.id DESC
+            """,
+            max_rows=20,
+            cfg=cfg,
+        )
+        if not rows:
+            return {"text": "📋 Hiện chưa ghi nhận đơn nào gọi thêm món (batch bổ sung) gần đây.", "slots": {"intent": "addon_orders"}}
+
+        grouped: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            code = str(r["order_code"])
+            if code not in grouped:
+                loc = r.get("table_name") or (f"Mang về #{r['takeaway_number']}" if r.get("takeaway_number") else "Mang về")
+                grouped[code] = {"loc": loc, "status": r["status"], "total": r["total_amount"], "items": []}
+            grouped[code]["items"].append(f"{r['quantity']}x {r['product_name']} ({r['added_hm']})")
+
+        top_code = next(iter(grouped))
+        lines = [f"➕ <b>ĐƠN VỪA GỌI THÊM MÓN ({len(grouped)} đơn)</b>"]
+        for code, info in list(grouped.items())[:5]:
+            items_txt = ", ".join(html.escape(it) for it in info["items"][:5])
+            lines.append(
+                f"• <code>{html.escape(code)}</code> ({html.escape(str(info['loc']))} · {fmt_vnd(info['total'])}) "
+                f"[{html.escape(str(info['status']))}]: {items_txt}"
+            )
+        return {"text": "\n".join(lines), "slots": {"intent": "addon_orders", "order_code": top_code}}
+
+    # 2. Recent N minutes/hours orders (e.g. "Cách đây 10 phút có đơn nào không?", "Vừa nãy có đơn nào?")
+    m_mins = re.search(r"\b(\d{1,3})\s*(phut|tieng|gio)\b", norm_q)
+    asks_recent = (bool(m_mins) or any(k in norm_q for k in ("vua nay", "moi day", "vua moi", "gan day nhat"))) and not any(
+        sig in norm_q for sig in ("phan tich", "xu huong", "giai thich", "nhan xet", "de xuat")
+    )
+    if asks_recent and any(k in norm_q for k in ("don", "hoa don", "khach nao", "co gi", "tao nao")):
+        if m_mins:
+            val = int(m_mins.group(1))
+            mins = max(1, min(1440, val * 60 if m_mins.group(2) in ("tieng", "gio") else val))
+            window_label = f"{val} phút" if m_mins.group(2) == "phut" else f"{val} giờ"
+        else:
+            mins = 15
+            window_label = "15 phút vừa qua"
+
+        rows = run_readonly_sql_json(
+            f"""
+            SELECT o.order_code, o.order_type, o.takeaway_number, dt.name AS table_name,
+                   o.status, o.total_amount,
+                   to_char(o.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI') AS created_hm
+            FROM orders o
+            LEFT JOIN dining_tables dt ON dt.id = o.table_id
+            WHERE o.created_at >= NOW() - INTERVAL '{mins} minutes'
+            ORDER BY o.created_at DESC, o.id DESC
+            """,
+            max_rows=12,
+            cfg=cfg,
+        )
+        if not rows:
+            return {
+                "text": f"🔎 Trong <b>{html.escape(window_label)}</b> gần đây chưa có đơn hàng nào mới.",
+                "slots": {"intent": "recent_orders"},
+            }
+        lines = [f"🕒 <b>ĐƠN HÀNG TRONG {html.escape(window_label.upper())} GẦN ĐÂY ({len(rows)} đơn)</b>"]
+        for r in rows[:8]:
+            loc = r.get("table_name") or (f"Mang về #{r['takeaway_number']}" if r.get("takeaway_number") else "Mang về")
+            lines.append(
+                f"• <code>{html.escape(str(r['order_code']))}</code> ({html.escape(str(loc))}) — "
+                f"<b>{fmt_vnd(r['total_amount'])}</b> [{html.escape(str(r['status']))}] lúc {html.escape(str(r['created_hm']))}"
+            )
+        return {
+            "text": "\n".join(lines),
+            "slots": {"intent": "recent_orders", "order_code": str(rows[0]["order_code"])},
+        }
+    return None
+
+
 def _handle_followup_local(
     norm_q: str,
     slots: dict[str, Any],
@@ -626,7 +778,64 @@ def _handle_followup_local(
         arg = f"cham {p_arg}".strip() if slots.get("intent") == "topmon_slow" else p_arg
         return {"text": handle_topmon(arg, cfg=cfg), "slots": slots}
 
-    # 2. Pronoun follow-up about previously mentioned product
+    # 2. Follow-up about previously mentioned order_code ("Đơn đó là ăn tại quán hay mang đi?", "Ai thu ngân?", "Hết mấy tiền?")
+    if slots.get("order_code"):
+        ocode = str(slots["order_code"])
+        refers_order = any(k in norm_q for k in ("don do", "don nay", "don vua roi")) or (
+            len(norm_q.split()) <= 10
+            and not extract_period_phrase(norm_q)
+            and any(
+                k in norm_q
+                for k in (
+                    "an tai quan", "tai quan", "tai ban", "mang di", "mang ve",
+                    "ban nao", "thu ngan", "ai tao", "ai chot", "thanh toan chua",
+                    "da tra tien", "bao nhieu tien", "het bao nhieu", "chi tiet",
+                )
+            )
+        )
+        if refers_order:
+            ord_rows = run_readonly_sql_json(
+                f"""
+                SELECT o.order_code, o.order_type, o.takeaway_number, dt.name AS table_name,
+                       o.status, o.payment_method, o.total_amount,
+                       COALESCE(e.short_name, u.username, '—') AS cashier_name,
+                       to_char(o.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI dd/mm') AS created_vn
+                FROM orders o
+                LEFT JOIN dining_tables dt ON dt.id = o.table_id
+                LEFT JOIN users u ON u.id = o.cashier_id
+                LEFT JOIN employees e ON e.id = u.employee_id
+                WHERE UPPER(o.order_code) = UPPER({_sql_quote(ocode)})
+                """,
+                max_rows=1,
+                cfg=cfg,
+            )
+            if ord_rows:
+                r = ord_rows[0]
+                if r.get("order_type") == "TAKEAWAY":
+                    kind_txt = f"Mang về #{r.get('takeaway_number') or ''}".strip()
+                else:
+                    tbl = r.get("table_name") or "Tại bàn"
+                    kind_txt = f"Ăn tại quán ({tbl})"
+                if any(k in norm_q for k in ("chi tiet", "nhung mon", "goi gi")):
+                    return {"text": handle_don(ocode, cfg=cfg), "slots": slots}
+                return {
+                    "text": (
+                        f"🧾 Đơn <code>{html.escape(str(r['order_code']))}</code> là đơn <b>{html.escape(kind_txt)}</b> "
+                        f"· Tổng: <b>{fmt_vnd(r['total_amount'])}</b> · Trạng thái: <b>{html.escape(str(r['status']))}</b> "
+                        f"({html.escape(str(r.get('payment_method') or 'Chưa TT'))} · TN {html.escape(str(r['cashier_name']))} lúc {html.escape(str(r['created_vn']))})."
+                    ),
+                    "slots": {**slots, "table_name": r.get("table_name") or slots.get("table_name")},
+                }
+
+    # 3. Follow-up about previously mentioned table_name
+    if slots.get("table_name") and any(k in norm_q for k in ("ban do", "ban nay")) and not any(k in norm_q for k in ("ban chay", "ban cham")):
+        m_num = re.search(r"(\d+)", str(slots["table_name"]))
+        if m_num:
+            sliced_tbl = _handle_targeted_slice(f"ban {m_num.group(1)}", "", cfg=cfg)
+            if sliced_tbl:
+                return sliced_tbl
+
+    # 4. Pronoun follow-up about previously mentioned product
     if slots.get("product_name"):
         pname = str(slots["product_name"])
         new_period = extract_period_phrase(norm_q)
@@ -635,7 +844,7 @@ def _handle_followup_local(
         if any(k in norm_q for k in ("mon do", "mon nay")) or (new_period and slots.get("intent") in ("topmon_best", "product_sales")):
             return _query_single_product(pname, new_period or str(slots.get("period_raw") or ""), cfg=cfg)
 
-    # 3. Period-shift follow-up ("còn hôm qua?", "còn tuần trước?")
+    # 5. Period-shift follow-up ("còn hôm qua?", "còn tuần trước?")
     new_period = extract_period_phrase(norm_q)
     if new_period and any(k in norm_q for k in ("con ", "the ", "sao", "thi sao")) and len(norm_q.split()) <= 7:
         last_intent = str(slots.get("intent") or "")
@@ -668,6 +877,7 @@ def try_answer_locally(
     cfg: dict[str, str] | None = None,
     slots: dict[str, Any] | None = None,
     cache: EntityCache | None = None,
+    telemetry: TelemetryStore | None = None,
 ) -> dict[str, Any] | None:
     """
     Attempt 0-token focused resolution before calling Gemini AI.
@@ -678,8 +888,8 @@ def try_answer_locally(
         return None
     cache = cache or EntityCache()
 
-    # 1. Meta FAQs about the bot itself (0 tokens)
-    meta = _resolve_meta_faq(norm_q, cfg=cfg)
+    # 1. Meta FAQs, command list & live token/quota status about the bot itself (0 tokens)
+    meta = _resolve_meta_faq(norm_q, cfg=cfg, telemetry=telemetry)
     if meta:
         return {**meta, "route": "local"}
 
@@ -695,18 +905,23 @@ def try_answer_locally(
 
     period_arg = extract_period_phrase(norm_q)
 
-    # 4. Structured context follow-ups ("Hôm nay món đó...", "Còn hôm qua?", "Xem đủ top 10")
+    # 4. Structured context follow-ups ("Hôm nay món đó...", "Đơn đó mang đi?", "Còn hôm qua?")
     if slots:
         fu = _handle_followup_local(norm_q, slots, cfg=cfg)
         if fu:
             return {**fu, "route": "local"}
 
-    # 5. Period comparison ("so sánh hôm nay với hôm qua")
+    # 5. Recent N minutes orders & added-item orders (batch_no > 1)
+    recent_res = _handle_recent_and_addon_orders(norm_q, cfg=cfg)
+    if recent_res:
+        return {**recent_res, "route": "local"}
+
+    # 6. Period comparison ("so sánh hôm nay với hôm qua")
     cmp_res = _handle_period_comparison(norm_q, cfg=cfg)
     if cmp_res:
         return {**cmp_res, "route": "local"}
 
-    # 6. Superlatives (#1 best/slow product, peak hour, top staff)
+    # 7. Superlatives (#1 best/slow product, peak hour, top staff)
     wants_list = any(k in norm_q for k in ("top ", "topmon", "danh sach", "liet ke", "cac mon"))
     if not wants_list and any(k in norm_q for k in ("ban chay nhat", "chay nhat", "ban nhieu nhat", "hot nhat", "best seller")):
         res = _answer_top_product_superlative(period_arg, slow=False, cfg=cfg)
@@ -722,12 +937,12 @@ def try_answer_locally(
         if staff_sup:
             return {**staff_sup, "route": "local"}
 
-    # 7. Narrow slices (table #N, active IPs, cash/transfer/takeaway/QR slices)
+    # 8. Narrow slices (table #N, active IPs, cash/transfer/takeaway/QR slices)
     sliced = _handle_targeted_slice(norm_q, period_arg, cfg=cfg)
     if sliced:
         return {**sliced, "route": "local"}
 
-    # 8. Specific product or employee entity match
+    # 9. Specific product or employee entity match
     ent = _handle_entity_match(norm_q, period_arg, cache, cfg=cfg)
     if ent:
         return {**ent, "route": "local"}

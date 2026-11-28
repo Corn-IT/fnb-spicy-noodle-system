@@ -40,7 +40,7 @@ _TRAILING_VOCATIVE_RE = re.compile(
 
 # Signals forcing Gemini + search_system_docs instead of local 0-token stats
 SYSTEM_DOC_SIGNALS = (
-    "cach ", "huong dan", "quy trinh", "hoat dong", "nguyen ly", "co che", "cong thuc",
+    "huong dan", "quy trinh", "hoat dong", "nguyen ly", "co che", "cong thuc",
     "phan he", "tai sao", "vi sao", "do dau", "do sao", "khac gi", "su co", "khac phuc",
     "ket noi", "cau hinh", "may in", "rawbt", "imin", "itp6", "invariant", "bat bien",
     "rbac", "phan quyen", "single session", "blind mode", "mdm", "master data", "delta split",
@@ -49,8 +49,9 @@ SYSTEM_DOC_SIGNALS = (
 )
 
 SYSTEM_META_SELF_SIGNALS = (
-    "khong ton token", "ton token", "tiet kiem token", "biet lam gi",
-    "lam duoc gi", "giup duoc gi", "truy cap vao db", "truy cap db", "ket noi db",
+    "khong ton token", "ton token", "tiet kiem token", "kiem tra token", "quota", "api key",
+    "trang thai gemini", "biet lam gi", "lam duoc gi", "giup duoc gi",
+    "cac cau lenh", "danh sach lenh", "truy cap vao db", "truy cap db", "ket noi db",
     "coding", "viet code",
 )
 
@@ -141,6 +142,9 @@ def is_system_doc_question(raw_text: str) -> bool:
     norm = strip_vi(raw_text)
     if not norm or any(m in norm for m in SYSTEM_META_SELF_SIGNALS):
         return False
+    # Treat "cách đây 10 phút" (ago) as time filter, NOT a how-to doc question ("cách kết nối...")
+    if re.search(r"\bcach\s+(?!day\b)", norm):
+        return True
     return any(sig in norm for sig in SYSTEM_DOC_SIGNALS)
 
 
