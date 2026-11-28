@@ -1,38 +1,49 @@
 # Báo Cáo Kiểm Thử Toàn Diện — Hệ Thống POS Mì Cay (`fnb-spicy-noodle-system`)
 
-> **Nhánh kiểm thử:** `qa/comprehensive-audit`
-> **Ngày hoàn tất nghiệm thu:** 2026-11-28
+> **Nhánh kiểm thử:** `qa/comprehensive-audit` (Chặng 1 merged `main` `7a84efd`) & `refactor/coverage-and-modularity` (Chặng 2 Wave A–D)
+> **Ngày hoàn tất nghiệm thu:** 2026-11-28 (Cập nhật hậu Chặng 2 Modularity & Sweet Spot Coverage Lock)
 > **Môi trường kiểm thử thật:** PostgreSQL 16 (`.env` `fnb_pos`, 20 Prisma models / 20 SQL migrations) + NestJS 11 Production Build (`:3000`) + Vite 8 Production Preview Proxy (`:4173`) + Mock TCP Printer `:9100`
-> **Tổng quan kết quả:** **100% PASS** trên mọi tầng kiểm tra tự động (TypeScript, ESLint, Vite/TSC Build, Vitest Coverage Lock, Playwright Chromium + WebKit Mobile/Tablet/Desktop, Real-Stack API/DB/Socket/TCP `:9100`, Ego Browser Live Smoke QA). Không có `test.skip` che lỗi, không nới lỏng assertions.
+> **Tổng quan kết quả:** **100% PASS** trên mọi tầng kiểm tra tự động (TypeScript, ESLint, Vite/TSC Build, AST Cycle Scan `0` cycles, Vitest Sweet Spot Coverage Lock, Playwright Chromium + WebKit Mobile/Tablet/Desktop, Real-Stack API/DB/Socket/TCP `:9100`, Ego Browser Live Smoke QA). Không có `test.skip` che lỗi, không nới lỏng assertions.
 
 ---
 
-## 1. Tóm Tắt Theo Tầng Kiểm Tra (Verification Layers)
+## 1. Tóm Tắt Theo Tầng Kiểm Tra (Verification Layers — Stage 2 Wave D Final)
 
 | Tầng kiểm tra | Phạm vi | Kết quả | Ghi chú |
 |---|---|---|---|
-| **Static TypeScript** | `@fnb/shared`, `@fnb/api-server`, `@fnb/web-app` | `PASS` | Chạy `pnpm -r typecheck` không lỗi |
-| **ESLint Rules** | Toàn bộ monorepo (bao gồm kiểm tra ranh giới module) | `PASS` | Chạy `pnpm -r lint` 0 lỗi |
-| **Production Build** | `tsc -p tsconfig.build.json`, `prisma generate && tsc`, `vite build` | `PASS` | Chạy `pnpm -r build` sạch |
-| **Unit & Integration Tests + Coverage Lock** | `@fnb/shared` (10 files), `@fnb/api-server` (53 files), `@fnb/web-app` (97 files) — tổng `160` files / `1,068` tests | `PASS` | Ratchet thresholds khóa trong `vitest.config.ts` / `vite.config.ts`: Shared `90/90/90/90`, API `88/75/90/90`, Web `80/72/75/81` |
-| **Graphify Knowledge Graph** | Toàn repo (`611` code + `49` project docs qua `.graphifyignore`, `--mode deep --directed --wiki --svg`) | `PASS` | `4,911` nodes, `17,534` edges, `190` communities, `200` wiki articles, `graph.html`/`graph.svg`/`callflow.html`, giảm `202.1x` tokens/query |
-| **E2E WebKit Matrix (`M / T / D`)** | `webkit-mobile`, `webkit-tablet`, `webkit-desktop` | `PASS` | `responsive-matrix.spec.ts` `24/24` PASS + `103/103` PASS (`7` skip hợp lệ theo thiết bị/màn hình) |
-| **E2E Chromium Full Regression** | 15 spec files (`all-routes-responsive-visual` 17 viewports, `responsive-matrix` 4 scales × 2 themes, `pos-touch`, `pos-drafts`, `takeaway-*`, `thermal-raster-qr`, ...) | `PASS` | `105/105` PASS (`2` skip hợp lệ: phone-only test trên desktop & `@real` tách riêng) |
-| **Real-Stack Production Build E2E** | `store-settings-global-real.spec.ts` (`@real`, `E2E_REAL_ISOLATED=1`) | `PASS` | `1/1` PASS: Staff + Guest QR đồng bộ real Socket `/pos`, optimistic concurrency `409`, offline recovery, RBAC `403` |
-| **Real API / DB / Socket / Mock TCP `:9100`** | Flow A–D end-to-end, `SELECT ... FOR UPDATE` race, Cashflow Blind Mode, Invoice Void sync, HR & Payroll, LAN ESC/POS `:9100` | `PASS` | 7/7 nhóm kịch bản PASS, ghi nhận `17` Socket events & exact binary ESC/POS kick bytes trên `127.0.0.1:9100` |
-| **Live Production Exploratory QA (`ego-browser`)** | 16/16 routes Desktop `1366×768` + `/pos` & `/q/:token` Mobile `390×844` + `@media print` 80mm + Logout Invariant 9 | `PASS` | `overflowX: false` 100%, 0 ErrorBoundary, `@media print` `80mm` verified, `fnb-ui-preferences` bảo toàn sau logout |
+| **Static TypeScript** | `@fnb/shared`, `@fnb/api-server`, `@fnb/web-app` | `PASS` | Chạy `pnpm -r typecheck` 0 lỗi |
+| **ESLint Rules & Boundary** | Toàn bộ monorepo | `PASS` | Chạy `pnpm -r lint` 0 lỗi; `0` cross-feature imports trong `src/features/*` |
+| **Production Build & AST Cycle Scan** | `tsc -p tsconfig.build.json`, `prisma generate && tsc`, `vite build` | `PASS` | `pnpm -r build` sạch (`0` circular chunk warnings); AST cycle scan `shared` (`41`), `api-server` (`164`), `web-app` (`367`) files → **`0` file-level cycles** |
+| **Unit & Integration Tests + Coverage Lock** | `@fnb/shared` (10 files), `@fnb/api-server` (53 files), `@fnb/web-app` (103 files) — tổng `166` files / `1,138` tests | `PASS` | Sweet Spot thresholds khóa trong `vitest.config.ts` / `vite.config.ts`: Shared `95/92/95/95`, API `90/80/90/92`, Web `85/76/80/85` |
+| **Graphify Knowledge Graph** | Toàn repo (`--mode deep --directed --wiki --svg`, theo `.graphifyignore`) | `PASS` | Phục vụ tra cứu kiến trúc & kiểm chứng `0` file-level import cycles sau khi đồng bộ commit `HEAD` cuối |
+| **E2E Cross-Browser Suite (`e2e:mock`)** | `chromium-desktop`, `webkit-mobile`, `webkit-tablet`, `webkit-desktop` (15 mock specs) | `PASS` | **`232/232` PASS** (`8` skip hợp lệ theo thiết bị/zoom: phone-only/desktop-only viewport guards, `0` fail) |
+| **Real-Stack Production Build E2E** | `store-settings-global-real.spec.ts` (`@real`, `E2E_REAL_ISOLATED=1`) trên `vite preview :4173` | `PASS` | `1/1` PASS: Staff + Guest QR đồng bộ real Socket `/pos`, optimistic concurrency `409`, offline recovery, RBAC `403` |
+| **Real API / DB / Socket / Mock TCP `:9100`** | Flow A–D end-to-end, `SELECT ... FOR UPDATE` (`[201, 409]`), Cashflow Blind Mode, Invoice Void sync, LAN ESC/POS `:9100` (`ESC p`) | `PASS` | **`6/6`** nhóm kịch bản PASS, xác minh bytes `0x1b 0x70` trên TCP `:9100` & chặn `403` với `adminview` |
+| **Live Production Exploratory QA (`ego-browser`)** | 16/16 routes Desktop `1366×768` + `/pos`, `/pos/touch` & `/q/ban01-63pq` Mobile `390×844` + `@media print` 80mm + Logout Invariant 9 | `PASS` | `overflowX: false` 100%, `0` ErrorBoundary, `@media print` `80mm` + Noto Sans verified, `fnb-ui-preferences` bảo toàn nguyên vẹn sau logout |
 
 ---
 
-## 2. Ma Trận Độ Phủ Mã Nguồn & Ngưỡng Khóa (Coverage Lock)
+## 2. Ma Trận Độ Phủ Mã Nguồn & Ngưỡng Khóa (Sweet Spot Coverage Lock)
 
-| Package | Ngưỡng khóa (Stmts / Branch / Funcs / Lines) | Mốc đạt được sau cùng (Post-All-Edits) | Config file |
+| Package | Ngưỡng khóa (Stmts / Branch / Funcs / Lines) | Mốc đạt được sau cùng (Post-Stage-2) | Config file |
 |---|---:|---|---|
-| `@fnb/shared` | `90 / 90 / 90 / 90` | `96.80% / 90.20% / 94.79% / 97.27%` (`10` files, `91` tests) | [vitest.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/packages/shared/vitest.config.ts) |
-| `@fnb/api-server` | `88 / 75 / 90 / 90` | `90.07% / 75.00% / 91.87% / 92.63%` (`53` files, `489` tests) | [vitest.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/api-server/vitest.config.ts) |
-| `@fnb/web-app` | `80 / 72 / 75 / 81` | `80.25% / 72.09% / 75.49% / 82.01%` (`97` files, `488` tests) | [vite.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/vite.config.ts) |
+| `@fnb/shared` | `95 / 92 / 95 / 95` | `98.61% / 93.00% / 95.83% / 98.96%` (`10` files, `94` tests) | [vitest.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/packages/shared/vitest.config.ts) |
+| `@fnb/api-server` | `90 / 80 / 90 / 92` | `93.44% / 80.46% / 95.08% / 95.81%` (`53` files, `516` tests) | [vitest.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/api-server/vitest.config.ts) |
+| `@fnb/web-app` | `85 / 76 / 80 / 85` | `85.79% / 76.12% / 82.14% / 87.66%` (`103` files, `528` tests) | [vite.config.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/vite.config.ts) |
 
-*(Tổng cộng `160` test files, `1,068/1,068` tests PASS, `0` failures, `0` skips sau toàn bộ chỉnh sửa code & docs Chặng 1.)*
+*(Tổng cộng `166` test files, `1,138/1,138` tests PASS, `0` failures, `0` skips sau toàn bộ chỉnh sửa Chặng 1 + Chặng 2 Wave A–D.)*
+
+### 2.1 Kết Quả Tái Cấu Trúc Modularity & Tối Ưu Bundle (Stage 2 Waves B–C)
+
+| Tệp / Hạng mục | Trước Chặng 2 | Sau Chặng 2 | Ghi chú kiến trúc |
+|---|---:|---:|---|
+| `pos.service.ts` | `3,152` dòng | `748` dòng (`-76.3%`) | Facade + 5 helpers một chiều (`pos-shared`, `pos-drafts`, `pos-tables`, `pos-qr`, `pos-billing`) |
+| `dashboard.service.ts` | `1,644` dòng | `412` dòng (`-74.9%`) | Facade + `dashboard-daily-sales.helper.ts`, `dashboard-builders.helper.ts` |
+| `iam.service.ts` | `1,527` dòng | `161` dòng (`-89.5%`) | Facade + `iam-shared`, `iam-session`, `iam-users`, `iam-profile` |
+| `qr-order-page.tsx` | `1,900` dòng | `497` dòng (`-73.8%`) | Tách hook filter/security, lock/header/menu/cart/placed sheets & hợp nhất `AddonServingModeToggle` |
+| `use-pos-workspace.ts` | `1,439` dòng | `368` dòng (`-74.4%`) | Tách `use-pos-drafts`, `use-pos-order-items`, `use-pos-billing-actions` & helpers QR/label |
+| `product-form-drawer.tsx` | `1,360` dòng | `304` dòng (`-77.6%`) | Tách `product-modifier-presets.ts`, `product-basic-and-combo-sections.tsx`, `product-modifier-groups-section.tsx` |
+| `apps/web-app/vite.config.ts` | Chung vendor UI vào chunk `dialog` (`218K`) | Tách `vendor-radix` (`117K`), `vendor-tanstack` (`79K`), `vendor-icons` (`43K`) | Chunk `dialog-*.js` giảm từ `218K → 144K` (`-34%`), `base-table-*.js` `58K → 13K`, `0` circular warnings |
 
 ---
 
@@ -97,3 +108,4 @@ Toàn bộ 10 Hard Invariants trong `AGENTS.md` §5 đều được kiểm tra t
   - **Hiệu quả truy vấn (`graphify benchmark`):** giảm **`202.1x`** lượng token mỗi câu hỏi (`327,400` tokens naive xuống `~1,620` tokens).
   - **Chẩn đoán sức khỏe đồ thị (`diagnose_extraction`):** `0` missing-endpoint edges, `0` unverified code nodes, `4` dangling-endpoint edges (AST literal/dynamic font refs), `2` self-loop edges, `481` collapsed same-endpoint directed edges (NestJS `@Inject`/`@Query` decorator repetition), và **`0` multi-file import cycles** sau khi tách [app-navigation.ts](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/lib/app-navigation.ts) khỏi [command-palette.tsx](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/apps/web-app/src/components/layout/command-palette.tsx).
   - **Hướng dẫn onboarding:** Đã bổ sung `§10. GRAPHIFY KNOWLEDGE GRAPH & AGENT ONBOARDING` vào [AGENTS.md](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/AGENTS.md) và cấu hình [.gitignore](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/.gitignore) giữ `graphify-out/` cục bộ (version hoá [.graphifyignore](file:///Volumes/SAMSUNG_SSD/FnB/fnb-spicy-noodle-system/.graphifyignore) để tái lập đồng nhất).
+  - **Đồng bộ Chặng 2 (Wave D):** Sau khi tách 6 file lớn & chốt commit `HEAD` nhánh `refactor/coverage-and-modularity`, chỉ mục `graphify-out/` được tái đồng bộ cục bộ khớp `HEAD` với `0` file-level import cycles.
