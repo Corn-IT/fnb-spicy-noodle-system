@@ -103,6 +103,26 @@ def parse_slash_command(raw_text: str) -> tuple[str, str] | None:
     return head, arg
 
 
+GROUP_ANONYMOUS_BOT_ID = 1087968824
+
+
+def is_human_or_anonymous_admin_message(msg: dict[str, Any], bot_id: int | None) -> bool:
+    from_user = msg.get("from") or {}
+    from_id = from_user.get("id")
+    if bot_id is not None and from_id == bot_id:
+        return False
+    if not from_user.get("is_bot"):
+        return True
+    # Allow Telegram supergroup Anonymous Admin messages (posted as GroupAnonymousBot / sender_chat)
+    sender_chat = msg.get("sender_chat") or {}
+    chat = msg.get("chat") or {}
+    if from_id == GROUP_ANONYMOUS_BOT_ID:
+        return True
+    if sender_chat.get("id") is not None and sender_chat.get("id") == chat.get("id"):
+        return True
+    return False
+
+
 def is_direct_message_to_bot(msg: dict[str, Any], bot_id: int | None, bot_username: str) -> bool:
     text_lower = (msg.get("text") or "").lower()
     if bot_username and f"@{bot_username.lower()}" in text_lower:
@@ -199,7 +219,7 @@ def main() -> int:
     offset = drain_stale_updates(bot_token)
     rate_limiter = AiRateLimiter()
     last_msg_at = 0.0
-    print(f"[biz-bot] @{bot_username} listening on chat {allowed_chat_id} (offset={offset})...")
+    print(f"[biz-bot] @{bot_username} listening on chat {allowed_chat_id} (offset={offset})...", flush=True)
 
     while True:
         try:
@@ -218,19 +238,23 @@ def main() -> int:
                 msg = update.get("message")
                 if not isinstance(msg, dict):
                     continue
-                if msg.get("from", {}).get("is_bot"):
-                    continue
 
                 chat_id = str(msg.get("chat", {}).get("id", ""))
+                raw_text = msg.get("text") or ""
                 if chat_id != allowed_chat_id:
+                    print(f"[biz-bot] ignored external chat={chat_id}", flush=True)
                     continue
 
-                raw_text = msg.get("text") or ""
+                if not is_human_or_anonymous_admin_message(msg, bot_id):
+                    print(f"[biz-bot] skipped bot sender from_id={msg.get('from', {}).get('id')}", flush=True)
+                    continue
+
                 if not raw_text.strip():
                     continue
 
                 now = time.monotonic()
                 if now - last_msg_at < MIN_MESSAGE_INTERVAL_SEC:
+                    print(f"[biz-bot] throttled rapid message in chat={chat_id}", flush=True)
                     continue
 
                 msg_id = msg.get("message_id")
@@ -246,8 +270,11 @@ def main() -> int:
                     if reply:
                         last_msg_at = time.monotonic()
                         send_tg_message(bot_token, chat_id, reply, reply_to_message_id=msg_id)
+                        print(f"[biz-bot] replied msg_id={msg_id} chars={len(reply)}", flush=True)
+                    else:
+                        print(f"[biz-bot] ignored non-query text={raw_text[:60]!r}", flush=True)
                 except Exception as err:
-                    print(f"[biz-bot] handler error: {err}", file=sys.stderr)
+                    print(f"[biz-bot] handler error: {err}", file=sys.stderr, flush=True)
                     send_tg_message(
                         bot_token,
                         chat_id,
@@ -255,7 +282,7 @@ def main() -> int:
                         reply_to_message_id=msg_id,
                     )
         except Exception as err:
-            print(f"[biz-bot] polling loop error: {err}", file=sys.stderr)
+            print(f"[biz-bot] polling loop error: {err}", file=sys.stderr, flush=True)
             time.sleep(5)
 
 
