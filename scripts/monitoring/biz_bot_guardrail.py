@@ -11,12 +11,27 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
-from biz_bot_common import strip_vi
+from biz_bot_common import persona_spec, strip_vi
 
 SCOPE_REFUSAL_MSG = (
-    "🤖 Tôi chỉ hỗ trợ tra cứu dữ liệu và giải đáp nghiệp vụ trong phạm vi hệ thống POS & Database của Ăn Vặt Tran."
+    "🤖 Mình chỉ hỗ trợ tra cứu dữ liệu và giải đáp nghiệp vụ trong phạm vi hệ thống POS & Database của Ăn Vặt Tran thôi nhé."
 )
+
+
+def format_scope_refusal(persona_key: str = "minh_ban") -> str:
+    spec = persona_spec(persona_key)
+    if spec["bot"] == "em":
+        return f"🤖 Dạ em chỉ hỗ trợ tra cứu dữ liệu và giải đáp nghiệp vụ trong phạm vi hệ thống POS & Database của Ăn Vặt Tran cho {spec['user']} thôi ạ."
+    return SCOPE_REFUSAL_MSG
+
+
+def format_hybrid_offtopic_tail(persona_key: str = "minh_ban") -> str:
+    spec = persona_spec(persona_key)
+    if spec["bot"] == "em":
+        return f"\n\n🤖 <i>Lưu ý: Phần hỏi ngoài phạm vi hệ thống POS &amp; Database em xin phép chưa hỗ trợ cho {spec['user']} ạ.</i>"
+    return "\n\n🤖 <i>Lưu ý: Phần hỏi ngoài phạm vi hệ thống POS &amp; Database mình xin phép không hỗ trợ nhé.</i>"
 
 MAX_INPUT_CHARS = 1000
 
@@ -55,16 +70,24 @@ OFF_TOPIC_PATTERNS = re.compile(
     r")\b"
 )
 
+# Accent-safe domain signals (checked on unaccented multi-word/tech terms + NFC Vietnamese accented nouns)
 POS_DOMAIN_CONTEXT_PATTERN = re.compile(
     r"\b(?:"
-    r"pos|an vat tran|quan|cua hang|don|hoa don|doanh thu|tien mat|chuyen khoan|"
-    r"ket|chot ca|ban|mang ve|mon|thuc don|menu|bep|pha che|combo|cap cay|topping|"
-    r"kho|nhap hang|nguyen lieu|nha cung cap|luong|lich truc|ca lam|nhan vien|"
-    r"vietqr|qr|khuyen mai|ma giam|voucher|huy|void|audit|nhat ky|"
+    r"pos|an vat tran|cua hang|hoa don|don hang|doanh thu|tien mat|chuyen khoan|"
+    r"ket tien|chot ca|ket ca|so ban|ban trong|ban dang|ban \d+|ban chay|ban cham|mang ve|"
+    r"thuc don|menu|bep nau|bep chien|pha che|combo|cap cay|topping|"
+    r"nhap kho|tien kho|nguyen lieu|nha cung cap|bang luong|quy luong|lich truc|ca lam|nhan vien|"
+    r"vietqr|qr|khuyen mai|ma giam|voucher|don huy|huy don|huy mon|void|audit|nhat ky|"
     r"db|database|du lieu|he thong|may in|rawbt|imin|itp6|invariant|rbac|mdm|"
     r"blind mode|single session|phan he|tai khoan|cau hinh|"
     r"(?:hd|ord)-[a-z0-9-]+"
     r")\b"
+)
+
+POS_DOMAIN_NFC_PATTERN = re.compile(
+    r"(?:^|[\s,.;:!?(\"'«\[])"
+    r"(?:quán|bàn|bán|món|đơn|két|bếp|lương|hủy|huỷ|kho\b(?=\s+(?:nguyên|nhập|hàng|tháng|hôm|tuần|này))|khuyến\s+mãi)"
+    r"(?=$|[\s,.;:!?)\"'»\]])"
 )
 
 OUTPUT_LEAK_PATTERNS = re.compile(
@@ -106,28 +129,31 @@ def check_pre_guardrail(raw_text: str) -> tuple[bool, str | None]:
             return False, SCOPE_REFUSAL_MSG
 
     # Block purely off-topic requests unless paired with genuine POS/DB terms (hybrid goes to Layer 2)
-    if OFF_TOPIC_PATTERNS.search(norm) and not POS_DOMAIN_CONTEXT_PATTERN.search(norm):
+    nfc_clean = unicodedata.normalize("NFC", re.sub(r"@pos_lona_bot\b", "", text, flags=re.I)).lower()
+    has_domain_ctx = bool(POS_DOMAIN_CONTEXT_PATTERN.search(norm) or POS_DOMAIN_NFC_PATTERN.search(nfc_clean))
+    if OFF_TOPIC_PATTERNS.search(norm) and not has_domain_ctx:
         return False, SCOPE_REFUSAL_MSG
 
     return True, None
 
 
-def sanitize_ai_output(raw_reply: str) -> tuple[str, bool]:
+def sanitize_ai_output(raw_reply: str, persona_key: str = "minh_ban") -> tuple[str, bool]:
     """
     Layer 3 output filter:
     Returns (cleaned_reply, is_refusal_or_blocked).
     Never lets prompt leaks, credential hashes, or generic programming code exit to Telegram.
     """
+    refusal_msg = format_scope_refusal(persona_key)
     txt = (raw_reply or "").strip()
     if not txt:
-        return SCOPE_REFUSAL_MSG, True
+        return refusal_msg, True
 
     if OUTPUT_LEAK_PATTERNS.search(txt) or OUTPUT_CODE_BLOCK_PATTERN.search(txt):
-        return SCOPE_REFUSAL_MSG, True
+        return refusal_msg, True
 
     # Normalize stray inline Markdown (**bold**, `code`) to Telegram HTML tags safely
     txt = re.sub(r"\*\*([^\n*]{1,200}?)\*\*", r"<b>\1</b>", txt)
     txt = re.sub(r"`([^\n`]{1,120}?)`", r"<code>\1</code>", txt)
 
-    is_refusal = txt.startswith("🤖 Tôi chỉ hỗ trợ") or "chỉ hỗ trợ tra cứu dữ liệu" in txt.lower()
+    is_refusal = "chỉ hỗ trợ tra cứu dữ liệu" in txt.lower()
     return txt, is_refusal
